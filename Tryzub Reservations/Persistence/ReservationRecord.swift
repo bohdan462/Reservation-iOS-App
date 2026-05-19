@@ -1,0 +1,118 @@
+//
+//  ReservationRecord.swift
+//  Tryzub Reservations
+//
+//  Created by Bohdan Tkachenko on 5/13/26.
+//
+
+import Foundation
+import SwiftData
+
+@Model
+class ReservationRecord: Identifiable {
+    var id: UUID
+    var remoteID: Int
+    var sourceSubmissionID: Int = 0
+    var guestName: String
+    var email: String
+    var phone: String
+    var reservationDate: String
+    var reservationTime: String
+    var partySize: Int
+    var status: String
+    var guestNotes: String?
+    var tableName: String?
+    var staffNotes: String?
+    var createdAt: String
+    var apiUpdatedAt: String?
+    var confirmedAt: String?
+    var confirmationEmailSentAt: String?
+    var reminderEmailSentAt: String?
+    var supersededById: Int?
+    var lastSyncedAt: Date
+    var updatedAt: Date?
+    
+    init (from dto: ReservationDTO) {
+        self.id = UUID()
+        self.remoteID = dto.id
+        self.sourceSubmissionID = dto.sourceSubmissionId ?? 0
+        self.guestName = dto.guestName
+        self.email = dto.email
+        self.phone = dto.phone
+        self.reservationDate = dto.reservationDate
+        self.reservationTime = dto.reservationTime
+        self.partySize = dto.partySize
+        self.status = dto.operationalStatus.rawValue
+        self.guestNotes = dto.guestNotes?.nilIfEmpty
+        self.tableName = dto.tableName?.nilIfEmpty
+        self.staffNotes = dto.staffNotes?.nilIfEmpty
+        self.createdAt = dto.createdAt
+        self.apiUpdatedAt = dto.updatedAt
+        self.confirmedAt = dto.confirmedAt
+        self.confirmationEmailSentAt = dto.confirmationEmailSentAt
+        self.reminderEmailSentAt = dto.reminderEmailSentAt
+        self.supersededById = dto.supersededById
+        self.lastSyncedAt = Date()
+        self.updatedAt = nil
+    }
+
+    func update(from dto: ReservationDTO) {
+        remoteID = dto.id
+        sourceSubmissionID = dto.sourceSubmissionId ?? 0
+        guestName = dto.guestName
+        email = dto.email
+        phone = dto.phone
+        reservationDate = dto.reservationDate
+        reservationTime = dto.reservationTime
+        partySize = dto.partySize
+        status = dto.operationalStatus.rawValue
+        guestNotes = dto.guestNotes?.nilIfEmpty
+        tableName = dto.tableName?.nilIfEmpty
+        staffNotes = dto.staffNotes?.nilIfEmpty
+        createdAt = dto.createdAt
+        apiUpdatedAt = dto.updatedAt
+        confirmedAt = dto.confirmedAt
+        confirmationEmailSentAt = dto.confirmationEmailSentAt
+        reminderEmailSentAt = dto.reminderEmailSentAt
+        supersededById = dto.supersededById
+        lastSyncedAt = Date()
+        updatedAt = Date()
+    }
+
+    var statusValue: ReservationStatus {
+        let storedStatus = ReservationStatus(rawValue: status) ?? .new
+
+        if storedStatus.isActive && reservationDate < Date.reservationDateString() {
+            return .completed
+        }
+
+        return storedStatus
+    }
+}
+
+private extension ReservationDTO {
+    var operationalStatus: ReservationStatus {
+        if status.isActive && reservationDate < Date.reservationDateString() {
+            return .completed
+        }
+
+        return status
+    }
+}
+
+private extension ReservationStatus {
+    var isActive: Bool {
+        switch self {
+        case .new, .needsReview, .confirmed, .seated:
+            return true
+        case .completed, .cancelled, .noShow:
+            return false
+        }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}

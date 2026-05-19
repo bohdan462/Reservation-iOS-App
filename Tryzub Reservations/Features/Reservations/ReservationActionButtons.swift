@@ -1,0 +1,343 @@
+//
+//  ReservationActionButtons.swift
+//  Tryzub Reservations
+//
+
+import SwiftUI
+
+enum ReservationHostAction: String, Identifiable {
+    case confirm
+    case seat
+    case assignTable
+    case complete
+    case cancel
+    case noShow
+
+    var id: String { rawValue }
+
+    var shortTitle: String {
+        switch self {
+        case .confirm:
+            return "Confirm"
+        case .seat:
+            return "Seat"
+        case .assignTable:
+            return "Table"
+        case .complete:
+            return "Complete"
+        case .cancel:
+            return "Cancel"
+        case .noShow:
+            return "No Show"
+        }
+    }
+
+    var fullTitle: String {
+        switch self {
+        case .confirm:
+            return "Confirm and Send Email"
+        case .seat:
+            return "Seat Party"
+        case .assignTable:
+            return "Assign Table"
+        case .complete:
+            return "Complete"
+        case .cancel:
+            return "Cancel Reservation"
+        case .noShow:
+            return "Mark No Show"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .confirm:
+            return "checkmark.circle"
+        case .seat:
+            return "person.2"
+        case .assignTable:
+            return "table.furniture"
+        case .complete:
+            return "checkmark.seal"
+        case .cancel:
+            return "xmark.circle"
+        case .noShow:
+            return "person.crop.circle.badge.xmark"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .confirm:
+            return .green
+        case .seat:
+            return .blue
+        case .assignTable:
+            return .indigo
+        case .complete:
+            return .teal
+        case .cancel, .noShow:
+            return .red
+        }
+    }
+
+    var role: ButtonRole? {
+        switch self {
+        case .cancel, .noShow:
+            return .destructive
+        case .confirm, .seat, .assignTable, .complete:
+            return nil
+        }
+    }
+
+    var statusPatch: ReservationStatus? {
+        switch self {
+        case .seat:
+            return .seated
+        case .complete:
+            return .completed
+        case .cancel:
+            return .cancelled
+        case .noShow:
+            return .noShow
+        case .confirm, .assignTable:
+            return nil
+        }
+    }
+
+    static func availableActions(
+        for reservation: ReservationRecord,
+        capabilities: AppCapabilities,
+        includeSecondary: Bool
+    ) -> [ReservationHostAction] {
+        let status = reservation.statusValue
+        var actions: [ReservationHostAction] = []
+
+        if capabilities.canConfirmReservations,
+           status == .new || status == .needsReview {
+            actions.append(.confirm)
+        }
+
+        if capabilities.canSeatReservations,
+           status == .confirmed {
+            actions.append(.seat)
+        }
+
+        if capabilities.canSeatReservations,
+           status == .seated {
+            actions.append(.complete)
+        }
+
+        if includeSecondary,
+           capabilities.canEditReservationDetails,
+           status != .completed,
+           status != .cancelled,
+           status != .noShow {
+            actions.append(.assignTable)
+        }
+
+        if includeSecondary,
+           capabilities.canCancelReservations,
+           status != .completed,
+           status != .cancelled,
+           status != .noShow {
+            actions.append(.cancel)
+        }
+
+        if includeSecondary,
+           capabilities.canCancelReservations,
+           status == .confirmed || status == .seated {
+            actions.append(.noShow)
+        }
+
+        return actions
+    }
+
+    func dialogTitle(for reservation: ReservationRecord) -> String {
+        switch self {
+        case .confirm:
+            return "Confirm reservation?"
+        case .seat:
+            return "Seat this party?"
+        case .assignTable:
+            return "Assign table?"
+        case .complete:
+            return "Complete this visit?"
+        case .cancel:
+            return "Cancel reservation?"
+        case .noShow:
+            return "Mark as no show?"
+        }
+    }
+
+    func dialogMessage(for reservation: ReservationRecord) -> String {
+        let summary = "\(reservation.guestName), \(reservation.displayDate) at \(reservation.displayTime), party of \(reservation.partySize)."
+
+        switch self {
+        case .confirm:
+            return "\(summary)\n\nThis will mark the reservation confirmed and send a confirmation email to \(reservation.email)."
+        case .seat:
+            return "\(summary)\n\nThis only updates staff status. No email will be sent."
+        case .assignTable:
+            return "\(summary)\n\nEnter the table name or number staff should use."
+        case .complete:
+            return "\(summary)\n\nUse this after the party has finished service."
+        case .cancel:
+            return "\(summary)\n\nThis cancels the managed reservation. No email will be sent yet."
+        case .noShow:
+            return "\(summary)\n\nUse this only when the guest did not arrive."
+        }
+    }
+}
+
+struct ReservationActionButtons: View {
+    let reservation: ReservationRecord
+    let capabilities: AppCapabilities
+    var compact = false
+    var includeSecondary = true
+    var isBusy = false
+    let onAction: (ReservationHostAction) -> Void
+
+    private var actions: [ReservationHostAction] {
+        ReservationHostAction.availableActions(
+            for: reservation,
+            capabilities: capabilities,
+            includeSecondary: includeSecondary
+        )
+    }
+
+    var body: some View {
+        if !actions.isEmpty {
+            HStack(spacing: compact ? 6 : 8) {
+                ForEach(actions.prefix(compact ? 2 : 4)) { action in
+                    Button {
+                        onAction(action)
+                    } label: {
+                        actionLabel(action)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(action.tint)
+                    .controlSize(compact ? .small : .regular)
+                    .disabled(isBusy)
+                }
+
+                if actions.count > (compact ? 2 : 4) {
+                    Menu {
+                        ForEach(actions.dropFirst(compact ? 2 : 4)) { action in
+                            Button(role: action.role) {
+                                onAction(action)
+                            } label: {
+                                Label(action.fullTitle, systemImage: action.systemImage)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(compact ? .small : .regular)
+                    .disabled(isBusy)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func actionLabel(_ action: ReservationHostAction) -> some View {
+        if compact {
+            Label(action.shortTitle, systemImage: action.systemImage)
+                .labelStyle(.iconOnly)
+        } else {
+            Label(action.fullTitle, systemImage: action.systemImage)
+                .labelStyle(.titleAndIcon)
+        }
+    }
+}
+
+struct TableAssignmentSheet: View {
+    let reservation: ReservationRecord
+    let onSave: (String) async throws -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var tableName: String
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(
+        reservation: ReservationRecord,
+        onSave: @escaping (String) async throws -> Void
+    ) {
+        self.reservation = reservation
+        self.onSave = onSave
+        _tableName = State(initialValue: reservation.tableName ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let errorMessage {
+                    Section {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                Section("Reservation") {
+                    HStack {
+                        Text(reservation.displayTime)
+                            .font(.headline.monospacedDigit())
+                        Text(reservation.guestName)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(reservation.partySize)")
+                            .font(.headline.monospacedDigit())
+                    }
+                }
+
+                Section("Table") {
+                    TextField("Table number or name", text: $tableName)
+                        .textInputAutocapitalization(.characters)
+                }
+            }
+            .navigationTitle("Assign Table")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        Task {
+                            await save()
+                        }
+                    } label: {
+                        if isSaving {
+                            ProgressView()
+                        } else {
+                            Text("Save")
+                        }
+                    }
+                    .disabled(isSaving)
+                }
+            }
+        }
+    }
+
+    private func save() async {
+        isSaving = true
+        errorMessage = nil
+
+        defer {
+            isSaving = false
+        }
+
+        do {
+            try await onSave(tableName.trimmingCharacters(in: .whitespacesAndNewlines))
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
