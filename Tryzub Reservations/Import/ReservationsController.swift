@@ -24,7 +24,10 @@ final class ReservationsController: ObservableObject {
         environment.capabilities
     }
 
-    private let automaticRefreshInterval: TimeInterval = 300
+    var hasActiveMutation: Bool {
+        !actionInProgressIDs.isEmpty || isCreatingReservation
+    }
+
     private var hasAttemptedInitialLoad = false
 
     init(environment: AppEnvironment) {
@@ -37,17 +40,14 @@ final class ReservationsController: ObservableObject {
 
         do {
             let repository = ReservationRepository(context: context)
-            if let latestLocalSyncDate = try repository.latestLocalSyncDate(),
-               Date().timeIntervalSince(latestLocalSyncDate) < automaticRefreshInterval {
+            if let latestLocalSyncDate = try repository.latestLocalSyncDate() {
                 lastSyncedAt = latestLocalSyncDate
-                await refreshImportFailureCount()
-                return
             }
         } catch {
             errorMessage = "Could not check local reservation cache."
         }
 
-        await refreshDashboard(context: context)
+        await refreshDashboard(context: context, mode: .startup)
     }
 
     func refreshAll(context: ModelContext) async {
@@ -72,6 +72,23 @@ final class ReservationsController: ObservableObject {
     }
 
     func refreshDashboard(context: ModelContext) async {
+        await refreshDashboard(context: context, mode: .manual)
+    }
+
+    func autoRefreshDashboardIfAllowed(
+        context: ModelContext,
+        isInteractionActive: Bool
+    ) async {
+        guard !isInteractionActive else { return }
+        guard !isSyncing, !hasActiveMutation, !isCheckingImportFailureCount else { return }
+
+        await refreshDashboard(context: context, mode: .automatic)
+    }
+
+    private func refreshDashboard(
+        context: ModelContext,
+        mode: ReservationRefreshMode
+    ) async {
         guard !isSyncing else { return }
 
         isSyncing = true
@@ -87,7 +104,7 @@ final class ReservationsController: ObservableObject {
             try await service.syncToday()
             lastSyncedAt = Date()
         } catch {
-            errorMessage = "Could not refresh today's reservations. Showing last saved data. Tap Refresh to try again."
+            errorMessage = mode.failureMessage
             return
         }
 
@@ -104,6 +121,10 @@ final class ReservationsController: ObservableObject {
 
     func refreshNeedsReview(context: ModelContext) async {
         await syncFiltered(context: context) { try await $0.syncNeedsReview() }
+    }
+
+    func refreshReviewQueues(context: ModelContext) async {
+        await syncFiltered(context: context) { try await $0.syncReviewQueues() }
     }
 
     func save(_ reservation: ReservationDTO, context: ModelContext) {
@@ -248,6 +269,30 @@ final class ReservationsController: ObservableObject {
         }
     }
 
+    func fetchImportFailures(page: Int = 1, perPage: Int = 100) async throws -> ImportFailuresResponse {
+        guard capabilities.canViewFailedImports else {
+            throw ReservationControllerError.permissionDenied
+        }
+
+        let service = ImportFailureService(client: environment.apiClient)
+        let response = try await service.fetchImportFailures(page: page, perPage: perPage)
+        importFailureCount = response.total
+        importFailureCountError = nil
+        return response
+    }
+
+    func clearErrorMessage() {
+        errorMessage = nil
+    }
+
+    func clearNoticeMessage() {
+        noticeMessage = nil
+    }
+
+    func clearImportFailureCountError() {
+        importFailureCountError = nil
+    }
+
     private func syncFiltered(
         context: ModelContext,
         operation: (ReservationSyncService) async throws -> Void
@@ -274,8 +319,31 @@ final class ReservationsController: ObservableObject {
 
 private enum ReservationControllerError: LocalizedError {
     case actionAlreadyInProgress
+    case permissionDenied
 
     var errorDescription: String? {
-        "Another update is already in progress for this reservation."
+        switch self {
+        case .actionAlreadyInProgress:
+            return "Another update is already in progress for this reservation."
+        case .permissionDenied:
+            return "This account cannot view form problems."
+        }
+    }
+}
+
+private enum ReservationRefreshMode {
+    case startup
+    case manual
+    case automatic
+
+    var failureMessage: String {
+        switch self {
+        case .startup:
+            return "Could not refresh today's reservations. Showing last saved data."
+        case .manual:
+            return "Could not refresh today's reservations. Showing last saved data. Tap Refresh to try again."
+        case .automatic:
+            return "Automatic refresh could not reach the server. Showing last saved data."
+        }
     }
 }

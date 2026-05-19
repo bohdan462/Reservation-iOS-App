@@ -13,6 +13,7 @@ protocol ReservationSyncServiceProtocol {
     func syncToday() async throws
     func syncUpcoming() async throws
     func syncNeedsReview() async throws
+    func syncReviewQueues() async throws
     func saveReservation(_ reservation: ReservationDTO) throws
 }
 
@@ -77,6 +78,28 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             search: nil
         )
         try repository.upsert(reservations)
+    }
+
+    func syncReviewQueues() async throws {
+        let needsReview = try await client.fetchAllReservations(
+            perPage: 100,
+            date: nil,
+            from: nil,
+            to: nil,
+            status: .needsReview,
+            search: nil
+        )
+
+        let newReservations = try await client.fetchAllReservations(
+            perPage: 100,
+            date: nil,
+            from: nil,
+            to: nil,
+            status: .new,
+            search: nil
+        )
+
+        try repository.upsert(needsReview + newReservations)
     }
 
     func saveReservation(_ reservation: ReservationDTO) throws {

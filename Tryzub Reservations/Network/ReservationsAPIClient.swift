@@ -27,11 +27,17 @@ protocol ReservationsAPIClientProtocol: AnyObject {
         search: String?
     ) async throws -> [ReservationDTO]
 
-    func fetchReservation(id: Int) async throws -> ReservationDTO
+    func fetchReservation(id: Int, retryCount: Int) async throws -> ReservationDTO
     func updateReservation(id: Int, request: ReservationUpdateRequest) async throws -> ReservationDTO
     func createReservation(_ createRequest: ReservationCreateRequest) async throws -> ReservationDTO
     func confirmReservation(id: Int) async throws -> ReservationConfirmResponse
     func fetchImportFailures(page: Int, perPage: Int) async throws -> ImportFailuresResponse
+}
+
+extension ReservationsAPIClientProtocol {
+    func fetchReservation(id: Int) async throws -> ReservationDTO {
+        try await fetchReservation(id: id, retryCount: 1)
+    }
 }
 
 //Build URL
@@ -165,10 +171,10 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return allReservations
     }
 
-    func fetchReservation(id: Int) async throws -> ReservationDTO {
+    func fetchReservation(id: Int, retryCount: Int = 1) async throws -> ReservationDTO {
         let url = managedReservationsURL().appendingPathComponent(String(id))
         let request = makeRequest(url: url, method: "GET")
-        let data = try await perform(request, retryCount: 1)
+        let data = try await perform(request, retryCount: retryCount)
 
         do {
             return try decoder.decode(ReservationFetchResponse.self, from: data).data

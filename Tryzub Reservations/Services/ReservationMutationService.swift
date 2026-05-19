@@ -59,7 +59,7 @@ final class ReservationMutationService: ReservationMutationServiceProtocol {
     }
 
     func reconcileReservation(id: Int) async throws -> ReservationDTO {
-        let reservation = try await client.fetchReservation(id: id)
+        let reservation = try await client.fetchReservation(id: id, retryCount: 0)
         try repository.upsert(reservation)
         return reservation
     }

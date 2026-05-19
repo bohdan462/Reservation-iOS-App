@@ -12,6 +12,8 @@ struct HostBoardView: View {
     let lastSyncedAt: Date?
     let isSyncing: Bool
     let failedImportCount: Int
+    let isVisible: Bool
+    let externalInteractionActive: Bool
     let onShowFormProblems: () -> Void
 
     @Environment(\.modelContext) private var modelContext
@@ -63,6 +65,13 @@ struct HostBoardView: View {
     private var nextReservationID: Int? {
         let currentTime = Date.currentReservationTimeString()
         return upcoming.first { $0.reservationTime >= currentTime }?.remoteID ?? upcoming.first?.remoteID
+    }
+
+    private var hasOpenInteraction: Bool {
+        externalInteractionActive
+            || pendingAction != nil
+            || tableAssignmentReservation != nil
+            || seatWithoutTableReservation != nil
     }
 
     var body: some View {
@@ -158,6 +167,9 @@ struct HostBoardView: View {
                 )
             }
         }
+        .task(id: isVisible) {
+            await runAutoRefreshLoop()
+        }
     }
 
     private var pendingActionTitle: String {
@@ -169,30 +181,58 @@ struct HostBoardView: View {
     }
 
     private var warningArea: some View {
-        HStack(spacing: 10) {
-            if failedImportCount > 0, controller.capabilities.canViewFailedImports {
-                FormProblemsBanner(count: failedImportCount, onTap: onShowFormProblems)
+        VStack(alignment: .leading, spacing: 8) {
+            if let noticeMessage = controller.noticeMessage {
+                HostMessageBanner(
+                    title: noticeMessage,
+                    symbolName: "checkmark.circle",
+                    tint: .blue,
+                    onDismiss: controller.clearNoticeMessage
+                )
             }
 
-            if !needsReview.isEmpty {
-                HostWarningBanner(
-                    title: "\(needsReview.count) need review",
-                    message: "",
+            if let errorMessage = controller.errorMessage {
+                HostMessageBanner(
+                    title: errorMessage,
                     symbolName: "exclamationmark.triangle",
-                    tint: .orange
+                    tint: .orange,
+                    onDismiss: controller.clearErrorMessage
                 )
             }
 
-            if noTableCount > 0 {
-                HostWarningBanner(
-                    title: "\(noTableCount) without table",
-                    message: "",
-                    symbolName: "table.furniture",
-                    tint: .indigo
+            if let importFailureCountError = controller.importFailureCountError {
+                HostMessageBanner(
+                    title: importFailureCountError,
+                    symbolName: "wifi.exclamationmark",
+                    tint: .orange,
+                    onDismiss: controller.clearImportFailureCountError
                 )
+            }
+
+            HStack(spacing: 10) {
+                if failedImportCount > 0, controller.capabilities.canViewFailedImports {
+                    FormProblemsBanner(count: failedImportCount, onTap: onShowFormProblems)
+                }
+
+                if !needsReview.isEmpty {
+                    HostWarningBanner(
+                        title: "\(needsReview.count) need review",
+                        message: "",
+                        symbolName: "exclamationmark.triangle",
+                        tint: .orange
+                    )
+                }
+
+                if noTableCount > 0 {
+                    HostWarningBanner(
+                        title: "\(noTableCount) without table",
+                        message: "",
+                        symbolName: "table.furniture",
+                        tint: .indigo
+                    )
+                }
             }
         }
-        
     }
 
     private var wideBoard: some View {
@@ -284,6 +324,26 @@ struct HostBoardView: View {
             await controller.updateStatus(reservation: reservation, status: .noShow, context: modelContext)
         case .assignTable:
             tableAssignmentReservation = reservation
+        }
+    }
+
+    @MainActor
+    private func runAutoRefreshLoop() async {
+        guard isVisible else { return }
+
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(90))
+            } catch {
+                return
+            }
+
+            guard isVisible else { return }
+
+            await controller.autoRefreshDashboardIfAllowed(
+                context: modelContext,
+                isInteractionActive: hasOpenInteraction
+            )
         }
     }
 }
@@ -618,6 +678,37 @@ private struct HostWarningBanner: View {
             }
 
             Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+private struct HostMessageBanner: View {
+    let title: String
+    let symbolName: String
+    let tint: Color
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbolName)
+                .foregroundStyle(tint)
+
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 8)
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Dismiss message")
         }
         .padding(12)
         .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))

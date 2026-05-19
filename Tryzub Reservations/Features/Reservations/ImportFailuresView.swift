@@ -10,6 +10,8 @@ struct ImportFailuresView: View {
     let onCreateReservation: (ReservationCreateRequest) async throws -> ReservationDTO
     let onCreated: (ReservationDTO) -> Void
 
+    @EnvironmentObject private var controller: ReservationsController
+
     @State private var failures: [ImportFailureDTO] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -94,8 +96,7 @@ struct ImportFailuresView: View {
         }
 
         do {
-            let service = ImportFailureService(client: environment.apiClient)
-            failures = try await service.fetchImportFailures(page: 1, perPage: 100).data
+            failures = try await controller.fetchImportFailures(page: 1, perPage: 100).data
         } catch {
             errorMessage = "Could not load form problems. Please retry."
         }
@@ -229,10 +230,13 @@ private extension String {
 
 #if DEBUG
 #Preview("Failed Imports") {
+    let environment = AppEnvironment(apiClient: ReservationsAPIClient.preview, role: .developer)
+
     ImportFailuresView(
-        environment: AppEnvironment(apiClient: ReservationsAPIClient.preview, role: .developer),
+        environment: environment,
         onCreateReservation: { _ in ReservationPreviewData.sampleDTOs[0] },
         onCreated: { _ in }
     )
+    .environmentObject(ReservationsController(environment: environment))
 }
 #endif

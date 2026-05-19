@@ -9,6 +9,7 @@ import SwiftData
 struct ReservationsListView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var controller: ReservationsController
+    @State private var selectedTab: ReservationsAppTab = .today
 
     let environment: AppEnvironment
 
@@ -18,32 +19,43 @@ struct ReservationsListView: View {
     }
 
     var body: some View {
-        TabView {
-            TodayDashboardView(environment: environment)
+        TabView(selection: $selectedTab) {
+            TodayDashboardView(environment: environment, isActive: selectedTab == .today)
                 .tabItem {
                     Label("Today", systemImage: "calendar")
                 }
+                .tag(ReservationsAppTab.today)
 
             ReservationScheduleView(environment: environment)
                 .tabItem {
                     Label("Schedule", systemImage: "list.bullet.rectangle")
                 }
+                .tag(ReservationsAppTab.schedule)
 
             ReservationReviewQueueView(environment: environment)
                 .tabItem {
                     Label("Review", systemImage: "exclamationmark.triangle")
                 }
+                .tag(ReservationsAppTab.review)
 
             ReservationMoreView(environment: environment)
                 .tabItem {
                     Label("More", systemImage: "ellipsis.circle")
                 }
+                .tag(ReservationsAppTab.more)
         }
         .environmentObject(controller)
         .task {
             await controller.loadIfNeeded(context: modelContext)
         }
     }
+}
+
+private enum ReservationsAppTab: Hashable {
+    case today
+    case schedule
+    case review
+    case more
 }
 
 private struct TodayDashboardView: View {
@@ -59,6 +71,7 @@ private struct TodayDashboardView: View {
     @State private var showImportFailures = false
 
     let environment: AppEnvironment
+    let isActive: Bool
 
     private var todayReservations: [ReservationRecord] {
         ReservationRecord.sortedChronologically(reservations.filter(\.isToday))
@@ -72,6 +85,8 @@ private struct TodayDashboardView: View {
                 lastSyncedAt: controller.lastSyncedAt,
                 isSyncing: controller.isSyncing,
                 failedImportCount: controller.importFailureCount,
+                isVisible: isActive,
+                externalInteractionActive: showManualCreate || showImportFailures,
                 onShowFormProblems: {
                     showImportFailures = true
                 }
@@ -133,26 +148,8 @@ private struct TodayDashboardView: View {
                         controller.save(createdReservation, context: modelContext)
                     }
                 )
+                .environmentObject(controller)
             }
-            .alert("Reservation Update", isPresented: Binding(
-                get: { controller.noticeMessage != nil },
-                set: { if !$0 { controller.noticeMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(controller.noticeMessage ?? "")
-            }
-            .alert("Action Needed", isPresented: Binding(
-                get: { controller.errorMessage != nil },
-                set: { if !$0 { controller.errorMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(controller.errorMessage ?? "")
-            }
-//            .task {
-//                await controller.refreshImportFailureCount()
-//            }
         }
     }
 }
@@ -376,13 +373,13 @@ private struct ReservationReviewQueueView: View {
             .navigationTitle("Review")
             .searchable(text: $searchText, prompt: "Name, phone, email")
             .refreshable {
-                await controller.refreshAll(context: modelContext)
+                await controller.refreshReviewQueues(context: modelContext)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Task {
-                            await controller.refreshAll(context: modelContext)
+                            await controller.refreshReviewQueues(context: modelContext)
                         }
                     } label: {
                         if controller.isSyncing {
@@ -437,6 +434,7 @@ private struct ReservationMoreView: View {
                                     controller.save(createdReservation, context: modelContext)
                                 }
                             )
+                            .environmentObject(controller)
                         } label: {
                             Label("Failed Imports", systemImage: "exclamationmark.triangle")
                         }
