@@ -196,13 +196,23 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return encoder
     }()
 
+//    private static let defaultSession: URLSession = {
+//        let configuration = URLSessionConfiguration.default
+//        configuration.waitsForConnectivity = true
+//        configuration.timeoutIntervalForRequest = 30
+//        configuration.timeoutIntervalForResource = 60
+//        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+//        configuration.httpMaximumConnectionsPerHost = 1
+//        return URLSession(configuration: configuration)
+//    }()
+    
     private static let defaultSession: URLSession = {
         let configuration = URLSessionConfiguration.default
-        configuration.waitsForConnectivity = true
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 60
+        configuration.waitsForConnectivity = false
+        configuration.timeoutIntervalForRequest = 8
+        configuration.timeoutIntervalForResource = 12
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.httpMaximumConnectionsPerHost = 1
+        configuration.httpMaximumConnectionsPerHost = 2
         return URLSession(configuration: configuration)
     }()
     

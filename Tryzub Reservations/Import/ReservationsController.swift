@@ -18,6 +18,12 @@ final class ReservationsController: ObservableObject {
     @Published var noticeMessage: String?
     @Published var importFailureCount: Int = 0
     @Published var importFailureCountError: String?
+    
+    private var lastAutoRefreshAttemptAt: Date?
+    private var lastAutoRefreshFailureAt: Date?
+
+    private let autoRefreshInterval: TimeInterval = 90
+    private let autoRefreshFailureCooldown: TimeInterval = 120
 
     let environment: AppEnvironment
 
@@ -82,6 +88,29 @@ final class ReservationsController: ObservableObject {
         await refreshDashboard(context: context, mode: .manual)
     }
 
+//    func autoRefreshDashboardIfAllowed(
+//        context: ModelContext,
+//        isInteractionActive: Bool,
+//        isAppActive: Bool
+//    ) async {
+//        guard isAppActive else {
+//            ReservationAPILogger.skip(reason: .autoSkipInactive, message: "app is not active")
+//            return
+//        }
+//
+//        guard !isInteractionActive else {
+//            ReservationAPILogger.skip(reason: .autoSkipBusy, message: "host interaction is active")
+//            return
+//        }
+//
+//        guard !hasActiveReservationRefresh, !hasActiveMutation, !isCheckingImportFailureCount else {
+//            ReservationAPILogger.skip(reason: .autoSkipBusy, message: "controller is busy")
+//            return
+//        }
+//
+//        await refreshDashboard(context: context, mode: .automatic)
+//    }
+    
     func autoRefreshDashboardIfAllowed(
         context: ModelContext,
         isInteractionActive: Bool,
@@ -97,12 +126,32 @@ final class ReservationsController: ObservableObject {
             return
         }
 
-        guard !hasActiveReservationRefresh, !hasActiveMutation, !isCheckingImportFailureCount else {
+        guard !hasActiveReservationRefresh,
+              !hasActiveMutation,
+              !isCheckingImportFailureCount else {
             ReservationAPILogger.skip(reason: .autoSkipBusy, message: "controller is busy")
             return
         }
 
+        let now = Date()
+
+        if let lastAttempt = lastAutoRefreshAttemptAt,
+           now.timeIntervalSince(lastAttempt) < autoRefreshInterval {
+            ReservationAPILogger.skip(reason: .autoSkipBusy, message: "auto-refresh interval has not passed")
+            return
+        }
+
+        if let lastFailure = lastAutoRefreshFailureAt,
+           now.timeIntervalSince(lastFailure) < autoRefreshFailureCooldown {
+            ReservationAPILogger.skip(reason: .autoSkipBusy, message: "auto-refresh failure cooldown is active")
+            return
+        }
+
+        lastAutoRefreshAttemptAt = now
+
         await refreshDashboard(context: context, mode: .automatic)
+
+        // If refreshDashboard does not throw, you need another way to know whether it failed.
     }
 
     private func refreshDashboard(
