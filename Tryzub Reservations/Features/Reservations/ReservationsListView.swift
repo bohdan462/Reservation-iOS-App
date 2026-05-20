@@ -45,8 +45,34 @@ struct ReservationsListView: View {
                 .tag(ReservationsAppTab.more)
         }
         .environmentObject(controller)
+        .overlay(alignment: .topTrailing) {
+            AppNoticeOverlay(
+                notices: visibleNotices,
+                onDismiss: controller.dismissNotice,
+                onClearAll: controller.clearAllNotices
+            )
+            .padding(.top, 10)
+            .padding(.trailing, 14)
+        }
         .task {
             await controller.loadIfNeeded(context: modelContext)
+        }
+    }
+
+    private var visibleNotices: [AppNotice] {
+        controller.notices.filter { notice in
+            switch notice.source {
+            case .mutation, .email, .credentials:
+                return true
+            case .startup, .manualToday, .autoToday:
+                return selectedTab == .today
+            case .schedule:
+                return selectedTab == .schedule
+            case .review:
+                return selectedTab == .review
+            case .importFailures, .admin:
+                return selectedTab == .today || selectedTab == .more
+            }
         }
     }
 }
@@ -202,13 +228,6 @@ private struct ReservationScheduleView: View {
     var body: some View {
         NavigationStack {
             List {
-                if let errorMessage = controller.errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                    }
-                }
-
                 Section {
                     Picker("Schedule", selection: $scope) {
                         ForEach(ReservationScheduleScope.allCases) { scope in
@@ -335,13 +354,6 @@ private struct ReservationReviewQueueView: View {
     var body: some View {
         NavigationStack {
             List {
-                if let errorMessage = controller.errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                    }
-                }
-
                 Section {
                     Picker("Queue", selection: $scope) {
                         ForEach(ReservationQueueScope.allCases) { scope in
@@ -417,13 +429,6 @@ private struct ReservationMoreView: View {
     var body: some View {
         NavigationStack {
             List {
-                if let errorMessage = controller.errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                    }
-                }
-
                 Section("Operations") {
                     if controller.capabilities.canCreateManualReservations {
                         Button {
@@ -447,6 +452,17 @@ private struct ReservationMoreView: View {
                             .environmentObject(controller)
                         } label: {
                             Label("Failed Imports", systemImage: "exclamationmark.triangle")
+                        }
+                    }
+                }
+
+                if controller.capabilities.canViewDeveloperDiagnostics {
+                    Section("Admin") {
+                        NavigationLink {
+                            DeveloperDiagnosticsView(environment: environment)
+                                .environmentObject(controller)
+                        } label: {
+                            Label("API & App Diagnostics", systemImage: "stethoscope")
                         }
                     }
                 }

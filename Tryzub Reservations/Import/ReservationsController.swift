@@ -14,6 +14,7 @@ final class ReservationsController: ObservableObject {
     @Published private(set) var isCreatingReservation = false
     @Published private(set) var isCheckingImportFailureCount = false
     @Published private(set) var lastSyncedAt: Date?
+    @Published private(set) var notices: [AppNotice] = []
     @Published var errorMessage: String?
     @Published var noticeMessage: String?
     @Published var importFailureCount: Int = 0
@@ -55,7 +56,12 @@ final class ReservationsController: ObservableObject {
                 lastSyncedAt = latestLocalSyncDate
             }
         } catch {
-            errorMessage = "Could not check local reservation cache."
+            postNotice(
+                severity: .warning,
+                source: .startup,
+                title: "Saved data check failed",
+                message: "The app could not inspect the local cache."
+            )
         }
 
         await refreshDashboard(context: context, mode: .startup)
@@ -75,7 +81,10 @@ final class ReservationsController: ObservableObject {
             lastSyncedAt = Date()
             didRefreshReservations = true
         } catch {
-            errorMessage = "Could not refresh reservations. Showing last saved data. Tap Refresh to try again."
+            postRefreshFailureNotice(
+                mode: .schedule,
+                error: error
+            )
         }
 
         isSyncing = false
@@ -84,33 +93,11 @@ final class ReservationsController: ObservableObject {
         }
     }
 
-    func refreshDashboard(context: ModelContext) async {
+    @discardableResult
+    func refreshDashboard(context: ModelContext) async -> Bool {
         await refreshDashboard(context: context, mode: .manual)
     }
 
-//    func autoRefreshDashboardIfAllowed(
-//        context: ModelContext,
-//        isInteractionActive: Bool,
-//        isAppActive: Bool
-//    ) async {
-//        guard isAppActive else {
-//            ReservationAPILogger.skip(reason: .autoSkipInactive, message: "app is not active")
-//            return
-//        }
-//
-//        guard !isInteractionActive else {
-//            ReservationAPILogger.skip(reason: .autoSkipBusy, message: "host interaction is active")
-//            return
-//        }
-//
-//        guard !hasActiveReservationRefresh, !hasActiveMutation, !isCheckingImportFailureCount else {
-//            ReservationAPILogger.skip(reason: .autoSkipBusy, message: "controller is busy")
-//            return
-//        }
-//
-//        await refreshDashboard(context: context, mode: .automatic)
-//    }
-    
     func autoRefreshDashboardIfAllowed(
         context: ModelContext,
         isInteractionActive: Bool,
@@ -143,29 +130,31 @@ final class ReservationsController: ObservableObject {
 
         if let lastFailure = lastAutoRefreshFailureAt,
            now.timeIntervalSince(lastFailure) < autoRefreshFailureCooldown {
-            ReservationAPILogger.skip(reason: .autoSkipBusy, message: "auto-refresh failure cooldown is active")
+            ReservationAPILogger.skip(reason: .autoSkipCooldown, message: "auto-refresh failure cooldown active")
             return
         }
 
         lastAutoRefreshAttemptAt = now
 
-        await refreshDashboard(context: context, mode: .automatic)
-
-        // If refreshDashboard does not throw, you need another way to know whether it failed.
+        let didRefresh = await refreshDashboard(context: context, mode: .automatic)
+        if !didRefresh {
+            lastAutoRefreshFailureAt = Date()
+        }
     }
 
+    @discardableResult
     private func refreshDashboard(
         context: ModelContext,
         mode: ReservationRefreshMode
-    ) async {
-        guard !hasActiveReservationRefresh else { return }
+    ) async -> Bool {
+        guard !hasActiveReservationRefresh else { return false }
 
         if mode == .automatic {
             isAutoRefreshing = true
         } else {
             isSyncing = true
         }
-        errorMessage = nil
+        clearScopedMessages(for: mode.noticeSource)
 
         do {
             let repository = ReservationRepository(context: context)
@@ -173,13 +162,16 @@ final class ReservationsController: ObservableObject {
             try await service.syncToday(reason: mode.requestReason)
             lastSyncedAt = Date()
         } catch {
-            errorMessage = mode.failureMessage
+            if mode == .startup || mode == .manual || mode == .automatic {
+                lastAutoRefreshFailureAt = Date()
+            }
+            postRefreshFailureNotice(mode: mode, error: error)
             if mode == .automatic {
                 isAutoRefreshing = false
             } else {
                 isSyncing = false
             }
-            return
+            return false
         }
 
         if mode == .automatic {
@@ -188,7 +180,17 @@ final class ReservationsController: ObservableObject {
             isSyncing = false
         }
 
+        if mode != .automatic {
+            postNotice(
+                severity: .success,
+                source: mode.noticeSource,
+                title: "Reservations updated",
+                requestReason: mode.requestReason
+            )
+        }
+
         await refreshImportFailureCount(reason: .failureCount)
+        return true
     }
 
     func refreshReviewQueues(context: ModelContext) async {
@@ -203,7 +205,12 @@ final class ReservationsController: ObservableObject {
         do {
             try service.saveReservation(reservation)
         } catch {
-            errorMessage = error.localizedDescription
+            postNotice(
+                severity: .error,
+                source: .mutation,
+                title: "Could not save reservation locally",
+                message: error.localizedDescription
+            )
         }
     }
 
@@ -228,10 +235,16 @@ final class ReservationsController: ObservableObject {
             let repository = ReservationRepository(context: context)
             let service = ReservationMutationService(client: environment.apiClient, repository: repository)
             let reservation = try await service.createReservation(request)
-            noticeMessage = "Manual reservation created."
+            postNotice(severity: .success, source: .mutation, title: "Manual reservation created")
             return reservation
         } catch {
             errorMessage = "Manual reservation was not created. Please retry before relying on this reservation."
+            postNotice(
+                severity: .error,
+                source: .mutation,
+                title: "Create did not sync",
+                message: "Manual reservation was not created. Please retry before relying on it."
+            )
             throw error
         }
     }
@@ -253,10 +266,16 @@ final class ReservationsController: ObservableObject {
 
         do {
             let reservation = try await service.updateReservation(id: id, request: request)
-            noticeMessage = "Reservation updated."
+            postNotice(severity: .success, source: .mutation, title: "Reservation updated")
             return reservation
         } catch {
             errorMessage = "Update did not sync. Please retry or check the reservation before relying on this change."
+            postNotice(
+                severity: .error,
+                source: .mutation,
+                title: "Update did not sync",
+                message: "Please retry or check the reservation before relying on this change."
+            )
             throw error
         }
     }
@@ -300,18 +319,25 @@ final class ReservationsController: ObservableObject {
 
             switch response.emailStatus {
             case .sent:
-                noticeMessage = "Reservation confirmed. Email sent."
+                postNotice(severity: .success, source: .email, title: "Reservation confirmed", message: "Email sent.")
             case .alreadySent:
-                noticeMessage = "Reservation was already confirmed. Confirmation email was already sent."
+                postNotice(severity: .info, source: .email, title: "Already confirmed", message: "Confirmation email was already sent.")
             case .failed:
                 errorMessage = "Reservation confirmed, but confirmation email failed. Follow up manually."
+                postNotice(severity: .warning, source: .email, title: "Email failed", message: "Reservation confirmed, but staff should follow up manually.")
             case .skipped:
-                noticeMessage = response.message ?? "Reservation confirmed. Email was skipped."
+                postNotice(severity: .info, source: .email, title: "Email skipped", message: response.message)
             case .unknown:
-                noticeMessage = "Reservation confirmed. Check email status in details."
+                postNotice(severity: .info, source: .email, title: "Reservation confirmed", message: "Check email status in details.")
             }
         } catch {
             errorMessage = "Reservation was not confirmed. Confirmation email may not have been sent. Please retry or check details."
+            postNotice(
+                severity: .error,
+                source: .mutation,
+                title: "Reservation was not confirmed",
+                message: "Confirmation email may not have been sent. Retry or check details."
+            )
         }
     }
 
@@ -335,6 +361,13 @@ final class ReservationsController: ObservableObject {
             importFailureCount = response.total
         } catch {
             importFailureCountError = "Could not check form problems."
+            postNotice(
+                severity: .warning,
+                source: .importFailures,
+                title: "Form problem check failed",
+                message: "The previous count is still shown.",
+                requestReason: reason
+            )
         }
     }
 
@@ -366,6 +399,132 @@ final class ReservationsController: ObservableObject {
         importFailureCountError = nil
     }
 
+    func dismissNotice(_ notice: AppNotice) {
+        notices.removeAll { $0.id == notice.id }
+    }
+
+    func clearAllNotices() {
+        notices.removeAll()
+    }
+
+    @discardableResult
+    func runAdminFetchTest(_ test: AdminFetchTest, reservationID: Int? = nil) async -> AdminFetchTestResult {
+        let startedAt = Date()
+
+        do {
+            let summary: String
+
+            switch test {
+            case .startupToday:
+                let response = try await environment.apiClient.fetchReservations(
+                    page: 1,
+                    perPage: 50,
+                    date: Date.reservationDateString(),
+                    from: nil,
+                    to: nil,
+                    status: nil,
+                    search: nil,
+                    retryCount: 0,
+                    reason: .startupToday
+                )
+                summary = "\(response.data.count) today rows, total \(response.total)"
+            case .manualToday:
+                let response = try await environment.apiClient.fetchReservations(
+                    page: 1,
+                    perPage: 50,
+                    date: Date.reservationDateString(),
+                    from: nil,
+                    to: nil,
+                    status: nil,
+                    search: nil,
+                    retryCount: 1,
+                    reason: .manualToday
+                )
+                summary = "\(response.data.count) today rows, total \(response.total)"
+            case .failureCount:
+                let response = try await environment.apiClient.fetchImportFailures(
+                    page: 1,
+                    perPage: 1,
+                    reason: .failureCount
+                )
+                summary = "\(response.total) form problems"
+            case .scheduleAll:
+                let response = try await environment.apiClient.fetchReservations(
+                    page: 1,
+                    perPage: 100,
+                    date: nil,
+                    from: nil,
+                    to: nil,
+                    status: nil,
+                    search: nil,
+                    retryCount: 1,
+                    reason: .scheduleAll
+                )
+                summary = "\(response.data.count) rows on first page, total \(response.total)"
+            case .reviewQueues:
+                let needsReview = try await environment.apiClient.fetchReservations(
+                    page: 1,
+                    perPage: 50,
+                    date: nil,
+                    from: nil,
+                    to: nil,
+                    status: .needsReview,
+                    search: nil,
+                    retryCount: 0,
+                    reason: .reviewQueues
+                )
+                let newRows = try await environment.apiClient.fetchReservations(
+                    page: 1,
+                    perPage: 50,
+                    date: nil,
+                    from: nil,
+                    to: nil,
+                    status: .new,
+                    search: nil,
+                    retryCount: 0,
+                    reason: .reviewQueues
+                )
+                summary = "\(needsReview.total) review, \(newRows.total) new"
+            case .importFailuresFull:
+                let response = try await environment.apiClient.fetchImportFailures(
+                    page: 1,
+                    perPage: 50,
+                    reason: .importFailuresFull
+                )
+                summary = "\(response.data.count) rows, total \(response.total)"
+            case .fetchByID:
+                guard let reservationID else {
+                    throw ReservationControllerError.missingReservationID
+                }
+
+                let reservation = try await environment.apiClient.fetchReservation(
+                    id: reservationID,
+                    retryCount: 0,
+                    reason: .reconcileByID
+                )
+                summary = "#\(reservation.id) \(reservation.guestName)"
+            }
+
+            let result = AdminFetchTestResult(
+                test: test,
+                succeeded: true,
+                summary: summary,
+                duration: Date().timeIntervalSince(startedAt)
+            )
+            postNotice(severity: .success, source: .admin, title: "\(test.title) passed", message: summary)
+            return result
+        } catch {
+            let result = AdminFetchTestResult(
+                test: test,
+                succeeded: false,
+                summary: error.localizedDescription,
+                duration: Date().timeIntervalSince(startedAt)
+            )
+            postNotice(severity: .warning, source: .admin, title: "\(test.title) failed", message: error.localizedDescription)
+            return result
+        }
+    }
+
     private func syncFiltered(
         context: ModelContext,
         operation: (ReservationSyncService) async throws -> Void
@@ -385,14 +544,70 @@ final class ReservationsController: ObservableObject {
             try await operation(service)
             lastSyncedAt = Date()
         } catch {
-            errorMessage = "Could not refresh reservations. Showing last saved data. Tap Refresh to try again."
+            postNotice(
+                severity: .warning,
+                source: .review,
+                title: "Showing saved data",
+                message: "Could not refresh review queues.",
+                requestReason: .reviewQueues
+            )
         }
+    }
+
+    private func postRefreshFailureNotice(mode: ReservationRefreshMode, error: Error) {
+        postNotice(
+            severity: mode.noticeSeverity,
+            source: mode.noticeSource,
+            title: mode.failureTitle,
+            message: mode.failureMessage,
+            requestReason: mode.requestReason,
+            errorCode: errorLogCode(error)
+        )
+    }
+
+    private func postNotice(
+        severity: AppNoticeSeverity,
+        source: AppNoticeSource,
+        title: String,
+        message: String? = nil,
+        requestReason: ReservationAPIRequestReason? = nil,
+        errorCode: String? = nil
+    ) {
+        let notice = AppNotice(
+            severity: severity,
+            source: source,
+            title: title,
+            message: message,
+            requestReason: requestReason,
+            errorCode: errorCode
+        )
+        notices.insert(notice, at: 0)
+        if notices.count > 20 {
+            notices.removeLast(notices.count - 20)
+        }
+    }
+
+    private func clearScopedMessages(for source: AppNoticeSource) {
+        errorMessage = nil
+        noticeMessage = nil
+        notices.removeAll { $0.source == source && $0.severity != .error }
+    }
+
+    private func errorLogCode(_ error: Error) -> String? {
+        if let apiError = error as? ReservationAPIError {
+            return apiError.logValue
+        }
+        if let urlError = error as? URLError {
+            return "\(urlError.errorCode)"
+        }
+        return nil
     }
 }
 
 private enum ReservationControllerError: LocalizedError {
     case actionAlreadyInProgress
     case permissionDenied
+    case missingReservationID
 
     var errorDescription: String? {
         switch self {
@@ -400,6 +615,8 @@ private enum ReservationControllerError: LocalizedError {
             return "Another update is already in progress for this reservation."
         case .permissionDenied:
             return "This account cannot view form problems."
+        case .missingReservationID:
+            return "Enter a reservation ID first."
         }
     }
 }
@@ -408,15 +625,58 @@ private enum ReservationRefreshMode {
     case startup
     case manual
     case automatic
+    case schedule
+    case review
+
+    var failureTitle: String {
+        switch self {
+        case .startup:
+            return "Showing saved data"
+        case .manual:
+            return "Refresh failed"
+        case .automatic:
+            return "Auto-refresh failed"
+        case .schedule:
+            return "Schedule refresh failed"
+        case .review:
+            return "Review refresh failed"
+        }
+    }
 
     var failureMessage: String {
         switch self {
         case .startup:
-            return "Could not refresh today's reservations. Showing last saved data."
+            return "The server did not respond. Cached reservations remain visible."
         case .manual:
-            return "Could not refresh today's reservations. Showing last saved data. Tap Refresh to try again."
+            return "Could not reach the server. Cached reservations remain visible."
         case .automatic:
-            return "Automatic refresh could not reach the server. Showing last saved data."
+            return "The app will try again later."
+        case .schedule:
+            return "Could not refresh the schedule. Cached reservations remain visible."
+        case .review:
+            return "Could not refresh review queues. Cached reservations remain visible."
+        }
+    }
+
+    var noticeSource: AppNoticeSource {
+        switch self {
+        case .startup:
+            return .startup
+        case .manual:
+            return .manualToday
+        case .automatic:
+            return .autoToday
+        case .schedule:
+            return .schedule
+        case .review:
+            return .review
+        }
+    }
+
+    var noticeSeverity: AppNoticeSeverity {
+        switch self {
+        case .automatic, .startup, .manual, .schedule, .review:
+            return .warning
         }
     }
 
@@ -428,6 +688,53 @@ private enum ReservationRefreshMode {
             return .manualToday
         case .automatic:
             return .autoToday
+        case .schedule:
+            return .scheduleAll
+        case .review:
+            return .reviewQueues
         }
+    }
+}
+
+enum AdminFetchTest: String, CaseIterable, Identifiable {
+    case startupToday
+    case manualToday
+    case failureCount
+    case scheduleAll
+    case reviewQueues
+    case importFailuresFull
+    case fetchByID
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .startupToday:
+            return "Test startup_today"
+        case .manualToday:
+            return "Test manual_today"
+        case .failureCount:
+            return "Test failure_count"
+        case .scheduleAll:
+            return "Test schedule_all"
+        case .reviewQueues:
+            return "Test review_queues"
+        case .importFailuresFull:
+            return "Test import_failures_full"
+        case .fetchByID:
+            return "Test fetch by ID"
+        }
+    }
+}
+
+struct AdminFetchTestResult: Identifiable, Equatable {
+    let id = UUID()
+    let test: AdminFetchTest
+    let succeeded: Bool
+    let summary: String
+    let duration: TimeInterval
+
+    var durationText: String {
+        String(format: "%.2fs", duration)
     }
 }

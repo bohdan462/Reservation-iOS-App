@@ -137,33 +137,6 @@ struct HostBoardView: View {
 
     private func warningArea(snapshot: HostBoardSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let noticeMessage = controller.noticeMessage {
-                HostMessageBanner(
-                    title: noticeMessage,
-                    symbolName: "checkmark.circle",
-                    tint: .blue,
-                    onDismiss: controller.clearNoticeMessage
-                )
-            }
-
-            if let errorMessage = controller.errorMessage {
-                HostMessageBanner(
-                    title: errorMessage,
-                    symbolName: "exclamationmark.triangle",
-                    tint: .orange,
-                    onDismiss: controller.clearErrorMessage
-                )
-            }
-
-            if let importFailureCountError = controller.importFailureCountError {
-                HostMessageBanner(
-                    title: importFailureCountError,
-                    symbolName: "wifi.exclamationmark",
-                    tint: .orange,
-                    onDismiss: controller.clearImportFailureCountError
-                )
-            }
-
             HStack(spacing: 8) {
                 if failedImportCount > 0, controller.capabilities.canViewFailedImports {
                     FormProblemsBanner(count: failedImportCount, onTap: onShowFormProblems)
@@ -595,38 +568,6 @@ private struct HostWarningBanner: View {
             Spacer(minLength: 0)
         }
         .padding(12)
-        .background(Color(.secondarySystemGroupedBackground), in: Capsule())
-    }
-}
-
-private struct HostMessageBanner: View {
-    let title: String
-    let symbolName: String
-    let tint: Color
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbolName)
-                .foregroundStyle(.secondary)
-
-            Text(title)
-                .font(.subheadline.weight(.medium))
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Spacer(minLength: 8)
-
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.bold))
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-            .accessibilityLabel("Dismiss message")
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
         .background(Color(.secondarySystemGroupedBackground), in: Capsule())
     }
 }

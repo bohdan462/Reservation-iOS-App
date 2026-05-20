@@ -12,6 +12,7 @@ enum ReservationAPIRequestReason: String {
     case startupToday = "startup_today"
     case manualToday = "manual_today"
     case autoToday = "auto_today"
+    case autoSkipCooldown = "auto_skip_cooldown"
     case failureCount = "failure_count"
     case importFailuresFull = "import_failures_full"
     case scheduleAll = "schedule_all"
@@ -33,6 +34,12 @@ enum ReservationAPILogger {
 
     static func start(request: URLRequest, reason: ReservationAPIRequestReason) -> Date {
         let startedAt = Date()
+        append(
+            outcome: .started,
+            request: request,
+            reason: reason,
+            duration: nil
+        )
         guard isEnabled else { return startedAt }
 
         print("[API] START reason=\(reason.rawValue) method=\(request.httpMethod ?? "GET") \(sanitizedPathAndQuery(for: request.url))")
@@ -45,6 +52,13 @@ enum ReservationAPILogger {
         statusCode: Int,
         startedAt: Date
     ) {
+        append(
+            outcome: .succeeded,
+            request: request,
+            reason: reason,
+            statusCode: statusCode,
+            duration: duration(since: startedAt)
+        )
         guard isEnabled else { return }
 
         print("[API] END reason=\(reason.rawValue) status=\(statusCode) duration=\(duration(since: startedAt)) \(sanitizedPathAndQuery(for: request.url))")
@@ -56,15 +70,57 @@ enum ReservationAPILogger {
         error: Error,
         startedAt: Date
     ) {
+        append(
+            outcome: .failed,
+            request: request,
+            reason: reason,
+            error: errorLogValue(error),
+            duration: duration(since: startedAt)
+        )
         guard isEnabled else { return }
 
         print("[API] FAIL reason=\(reason.rawValue) error=\(errorLogValue(error)) duration=\(duration(since: startedAt)) \(sanitizedPathAndQuery(for: request.url))")
     }
 
     static func skip(reason: ReservationAPIRequestReason, message: String) {
+        Task { @MainActor in
+            APIRequestLogStore.shared.append(
+                APIRequestLogEvent(
+                    outcome: .skipped,
+                    reason: reason,
+                    message: message
+                )
+            )
+        }
         guard isEnabled else { return }
 
         print("[API] SKIP reason=\(reason.rawValue) \(message)")
+    }
+
+    private static func append(
+        outcome: APIRequestLogOutcome,
+        request: URLRequest,
+        reason: ReservationAPIRequestReason,
+        statusCode: Int? = nil,
+        error: String? = nil,
+        duration: String? = nil
+    ) {
+        let method = request.httpMethod ?? "GET"
+        let pathAndQuery = sanitizedPathAndQuery(for: request.url)
+
+        Task { @MainActor in
+            APIRequestLogStore.shared.append(
+                APIRequestLogEvent(
+                    outcome: outcome,
+                    reason: reason,
+                    method: method,
+                    pathAndQuery: pathAndQuery,
+                    statusCode: statusCode,
+                    error: error,
+                    duration: duration
+                )
+            )
+        }
     }
 
     private static func sanitizedPathAndQuery(for url: URL?) -> String {
@@ -108,6 +164,9 @@ enum ReservationAPILogger {
 }
 
 protocol ReservationsAPIClientProtocol: AnyObject {
+    var debugBaseURLDescription: String { get }
+    var hasConfiguredCredentials: Bool { get }
+
     func fetchReservations(
         page: Int,
         perPage: Int,
@@ -183,6 +242,14 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
     private let username: String
     private let applicationPassword: String
     private let session: URLSession
+
+    var debugBaseURLDescription: String {
+        baseURL.absoluteString
+    }
+
+    var hasConfiguredCredentials: Bool {
+        !username.isEmpty && !applicationPassword.isEmpty
+    }
 
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()

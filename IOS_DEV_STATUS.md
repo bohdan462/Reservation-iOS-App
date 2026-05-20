@@ -50,6 +50,9 @@ Current request reasons:
 - `reconcile_by_id`
 - `auto_skip_busy`
 - `auto_skip_inactive`
+- `auto_skip_cooldown`
+
+Debug logs are also stored in-memory for the Admin / API Diagnostics screen. The store keeps only recent method/path/reason/status/error/duration metadata. It does not store payloads, credentials, or Authorization headers.
 
 ## 3. Startup Request Sequence
 
@@ -105,8 +108,19 @@ Auto-refresh logs:
 - `auto_today` when it fetches;
 - `auto_skip_busy` when the controller or host UI is busy;
 - `auto_skip_inactive` when the app is not active.
+- `auto_skip_cooldown` when the backend recently failed and the app is deliberately waiting.
+
+Auto-refresh sleeps before its first attempt, so opening Today does not immediately create a second backend request after startup.
 
 Auto-refresh fetches Today only. It does not show a blocking alert and does not use the main visible spinner.
+
+Cooldown behavior:
+
+- `autoRefreshInterval` is 90 seconds.
+- `autoRefreshFailureCooldown` is 120 seconds.
+- Startup, manual, or automatic Today refresh failure records a failure timestamp.
+- Auto-refresh skips during cooldown.
+- Manual refresh still works during cooldown unless another request is already running.
 
 ## 6. Import Failure Count Behavior
 
@@ -121,6 +135,50 @@ If count check fails:
 - a non-blocking form-problem check message can be shown.
 
 The full Import Failures screen loads through `ReservationsController.fetchImportFailures(page:perPage:)`, not by creating API services in the view.
+
+## 6A. Notice / Notification Behavior
+
+Normal refresh failures now become small non-blocking notices instead of large blocking alerts or loud full-width warning blocks.
+
+Notice sources:
+
+- `startup`
+- `manualToday`
+- `autoToday`
+- `schedule`
+- `review`
+- `mutation`
+- `email`
+- `credentials`
+- `importFailures`
+- `admin`
+
+Scope rules:
+
+- Today shows startup/manual/auto Today notices.
+- Schedule shows Schedule notices.
+- Review shows Review notices.
+- Mutation and email notices are global because staff actions may need attention.
+- Auto-refresh failures are quiet and do not take over Schedule or Review.
+
+The top-right notice badge can be tapped to open a compact notice list with source, request reason, time, and error code when available.
+
+## 6B. Admin / Diagnostic Screen
+
+Developer users can open `More -> API & App Diagnostics`.
+
+The admin screen shows:
+
+- API base URL and credential-present status;
+- current role/capability context;
+- last successful sync and last failed request;
+- in-memory request log viewer;
+- safe GET tests for Today, Schedule, Review, failure count, import failures, and fetch-by-ID;
+- SwiftData cache counts;
+- current notices;
+- endpoint checklist, including `POST /managed-reservations/import` as explicitly not used.
+
+Admin tests do not mutate real reservations by default. There are no confirm/cancel/seat/create/email-send tests in this screen.
 
 ## 7. SwiftData Performance Changes
 
@@ -172,6 +230,8 @@ The app does not call:
 - No production auth flow beyond WordPress Application Password in Keychain.
 - Schedule refresh still uses the heavier all-reservations path.
 - Device-level credential setup is simple and internal-pilot oriented.
+- Admin screen safe tests are GET-focused; mutation testing remains manual through normal app flows.
+- Request logs are in-memory only and reset when the app process exits.
 
 ## 11. Manual Test Checklist
 
@@ -186,6 +246,7 @@ The app does not call:
 - [ ] Toolbar refresh on Today logs `manual_today`.
 - [ ] Auto-refresh logs `auto_today` about every 90 seconds while active.
 - [ ] Auto-refresh logs skip reasons while app is inactive or UI/mutations are busy.
+- [ ] After a startup/manual failure, auto-refresh logs `auto_skip_cooldown` instead of immediately retrying.
 - [ ] Schedule refresh still works and logs `schedule_all`.
 - [ ] Review refresh logs `review_queues` and fetches new/review only.
 - [ ] Confirm logs `mutation_confirm`.
@@ -194,5 +255,7 @@ The app does not call:
 - [ ] Uncertain mutation failure attempts `reconcile_by_id` once.
 - [ ] Failed network keeps cached rows visible.
 - [ ] No blocking modal refresh alert appears for normal refresh failure.
+- [ ] Small notice badge appears for scoped refresh/action errors.
+- [ ] More -> API & App Diagnostics shows request logs and safe GET test results.
 - [ ] iOS does not call the backend import endpoint.
 - [ ] App builds.

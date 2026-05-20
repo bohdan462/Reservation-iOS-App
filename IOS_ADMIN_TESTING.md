@@ -1,0 +1,138 @@
+# iOS Admin / Testing Screen
+
+## 1. Purpose
+
+The Admin / API Diagnostics screen is for controlled restaurant pilot testing and developer troubleshooting.
+
+It helps verify API reachability, request flow, SwiftData cache state, and notice behavior without disturbing real reservations.
+
+## 2. Access
+
+Open:
+
+`More -> API & App Diagnostics`
+
+The screen is shown only when the app role has `canViewDeveloperDiagnostics`.
+
+## 3. Safe Tests
+
+The screen includes safe GET tests:
+
+- Test `startup_today`
+- Test `manual_today`
+- Test `failure_count`
+- Test `schedule_all`
+- Test `review_queues`
+- Test `import_failures_full`
+- Test fetch by managed reservation ID
+
+These tests read from the backend and summarize decoded results. They do not create, confirm, cancel, seat, or email reservations.
+
+## 4. Dangerous Tests Not Implemented
+
+The screen intentionally does not include automatic mutation tests.
+
+Not implemented here:
+
+- confirm reservation;
+- cancel reservation;
+- seat reservation;
+- no-show reservation;
+- create fake reservation;
+- send confirmation email;
+- call backend import endpoint.
+
+Any real mutation must happen through the normal reservation workflow with explicit staff action.
+
+## 5. Request Log Viewer
+
+The screen shows the recent in-memory API request log.
+
+Each log event includes:
+
+- time;
+- request reason;
+- method;
+- sanitized path/query;
+- status or error;
+- duration;
+- outcome.
+
+The log does not include:
+
+- credentials;
+- Authorization header;
+- raw reservation payloads;
+- guest notes;
+- full search text.
+
+Search query values are redacted.
+
+## 6. API Health Checks
+
+The API Health section shows:
+
+- base URL;
+- credential-present status;
+- current role;
+- last sync time;
+- last failed request;
+- last failed request reason.
+
+The app does not expose the WordPress Application Password.
+
+## 7. Cache Stats
+
+The SwiftData Cache section shows:
+
+- total cached reservations;
+- Today cached reservations;
+- new count;
+- needs-review count;
+- confirmed count;
+- without-table count;
+- latest local sync timestamp.
+
+SwiftData remains local cache only. The WordPress backend remains source of truth.
+
+## 8. Notification Center Preview
+
+The admin screen shows current app notices.
+
+Examples:
+
+- refresh failed;
+- auto-refresh failed;
+- mutation did not sync;
+- confirmation email failed;
+- form problem check failed;
+- admin test result.
+
+Notices can be dismissed or cleared.
+
+## 9. Manual Test Checklist
+
+- [ ] Open the screen as developer.
+- [ ] Confirm credentials show as present without exposing password.
+- [ ] Run `Test startup_today`.
+- [ ] Run `Test manual_today`.
+- [ ] Run `Test failure_count`.
+- [ ] Run `Test schedule_all`.
+- [ ] Run `Test review_queues`.
+- [ ] Run `Test import_failures_full`.
+- [ ] Enter a known reservation ID and run fetch by ID.
+- [ ] Confirm request logs show reason, endpoint, status/error, and duration.
+- [ ] Confirm no payloads or credentials appear in logs.
+- [ ] Confirm notices appear in the notification preview.
+- [ ] Confirm endpoint checklist marks successful calls during the session.
+- [ ] Confirm `POST /managed-reservations/import` stays clean/not used.
+
+## 10. Known Limitations
+
+- Request logs are in-memory only and clear when the app process restarts.
+- Safe tests are GET-focused.
+- There is no backend test mode yet.
+- There is no fake-reservation generator.
+- There is no automatic email test.
+- There is no full production diagnostics/export workflow.
+
