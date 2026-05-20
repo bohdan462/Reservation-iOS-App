@@ -11,6 +11,7 @@ import Foundation
 protocol ReservationSyncServiceProtocol {
     func syncAllReservations(reason: ReservationAPIRequestReason) async throws
     func syncToday(reason: ReservationAPIRequestReason) async throws
+    func syncScheduleWindow(from: String, to: String, reason: ReservationAPIRequestReason) async throws
     func syncReviewQueues(reason: ReservationAPIRequestReason) async throws
     func saveReservation(_ reservation: ReservationDTO) throws
 }
@@ -55,6 +56,19 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         )
 
         try repository.upsert(response.data)
+    }
+
+    func syncScheduleWindow(from: String, to: String, reason: ReservationAPIRequestReason) async throws {
+        let reservations = try await client.fetchAllReservations(
+            perPage: 100,
+            date: nil,
+            from: from,
+            to: to,
+            status: nil,
+            search: nil,
+            reason: reason
+        )
+        try repository.upsert(reservations)
     }
 
     func syncReviewQueues(reason: ReservationAPIRequestReason) async throws {

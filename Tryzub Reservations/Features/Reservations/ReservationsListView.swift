@@ -26,13 +26,13 @@ struct ReservationsListView: View {
                 }
                 .tag(ReservationsAppTab.today)
 
-            ReservationScheduleView(environment: environment)
+            ReservationScheduleView(environment: environment, isActive: selectedTab == .schedule)
                 .tabItem {
                     Label("Schedule", systemImage: "list.bullet.rectangle")
                 }
                 .tag(ReservationsAppTab.schedule)
 
-            ReservationReviewQueueView(environment: environment)
+            ReservationReviewQueueView(environment: environment, isActive: selectedTab == .review)
                 .tabItem {
                     Label("Review", systemImage: "exclamationmark.triangle")
                 }
@@ -121,7 +121,7 @@ private struct TodayDashboardView: View {
             )
             .navigationTitle("Today")
             .refreshable {
-                await controller.refreshDashboard(context: modelContext)
+                await controller.requestManualTodayRefresh(context: modelContext)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -148,7 +148,7 @@ private struct TodayDashboardView: View {
 
                     Button {
                         Task {
-                            await controller.refreshDashboard(context: modelContext)
+                            await controller.requestManualTodayRefresh(context: modelContext)
                         }
                     } label: {
                         if controller.isSyncing {
@@ -196,6 +196,7 @@ private struct ReservationScheduleView: View {
     @State private var showManualCreate = false
 
     let environment: AppEnvironment
+    let isActive: Bool
 
     private var displayedReservations: [ReservationRecord] {
         let today = Date.reservationDateString()
@@ -278,7 +279,7 @@ private struct ReservationScheduleView: View {
             .navigationTitle("Schedule")
             .searchable(text: $searchText, prompt: "Name, phone, email, table")
             .refreshable {
-                await controller.refreshAll(context: modelContext)
+                await controller.requestScheduleRefresh(context: modelContext)
             }
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -293,7 +294,7 @@ private struct ReservationScheduleView: View {
 
                     Button {
                         Task {
-                            await controller.refreshAll(context: modelContext)
+                            await controller.requestScheduleRefresh(context: modelContext)
                         }
                     } label: {
                         if controller.isSyncing {
@@ -310,6 +311,10 @@ private struct ReservationScheduleView: View {
                 ManualReservationFormView { request in
                     try await controller.createReservation(request, context: modelContext)
                 }
+            }
+            .task(id: isActive) {
+                guard isActive else { return }
+                await controller.scheduleBecameActive(context: modelContext)
             }
         }
     }
@@ -328,6 +333,7 @@ private struct ReservationReviewQueueView: View {
     @State private var searchText = ""
 
     let environment: AppEnvironment
+    let isActive: Bool
 
     private var queueReservations: [ReservationRecord] {
         let trimmedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -395,13 +401,13 @@ private struct ReservationReviewQueueView: View {
             .navigationTitle("Review")
             .searchable(text: $searchText, prompt: "Name, phone, email")
             .refreshable {
-                await controller.refreshReviewQueues(context: modelContext)
+                await controller.requestReviewRefresh(context: modelContext)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Task {
-                            await controller.refreshReviewQueues(context: modelContext)
+                            await controller.requestReviewRefresh(context: modelContext)
                         }
                     } label: {
                         if controller.isSyncing {
@@ -413,6 +419,10 @@ private struct ReservationReviewQueueView: View {
                     .disabled(controller.isSyncing)
                     .accessibilityLabel("Refresh")
                 }
+            }
+            .task(id: isActive) {
+                guard isActive else { return }
+                await controller.reviewBecameActive(context: modelContext)
             }
         }
     }

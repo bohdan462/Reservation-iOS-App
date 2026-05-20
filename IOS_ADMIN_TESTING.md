@@ -21,7 +21,7 @@ The screen includes safe GET tests:
 - Test `startup_today`
 - Test `manual_today`
 - Test `failure_count`
-- Test `schedule_all`
+- Test `schedule_window`
 - Test `review_queues`
 - Test `import_failures_full`
 - Test fetch by managed reservation ID
@@ -81,6 +81,16 @@ The API Health section shows:
 
 The app does not expose the WordPress Application Password.
 
+The diagnostics screen also shows sync scope snapshots:
+
+- Today scope;
+- Schedule window scope;
+- Review queues scope;
+- failure-count scope;
+- single-reservation reconciliation scopes after they run.
+
+Each scope can show last attempt, success, failure, in-flight state, and cooldown.
+
 ## 7. Cache Stats
 
 The SwiftData Cache section shows:
@@ -117,7 +127,7 @@ Notices can be dismissed or cleared.
 - [ ] Run `Test startup_today`.
 - [ ] Run `Test manual_today`.
 - [ ] Run `Test failure_count`.
-- [ ] Run `Test schedule_all`.
+- [ ] Run `Test schedule_window`.
 - [ ] Run `Test review_queues`.
 - [ ] Run `Test import_failures_full`.
 - [ ] Enter a known reservation ID and run fetch by ID.
@@ -131,8 +141,8 @@ Notices can be dismissed or cleared.
 
 - Request logs are in-memory only and clear when the app process restarts.
 - Safe tests are GET-focused.
+- Schedule tests use the current 30-day schedule window.
 - There is no backend test mode yet.
 - There is no fake-reservation generator.
 - There is no automatic email test.
 - There is no full production diagnostics/export workflow.
-

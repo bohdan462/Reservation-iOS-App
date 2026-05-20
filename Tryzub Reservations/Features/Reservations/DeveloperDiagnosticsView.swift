@@ -30,6 +30,7 @@ struct DeveloperDiagnosticsView: View {
     var body: some View {
         List {
             apiHealthSection
+            syncScopeSection
             safeFetchTestsSection
             requestLogSection
             cacheSection
@@ -38,6 +39,35 @@ struct DeveloperDiagnosticsView: View {
             safetySection
         }
         .navigationTitle("API Diagnostics")
+    }
+
+    private var syncScopeSection: some View {
+        Section("Sync Scopes") {
+            if controller.syncScopeSnapshots.isEmpty {
+                Text("No scope activity yet.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(controller.syncScopeSnapshots) { snapshot in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(snapshot.scope.description)
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            if snapshot.isInFlight {
+                                Text("In flight")
+                                    .font(.caption)
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                        scopeTimestampRow("Attempt", snapshot.lastAttemptAt)
+                        scopeTimestampRow("Success", snapshot.lastSuccessAt)
+                        scopeTimestampRow("Failure", snapshot.lastFailureAt)
+                        scopeTimestampRow("Cooldown", snapshot.cooldownUntil)
+                    }
+                    .padding(.vertical, 3)
+                }
+            }
+        }
     }
 
     private var apiHealthSection: some View {
@@ -214,6 +244,16 @@ struct DeveloperDiagnosticsView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
         }
+    }
+
+    private func scopeTimestampRow(_ title: String, _ date: Date?) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(date?.formatted(date: .omitted, time: .standard) ?? "none")
+                .foregroundStyle(.secondary)
+        }
+        .font(.caption)
     }
 
     private func endpointRow(_ title: String, pathFragment: String) -> some View {

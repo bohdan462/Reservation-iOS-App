@@ -268,7 +268,7 @@ struct HostBoardView: View {
 
         while !Task.isCancelled {
             do {
-                try await Task.sleep(for: .seconds(90))
+                try await Task.sleep(for: .seconds(60))
             } catch {
                 return
             }

@@ -15,12 +15,15 @@ enum ReservationAPIRequestReason: String {
     case autoSkipCooldown = "auto_skip_cooldown"
     case failureCount = "failure_count"
     case importFailuresFull = "import_failures_full"
-    case scheduleAll = "schedule_all"
+    case scheduleWindow = "schedule_window"
     case reviewQueues = "review_queues"
     case mutationPatch = "mutation_patch"
     case mutationConfirm = "mutation_confirm"
     case mutationCreate = "mutation_create"
     case reconcileByID = "reconcile_by_id"
+    case manualSkipBusy = "manual_skip_busy"
+    case manualSkipCooldown = "manual_skip_cooldown"
+    case scopeSkipInFlight = "scope_skip_in_flight"
     case autoSkipBusy = "auto_skip_busy"
     case autoSkipInactive = "auto_skip_inactive"
 }
@@ -80,6 +83,23 @@ enum ReservationAPILogger {
         guard isEnabled else { return }
 
         print("[API] FAIL reason=\(reason.rawValue) error=\(errorLogValue(error)) duration=\(duration(since: startedAt)) \(sanitizedPathAndQuery(for: request.url))")
+    }
+
+    static func cancelled(
+        request: URLRequest,
+        reason: ReservationAPIRequestReason,
+        startedAt: Date
+    ) {
+        append(
+            outcome: .cancelled,
+            request: request,
+            reason: reason,
+            error: "cancelled",
+            duration: duration(since: startedAt)
+        )
+        guard isEnabled else { return }
+
+        print("[API] CANCELLED reason=\(reason.rawValue) duration=\(duration(since: startedAt)) \(sanitizedPathAndQuery(for: request.url))")
     }
 
     static func skip(reason: ReservationAPIRequestReason, message: String) {
@@ -529,7 +549,15 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
                     startedAt: startedAt
                 )
                 return data
+            } catch is CancellationError {
+                ReservationAPILogger.cancelled(request: request, reason: reason, startedAt: startedAt)
+                throw ReservationAPIError.cancelled
             } catch let error as URLError {
+                if error.code == .cancelled {
+                    ReservationAPILogger.cancelled(request: request, reason: reason, startedAt: startedAt)
+                    throw ReservationAPIError.cancelled
+                }
+
                 lastNetworkError = error
 
                 guard error.isTransientNetworkError, attempt < retryCount else {
@@ -543,11 +571,15 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
                 do {
                     try await Task.sleep(for: .milliseconds(450 * attempt))
                 } catch {
-                    let apiError = ReservationAPIError.networkFailure(lastNetworkError ?? URLError(.cancelled))
-                    ReservationAPILogger.fail(request: request, reason: reason, error: apiError, startedAt: startedAt)
-                    throw apiError
+                    ReservationAPILogger.cancelled(request: request, reason: reason, startedAt: startedAt)
+                    throw ReservationAPIError.cancelled
                 }
             } catch {
+                if error.isCancellationLike {
+                    ReservationAPILogger.cancelled(request: request, reason: reason, startedAt: startedAt)
+                    throw ReservationAPIError.cancelled
+                }
+
                 ReservationAPILogger.fail(request: request, reason: reason, error: error, startedAt: startedAt)
                 throw error
             }

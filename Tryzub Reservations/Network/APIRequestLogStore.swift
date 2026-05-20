@@ -9,6 +9,7 @@ enum APIRequestLogOutcome: String {
     case started
     case succeeded
     case failed
+    case cancelled
     case skipped
 }
 
@@ -76,4 +77,3 @@ final class APIRequestLogStore: ObservableObject {
         }
     }
 }
-

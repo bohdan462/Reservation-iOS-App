@@ -11,6 +11,7 @@ enum ReservationAPIError: Error, LocalizedError {
     case invalidURL
     case invalidResponse
     case unauthorized
+    case cancelled
     case networkFailure(URLError)
     case serverError(statusCode: Int)
     case wordpressError(code: String, message: String, statusCode: Int)
@@ -24,6 +25,8 @@ enum ReservationAPIError: Error, LocalizedError {
             return "The reservation API returned an invalid response."
         case .unauthorized:
             return "The WordPress username or application password was rejected."
+        case .cancelled:
+            return "The reservation API request was cancelled."
         case .networkFailure(let error):
             switch error.code {
             case .notConnectedToInternet:
@@ -52,6 +55,8 @@ enum ReservationAPIError: Error, LocalizedError {
             return "invalid_response"
         case .unauthorized:
             return "unauthorized"
+        case .cancelled:
+            return "cancelled"
         case .networkFailure(let error):
             return "\(error.errorCode)"
         case .serverError(let statusCode):
@@ -65,6 +70,28 @@ enum ReservationAPIError: Error, LocalizedError {
 }
 
 extension Error {
+    var isCancellationLike: Bool {
+        if self is CancellationError {
+            return true
+        }
+
+        if let reservationError = self as? ReservationAPIError,
+           case .cancelled = reservationError {
+            return true
+        }
+
+        if let urlError = self as? URLError {
+            return urlError.code == .cancelled
+        }
+
+        if let reservationError = self as? ReservationAPIError,
+           case .networkFailure(let urlError) = reservationError {
+            return urlError.code == .cancelled
+        }
+
+        return false
+    }
+
     var mayHaveReachedReservationServer: Bool {
         guard let reservationError = self as? ReservationAPIError,
               case ReservationAPIError.networkFailure(let urlError) = reservationError else {

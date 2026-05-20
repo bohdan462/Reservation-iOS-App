@@ -42,19 +42,44 @@ Current request reasons:
 - `auto_today`
 - `failure_count`
 - `import_failures_full`
-- `schedule_all`
+- `schedule_window`
 - `review_queues`
 - `mutation_patch`
 - `mutation_confirm`
 - `mutation_create`
 - `reconcile_by_id`
+- `manual_skip_busy`
+- `manual_skip_cooldown`
+- `scope_skip_in_flight`
 - `auto_skip_busy`
 - `auto_skip_inactive`
 - `auto_skip_cooldown`
 
 Debug logs are also stored in-memory for the Admin / API Diagnostics screen. The store keeps only recent method/path/reason/status/error/duration metadata. It does not store payloads, credentials, or Authorization headers.
 
-## 3. Startup Request Sequence
+## 3. Sync Scope Model
+
+Fetching is handled as synchronization scopes owned by `ReservationsController`.
+
+Current scopes:
+
+- `today(yyyy-MM-dd)`: reservations for the current host-service date.
+- `schedule(from...to)`: upcoming schedule window, currently today through today + 30 days.
+- `review_queues`: `new` and `needs_review` reservations.
+- `failure_count`: form problems / failed imports count.
+- `reservation(id)`: single-row reconciliation after uncertain mutation failure.
+
+Each scope tracks:
+
+- last attempt;
+- last success;
+- last failure;
+- in-flight state;
+- cooldown time.
+
+Views emit events such as “Schedule became active” or “user refreshed Today.” The controller decides whether a scope is fresh, stale, busy, or cooling down.
+
+## 4. Startup Request Sequence
 
 Startup shows cached SwiftData rows immediately.
 
@@ -65,14 +90,14 @@ Then `ReservationsController.loadIfNeeded(context:)` runs once:
 3. Stops the main Today spinner after Today reservations finish.
 4. Separately checks form-problem count with `GET /managed-reservations/import-failures?page=1&per_page=1`.
 
-Startup should not call `schedule_all`.
+Startup should not call `schedule_window` or `schedule_all`.
 
-## 4. Manual Refresh Sequence
+## 5. Manual Refresh Sequence
 
 Today pull-to-refresh and toolbar refresh both call:
 
 ```swift
-ReservationsController.refreshDashboard(context:)
+ReservationsController.requestManualTodayRefresh(context:)
 ```
 
 Manual Today refresh logs `reason=manual_today`.
@@ -85,16 +110,28 @@ Manual refresh:
 - shows a non-blocking inline error message;
 - does not call the import endpoint.
 
-Schedule refresh still uses `reason=schedule_all` and can paginate all managed reservations. This is heavier and should not run on startup.
+Schedule pull-to-refresh and toolbar refresh call:
+
+```swift
+ReservationsController.requestScheduleRefresh(context:)
+```
+
+Schedule refresh logs `reason=schedule_window` and fetches:
+
+```text
+GET /managed-reservations?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&per_page=100
+```
+
+The MVP window is today through today + 30 days.
 
 Review refresh uses `reason=review_queues` and fetches one page each for:
 
 - `status=needs_review`
 - `status=new`
 
-## 5. Auto-Refresh Sequence
+## 6. Auto-Refresh Sequence
 
-Today/Host Board runs a 90-second auto-refresh loop while:
+Today/Host Board runs a 60-second auto-refresh loop while:
 
 - Today screen is visible;
 - app `scenePhase` is active;
@@ -116,13 +153,86 @@ Auto-refresh fetches Today only. It does not show a blocking alert and does not 
 
 Cooldown behavior:
 
-- `autoRefreshInterval` is 90 seconds.
-- `autoRefreshFailureCooldown` is 120 seconds.
+- `autoRefreshInterval` is 60 seconds.
+- `autoRefreshFailureCooldown` is 180 seconds.
 - Startup, manual, or automatic Today refresh failure records a failure timestamp.
 - Auto-refresh skips during cooldown.
 - Manual refresh still works during cooldown unless another request is already running.
 
-## 6. Import Failure Count Behavior
+## 7. Schedule Screen Activation
+
+Opening Schedule calls:
+
+```swift
+ReservationsController.scheduleBecameActive(context:)
+```
+
+If the schedule scope is stale, it fetches the schedule window. If it is fresh, it uses SwiftData cache only.
+
+Rules:
+
+- Schedule does not refresh on startup.
+- Today auto-refresh does not refresh Schedule.
+- Future website reservations appear after Schedule scope fetches.
+- Manual Schedule refresh bypasses freshness unless another reservation refresh is active.
+
+## 8. Review Screen Activation
+
+Opening Review calls:
+
+```swift
+ReservationsController.reviewBecameActive(context:)
+```
+
+If the review queue scope is stale, it fetches `needs_review` and `new`. If it is fresh, it uses SwiftData cache only.
+
+Rules:
+
+- Review does not refresh on startup.
+- Today auto-refresh does not refresh Review.
+- New website reservations needing review appear after Review scope fetches.
+- Manual Review refresh bypasses freshness unless another reservation refresh is active.
+
+## 9. Website New Reservation Behavior
+
+Website submissions are imported by the backend, not the iOS app.
+
+Expected behavior:
+
+- Reservation for today: next Today auto/manual/startup fetch can catch it.
+- Future reservation: Schedule updates when Schedule scope fetches.
+- `new` or `needs_review` reservation: Review updates when Review scope fetches.
+
+One Today fetch is not expected to update every projection in the app.
+
+## 10. Mutation / Reconciliation Sequence
+
+Mutations remain server-first.
+
+Success path:
+
+1. Controller locks the reservation ID or create state.
+2. API call runs through mutation service.
+3. Server returns updated/created DTO.
+4. Repository upserts returned DTO into SwiftData.
+5. Controller marks related scopes touched or stale.
+6. SwiftData projections redraw.
+
+Uncertain failure path:
+
+1. PATCH/confirm fails with a possible server-side result, such as timeout or network connection lost.
+2. Controller attempts one `GET /managed-reservations/{id}` with `retryCount=0`.
+3. If reconciliation succeeds, returned DTO is upserted.
+4. If reconciliation fails, the app shows an uncertainty notice and keeps cached data visible.
+
+Cancelled requests (`-999` / `CancellationError`) are neutral:
+
+- logged as `cancelled`;
+- no failure notice;
+- no cooldown;
+- no scary UI.
+
+## 11. Import Failure Count Behavior
 
 Import failure count is separate from Today reservation loading.
 
@@ -136,7 +246,7 @@ If count check fails:
 
 The full Import Failures screen loads through `ReservationsController.fetchImportFailures(page:perPage:)`, not by creating API services in the view.
 
-## 6A. Notice / Notification Behavior
+## 12. Notice / Notification Behavior
 
 Normal refresh failures now become small non-blocking notices instead of large blocking alerts or loud full-width warning blocks.
 
@@ -163,7 +273,7 @@ Scope rules:
 
 The top-right notice badge can be tapped to open a compact notice list with source, request reason, time, and error code when available.
 
-## 6B. Admin / Diagnostic Screen
+## 13. Admin / Diagnostic Screen
 
 Developer users can open `More -> API & App Diagnostics`.
 
@@ -177,10 +287,11 @@ The admin screen shows:
 - SwiftData cache counts;
 - current notices;
 - endpoint checklist, including `POST /managed-reservations/import` as explicitly not used.
+- sync scope snapshots showing last attempt/success/failure/cooldown for Today, Schedule, Review, failure count, and reconciliation scopes.
 
 Admin tests do not mutate real reservations by default. There are no confirm/cancel/seat/create/email-send tests in this screen.
 
-## 7. SwiftData Performance Changes
+## 14. SwiftData Performance Changes
 
 Repository upsert now fetches existing local records once per batch, builds a dictionary by `remoteID`, updates/inserts rows, and saves once.
 
@@ -194,7 +305,7 @@ Remaining possible optimization:
 
 - Today, Schedule, and Review still use broad `@Query` reads and local filtering. This is acceptable for pilot-sized data but should eventually move toward predicate-backed queries per screen.
 
-## 8. Dead Code Removed
+## 15. Dead Code Removed
 
 Removed:
 
@@ -204,11 +315,14 @@ Removed:
 - unused `syncUpcoming` and `syncNeedsReview` sync helpers;
 - unused HostBoard `done` computed property.
 
-## 9. Current Endpoint Use
+## 16. Current Endpoint Use
 
 The app calls:
 
 - `GET /managed-reservations?date=YYYY-MM-DD`
+- `GET /managed-reservations?from=YYYY-MM-DD&to=YYYY-MM-DD`
+- `GET /managed-reservations?status=new`
+- `GET /managed-reservations?status=needs_review`
 - `GET /managed-reservations`
 - `GET /managed-reservations/{id}`
 - `PATCH /managed-reservations/{id}`
@@ -220,7 +334,7 @@ The app does not call:
 
 - `POST /managed-reservations/import`
 
-## 10. Remaining Known Limitations
+## 17. Remaining Known Limitations
 
 - No waitlist.
 - No table map.
@@ -228,31 +342,35 @@ The app does not call:
 - No reminder UI.
 - No inbound email reply UI.
 - No production auth flow beyond WordPress Application Password in Keychain.
-- Schedule refresh still uses the heavier all-reservations path.
+- Schedule is scoped to a 30-day window; older historical reservations may require the All filter plus a later dedicated history fetch.
 - Device-level credential setup is simple and internal-pilot oriented.
 - Admin screen safe tests are GET-focused; mutation testing remains manual through normal app flows.
 - Request logs are in-memory only and reset when the app process exits.
 
-## 11. Manual Test Checklist
+## 18. Manual Test Checklist
 
 - [ ] App launches and cached rows appear immediately.
 - [ ] Missing credentials show the setup screen.
 - [ ] Saved credentials persist through app relaunch.
 - [ ] Startup logs one `startup_today` request.
-- [ ] Startup does not log `schedule_all`.
+- [ ] Startup does not log `schedule_window` or `schedule_all`.
 - [ ] Startup may log one `failure_count` after Today finishes.
 - [ ] Today main spinner stops after Today reservations finish, not after form-problem count.
 - [ ] Pull-to-refresh on Today logs `manual_today`.
 - [ ] Toolbar refresh on Today logs `manual_today`.
-- [ ] Auto-refresh logs `auto_today` about every 90 seconds while active.
+- [ ] Auto-refresh logs `auto_today` about every 60 seconds while active.
 - [ ] Auto-refresh logs skip reasons while app is inactive or UI/mutations are busy.
 - [ ] After a startup/manual failure, auto-refresh logs `auto_skip_cooldown` instead of immediately retrying.
-- [ ] Schedule refresh still works and logs `schedule_all`.
+- [ ] Opening Schedule when stale logs `schedule_window`.
+- [ ] Schedule manual refresh logs `schedule_window`.
+- [ ] Opening Review when stale logs `review_queues`.
 - [ ] Review refresh logs `review_queues` and fetches new/review only.
 - [ ] Confirm logs `mutation_confirm`.
 - [ ] PATCH status/table/notes logs `mutation_patch`.
 - [ ] Create manual reservation logs `mutation_create`.
 - [ ] Uncertain mutation failure attempts `reconcile_by_id` once.
+- [ ] Cancelled requests log `cancelled` and do not show failure notices.
+- [ ] Developer diagnostics show sync scope snapshots.
 - [ ] Failed network keeps cached rows visible.
 - [ ] No blocking modal refresh alert appears for normal refresh failure.
 - [ ] Small notice badge appears for scoped refresh/action errors.

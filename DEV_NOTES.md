@@ -186,9 +186,13 @@ Developer:
 
 ## Manual Refresh
 
-Manual refresh always calls the backend through `refreshAll(context:)`.
+Manual refresh is scope-specific:
 
-`loadIfNeeded(context:)` may skip refresh if recently synced.
+- Today calls `requestManualTodayRefresh(context:)`.
+- Schedule calls `requestScheduleRefresh(context:)`.
+- Review calls `requestReviewRefresh(context:)`.
+
+`loadIfNeeded(context:)` shows cached rows immediately, then attempts one fresh Today sync.
 
 ## Screen Overview
 
