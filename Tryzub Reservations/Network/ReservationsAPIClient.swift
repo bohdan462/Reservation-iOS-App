@@ -7,6 +7,106 @@
 
 import Foundation
 
+enum ReservationAPIRequestReason: String {
+    case unspecified
+    case startupToday = "startup_today"
+    case manualToday = "manual_today"
+    case autoToday = "auto_today"
+    case failureCount = "failure_count"
+    case importFailuresFull = "import_failures_full"
+    case scheduleAll = "schedule_all"
+    case reviewQueues = "review_queues"
+    case mutationPatch = "mutation_patch"
+    case mutationConfirm = "mutation_confirm"
+    case mutationCreate = "mutation_create"
+    case reconcileByID = "reconcile_by_id"
+    case autoSkipBusy = "auto_skip_busy"
+    case autoSkipInactive = "auto_skip_inactive"
+}
+
+enum ReservationAPILogger {
+    #if DEBUG
+    static let isEnabled = true
+    #else
+    static let isEnabled = false
+    #endif
+
+    static func start(request: URLRequest, reason: ReservationAPIRequestReason) -> Date {
+        let startedAt = Date()
+        guard isEnabled else { return startedAt }
+
+        print("[API] START reason=\(reason.rawValue) method=\(request.httpMethod ?? "GET") \(sanitizedPathAndQuery(for: request.url))")
+        return startedAt
+    }
+
+    static func end(
+        request: URLRequest,
+        reason: ReservationAPIRequestReason,
+        statusCode: Int,
+        startedAt: Date
+    ) {
+        guard isEnabled else { return }
+
+        print("[API] END reason=\(reason.rawValue) status=\(statusCode) duration=\(duration(since: startedAt)) \(sanitizedPathAndQuery(for: request.url))")
+    }
+
+    static func fail(
+        request: URLRequest,
+        reason: ReservationAPIRequestReason,
+        error: Error,
+        startedAt: Date
+    ) {
+        guard isEnabled else { return }
+
+        print("[API] FAIL reason=\(reason.rawValue) error=\(errorLogValue(error)) duration=\(duration(since: startedAt)) \(sanitizedPathAndQuery(for: request.url))")
+    }
+
+    static func skip(reason: ReservationAPIRequestReason, message: String) {
+        guard isEnabled else { return }
+
+        print("[API] SKIP reason=\(reason.rawValue) \(message)")
+    }
+
+    private static func sanitizedPathAndQuery(for url: URL?) -> String {
+        guard let url else { return "path=<unknown>" }
+
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return "path=\(url.path)"
+        }
+
+        components.scheme = nil
+        components.host = nil
+        components.port = nil
+        components.user = nil
+        components.password = nil
+
+        components.queryItems = components.queryItems?.map { item in
+            if item.name.lowercased() == "search" {
+                return URLQueryItem(name: item.name, value: "<redacted>")
+            }
+            return item
+        }
+
+        return "path=\(components.path) query=\(components.percentEncodedQuery ?? "")"
+    }
+
+    private static func duration(since startedAt: Date) -> String {
+        String(format: "%.2fs", Date().timeIntervalSince(startedAt))
+    }
+
+    private static func errorLogValue(_ error: Error) -> String {
+        if let apiError = error as? ReservationAPIError {
+            return apiError.logValue
+        }
+
+        if let urlError = error as? URLError {
+            return "\(urlError.errorCode)"
+        }
+
+        return String(describing: error)
+    }
+}
+
 protocol ReservationsAPIClientProtocol: AnyObject {
     func fetchReservations(
         page: Int,
@@ -16,7 +116,8 @@ protocol ReservationsAPIClientProtocol: AnyObject {
         to: String?,
         status: ReservationStatus?,
         search: String?,
-        retryCount: Int
+        retryCount: Int,
+        reason: ReservationAPIRequestReason
     ) async throws -> ReservationsResponse
 
     func fetchAllReservations(
@@ -25,14 +126,15 @@ protocol ReservationsAPIClientProtocol: AnyObject {
         from: String?,
         to: String?,
         status: ReservationStatus?,
-        search: String?
+        search: String?,
+        reason: ReservationAPIRequestReason
     ) async throws -> [ReservationDTO]
 
-    func fetchReservation(id: Int, retryCount: Int) async throws -> ReservationDTO
-    func updateReservation(id: Int, request: ReservationUpdateRequest) async throws -> ReservationDTO
-    func createReservation(_ createRequest: ReservationCreateRequest) async throws -> ReservationDTO
-    func confirmReservation(id: Int) async throws -> ReservationConfirmResponse
-    func fetchImportFailures(page: Int, perPage: Int) async throws -> ImportFailuresResponse
+    func fetchReservation(id: Int, retryCount: Int, reason: ReservationAPIRequestReason) async throws -> ReservationDTO
+    func updateReservation(id: Int, request: ReservationUpdateRequest, reason: ReservationAPIRequestReason) async throws -> ReservationDTO
+    func createReservation(_ createRequest: ReservationCreateRequest, reason: ReservationAPIRequestReason) async throws -> ReservationDTO
+    func confirmReservation(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationConfirmResponse
+    func fetchImportFailures(page: Int, perPage: Int, reason: ReservationAPIRequestReason) async throws -> ImportFailuresResponse
 }
 
 extension ReservationsAPIClientProtocol {
@@ -43,7 +145,8 @@ extension ReservationsAPIClientProtocol {
         from: String?,
         to: String?,
         status: ReservationStatus?,
-        search: String?
+        search: String?,
+        reason: ReservationAPIRequestReason = .unspecified
     ) async throws -> ReservationsResponse {
         try await fetchReservations(
             page: page,
@@ -53,12 +156,13 @@ extension ReservationsAPIClientProtocol {
             to: to,
             status: status,
             search: search,
-            retryCount: 0
+            retryCount: 0,
+            reason: reason
         )
     }
 
     func fetchReservation(id: Int) async throws -> ReservationDTO {
-        try await fetchReservation(id: id, retryCount: 0)
+        try await fetchReservation(id: id, retryCount: 0, reason: .unspecified)
     }
 }
 
@@ -121,7 +225,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         to: String? = nil,
         status: ReservationStatus? = nil,
         search: String? = nil,
-        retryCount: Int = 0
+        retryCount: Int = 0,
+        reason: ReservationAPIRequestReason = .unspecified
     ) async throws -> ReservationsResponse {
         
         var components = URLComponents(url: managedReservationsURL(), resolvingAgainstBaseURL: false)
@@ -152,7 +257,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
         
         let request = makeRequest(url: url, method: "GET")
-        let data = try await perform(request, retryCount: retryCount)
+        let data = try await perform(request, retryCount: retryCount, reason: reason)
         
         do {
             return try decoder.decode(ReservationsResponse.self, from: data)
@@ -168,7 +273,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         from: String? = nil,
         to: String? = nil,
         status: ReservationStatus? = nil,
-        search: String? = nil
+        search: String? = nil,
+        reason: ReservationAPIRequestReason = .unspecified
     ) async throws -> [ReservationDTO] {
         let cappedPerPage = min(max(perPage, 1), 100)
         var currentPage = 1
@@ -183,7 +289,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
                 from: from,
                 to: to,
                 status: status,
-                search: search
+                search: search,
+                reason: reason
             )
 
             allReservations.append(contentsOf: response.data)
@@ -194,10 +301,14 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return allReservations
     }
 
-    func fetchReservation(id: Int, retryCount: Int = 1) async throws -> ReservationDTO {
+    func fetchReservation(
+        id: Int,
+        retryCount: Int = 1,
+        reason: ReservationAPIRequestReason = .unspecified
+    ) async throws -> ReservationDTO {
         let url = managedReservationsURL().appendingPathComponent(String(id))
         let request = makeRequest(url: url, method: "GET")
-        let data = try await perform(request, retryCount: retryCount)
+        let data = try await perform(request, retryCount: retryCount, reason: reason)
 
         do {
             return try decoder.decode(ReservationFetchResponse.self, from: data).data
@@ -206,11 +317,15 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
     }
 
-    func updateReservation(id: Int, request updateRequest: ReservationUpdateRequest) async throws -> ReservationDTO {
+    func updateReservation(
+        id: Int,
+        request updateRequest: ReservationUpdateRequest,
+        reason: ReservationAPIRequestReason = .mutationPatch
+    ) async throws -> ReservationDTO {
         let url = managedReservationsURL().appendingPathComponent(String(id))
 
         let request = try makeJSONRequest(url: url, method: "PATCH", body: updateRequest)
-        let data = try await perform(request)
+        let data = try await perform(request, reason: reason)
 
         do {
             return try decoder.decode(ReservationUpdateResponse.self, from: data).data
@@ -219,13 +334,16 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
     }
 
-    func createReservation(_ createRequest: ReservationCreateRequest) async throws -> ReservationDTO {
+    func createReservation(
+        _ createRequest: ReservationCreateRequest,
+        reason: ReservationAPIRequestReason = .mutationCreate
+    ) async throws -> ReservationDTO {
         let request = try makeJSONRequest(
             url: managedReservationsURL(),
             method: "POST",
             body: createRequest
         )
-        let data = try await perform(request)
+        let data = try await perform(request, reason: reason)
 
         do {
             return try decoder.decode(ReservationCreateResponse.self, from: data).data
@@ -234,12 +352,15 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
     }
 
-    func confirmReservation(id: Int) async throws -> ReservationConfirmResponse {
+    func confirmReservation(
+        id: Int,
+        reason: ReservationAPIRequestReason = .mutationConfirm
+    ) async throws -> ReservationConfirmResponse {
         let url = managedReservationsURL()
             .appendingPathComponent(String(id))
             .appendingPathComponent("confirm")
         let request = makeRequest(url: url, method: "POST")
-        let data = try await perform(request)
+        let data = try await perform(request, reason: reason)
 
         do {
             return try decoder.decode(ReservationConfirmResponse.self, from: data)
@@ -248,7 +369,11 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
     }
 
-    func fetchImportFailures(page: Int = 1, perPage: Int = 50) async throws -> ImportFailuresResponse {
+    func fetchImportFailures(
+        page: Int = 1,
+        perPage: Int = 50,
+        reason: ReservationAPIRequestReason = .importFailuresFull
+    ) async throws -> ImportFailuresResponse {
         let url = try makeURL(
             path: "managed-reservations/import-failures",
             queryItems: [
@@ -257,7 +382,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
             ]
         )
         let request = makeRequest(url: url, method: "GET")
-        let data = try await perform(request, retryCount: 0)
+        let data = try await perform(request, retryCount: 0, reason: reason)
 
         do {
             return try decoder.decode(ImportFailuresResponse.self, from: data)
@@ -307,20 +432,33 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return "Basic \(base64LoginString)"
     }
 
-    private func perform(_ request: URLRequest, retryCount: Int = 0) async throws -> Data {
+    private func perform(
+        _ request: URLRequest,
+        retryCount: Int = 0,
+        reason: ReservationAPIRequestReason = .unspecified
+    ) async throws -> Data {
         var attempt = 0
         var lastNetworkError: URLError?
+        let startedAt = ReservationAPILogger.start(request: request, reason: reason)
 
         while attempt <= retryCount {
             do {
                 let (data, response) = try await session.data(for: request)
                 try validate(response: response, data: data)
+                ReservationAPILogger.end(
+                    request: request,
+                    reason: reason,
+                    statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0,
+                    startedAt: startedAt
+                )
                 return data
             } catch let error as URLError {
                 lastNetworkError = error
 
                 guard error.isTransientNetworkError, attempt < retryCount else {
-                    throw ReservationAPIError.networkFailure(error)
+                    let apiError = ReservationAPIError.networkFailure(error)
+                    ReservationAPILogger.fail(request: request, reason: reason, error: apiError, startedAt: startedAt)
+                    throw apiError
                 }
 
                 attempt += 1
@@ -328,12 +466,19 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
                 do {
                     try await Task.sleep(for: .milliseconds(450 * attempt))
                 } catch {
-                    throw ReservationAPIError.networkFailure(lastNetworkError ?? URLError(.cancelled))
+                    let apiError = ReservationAPIError.networkFailure(lastNetworkError ?? URLError(.cancelled))
+                    ReservationAPILogger.fail(request: request, reason: reason, error: apiError, startedAt: startedAt)
+                    throw apiError
                 }
+            } catch {
+                ReservationAPILogger.fail(request: request, reason: reason, error: error, startedAt: startedAt)
+                throw error
             }
         }
 
-        throw ReservationAPIError.networkFailure(lastNetworkError ?? URLError(.unknown))
+        let apiError = ReservationAPIError.networkFailure(lastNetworkError ?? URLError(.unknown))
+        ReservationAPILogger.fail(request: request, reason: reason, error: apiError, startedAt: startedAt)
+        throw apiError
     }
 
     private func validate(response: URLResponse, data: Data) throws {

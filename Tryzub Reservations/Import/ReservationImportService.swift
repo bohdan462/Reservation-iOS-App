@@ -9,11 +9,9 @@ import Foundation
 
 @MainActor
 protocol ReservationSyncServiceProtocol {
-    func syncAllReservations() async throws
-    func syncToday() async throws
-    func syncUpcoming() async throws
-    func syncNeedsReview() async throws
-    func syncReviewQueues() async throws
+    func syncAllReservations(reason: ReservationAPIRequestReason) async throws
+    func syncToday(reason: ReservationAPIRequestReason) async throws
+    func syncReviewQueues(reason: ReservationAPIRequestReason) async throws
     func saveReservation(_ reservation: ReservationDTO) throws
 }
 
@@ -30,19 +28,20 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         self.repository = repository
     }
 
-    func syncAllReservations() async throws {
+    func syncAllReservations(reason: ReservationAPIRequestReason) async throws {
         let reservations = try await client.fetchAllReservations(
             perPage: 100,
             date: nil,
             from: nil,
             to: nil,
             status: nil,
-            search: nil
+            search: nil,
+            reason: reason
         )
         try repository.upsert(reservations)
     }
 
-    func syncToday() async throws {
+    func syncToday(reason: ReservationAPIRequestReason) async throws {
         let response = try await client.fetchReservations(
             page: 1,
             perPage: 50,
@@ -51,54 +50,37 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             to: nil,
             status: nil,
             search: nil,
-            retryCount: 0
+            retryCount: 0,
+            reason: reason
         )
 
         try repository.upsert(response.data)
     }
 
-    func syncUpcoming() async throws {
-        let reservations = try await client.fetchAllReservations(
-            perPage: 100,
-            date: nil,
-            from: Date.reservationDateString(),
-            to: nil,
-            status: nil,
-            search: nil
-        )
-        try repository.upsert(reservations)
-    }
-
-    func syncNeedsReview() async throws {
-        let reservations = try await client.fetchAllReservations(
-            perPage: 100,
+    func syncReviewQueues(reason: ReservationAPIRequestReason) async throws {
+        let needsReview = try await client.fetchReservations(
+            page: 1,
+            perPage: 50,
             date: nil,
             from: nil,
             to: nil,
             status: .needsReview,
-            search: nil
-        )
-        try repository.upsert(reservations)
-    }
+            search: nil,
+            retryCount: 0,
+            reason: reason
+        ).data
 
-    func syncReviewQueues() async throws {
-        let needsReview = try await client.fetchAllReservations(
-            perPage: 100,
-            date: nil,
-            from: nil,
-            to: nil,
-            status: .needsReview,
-            search: nil
-        )
-
-        let newReservations = try await client.fetchAllReservations(
-            perPage: 100,
+        let newReservations = try await client.fetchReservations(
+            page: 1,
+            perPage: 50,
             date: nil,
             from: nil,
             to: nil,
             status: .new,
-            search: nil
-        )
+            search: nil,
+            retryCount: 0,
+            reason: reason
+        ).data
 
         try repository.upsert(needsReview + newReservations)
     }
@@ -107,5 +89,3 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         try repository.upsert(reservation)
     }
 }
-
-typealias ReservationImportService = ReservationSyncService

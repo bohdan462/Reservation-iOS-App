@@ -9,6 +9,7 @@ import SwiftData
 @MainActor
 final class ReservationsController: ObservableObject {
     @Published private(set) var isSyncing = false
+    @Published private(set) var isAutoRefreshing = false
     @Published private(set) var actionInProgressIDs: Set<Int> = []
     @Published private(set) var isCreatingReservation = false
     @Published private(set) var isCheckingImportFailureCount = false
@@ -26,6 +27,10 @@ final class ReservationsController: ObservableObject {
 
     var hasActiveMutation: Bool {
         !actionInProgressIDs.isEmpty || isCreatingReservation
+    }
+
+    private var hasActiveReservationRefresh: Bool {
+        isSyncing || isAutoRefreshing
     }
 
     private var hasAttemptedInitialLoad = false
@@ -51,23 +56,25 @@ final class ReservationsController: ObservableObject {
     }
 
     func refreshAll(context: ModelContext) async {
-        guard !isSyncing else { return }
+        guard !hasActiveReservationRefresh else { return }
 
         isSyncing = true
         errorMessage = nil
-
-        defer {
-            isSyncing = false
-        }
+        var didRefreshReservations = false
 
         do {
             let repository = ReservationRepository(context: context)
             let service = ReservationSyncService(client: environment.apiClient, repository: repository)
-            try await service.syncAllReservations()
-            await refreshImportFailureCount()
+            try await service.syncAllReservations(reason: .scheduleAll)
             lastSyncedAt = Date()
+            didRefreshReservations = true
         } catch {
             errorMessage = "Could not refresh reservations. Showing last saved data. Tap Refresh to try again."
+        }
+
+        isSyncing = false
+        if didRefreshReservations {
+            await refreshImportFailureCount(reason: .failureCount)
         }
     }
 
@@ -77,10 +84,23 @@ final class ReservationsController: ObservableObject {
 
     func autoRefreshDashboardIfAllowed(
         context: ModelContext,
-        isInteractionActive: Bool
+        isInteractionActive: Bool,
+        isAppActive: Bool
     ) async {
-        guard !isInteractionActive else { return }
-        guard !isSyncing, !hasActiveMutation, !isCheckingImportFailureCount else { return }
+        guard isAppActive else {
+            ReservationAPILogger.skip(reason: .autoSkipInactive, message: "app is not active")
+            return
+        }
+
+        guard !isInteractionActive else {
+            ReservationAPILogger.skip(reason: .autoSkipBusy, message: "host interaction is active")
+            return
+        }
+
+        guard !hasActiveReservationRefresh, !hasActiveMutation, !isCheckingImportFailureCount else {
+            ReservationAPILogger.skip(reason: .autoSkipBusy, message: "controller is busy")
+            return
+        }
 
         await refreshDashboard(context: context, mode: .automatic)
     }
@@ -89,42 +109,42 @@ final class ReservationsController: ObservableObject {
         context: ModelContext,
         mode: ReservationRefreshMode
     ) async {
-        guard !isSyncing else { return }
+        guard !hasActiveReservationRefresh else { return }
 
-        isSyncing = true
-        errorMessage = nil
-
-        defer {
-            isSyncing = false
+        if mode == .automatic {
+            isAutoRefreshing = true
+        } else {
+            isSyncing = true
         }
+        errorMessage = nil
 
         do {
             let repository = ReservationRepository(context: context)
             let service = ReservationSyncService(client: environment.apiClient, repository: repository)
-            try await service.syncToday()
+            try await service.syncToday(reason: mode.requestReason)
             lastSyncedAt = Date()
         } catch {
             errorMessage = mode.failureMessage
+            if mode == .automatic {
+                isAutoRefreshing = false
+            } else {
+                isSyncing = false
+            }
             return
         }
 
-        await refreshImportFailureCount()
-    }
+        if mode == .automatic {
+            isAutoRefreshing = false
+        } else {
+            isSyncing = false
+        }
 
-    func refreshToday(context: ModelContext) async {
-        await syncFiltered(context: context) { try await $0.syncToday() }
-    }
-
-    func refreshUpcoming(context: ModelContext) async {
-        await syncFiltered(context: context) { try await $0.syncUpcoming() }
-    }
-
-    func refreshNeedsReview(context: ModelContext) async {
-        await syncFiltered(context: context) { try await $0.syncNeedsReview() }
+        await refreshImportFailureCount(reason: .failureCount)
     }
 
     func refreshReviewQueues(context: ModelContext) async {
-        await syncFiltered(context: context) { try await $0.syncReviewQueues() }
+        await syncFiltered(context: context) { try await $0.syncReviewQueues(reason: .reviewQueues) }
+        await refreshImportFailureCount(reason: .failureCount)
     }
 
     func save(_ reservation: ReservationDTO, context: ModelContext) {
@@ -246,7 +266,7 @@ final class ReservationsController: ObservableObject {
         }
     }
 
-    func refreshImportFailureCount() async {
+    func refreshImportFailureCount(reason: ReservationAPIRequestReason = .failureCount) async {
         guard capabilities.canViewFailedImports else {
             importFailureCount = 0
             importFailureCountError = nil
@@ -262,7 +282,7 @@ final class ReservationsController: ObservableObject {
         let service = ImportFailureService(client: environment.apiClient)
 
         do {
-            let response = try await service.fetchImportFailures(page: 1, perPage: 1)
+            let response = try await service.fetchImportFailures(page: 1, perPage: 1, reason: reason)
             importFailureCount = response.total
         } catch {
             importFailureCountError = "Could not check form problems."
@@ -275,7 +295,11 @@ final class ReservationsController: ObservableObject {
         }
 
         let service = ImportFailureService(client: environment.apiClient)
-        let response = try await service.fetchImportFailures(page: page, perPage: perPage)
+        let response = try await service.fetchImportFailures(
+            page: page,
+            perPage: perPage,
+            reason: .importFailuresFull
+        )
         importFailureCount = response.total
         importFailureCountError = nil
         return response
@@ -297,7 +321,7 @@ final class ReservationsController: ObservableObject {
         context: ModelContext,
         operation: (ReservationSyncService) async throws -> Void
     ) async {
-        guard !isSyncing else { return }
+        guard !hasActiveReservationRefresh else { return }
 
         isSyncing = true
         errorMessage = nil
@@ -344,6 +368,17 @@ private enum ReservationRefreshMode {
             return "Could not refresh today's reservations. Showing last saved data. Tap Refresh to try again."
         case .automatic:
             return "Automatic refresh could not reach the server. Showing last saved data."
+        }
+    }
+
+    var requestReason: ReservationAPIRequestReason {
+        switch self {
+        case .startup:
+            return .startupToday
+        case .manual:
+            return .manualToday
+        case .automatic:
+            return .autoToday
         }
     }
 }

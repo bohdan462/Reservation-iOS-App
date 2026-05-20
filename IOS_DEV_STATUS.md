@@ -1,10 +1,154 @@
 # iOS Reservation App Status
 
-## Current Fetch Architecture
+This app is a controlled restaurant pilot client for the private Tryzub Reservations WordPress API.
 
-`ReservationsController` is the app-facing network coordinator. SwiftUI views call controller methods only; they do not create API clients, URLRequests, or network services directly.
+SwiftData is local cache only. The WordPress backend remains the source of truth. The iOS app does not call the backend import endpoint; Contact Form 7 / Flamingo import is backend-owned.
 
-The app calls these backend endpoints:
+## 1. Credential Handling
+
+Real WordPress credentials are no longer committed in source.
+
+The app loads API credentials from:
+
+1. `TRYZUB_API_USERNAME` and `TRYZUB_API_PASSWORD` environment variables, if present.
+2. The device Keychain, if credentials were entered in the setup screen.
+
+If credentials are missing, the app shows an API credential setup screen and does not create the API client.
+
+Important before TestFlight or restaurant pilot:
+
+- Rotate the WordPress Application Password that was previously exposed in source.
+- Enter the new Application Password in the app setup screen.
+- Do not commit `LocalCredentials.swift` or `LocalConfig.plist`; both are gitignored as local escape hatches.
+
+## 2. Request Reason Logging
+
+Debug builds print lightweight API request logs without credentials or guest payloads.
+
+Example:
+
+```text
+[API] START reason=startup_today method=GET path=/wp-json/tryzub/v1/managed-reservations query=page=1&per_page=50&date=2026-05-19
+[API] END reason=startup_today status=200 duration=0.42s path=/wp-json/tryzub/v1/managed-reservations query=page=1&per_page=50&date=2026-05-19
+[API] FAIL reason=auto_today error=-1005 duration=30.00s path=/wp-json/tryzub/v1/managed-reservations query=page=1&per_page=50&date=2026-05-19
+```
+
+Search query values are redacted in logs.
+
+Current request reasons:
+
+- `startup_today`
+- `manual_today`
+- `auto_today`
+- `failure_count`
+- `import_failures_full`
+- `schedule_all`
+- `review_queues`
+- `mutation_patch`
+- `mutation_confirm`
+- `mutation_create`
+- `reconcile_by_id`
+- `auto_skip_busy`
+- `auto_skip_inactive`
+
+## 3. Startup Request Sequence
+
+Startup shows cached SwiftData rows immediately.
+
+Then `ReservationsController.loadIfNeeded(context:)` runs once:
+
+1. Reads latest local sync date for display.
+2. Fetches Today only with `GET /managed-reservations?date=YYYY-MM-DD`.
+3. Stops the main Today spinner after Today reservations finish.
+4. Separately checks form-problem count with `GET /managed-reservations/import-failures?page=1&per_page=1`.
+
+Startup should not call `schedule_all`.
+
+## 4. Manual Refresh Sequence
+
+Today pull-to-refresh and toolbar refresh both call:
+
+```swift
+ReservationsController.refreshDashboard(context:)
+```
+
+Manual Today refresh logs `reason=manual_today`.
+
+Manual refresh:
+
+- always attempts the backend;
+- fetches Today only;
+- keeps cached rows visible on failure;
+- shows a non-blocking inline error message;
+- does not call the import endpoint.
+
+Schedule refresh still uses `reason=schedule_all` and can paginate all managed reservations. This is heavier and should not run on startup.
+
+Review refresh uses `reason=review_queues` and fetches one page each for:
+
+- `status=needs_review`
+- `status=new`
+
+## 5. Auto-Refresh Sequence
+
+Today/Host Board runs a 90-second auto-refresh loop while:
+
+- Today screen is visible;
+- app `scenePhase` is active;
+- no host dialog/sheet is open;
+- no reservation refresh is already running;
+- no mutation/create is in progress;
+- import failure count is not already checking.
+
+Auto-refresh logs:
+
+- `auto_today` when it fetches;
+- `auto_skip_busy` when the controller or host UI is busy;
+- `auto_skip_inactive` when the app is not active.
+
+Auto-refresh fetches Today only. It does not show a blocking alert and does not use the main visible spinner.
+
+## 6. Import Failure Count Behavior
+
+Import failure count is separate from Today reservation loading.
+
+Today reservations can finish and update `lastSyncedAt` before the form-problem count check finishes.
+
+If count check fails:
+
+- previous count is kept;
+- count is not reset to zero;
+- a non-blocking form-problem check message can be shown.
+
+The full Import Failures screen loads through `ReservationsController.fetchImportFailures(page:perPage:)`, not by creating API services in the view.
+
+## 7. SwiftData Performance Changes
+
+Repository upsert now fetches existing local records once per batch, builds a dictionary by `remoteID`, updates/inserts rows, and saves once.
+
+This replaced the previous one-SwiftData-fetch-per-DTO behavior.
+
+Date formatting for reservation row display now uses cached shared formatters instead of creating new `DateFormatter` instances for every row render.
+
+HostBoard now computes its upcoming/seated/review/no-table snapshot once per render path instead of repeatedly filtering and sorting the same array.
+
+Remaining possible optimization:
+
+- Today, Schedule, and Review still use broad `@Query` reads and local filtering. This is acceptable for pilot-sized data but should eventually move toward predicate-backed queries per screen.
+
+## 8. Dead Code Removed
+
+Removed:
+
+- stale `DIAGNOSTIC_REPORT.md`;
+- legacy `ReservationImportService` typealias;
+- unused `refreshToday`, `refreshUpcoming`, and `refreshNeedsReview` controller helpers;
+- unused `syncUpcoming` and `syncNeedsReview` sync helpers;
+- unused HostBoard `done` computed property.
+
+## 9. Current Endpoint Use
+
+The app calls:
 
 - `GET /managed-reservations?date=YYYY-MM-DD`
 - `GET /managed-reservations`
@@ -14,119 +158,41 @@ The app calls these backend endpoints:
 - `POST /managed-reservations/{id}/confirm`
 - `GET /managed-reservations/import-failures`
 
-The iOS app does not call `POST /managed-reservations/import`. Backend auto-import happens server-side after Contact Form 7 / Flamingo intake.
+The app does not call:
 
-## Startup Refresh Behavior
+- `POST /managed-reservations/import`
 
-On app launch, cached SwiftData reservations are shown immediately by the query-backed views.
+## 10. Remaining Known Limitations
 
-`ReservationsController.loadIfNeeded(context:)` still guards with `hasAttemptedInitialLoad`, reads the latest local sync date for display, and always attempts one fresh Today refresh. It no longer skips the Today fetch because the cache is fresh.
-
-Startup refresh calls `refreshDashboard(context:)` internally in startup mode, which fetches Today only through `ReservationSyncService.syncToday()`.
-
-Today startup refresh is a single request attempt. The app no longer performs a hidden automatic retry for the same `GET /managed-reservations?date=YYYY-MM-DD` URL, so launch should not produce two identical Today requests because of API-client retry behavior.
-
-## Manual Refresh Behavior
-
-Today pull-to-refresh and the toolbar refresh button both call `ReservationsController.refreshDashboard(context:)`.
-
-Manual Today refresh always attempts the backend, regardless of local cache freshness. If it fails, cached rows remain visible and an inline message is shown.
-
-Manual Today refresh also uses one request attempt. Staff can tap refresh again if needed, but the app will not silently stack a second identical request after a timeout.
-
-Schedule refresh still calls `refreshAll(context:)`. This is intentionally heavier because it may paginate all managed reservations. Startup does not call this path.
-
-Review refresh calls `refreshReviewQueues(context:)`, which syncs only `needs_review` and `new` reservations instead of refreshing all reservations.
-
-## Auto-Refresh Behavior
-
-Today/Host Board runs a controlled auto-refresh loop every 90 seconds while the Today tab is visible.
-
-Auto-refresh is skipped when:
-
-- `isSyncing` is true
-- any reservation mutation is in progress
-- manual reservation creation is in progress
-- import failure count check is in progress
-- a host interaction/dialog/sheet is open
-
-Auto-refresh fetches Today only. Failure does not present a blocking modal alert; it shows an inline stale-data message and keeps cached data visible.
-
-## Mutation Behavior
-
-Mutations are server-first:
-
-- PATCH status/details sends to server, decodes the returned DTO, then upserts into SwiftData.
-- Create sends to server, decodes the created DTO, then upserts into SwiftData.
-- Confirm calls the backend confirm endpoint, decodes email status and returned DTO, then upserts into SwiftData.
-
-Mutations are guarded with `actionInProgressIDs` per reservation. Manual create is guarded with `isCreatingReservation`.
-
-After uncertain PATCH/confirm network failures, reconciliation uses `GET /managed-reservations/{id}` with `retryCount: 0` to avoid hidden retry loops.
-
-## SwiftData Role
-
-SwiftData is a local cache only. The server remains the source of truth.
-
-Repository upsert uses server `id` / `remoteID`. Successful server responses overwrite local cached records.
-
-## Request Locking / Sequencing Rules
-
-- `refreshDashboard` is guarded by `isSyncing`.
-- `refreshAll` is guarded by `isSyncing`.
-- `refreshReviewQueues` is guarded by `isSyncing`.
-- import failure count is guarded by `isCheckingImportFailureCount`.
-- full ImportFailuresView loading is guarded by its local `isLoading`.
-- reservation mutations are guarded by `actionInProgressIDs`.
-- manual create is guarded by `isCreatingReservation`.
-- auto-refresh skips instead of queuing if the app is busy.
-- GET retries are disabled by default for reservation list/detail and import-failure checks. This keeps WordPress traffic predictable and makes each user-visible refresh map to one backend attempt.
-
-## Network Failure Behavior
-
-Refresh failure keeps cached rows visible and sets a non-blocking inline error message.
-
-Mutation failure sets a visible controller error message. The app does not pretend a failed mutation succeeded.
-
-Confirm can return `email_status: failed` while the reservation itself is confirmed. The UI shows that staff must follow up manually.
-
-Import failure count errors do not reset the previous count to zero.
-
-## Remaining Known Limitations
-
-- No waitlist yet.
-- No full table map yet.
-- No full offline mutation queue yet.
-- No reminder UI yet.
-- No inbound email reply capture yet.
-- Auth is still WordPress application password based for the pilot.
+- No waitlist.
+- No table map.
+- No full offline mutation queue.
+- No reminder UI.
+- No inbound email reply UI.
+- No production auth flow beyond WordPress Application Password in Keychain.
 - Schedule refresh still uses the heavier all-reservations path.
+- Device-level credential setup is simple and internal-pilot oriented.
 
-## Files Changed
+## 11. Manual Test Checklist
 
-- `Tryzub Reservations/Import/ReservationsController.swift`
-- `Tryzub Reservations/Import/ReservationImportService.swift`
-- `Tryzub Reservations/Network/ReservationsAPIClient.swift`
-- `Tryzub Reservations/Services/ReservationMutationService.swift`
-- `Tryzub Reservations/Features/Reservations/ReservationsListView.swift`
-- `Tryzub Reservations/Features/Reservations/HostBoardView.swift`
-- `Tryzub Reservations/Features/Reservations/ImportFailuresView.swift`
-- `IOS_DEV_STATUS.md`
-
-## Manual Test Checklist
-
-- App launches and cached Today rows appear immediately.
-- Startup makes one fresh Today fetch.
-- Pull-to-refresh on Today hits the same path as toolbar refresh.
-- Today refresh uses `GET /managed-reservations?date=YYYY-MM-DD`.
-- Schedule refresh still works.
-- Review refresh loads only new/review queues.
-- Today auto-refresh runs about every 90 seconds when visible.
-- Auto-refresh skips during confirm, seat, cancel, create, or table assignment.
-- Refresh failure keeps cached rows visible and shows an inline message.
-- No blocking modal alert appears for normal refresh failure.
-- Confirm still calls `POST /managed-reservations/{id}/confirm`.
-- PATCH still upserts returned DTOs.
-- Create still upserts returned DTOs.
-- Failed imports screen loads through `ReservationsController`.
-- iOS does not call the backend import endpoint.
+- [ ] App launches and cached rows appear immediately.
+- [ ] Missing credentials show the setup screen.
+- [ ] Saved credentials persist through app relaunch.
+- [ ] Startup logs one `startup_today` request.
+- [ ] Startup does not log `schedule_all`.
+- [ ] Startup may log one `failure_count` after Today finishes.
+- [ ] Today main spinner stops after Today reservations finish, not after form-problem count.
+- [ ] Pull-to-refresh on Today logs `manual_today`.
+- [ ] Toolbar refresh on Today logs `manual_today`.
+- [ ] Auto-refresh logs `auto_today` about every 90 seconds while active.
+- [ ] Auto-refresh logs skip reasons while app is inactive or UI/mutations are busy.
+- [ ] Schedule refresh still works and logs `schedule_all`.
+- [ ] Review refresh logs `review_queues` and fetches new/review only.
+- [ ] Confirm logs `mutation_confirm`.
+- [ ] PATCH status/table/notes logs `mutation_patch`.
+- [ ] Create manual reservation logs `mutation_create`.
+- [ ] Uncertain mutation failure attempts `reconcile_by_id` once.
+- [ ] Failed network keeps cached rows visible.
+- [ ] No blocking modal refresh alert appears for normal refresh failure.
+- [ ] iOS does not call the backend import endpoint.
+- [ ] App builds.

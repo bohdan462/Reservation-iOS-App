@@ -60,6 +60,7 @@ private enum ReservationsAppTab: Hashable {
 
 private struct TodayDashboardView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var controller: ReservationsController
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate),
@@ -86,6 +87,7 @@ private struct TodayDashboardView: View {
                 isSyncing: controller.isSyncing,
                 failedImportCount: controller.importFailureCount,
                 isVisible: isActive,
+                isAppActive: scenePhase == .active,
                 externalInteractionActive: showManualCreate || showImportFailures,
                 onShowFormProblems: {
                     showImportFailures = true

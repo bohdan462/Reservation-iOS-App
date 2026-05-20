@@ -5,15 +5,39 @@
 
 import Foundation
 
+enum ReservationFormatters {
+    static let reservationDateKey: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    static let apiTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    static let mediumDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        return formatter
+    }()
+
+    static let shortTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter
+    }()
+}
+
 extension Date {
     static func reservationDateString() -> String {
         Date().reservationDateString()
     }
 
     func reservationDateString() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: self)
+        ReservationFormatters.reservationDateKey.string(from: self)
     }
 }
 
@@ -214,29 +238,19 @@ extension ReservationRecord {
     }
 
     private static func displayDate(from value: String) -> String {
-        let parser = DateFormatter()
-        parser.dateFormat = "yyyy-MM-dd"
-
-        guard let date = parser.date(from: value) else {
+        guard let date = ReservationFormatters.reservationDateKey.date(from: value) else {
             return value
         }
 
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        return formatter.string(from: date)
+        return ReservationFormatters.mediumDate.string(from: date)
     }
 
     private static func displayTime(from value: String) -> String {
-        let parser = DateFormatter()
-        parser.dateFormat = "HH:mm:ss"
-
-        guard let date = parser.date(from: value) else {
+        guard let date = ReservationFormatters.apiTime.date(from: value) else {
             return value
         }
 
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return ReservationFormatters.shortTime.string(from: date)
     }
 
     private static func formatPhone(_ value: String) -> String {

@@ -34,8 +34,14 @@ final class ReservationRepository: ReservationRepositoryProtocol {
     }
 
     func upsert(_ reservations: [ReservationDTO]) throws {
+        let existingRecords = try context.fetch(FetchDescriptor<ReservationRecord>())
+        var existingByRemoteID: [Int: ReservationRecord] = [:]
+        for record in existingRecords {
+            existingByRemoteID[record.remoteID] = record
+        }
+
         for dto in reservations {
-            if let existing = try existingReservation(remoteID: dto.id) {
+            if let existing = existingByRemoteID[dto.id] {
                 existing.update(from: dto)
             } else {
                 context.insert(ReservationRecord(from: dto))
@@ -43,12 +49,5 @@ final class ReservationRepository: ReservationRepositoryProtocol {
         }
 
         try context.save()
-    }
-
-    private func existingReservation(remoteID: Int) throws -> ReservationRecord? {
-        let descriptor = FetchDescriptor<ReservationRecord>(
-            predicate: #Predicate<ReservationRecord> { $0.remoteID == remoteID }
-        )
-        return try context.fetch(descriptor).first
     }
 }

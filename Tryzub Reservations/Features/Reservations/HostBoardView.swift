@@ -13,6 +13,7 @@ struct HostBoardView: View {
     let isSyncing: Bool
     let failedImportCount: Int
     let isVisible: Bool
+    let isAppActive: Bool
     let externalInteractionActive: Bool
     let onShowFormProblems: () -> Void
 
@@ -24,49 +25,6 @@ struct HostBoardView: View {
     @State private var tableAssignmentReservation: ReservationRecord?
     @State private var seatWithoutTableReservation: ReservationRecord?
 
-    private var upcoming: [ReservationRecord] {
-        ReservationRecord.sortedForHostBoard(
-            reservations.filter {
-                $0.statusValue == .new || $0.statusValue == .needsReview || $0.statusValue == .confirmed
-            }
-        )
-    }
-
-    private var seated: [ReservationRecord] {
-        ReservationRecord.sortedChronologically(
-            reservations.filter { $0.statusValue == .seated }
-        )
-    }
-
-    private var done: [ReservationRecord] {
-        ReservationRecord.sortedChronologically(
-            reservations.filter {
-                $0.statusValue == .completed || $0.statusValue == .cancelled || $0.statusValue == .noShow
-            }
-        )
-    }
-
-    private var needsReview: [ReservationRecord] {
-        upcoming.filter { $0.statusValue == .needsReview }
-    }
-
-    private var newReservations: [ReservationRecord] {
-        upcoming.filter { $0.statusValue == .new }
-    }
-
-    private var noTableCount: Int {
-        upcoming.filter { !$0.hasTableAssignment }.count
-    }
-
-    private var expectedGuestCount: Int {
-        upcoming.reduce(0) { $0 + $1.partySize } + seated.reduce(0) { $0 + $1.partySize }
-    }
-
-    private var nextReservationID: Int? {
-        let currentTime = Date.currentReservationTimeString()
-        return upcoming.first { $0.reservationTime >= currentTime }?.remoteID ?? upcoming.first?.remoteID
-    }
-
     private var hasOpenInteraction: Bool {
         externalInteractionActive
             || pendingAction != nil
@@ -76,25 +34,27 @@ struct HostBoardView: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let snapshot = HostBoardSnapshot(reservations: reservations)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     HostBoardSummaryCard(
                         lastSyncedAt: lastSyncedAt,
                         isSyncing: isSyncing,
-                        reservationCount: upcoming.count + seated.count,
-                        guestCount: expectedGuestCount,
-                        newCount: newReservations.count,
-                        reviewCount: needsReview.count,
+                        reservationCount: snapshot.upcoming.count + snapshot.seated.count,
+                        guestCount: snapshot.expectedGuestCount,
+                        newCount: snapshot.newReservations.count,
+                        reviewCount: snapshot.needsReview.count,
                         failedImportCount: failedImportCount,
-                        noTableCount: noTableCount
+                        noTableCount: snapshot.noTableCount
                     )
 
-                    warningArea
+                    warningArea(snapshot: snapshot)
 
                     if proxy.size.width >= 820 {
-                        wideBoard
+                        wideBoard(snapshot: snapshot)
                     } else {
-                        compactBoard
+                        compactBoard(snapshot: snapshot)
                     }
                 }
                 .padding(.horizontal, proxy.size.width >= 820 ? 20 : 16)
@@ -162,7 +122,7 @@ struct HostBoardView: View {
                 )
             }
         }
-        .task(id: isVisible) {
+        .task(id: isVisible && isAppActive) {
             await runAutoRefreshLoop()
         }
     }
@@ -175,7 +135,7 @@ struct HostBoardView: View {
         return pendingAction.action.dialogTitle(for: pendingAction.reservation)
     }
 
-    private var warningArea: some View {
+    private func warningArea(snapshot: HostBoardSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if let noticeMessage = controller.noticeMessage {
                 HostMessageBanner(
@@ -209,18 +169,18 @@ struct HostBoardView: View {
                     FormProblemsBanner(count: failedImportCount, onTap: onShowFormProblems)
                 }
 
-                if !needsReview.isEmpty {
+                if !snapshot.needsReview.isEmpty {
                     HostWarningBanner(
-                        title: "\(needsReview.count) need review",
+                        title: "\(snapshot.needsReview.count) need review",
                         message: "",
                         symbolName: "exclamationmark.triangle",
                         tint: .orange
                     )
                 }
 
-                if noTableCount > 0 {
+                if snapshot.noTableCount > 0 {
                     HostWarningBanner(
-                        title: "\(noTableCount) without table",
+                        title: "\(snapshot.noTableCount) without table",
                         message: "",
                         symbolName: "table.furniture",
                         tint: .indigo
@@ -230,12 +190,12 @@ struct HostBoardView: View {
         }
     }
 
-    private var wideBoard: some View {
+    private func wideBoard(snapshot: HostBoardSnapshot) -> some View {
         HStack(alignment: .top, spacing: 16) {
             HostBoardColumn(
                 title: "Seated / In House",
-                subtitle: "\(seated.count) seated",
-                reservations: seated,
+                subtitle: "\(snapshot.seated.count) seated",
+                reservations: snapshot.seated,
                 emptyTitle: "No one seated",
                 emptySystemImage: "person.2.slash",
                 nextReservationID: nil,
@@ -243,27 +203,27 @@ struct HostBoardView: View {
                 onAction: handleAction
             )
             .frame(
-                minWidth: seated.isEmpty ? 240 : 360,
-                idealWidth: seated.isEmpty ? 260 : nil,
-                maxWidth: seated.isEmpty ? 300 : .infinity,
+                minWidth: snapshot.seated.isEmpty ? 240 : 360,
+                idealWidth: snapshot.seated.isEmpty ? 260 : nil,
+                maxWidth: snapshot.seated.isEmpty ? 300 : .infinity,
                 alignment: .topLeading
             )
 
             HostBoardColumn(
                 title: "Upcoming Today",
-                subtitle: "\(upcoming.count) active reservations",
-                reservations: upcoming,
+                subtitle: "\(snapshot.upcoming.count) active reservations",
+                reservations: snapshot.upcoming,
                 emptyTitle: "No upcoming reservations",
                 emptySystemImage: "calendar.badge.checkmark",
-                nextReservationID: nextReservationID,
+                nextReservationID: snapshot.nextReservationID,
                 environment: environment,
                 onAction: handleAction
             )
-            .layoutPriority(seated.isEmpty ? 2 : 1)
+            .layoutPriority(snapshot.seated.isEmpty ? 2 : 1)
         }
     }
 
-    private var compactBoard: some View {
+    private func compactBoard(snapshot: HostBoardSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Picker("Board", selection: $compactScope) {
                 ForEach(HostBoardScope.allCases) { scope in
@@ -275,28 +235,28 @@ struct HostBoardView: View {
             HostBoardColumn(
                 title: compactScope.title,
                 subtitle: compactScope.subtitle(
-                    upcoming: upcoming.count,
-                    seated: seated.count,
-                    review: needsReview.count
+                    upcoming: snapshot.upcoming.count,
+                    seated: snapshot.seated.count,
+                    review: snapshot.needsReview.count
                 ),
-                reservations: compactReservations,
+                reservations: compactReservations(from: snapshot),
                 emptyTitle: compactScope.emptyTitle,
                 emptySystemImage: compactScope.emptySystemImage,
-                nextReservationID: compactScope == .upcoming ? nextReservationID : nil,
+                nextReservationID: compactScope == .upcoming ? snapshot.nextReservationID : nil,
                 environment: environment,
                 onAction: handleAction
             )
         }
     }
 
-    private var compactReservations: [ReservationRecord] {
+    private func compactReservations(from snapshot: HostBoardSnapshot) -> [ReservationRecord] {
         switch compactScope {
         case .upcoming:
-            return upcoming
+            return snapshot.upcoming
         case .seated:
-            return seated
+            return snapshot.seated
         case .review:
-            return needsReview
+            return snapshot.needsReview
         }
     }
 
@@ -331,7 +291,7 @@ struct HostBoardView: View {
 
     @MainActor
     private func runAutoRefreshLoop() async {
-        guard isVisible else { return }
+        guard isVisible, isAppActive else { return }
 
         while !Task.isCancelled {
             do {
@@ -340,13 +300,42 @@ struct HostBoardView: View {
                 return
             }
 
-            guard isVisible else { return }
+            guard isVisible, isAppActive else { return }
 
             await controller.autoRefreshDashboardIfAllowed(
                 context: modelContext,
-                isInteractionActive: hasOpenInteraction
+                isInteractionActive: hasOpenInteraction,
+                isAppActive: isAppActive
             )
         }
+    }
+}
+
+private struct HostBoardSnapshot {
+    let upcoming: [ReservationRecord]
+    let seated: [ReservationRecord]
+    let needsReview: [ReservationRecord]
+    let newReservations: [ReservationRecord]
+    let noTableCount: Int
+    let expectedGuestCount: Int
+    let nextReservationID: Int?
+
+    init(reservations: [ReservationRecord]) {
+        upcoming = ReservationRecord.sortedForHostBoard(
+            reservations.filter {
+                $0.statusValue == .new || $0.statusValue == .needsReview || $0.statusValue == .confirmed
+            }
+        )
+        seated = ReservationRecord.sortedChronologically(
+            reservations.filter { $0.statusValue == .seated }
+        )
+        needsReview = upcoming.filter { $0.statusValue == .needsReview }
+        newReservations = upcoming.filter { $0.statusValue == .new }
+        noTableCount = upcoming.filter { !$0.hasTableAssignment }.count
+        expectedGuestCount = upcoming.reduce(0) { $0 + $1.partySize } + seated.reduce(0) { $0 + $1.partySize }
+
+        let currentTime = Date.currentReservationTimeString()
+        nextReservationID = upcoming.first { $0.reservationTime >= currentTime }?.remoteID ?? upcoming.first?.remoteID
     }
 }
 
@@ -716,8 +705,6 @@ private enum HostBoardScope: String, CaseIterable, Identifiable {
 
 private extension Date {
     static func currentReservationTimeString() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter.string(from: Date())
+        ReservationFormatters.apiTime.string(from: Date())
     }
 }

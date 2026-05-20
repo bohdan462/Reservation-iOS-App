@@ -43,6 +43,25 @@ enum ReservationAPIError: Error, LocalizedError {
             return "Could not read the reservation response: \(error.localizedDescription)"
         }
     }
+
+    var logValue: String {
+        switch self {
+        case .invalidURL:
+            return "invalid_url"
+        case .invalidResponse:
+            return "invalid_response"
+        case .unauthorized:
+            return "unauthorized"
+        case .networkFailure(let error):
+            return "\(error.errorCode)"
+        case .serverError(let statusCode):
+            return "http_\(statusCode)"
+        case .wordpressError(let code, _, let statusCode):
+            return "wordpress_\(code)_http_\(statusCode)"
+        case .decodingFailure:
+            return "decoding_failure"
+        }
+    }
 }
 
 extension Error {

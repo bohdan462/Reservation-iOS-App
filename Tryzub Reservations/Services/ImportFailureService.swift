@@ -6,7 +6,11 @@
 import Foundation
 
 protocol ImportFailureServiceProtocol {
-    func fetchImportFailures(page: Int, perPage: Int) async throws -> ImportFailuresResponse
+    func fetchImportFailures(
+        page: Int,
+        perPage: Int,
+        reason: ReservationAPIRequestReason
+    ) async throws -> ImportFailuresResponse
 }
 
 final class ImportFailureService: ImportFailureServiceProtocol {
@@ -16,7 +20,11 @@ final class ImportFailureService: ImportFailureServiceProtocol {
         self.client = client
     }
 
-    func fetchImportFailures(page: Int = 1, perPage: Int = 50) async throws -> ImportFailuresResponse {
-        try await client.fetchImportFailures(page: page, perPage: perPage)
+    func fetchImportFailures(
+        page: Int = 1,
+        perPage: Int = 50,
+        reason: ReservationAPIRequestReason = .importFailuresFull
+    ) async throws -> ImportFailuresResponse {
+        try await client.fetchImportFailures(page: page, perPage: perPage, reason: reason)
     }
 }

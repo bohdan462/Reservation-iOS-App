@@ -28,7 +28,11 @@ final class ReservationMutationService: ReservationMutationServiceProtocol {
 
     func updateReservation(id: Int, request: ReservationUpdateRequest) async throws -> ReservationDTO {
         do {
-            let reservation = try await client.updateReservation(id: id, request: request)
+            let reservation = try await client.updateReservation(
+                id: id,
+                request: request,
+                reason: .mutationPatch
+            )
             try repository.upsert(reservation)
             return reservation
         } catch {
@@ -40,14 +44,14 @@ final class ReservationMutationService: ReservationMutationServiceProtocol {
     }
 
     func createReservation(_ request: ReservationCreateRequest) async throws -> ReservationDTO {
-        let reservation = try await client.createReservation(request)
+        let reservation = try await client.createReservation(request, reason: .mutationCreate)
         try repository.upsert(reservation)
         return reservation
     }
 
     func confirmReservation(id: Int) async throws -> ReservationConfirmResponse {
         do {
-            let response = try await client.confirmReservation(id: id)
+            let response = try await client.confirmReservation(id: id, reason: .mutationConfirm)
             try repository.upsert(response.data)
             return response
         } catch {
@@ -59,7 +63,11 @@ final class ReservationMutationService: ReservationMutationServiceProtocol {
     }
 
     func reconcileReservation(id: Int) async throws -> ReservationDTO {
-        let reservation = try await client.fetchReservation(id: id, retryCount: 0)
+        let reservation = try await client.fetchReservation(
+            id: id,
+            retryCount: 0,
+            reason: .reconcileByID
+        )
         try repository.upsert(reservation)
         return reservation
     }
