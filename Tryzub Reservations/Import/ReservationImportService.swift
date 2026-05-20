@@ -50,7 +50,8 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             from: nil,
             to: nil,
             status: nil,
-            search: nil
+            search: nil,
+            retryCount: 0
         )
 
         try repository.upsert(response.data)

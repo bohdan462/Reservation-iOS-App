@@ -15,7 +15,8 @@ protocol ReservationsAPIClientProtocol: AnyObject {
         from: String?,
         to: String?,
         status: ReservationStatus?,
-        search: String?
+        search: String?,
+        retryCount: Int
     ) async throws -> ReservationsResponse
 
     func fetchAllReservations(
@@ -35,8 +36,29 @@ protocol ReservationsAPIClientProtocol: AnyObject {
 }
 
 extension ReservationsAPIClientProtocol {
+    func fetchReservations(
+        page: Int,
+        perPage: Int,
+        date: String?,
+        from: String?,
+        to: String?,
+        status: ReservationStatus?,
+        search: String?
+    ) async throws -> ReservationsResponse {
+        try await fetchReservations(
+            page: page,
+            perPage: perPage,
+            date: date,
+            from: from,
+            to: to,
+            status: status,
+            search: search,
+            retryCount: 0
+        )
+    }
+
     func fetchReservation(id: Int) async throws -> ReservationDTO {
-        try await fetchReservation(id: id, retryCount: 1)
+        try await fetchReservation(id: id, retryCount: 0)
     }
 }
 
@@ -98,7 +120,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         from: String? = nil,
         to: String? = nil,
         status: ReservationStatus? = nil,
-        search: String? = nil
+        search: String? = nil,
+        retryCount: Int = 0
     ) async throws -> ReservationsResponse {
         
         var components = URLComponents(url: managedReservationsURL(), resolvingAgainstBaseURL: false)
@@ -129,7 +152,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
         
         let request = makeRequest(url: url, method: "GET")
-        let data = try await perform(request, retryCount: 1)
+        let data = try await perform(request, retryCount: retryCount)
         
         do {
             return try decoder.decode(ReservationsResponse.self, from: data)
@@ -234,7 +257,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
             ]
         )
         let request = makeRequest(url: url, method: "GET")
-        let data = try await perform(request, retryCount: 1)
+        let data = try await perform(request, retryCount: 0)
 
         do {
             return try decoder.decode(ImportFailuresResponse.self, from: data)

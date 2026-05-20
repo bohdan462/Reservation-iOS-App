@@ -24,11 +24,15 @@ On app launch, cached SwiftData reservations are shown immediately by the query-
 
 Startup refresh calls `refreshDashboard(context:)` internally in startup mode, which fetches Today only through `ReservationSyncService.syncToday()`.
 
+Today startup refresh is a single request attempt. The app no longer performs a hidden automatic retry for the same `GET /managed-reservations?date=YYYY-MM-DD` URL, so launch should not produce two identical Today requests because of API-client retry behavior.
+
 ## Manual Refresh Behavior
 
 Today pull-to-refresh and the toolbar refresh button both call `ReservationsController.refreshDashboard(context:)`.
 
 Manual Today refresh always attempts the backend, regardless of local cache freshness. If it fails, cached rows remain visible and an inline message is shown.
+
+Manual Today refresh also uses one request attempt. Staff can tap refresh again if needed, but the app will not silently stack a second identical request after a timeout.
 
 Schedule refresh still calls `refreshAll(context:)`. This is intentionally heavier because it may paginate all managed reservations. Startup does not call this path.
 
@@ -76,6 +80,7 @@ Repository upsert uses server `id` / `remoteID`. Successful server responses ove
 - reservation mutations are guarded by `actionInProgressIDs`.
 - manual create is guarded by `isCreatingReservation`.
 - auto-refresh skips instead of queuing if the app is busy.
+- GET retries are disabled by default for reservation list/detail and import-failure checks. This keeps WordPress traffic predictable and makes each user-visible refresh map to one backend attempt.
 
 ## Network Failure Behavior
 

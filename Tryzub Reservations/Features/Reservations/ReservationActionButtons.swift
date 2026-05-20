@@ -22,13 +22,22 @@ enum ReservationHostAction: String, Identifiable {
         case .seat:
             return "Seat"
         case .assignTable:
-            return "Table"
+            return "Assign Table"
         case .complete:
             return "Complete"
         case .cancel:
             return "Cancel"
         case .noShow:
             return "No Show"
+        }
+    }
+
+    var rowTitle: String {
+        switch self {
+        case .assignTable:
+            return "Table"
+        case .confirm, .seat, .complete, .cancel, .noShow:
+            return shortTitle
         }
     }
 
@@ -68,16 +77,10 @@ enum ReservationHostAction: String, Identifiable {
 
     var tint: Color {
         switch self {
-        case .confirm:
-            return .green
-        case .seat:
-            return .blue
-        case .assignTable:
-            return .indigo
-        case .complete:
-            return .teal
+        case .confirm, .seat, .assignTable, .complete:
+            return Color(.label)
         case .cancel, .noShow:
-            return .red
+            return Color(.secondaryLabel)
         }
     }
 
@@ -208,22 +211,84 @@ struct ReservationActionButtons: View {
 
     var body: some View {
         if !actions.isEmpty {
-            HStack(spacing: compact ? 6 : 8) {
-                ForEach(actions.prefix(compact ? 2 : 4)) { action in
-                    Button {
-                        onAction(action)
-                    } label: {
-                        actionLabel(action)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(action.tint)
-                    .controlSize(compact ? .small : .regular)
-                    .disabled(isBusy)
-                }
+            if compact {
+                compactActions
+            } else {
+                fullActions
+            }
+        }
+    }
 
-                if actions.count > (compact ? 2 : 4) {
+    private var compactActions: some View {
+        HStack(spacing: 6) {
+            if let primaryAction = actions.first {
+                Button {
+                    onAction(primaryAction)
+                } label: {
+                    Text(primaryAction.rowTitle)
+                        .font(.caption.weight(.bold))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.primary)
+                .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.primary.opacity(0.45), lineWidth: 1)
+                )
+                .disabled(isBusy)
+            }
+
+            if includeSecondary, actions.count > 1 {
+                Menu {
+                    ForEach(actions.dropFirst()) { action in
+                        Button(role: action.role) {
+                            onAction(action)
+                        } label: {
+                            Label(action.fullTitle, systemImage: action.systemImage)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(.primary.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+                .disabled(isBusy)
+            }
+        }
+    }
+
+    private var fullActions: some View {
+        HStack(spacing: 8) {
+            ForEach(actions.prefix(3)) { action in
+                Button {
+                    onAction(action)
+                } label: {
+                    Label(action.shortTitle, systemImage: action.systemImage)
+                        .labelStyle(.titleAndIcon)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.primary)
+                .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(Color.primary.opacity(0.38), lineWidth: 1)
+                )
+                .disabled(isBusy)
+            }
+
+            if actions.count > 3 {
                     Menu {
-                        ForEach(actions.dropFirst(compact ? 2 : 4)) { action in
+                    ForEach(actions.dropFirst(3)) { action in
                             Button(role: action.role) {
                                 onAction(action)
                             } label: {
@@ -231,26 +296,15 @@ struct ReservationActionButtons: View {
                             }
                         }
                     } label: {
-                        Image(systemName: "ellipsis.circle")
+                        Image(systemName: "ellipsis")
+                        .font(.title3)
+                        .foregroundStyle(.primary.opacity(0.7))
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(compact ? .small : .regular)
+                .buttonStyle(.plain)
                     .disabled(isBusy)
                 }
             }
         }
-    }
-
-    @ViewBuilder
-    private func actionLabel(_ action: ReservationHostAction) -> some View {
-        if compact {
-            Label(action.shortTitle, systemImage: action.systemImage)
-                .labelStyle(.iconOnly)
-        } else {
-            Label(action.fullTitle, systemImage: action.systemImage)
-                .labelStyle(.titleAndIcon)
-        }
-    }
 }
 
 struct TableAssignmentSheet: View {

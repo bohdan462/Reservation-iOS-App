@@ -211,16 +211,18 @@ private struct ReservationHeroCard: View {
     let onEdit: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(reservation.displayTime)
-                        .font(.system(size: 44, weight: .bold, design: .rounded))
+                        .font(.system(size: 38, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                     Text(reservation.displayDate)
-                        .font(.headline)
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 .layoutPriority(2)
 
@@ -232,14 +234,14 @@ private struct ReservationHeroCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(reservation.guestName)
                     .font(.title2.weight(.bold))
-                    .lineLimit(2)
+                    .lineLimit(1)
                     .truncationMode(.tail)
 
                 HStack(spacing: 8) {
-                    DetailPill(label: "\(reservation.partySize)", systemImage: "person.2", tint: .green)
-                    DetailPill(label: reservation.tableDisplay, systemImage: "table.furniture", tint: reservation.hasTableAssignment ? .secondary : .orange)
+                    DetailPill(label: "\(reservation.partySize)", systemImage: "person.2", tint: .secondary)
+                    DetailPill(label: reservation.tableDisplay, systemImage: "table.furniture", tint: .secondary)
                     if reservation.confirmationEmailSentAt?.nilIfBlank != nil {
-                        DetailPill(label: "Email sent", systemImage: "envelope.badge", tint: .blue)
+                        DetailPill(label: "Email sent", systemImage: "envelope.badge", tint: .secondary)
                     }
                 }
                 .lineLimit(1)
@@ -258,12 +260,15 @@ private struct ReservationHeroCard: View {
                 onEdit()
             } label: {
                 Label("Edit Details", systemImage: "pencil")
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
             }
             .buttonStyle(.bordered)
+            .controlSize(.small)
             .disabled(!capabilities.canEditReservationDetails)
         }
-        .padding(18)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -314,7 +319,7 @@ private struct ReservationFactsCard: View {
                 DetailInfoRow(title: "Date", value: reservation.displayDate)
                 DetailInfoRow(title: "Time", value: reservation.displayTime, monospaced: true)
                 DetailInfoRow(title: "Party", value: "\(reservation.partySize) guests", monospaced: true)
-                DetailInfoRow(title: "Table", value: reservation.tableDisplay, valueTint: reservation.hasTableAssignment ? .secondary : .orange)
+                DetailInfoRow(title: "Table", value: reservation.tableDisplay)
                 DetailInfoRow(title: "Status", value: reservation.statusValue.displayName)
             }
         }
@@ -344,14 +349,15 @@ private struct ReservationNotesCard: View {
 
 private struct ReservationOperationalCard: View {
     let reservation: ReservationRecord
+    @State private var isExpanded = false
 
     var body: some View {
-        DetailCard(title: "Operations", systemImage: "server.rack") {
-            VStack(spacing: 10) {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(spacing: 9) {
+                Divider()
                 DetailInfoRow(title: "Remote ID", value: "#\(reservation.remoteID)", monospaced: true)
                 DetailInfoRow(title: "Source", value: reservation.sourceSubmissionID > 0 ? "#\(reservation.sourceSubmissionID)" : "Manual", monospaced: true)
                 DetailInfoRow(title: "Superseded By", value: reservation.supersededById.map { "#\($0)" } ?? "-", monospaced: true)
-                Divider()
                 DetailInfoRow(title: "Created", value: DetailDateFormatting.server(reservation.createdAt))
                 DetailInfoRow(title: "Updated", value: DetailDateFormatting.server(reservation.apiUpdatedAt))
                 DetailInfoRow(title: "Confirmed", value: DetailDateFormatting.server(reservation.confirmedAt))
@@ -359,7 +365,15 @@ private struct ReservationOperationalCard: View {
                 DetailInfoRow(title: "Reminder", value: DetailDateFormatting.server(reservation.reminderEmailSentAt))
                 DetailInfoRow(title: "Last Synced", value: DetailDateFormatting.local(reservation.lastSyncedAt))
             }
+            .padding(.top, 8)
+        } label: {
+            Label("Developer / Sync Info", systemImage: "server.rack")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.secondary)
         }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -373,9 +387,9 @@ private struct DetailWarningCard: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: symbolName)
                 .font(.headline)
-                .foregroundStyle(tint)
+                .foregroundStyle(.secondary)
                 .frame(width: 32, height: 32)
-                .background(tint.opacity(0.14), in: Circle())
+                .background(Color(.systemGray5), in: Circle())
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
@@ -389,7 +403,7 @@ private struct DetailWarningCard: View {
             Spacer(minLength: 0)
         }
         .padding(14)
-        .background(tint.opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -406,7 +420,7 @@ private struct DetailCard<Content: View>: View {
 
             content
         }
-        .padding(16)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
     }
@@ -420,7 +434,7 @@ private struct DetailContactLine: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: systemImage)
-                .foregroundStyle(.blue)
+                .foregroundStyle(.secondary)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -489,12 +503,13 @@ private struct DetailPill: View {
     var body: some View {
         Label(label, systemImage: systemImage)
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(tint)
+            .foregroundStyle(.secondary)
             .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .truncationMode(.tail)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(tint.opacity(0.12), in: Capsule())
+            .background(Color(.systemGray6), in: Capsule())
     }
 }
 

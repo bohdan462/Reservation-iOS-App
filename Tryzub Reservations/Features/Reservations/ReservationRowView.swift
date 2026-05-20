@@ -7,133 +7,264 @@
 
 import SwiftUI
 
-struct ReservationRowView: View {
+enum ReservationRowContext: Equatable {
+    case schedule
+    case todayUpcoming(isNext: Bool)
+    case todaySeated
+    case review
+
+    func eyebrow(for reservation: ReservationRecord, showsDate: Bool) -> String? {
+        switch self {
+        case .todayUpcoming(let isNext):
+            return isNext ? "NEXT" : nil
+        case .todaySeated:
+            return nil
+        case .review:
+            return showsDate ? reservation.displayDate.uppercased() : "REVIEW"
+        case .schedule:
+            return showsDate ? reservation.displayDate.uppercased() : nil
+        }
+    }
+
+    var isNext: Bool {
+        if case .todayUpcoming(let isNext) = self {
+            return isNext
+        }
+        return false
+    }
+}
+
+struct ReservationRowView<Accessory: View>: View {
     let reservation: ReservationRecord
     var showsDate = true
+    var context: ReservationRowContext = .schedule
+
+    @ViewBuilder let accessory: () -> Accessory
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    init(
+        reservation: ReservationRecord,
+        showsDate: Bool = true,
+        context: ReservationRowContext = .schedule,
+        @ViewBuilder accessory: @escaping () -> Accessory
+    ) {
+        self.reservation = reservation
+        self.showsDate = showsDate
+        self.context = context
+        self.accessory = accessory
+    }
 
     var body: some View {
         Group {
             if horizontalSizeClass == .regular {
-                regularRow
+                wideRow
             } else {
                 compactRow
             }
         }
-        .padding(.vertical, 3)
+        .opacity(isMuted ? 0.58 : 1)
+    }
+
+    private var wideRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                if let eyebrow {
+                    Text(eyebrow)
+                        .font(.caption2.weight(.black))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Text(reservation.displayTime)
+                    .font(.title3.weight(.black))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .frame(width: 86, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "person.fill")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+
+                    Text("\(reservation.partySize)")
+                        .font(.subheadline.weight(.black))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+
+                HStack(spacing: 5) {
+                    Image(systemName: "chair.lounge.fill")
+                        .font(.caption2.weight(.bold))
+                    Text(tableText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.secondary)
+            }
+            .frame(width: 58, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(reservation.guestName.uppercased())
+                    .font(.headline.weight(.black))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                HStack(spacing: 10) {
+                    if !reservation.phone.isEmpty {
+                        ReservationInlineMeta(text: reservation.formattedPhone, systemImage: "phone.fill")
+                    }
+
+                    if reservation.hasGuestNotes || reservation.hasStaffNotes {
+                        ReservationInlineMeta(text: "NOTES", systemImage: "note.text")
+                    }
+
+                    if reservation.partySize >= 7 {
+                        ReservationInlineMeta(text: "LARGE", systemImage: "person.3.fill")
+                    }
+                }
+            }
+            .layoutPriority(2)
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .trailing, spacing: 6) {
+                ReservationStatusBadge(status: reservation.statusValue)
+
+                if reservation.statusValue == .needsReview,
+                   let staffNotes = reservation.staffNotes,
+                   !staffNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(staffNotes)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 140, alignment: .trailing)
+                }
+            }
+
+            accessory()
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(minHeight: 58)
+      
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(rowStroke)
     }
 
     private var compactRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(reservation.guestName)
-                    .font(.headline.weight(.semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .layoutPriority(2)
+                VStack(alignment: .leading, spacing: 1) {
+                    if let eyebrow {
+                        Text(eyebrow)
+                            .font(.caption2.weight(.black))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
 
-                Spacer(minLength: 8)
+                    Text(reservation.displayTime)
+                        .font(.title3.weight(.black))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(reservation.guestName.uppercased())
+                        .font(.headline.weight(.black))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    HStack(spacing: 9) {
+                        ReservationInlineMeta(text: "\(reservation.partySize)", systemImage: "person.fill")
+                        ReservationInlineMeta(text: tableText, systemImage: "chair.lounge.fill")
+                        if !reservation.phone.isEmpty {
+                            ReservationInlineMeta(text: reservation.formattedPhone, systemImage: "phone.fill")
+                        }
+                    }
+                }
+                .layoutPriority(2)
+
+                Spacer(minLength: 0)
 
                 ReservationStatusBadge(status: reservation.statusValue)
             }
 
-            // Primary info: time, party size, table
-            HStack(spacing: 6) {
-                ReservationMetaPill(text: reservation.displayTime, systemImage: "clock", emphasized: true)
-                    .layoutPriority(3)
-                
-                ReservationMetaPill(text: "\(reservation.partySize)", systemImage: "person.2")
-                    .layoutPriority(2)
-                
-                ReservationMetaPill(
-                    text: reservation.tableDisplay,
-                    systemImage: "table.furniture",
-                    tint: reservation.hasTableAssignment ? .secondary : .orange
-                )
-                .layoutPriority(1)
-                
-                Spacer(minLength: 0)
-                
-                ReservationMetaPill(text: reservation.formattedPhone, systemImage: "phone")
-                    .layoutPriority(0)
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-
-            if showsDate || reservation.needsOperationalWarning {
-                HStack(spacing: 4) {
-                    if showsDate {
-                        ReservationMetaPill(text: reservation.displayDate, systemImage: "calendar")
-                            .layoutPriority(1)
-                    }
-                    if reservation.statusValue == .needsReview {
-                        ReservationMetaPill(text: "Review", systemImage: "exclamationmark.triangle", tint: .orange)
-                            .layoutPriority(2)
-                    }
-                    if reservation.hasGuestNotes || reservation.hasStaffNotes {
-                        ReservationMetaPill(text: "Notes", systemImage: "note.text", tint: .secondary)
-                            .layoutPriority(0)
-                    }
-                    if reservation.partySize >= 7 {
-                        ReservationMetaPill(text: "Large party", systemImage: "person.3", tint: .orange)
-                            .layoutPriority(0)
-                    }
-                    Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                if reservation.hasGuestNotes || reservation.hasStaffNotes {
+                    ReservationInlineMeta(text: "NOTES", systemImage: "note.text")
                 }
+
+                if reservation.partySize >= 7 {
+                    ReservationInlineMeta(text: "LARGE PARTY", systemImage: "person.3.fill")
+                }
+
+                Spacer(minLength: 0)
+
+                accessory()
             }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(minHeight: 76)
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(rowStroke)
+    }
+
+    private var eyebrow: String? {
+        context.eyebrow(for: reservation, showsDate: showsDate)
+    }
+
+    private var tableText: String {
+        guard let tableName = reservation.tableName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !tableName.isEmpty else {
+            return "x"
+        }
+        return tableName.uppercased()
+    }
+
+    private var isMuted: Bool {
+        switch reservation.statusValue {
+        case .completed, .cancelled, .noShow:
+            return true
+        case .new, .needsReview, .confirmed, .seated:
+            return false
         }
     }
 
-    private var regularRow: some View {
-        HStack(alignment: .center, spacing: 14) {
-            Text(reservation.displayTime)
-                .font(.title3.weight(.bold))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .frame(width: 82, alignment: .leading)
+    private var rowBackground: Color {
+        context.isNext
+            ? Color(.systemGray5)
+            : Color(.secondarySystemGroupedBackground)
+    }
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(reservation.guestName)
-                    .font(.headline.weight(.semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+    private var rowStroke: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .stroke(context.isNext ? Color.primary.opacity(0.32) : Color.clear, lineWidth: 1)
+    }
+}
 
-                HStack(spacing: 8) {
-                    Text(reservation.formattedPhone)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-
-                    if showsDate {
-                        Text(reservation.displayDate)
-                            .lineLimit(1)
-                    }
-
-                    if reservation.hasGuestNotes || reservation.hasStaffNotes {
-                        Label("Notes", systemImage: "note.text")
-                            .lineLimit(1)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            .layoutPriority(2)
-
-            Text("\(reservation.partySize)")
-                .font(.headline.weight(.semibold))
-                .monospacedDigit()
-                .frame(width: 42, alignment: .center)
-
-            Text(reservation.tableDisplay)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(reservation.hasTableAssignment ? Color.secondary : Color.orange)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(minWidth: 92, maxWidth: 140, alignment: .leading)
-
-            ReservationStatusBadge(status: reservation.statusValue)
-                .frame(width: 116, alignment: .trailing)
+extension ReservationRowView where Accessory == EmptyView {
+    init(
+        reservation: ReservationRecord,
+        showsDate: Bool = true,
+        context: ReservationRowContext = .schedule
+    ) {
+        self.init(
+            reservation: reservation,
+            showsDate: showsDate,
+            context: context
+        ) {
+            EmptyView()
         }
     }
 }
@@ -142,82 +273,44 @@ struct ReservationStatusBadge: View {
     let status: ReservationStatus
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: status.systemImage)
-            Text(status.displayName)
-        }
-        .font(.caption2.weight(.bold))
-        .foregroundStyle(status.tintColor)
-        .lineLimit(1)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(status.tintColor.opacity(0.13), in: Capsule())
+        Text(status.shortDisplayName.uppercased())
+            .font(.caption2.weight(.black))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
     }
 }
 
-private struct ReservationMetaPill: View {
+private struct ReservationInlineMeta: View {
     let text: String
     let systemImage: String
-    var emphasized = false
-    var tint: Color = .secondary
 
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: systemImage)
-                .imageScale(.small)
-                .flexibleFrame(horizontal: 14, vertical: 14)
-            
+                .font(.caption2.weight(.bold))
+                .frame(width: 11)
+
             Text(text)
+                .font(.caption2.weight(.bold))
                 .monospacedDigit()
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
-        .font(emphasized ? .subheadline.weight(.semibold) : .caption.weight(.medium))
-        .foregroundStyle(tint)
-        .layoutPriority(emphasized ? 2 : 1)
-    }
-}
-
-extension View {
-    func flexibleFrame(horizontal: CGFloat, vertical: CGFloat) -> some View {
-        self.frame(width: horizontal, height: vertical)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
 extension ReservationStatus {
-    var tintColor: Color {
+    var shortDisplayName: String {
         switch self {
-        case .new:
-            return .blue.opacity(0.8)
         case .needsReview:
-            return .orange.opacity(0.8)
-        case .confirmed:
-            return .green.opacity(0.8)
-        case .seated:
-            return .purple.opacity(0.8)
-        case .completed:
-            return .gray.opacity(0.8)
-        case .cancelled, .noShow:
-            return .red.opacity(0.8)
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .new:
-            return "sparkle"
-        case .needsReview:
-            return "exclamationmark.triangle"
-        case .confirmed:
-            return "checkmark.circle"
-        case .seated:
-            return "person.2"
-        case .completed:
-            return "checkmark.seal"
-        case .cancelled:
-            return "xmark.circle"
+            return "Review"
         case .noShow:
-            return "person.crop.circle.badge.xmark"
+            return "No Show"
+        case .new, .confirmed, .seated, .completed, .cancelled:
+            return displayName
         }
     }
 }

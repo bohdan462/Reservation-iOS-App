@@ -77,12 +77,7 @@ struct HostBoardView: View {
     var body: some View {
         GeometryReader { proxy in
             ScrollView {
-               
-                VStack(alignment: .leading, spacing: 16) {
-                    
-                    warningArea
-                        .frame(maxWidth: 400)
-                    
+                VStack(alignment: .leading, spacing: 10) {
                     HostBoardSummaryCard(
                         lastSyncedAt: lastSyncedAt,
                         isSyncing: isSyncing,
@@ -94,7 +89,7 @@ struct HostBoardView: View {
                         noTableCount: noTableCount
                     )
 
-//                    warningArea
+                    warningArea
 
                     if proxy.size.width >= 820 {
                         wideBoard
@@ -181,7 +176,7 @@ struct HostBoardView: View {
     }
 
     private var warningArea: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             if let noticeMessage = controller.noticeMessage {
                 HostMessageBanner(
                     title: noticeMessage,
@@ -209,7 +204,7 @@ struct HostBoardView: View {
                 )
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 if failedImportCount > 0, controller.capabilities.canViewFailedImports {
                     FormProblemsBanner(count: failedImportCount, onTap: onShowFormProblems)
                 }
@@ -238,7 +233,7 @@ struct HostBoardView: View {
     private var wideBoard: some View {
         HStack(alignment: .top, spacing: 16) {
             HostBoardColumn(
-                title: "Seated",
+                title: "Seated / In House",
                 subtitle: "\(seated.count) seated",
                 reservations: seated,
                 emptyTitle: "No one seated",
@@ -246,6 +241,12 @@ struct HostBoardView: View {
                 nextReservationID: nil,
                 environment: environment,
                 onAction: handleAction
+            )
+            .frame(
+                minWidth: seated.isEmpty ? 240 : 360,
+                idealWidth: seated.isEmpty ? 260 : nil,
+                maxWidth: seated.isEmpty ? 300 : .infinity,
+                alignment: .topLeading
             )
 
             HostBoardColumn(
@@ -258,6 +259,7 @@ struct HostBoardView: View {
                 environment: environment,
                 onAction: handleAction
             )
+            .layoutPriority(seated.isEmpty ? 2 : 1)
         }
     }
 
@@ -376,77 +378,104 @@ private struct HostBoardSummaryCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .center, spacing: 14) {
-            HStack(alignment: .center) {
+        ViewThatFits(in: .horizontal) {
+            wideSummary
+            compactSummary
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var wideSummary: some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Date().formatted(date: .abbreviated, time: .omitted))
+                    .font(.headline.weight(.bold))
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                        if isSyncing {
+                            ProgressView()
+                            .controlSize(.small)
+                    }
+                    Text(isSyncing ? "Refreshing..." : lastSyncedText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(minWidth: 210, alignment: .leading)
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 8) {
+                SummaryMetricChip(title: "Count", value: reservationCount, symbolName: "calendar", tint: .blue)
+                SummaryMetricChip(title: "Guests", value: guestCount, symbolName: "person.2", tint: .green)
+                SummaryMetricChip(title: "New", value: newCount, symbolName: "sparkle", tint: .cyan)
+                SummaryMetricChip(title: "Review", value: reviewCount, symbolName: "exclamationmark.triangle", tint: .orange)
+                SummaryMetricChip(title: "Forms", value: failedImportCount, symbolName: "exclamationmark.octagon", tint: .red)
+                SummaryMetricChip(title: "No Table", value: noTableCount, symbolName: "table.furniture", tint: .indigo)
+            }
+        }
+    }
+
+    private var compactSummary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(Date().formatted(date: .complete, time: .omitted))
-                        .font(.title3.weight(.bold))
+                    Text(Date().formatted(date: .abbreviated, time: .omitted))
+                        .font(.headline.weight(.bold))
                     HStack(spacing: 6) {
                         if isSyncing {
                             ProgressView()
                                 .controlSize(.small)
                         }
                         Text(isSyncing ? "Refreshing..." : lastSyncedText)
-                            .font(.subheadline)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
-                .padding(.horizontal, 20)
-
                 Spacer()
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
-                    DashboardMetricCard(title: "Count", value: reservationCount, symbolName: "calendar", tint: .blue)
-                    DashboardMetricCard(title: "Guests", value: guestCount, symbolName: "person.2", tint: .green)
-                    DashboardMetricCard(title: "New", value: newCount, symbolName: "sparkle", tint: .cyan)
-                    DashboardMetricCard(title: "Review", value: reviewCount, symbolName: "exclamationmark.triangle", tint: .orange)
-                    DashboardMetricCard(title: "Failed", value: failedImportCount, symbolName: "exclamationmark.octagon", tint: .red)
-                    DashboardMetricCard(title: "No Table", value: noTableCount, symbolName: "table.furniture", tint: .indigo)
-                }
             }
 
-//            LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 10)], spacing: 10) {
-//                DashboardMetricCard(title: "Count", value: reservationCount, symbolName: "calendar", tint: .blue)
-//                DashboardMetricCard(title: "Guests", value: guestCount, symbolName: "person.2", tint: .green)
-//                DashboardMetricCard(title: "New", value: newCount, symbolName: "sparkle", tint: .cyan)
-//                DashboardMetricCard(title: "Review", value: reviewCount, symbolName: "exclamationmark.triangle", tint: .orange)
-//                DashboardMetricCard(title: "Failed", value: failedImportCount, symbolName: "exclamationmark.octagon", tint: .red)
-//                DashboardMetricCard(title: "No Table", value: noTableCount, symbolName: "table.furniture", tint: .indigo)
-//            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 6)], spacing: 6) {
+                SummaryMetricChip(title: "Count", value: reservationCount, symbolName: "calendar", tint: .blue)
+                SummaryMetricChip(title: "Guests", value: guestCount, symbolName: "person.2", tint: .green)
+                SummaryMetricChip(title: "New", value: newCount, symbolName: "sparkle", tint: .cyan)
+                SummaryMetricChip(title: "Review", value: reviewCount, symbolName: "exclamationmark.triangle", tint: .orange)
+                SummaryMetricChip(title: "Forms", value: failedImportCount, symbolName: "exclamationmark.octagon", tint: .red)
+                SummaryMetricChip(title: "No Table", value: noTableCount, symbolName: "table.furniture", tint: .indigo)
+            }
         }
-        .padding(16)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
-struct DashboardMetricCard: View {
+private struct SummaryMetricChip: View {
     let title: String
     let value: Int
     let symbolName: String
     let tint: Color
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Image(systemName: symbolName)
-                .font(.footnote)
-                .foregroundStyle(tint)
-                .frame(width: 15, height: 15)
-                .background(tint.opacity(0.1), in: Circle())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 16)
 
-            HStack(alignment: .center, spacing: 1) {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer()
-                Text(value, format: .number)
-                    .font(.title3.weight(.bold))
-                    .monospacedDigit()
-            }
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
 
-            Spacer(minLength: 0)
+            Text(value, format: .number)
+                .font(.headline.weight(.bold))
+                .monospacedDigit()
+                .lineLimit(1)
         }
-        .padding(10)
-        .background(Color(.tertiarySystemGroupedBackground).opacity(0.8), in: RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(Color(.secondarySystemGroupedBackground), in: Capsule())
     }
 }
 
@@ -475,9 +504,7 @@ private struct HostBoardColumn: View {
             }
 
             if reservations.isEmpty {
-                ContentUnavailableView(emptyTitle, systemImage: emptySystemImage)
-                    .frame(maxWidth: .infinity, minHeight: 180)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+                CompactEmptyHostState(title: emptyTitle, systemImage: emptySystemImage)
             } else {
                 LazyVStack(spacing: 8) {
                     ForEach(reservations) { reservation in
@@ -504,107 +531,21 @@ private struct HostBoardReservationRow: View {
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            wideLayout
-            compactLayout
-        }
-        .padding(12)
-        .background(rowBackground, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(isNext ? Color.blue.opacity(0.45) : Color.clear, lineWidth: 2)
-        )
-    }
-
-    private var wideLayout: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(reservation.displayTime)
-                    .font(.title3.weight(.bold))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                if isNext {
-                    Text("Next")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.blue)
-                }
-            }
-            .frame(width: 74, alignment: .leading)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(reservation.guestName)
-                    .font(.headline.weight(.semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                Text(reservation.formattedPhone)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .frame(minWidth: 150, maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(2)
-
-            Text("\(reservation.partySize)")
-                .font(.title3.weight(.bold))
-                .monospacedDigit()
-                .frame(width: 36)
-
-            Text(reservation.tableDisplay)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(reservation.hasTableAssignment ? Color.secondary : Color.orange)
-                .lineLimit(1)
-                .frame(width: 98, alignment: .leading)
-
-            ReservationStatusBadge(status: reservation.statusValue)
-                .frame(width: 108, alignment: .trailing)
-
-            ReservationActionButtons(
-                reservation: reservation,
-                capabilities: controller.capabilities,
-                compact: true,
-                includeSecondary: true,
-                isBusy: controller.isActionInProgress(for: reservation)
-            ) { action in
-                onAction(action, reservation)
-            }
-
+        ReservationRowView(
+            reservation: reservation,
+            showsDate: false,
+            context: rowContext
+        ) {
+            HStack(spacing: 10) {
             NavigationLink {
                 ReservationDetailView(reservation: reservation, environment: environment)
             } label: {
-                Image(systemName: "chevron.right.circle")
+                    Image(systemName: "ellipsis")
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(.primary.opacity(0.7))
             }
             .buttonStyle(.borderless)
-        }
-    }
 
-    private var compactLayout: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(reservation.displayTime)
-                    .font(.headline.weight(.bold))
-                    .monospacedDigit()
-                Text(reservation.guestName)
-                    .font(.headline.weight(.semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .layoutPriority(2)
-                Spacer(minLength: 8)
-                ReservationStatusBadge(status: reservation.statusValue)
-            }
-
-            HStack(spacing: 10) {
-                Label("\(reservation.partySize)", systemImage: "person.2")
-                Label(reservation.tableDisplay, systemImage: "table.furniture")
-                    .foregroundStyle(reservation.hasTableAssignment ? Color.secondary : Color.orange)
-                Label(reservation.formattedPhone, systemImage: "phone")
-                    .monospacedDigit()
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-
-            HStack {
                 ReservationActionButtons(
                     reservation: reservation,
                     capabilities: controller.capabilities,
@@ -614,30 +555,15 @@ private struct HostBoardReservationRow: View {
                 ) { action in
                     onAction(action, reservation)
                 }
-
-                Spacer()
-
-                NavigationLink {
-                    ReservationDetailView(reservation: reservation, environment: environment)
-                } label: {
-                    Label("Details", systemImage: "chevron.right.circle")
-                }
-                .buttonStyle(.borderless)
-                .font(.caption.weight(.semibold))
             }
         }
     }
 
-    private var rowBackground: Color {
-        if isNext {
-            return Color.blue.opacity(0.08)
+    private var rowContext: ReservationRowContext {
+        if reservation.statusValue == .seated {
+            return .todaySeated
         }
-
-        if reservation.statusValue == .needsReview {
-            return Color.orange.opacity(0.09)
-        }
-
-        return Color(.secondarySystemGroupedBackground)
+        return .todayUpcoming(isNext: isNext)
     }
 }
 
@@ -668,9 +594,9 @@ private struct HostWarningBanner: View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: symbolName)
                 .font(.subheadline)
-                .foregroundStyle(tint)
+                .foregroundStyle(.secondary)
                 .frame(width: 15, height: 15)
-                .background(tint.opacity(0.14), in: Circle())
+                .background(Color(.systemGray5), in: Circle())
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -680,7 +606,7 @@ private struct HostWarningBanner: View {
             Spacer(minLength: 0)
         }
         .padding(12)
-        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .background(Color(.secondarySystemGroupedBackground), in: Capsule())
     }
 }
 
@@ -693,7 +619,7 @@ private struct HostMessageBanner: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: symbolName)
-                .foregroundStyle(tint)
+                .foregroundStyle(.secondary)
 
             Text(title)
                 .font(.subheadline.weight(.medium))
@@ -710,8 +636,29 @@ private struct HostMessageBanner: View {
             .foregroundStyle(.secondary)
             .accessibilityLabel("Dismiss message")
         }
-        .padding(12)
-        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color(.secondarySystemGroupedBackground), in: Capsule())
+    }
+}
+
+private struct CompactEmptyHostState: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .foregroundStyle(.secondary)
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

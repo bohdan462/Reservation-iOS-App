@@ -237,7 +237,11 @@ private struct ReservationScheduleView: View {
                     ForEach(sections) { section in
                         Section {
                             ForEach(section.reservations) { reservation in
-                                ReservationNavigationRow(reservation: reservation, environment: environment)
+                                ReservationNavigationRow(
+                                    reservation: reservation,
+                                    environment: environment,
+                                    context: .schedule
+                                )
                             }
                         } header: {
                             VStack(alignment: .leading, spacing: 2) {
@@ -357,7 +361,11 @@ private struct ReservationReviewQueueView: View {
                     ForEach(sections) { section in
                         Section {
                             ForEach(section.reservations) { reservation in
-                                ReservationNavigationRow(reservation: reservation, environment: environment)
+                                ReservationNavigationRow(
+                                    reservation: reservation,
+                                    environment: environment,
+                                    context: .review
+                                )
                             }
                         } header: {
                             VStack(alignment: .leading, spacing: 2) {
@@ -463,15 +471,19 @@ private struct ReservationNavigationRow: View {
 
     let reservation: ReservationRecord
     let environment: AppEnvironment
+    var context: ReservationRowContext = .schedule
 
-    @State private var pendingAction: ReservationQuickAction?
+    @State private var pendingAction: ReservationHostAction?
 
     var body: some View {
         NavigationLink {
             ReservationDetailView(reservation: reservation, environment: environment)
         } label: {
-            ReservationRowView(reservation: reservation)
+            ReservationRowView(reservation: reservation, context: context)
         }
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             ForEach(availableActions) { action in
                 Button(role: action.role) {
@@ -492,7 +504,7 @@ private struct ReservationNavigationRow: View {
             titleVisibility: .visible
         ) {
             if let pendingAction {
-                Button(pendingAction.confirmButtonTitle, role: pendingAction.role) {
+                Button(pendingAction.fullTitle, role: pendingAction.role) {
                     Task {
                         await perform(pendingAction)
                     }
@@ -508,9 +520,9 @@ private struct ReservationNavigationRow: View {
         }
     }
 
-    private var availableActions: [ReservationQuickAction] {
+    private var availableActions: [ReservationHostAction] {
         let status = reservation.statusValue
-        var actions: [ReservationQuickAction] = []
+        var actions: [ReservationHostAction] = []
 
         if controller.capabilities.canConfirmReservations,
            status == .new || status == .needsReview {
@@ -532,7 +544,7 @@ private struct ReservationNavigationRow: View {
         return actions
     }
 
-    private func perform(_ action: ReservationQuickAction) async {
+    private func perform(_ action: ReservationHostAction) async {
         pendingAction = nil
 
         switch action {
@@ -542,86 +554,8 @@ private struct ReservationNavigationRow: View {
             await controller.updateStatus(reservation: reservation, status: .seated, context: modelContext)
         case .cancel:
             await controller.updateStatus(reservation: reservation, status: .cancelled, context: modelContext)
-        }
-    }
-}
-
-private enum ReservationQuickAction: String, Identifiable {
-    case confirm
-    case seat
-    case cancel
-
-    var id: String { rawValue }
-
-    var shortTitle: String {
-        switch self {
-        case .confirm:
-            return "Confirm"
-        case .seat:
-            return "Seat"
-        case .cancel:
-            return "Cancel"
-        }
-    }
-
-    var confirmButtonTitle: String {
-        switch self {
-        case .confirm:
-            return "Confirm and Send Email"
-        case .seat:
-            return "Seat Party"
-        case .cancel:
-            return "Cancel Reservation"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .confirm:
-            return "checkmark.circle"
-        case .seat:
-            return "person.2"
-        case .cancel:
-            return "xmark.circle"
-        }
-    }
-
-    var role: ButtonRole? {
-        self == .cancel ? .destructive : nil
-    }
-
-    var tint: Color {
-        switch self {
-        case .confirm:
-            return .green
-        case .seat:
-            return .blue
-        case .cancel:
-            return .red
-        }
-    }
-
-    func dialogTitle(for reservation: ReservationRecord) -> String {
-        switch self {
-        case .confirm:
-            return "Confirm reservation?"
-        case .seat:
-            return "Seat this party?"
-        case .cancel:
-            return "Cancel reservation?"
-        }
-    }
-
-    func dialogMessage(for reservation: ReservationRecord) -> String {
-        let summary = "\(reservation.guestName), \(reservation.displayDate) at \(reservation.displayTime), party of \(reservation.partySize)."
-
-        switch self {
-        case .confirm:
-            return "\(summary)\n\nThis will mark the reservation confirmed and send a confirmation email to \(reservation.email)."
-        case .seat:
-            return "\(summary)\n\nThis only updates staff status. No email will be sent."
-        case .cancel:
-            return "\(summary)\n\nThis will cancel the managed reservation. No email will be sent yet."
+        case .assignTable, .complete, .noShow:
+            break
         }
     }
 }
