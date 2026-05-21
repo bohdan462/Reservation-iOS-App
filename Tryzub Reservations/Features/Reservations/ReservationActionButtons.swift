@@ -123,7 +123,15 @@ enum ReservationHostAction: String, Identifiable {
 
         if capabilities.canSeatReservations,
            status == .confirmed {
-            actions.append(.seat)
+            if !reservation.hasTableAssignment,
+               capabilities.canEditReservationDetails {
+                actions.append(.assignTable)
+                if includeSecondary {
+                    actions.append(.seat)
+                }
+            } else {
+                actions.append(.seat)
+            }
         }
 
         if capabilities.canSeatReservations,
@@ -133,6 +141,7 @@ enum ReservationHostAction: String, Identifiable {
 
         if includeSecondary,
            capabilities.canEditReservationDetails,
+           !actions.contains(.assignTable),
            status != .completed,
            status != .cancelled,
            status != .noShow {
@@ -201,6 +210,8 @@ struct ReservationActionButtons: View {
     var isBusy = false
     let onAction: (ReservationHostAction) -> Void
 
+    @State private var pendingInlineAction: ReservationHostAction?
+
     private var actions: [ReservationHostAction] {
         ReservationHostAction.availableActions(
             for: reservation,
@@ -210,11 +221,20 @@ struct ReservationActionButtons: View {
     }
 
     var body: some View {
-        if !actions.isEmpty {
-            if compact {
-                compactActions
-            } else {
-                fullActions
+        Group {
+            if !actions.isEmpty {
+                if compact {
+                    compactActions
+                } else {
+                    fullActions
+                }
+            }
+        }
+        .task(id: pendingInlineAction) {
+            guard let action = pendingInlineAction else { return }
+            try? await Task.sleep(for: .seconds(3))
+            if pendingInlineAction == action {
+                pendingInlineAction = nil
             }
         }
     }
@@ -222,24 +242,7 @@ struct ReservationActionButtons: View {
     private var compactActions: some View {
         HStack(spacing: 6) {
             if let primaryAction = actions.first {
-                Button {
-                    onAction(primaryAction)
-                } label: {
-                    Text(primaryAction.rowTitle)
-                        .font(.caption.weight(.bold))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.primary)
-                .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color.primary.opacity(0.45), lineWidth: 1)
-                )
-                .disabled(isBusy)
+                actionButton(primaryAction, compact: true, isPrimary: true)
             }
 
             if includeSecondary, actions.count > 1 {
@@ -260,51 +263,148 @@ struct ReservationActionButtons: View {
                 .disabled(isBusy)
             }
         }
+        .layoutPriority(1)
     }
 
     private var fullActions: some View {
         HStack(spacing: 8) {
-            ForEach(actions.prefix(3)) { action in
-                Button {
-                    onAction(action)
-                } label: {
-                    Label(action.shortTitle, systemImage: action.systemImage)
-                        .labelStyle(.titleAndIcon)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.primary)
-                .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(Color.primary.opacity(0.38), lineWidth: 1)
-                )
-                .disabled(isBusy)
+            if let primaryAction = actions.first {
+                actionButton(primaryAction, compact: false, isPrimary: true)
             }
 
-            if actions.count > 3 {
-                    Menu {
-                    ForEach(actions.dropFirst(3)) { action in
+            if actions.count > 1 {
+                Menu {
+                    ForEach(actions.dropFirst()) { action in
                             Button(role: action.role) {
                                 onAction(action)
                             } label: {
                                 Label(action.fullTitle, systemImage: action.systemImage)
                             }
                         }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                        .font(.title3)
-                        .foregroundStyle(.primary.opacity(0.7))
-                    }
-                .buttonStyle(.plain)
-                    .disabled(isBusy)
+                } label: {
+                    Label("More", systemImage: "ellipsis")
+                        .labelStyle(.titleAndIcon)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(.primary.opacity(0.74))
+                .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .disabled(isBusy)
             }
         }
+    }
+
+    private func actionButton(_ action: ReservationHostAction, compact: Bool, isPrimary: Bool) -> some View {
+        Button {
+            handleTap(action)
+        } label: {
+            if compact {
+                Text(title(for: action, compact: true))
+                    .font(.caption2.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+            } else {
+                Label(title(for: action, compact: false), systemImage: action.systemImage)
+                    .labelStyle(.titleAndIcon)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(pendingInlineAction == action ? Color(.systemBackground) : .primary)
+        .background(
+            pendingInlineAction == action ? Color.primary : Color(.systemGray6),
+            in: RoundedRectangle(cornerRadius: compact ? 8 : 9, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: compact ? 8 : 9, style: .continuous)
+                .stroke(pendingInlineAction == action ? Color.primary.opacity(0.7) : Color.primary.opacity(isPrimary ? 0.42 : 0.24), lineWidth: 1)
+        )
+        .disabled(isBusy)
+        .accessibilityLabel(accessibilityLabel(for: action))
+    }
+
+    private func title(for action: ReservationHostAction, compact: Bool) -> String {
+        if pendingInlineAction == action {
+            switch action {
+            case .confirm:
+                return hasConfirmationEmailTimestamp ? "Confirm?" : "Send email?"
+            case .seat:
+                return "Seat now?"
+            case .complete:
+                return "Complete?"
+            case .cancel:
+                return "Cancel?"
+            case .noShow:
+                return "No show?"
+            case .assignTable:
+                return action.rowTitle
+            }
+        }
+
+        return compact ? action.rowTitle : action.shortTitle
+    }
+
+    private var hasConfirmationEmailTimestamp: Bool {
+        reservation.confirmationEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    private func handleTap(_ action: ReservationHostAction) {
+        guard action.needsInlineConfirmation else {
+            pendingInlineAction = nil
+            onAction(action)
+            return
+        }
+
+        if pendingInlineAction == action {
+            pendingInlineAction = nil
+            onAction(action)
+        } else {
+            pendingInlineAction = action
+        }
+    }
+
+    private func accessibilityLabel(for action: ReservationHostAction) -> String {
+        switch action {
+        case .confirm:
+            return pendingInlineAction == action
+                ? "Confirm reservation for \(reservation.guestName)"
+                : "Prepare to confirm reservation for \(reservation.guestName)"
+        case .seat:
+            return pendingInlineAction == action
+                ? "Seat party of \(reservation.partySize)"
+                : "Prepare to seat party of \(reservation.partySize)"
+        case .assignTable:
+            return "Assign table for \(reservation.guestName)"
+        case .complete:
+            return pendingInlineAction == action ? "Complete visit" : "Prepare to complete visit"
+        case .cancel:
+            return "Cancel reservation for \(reservation.guestName)"
+        case .noShow:
+            return "Mark no show for \(reservation.guestName)"
+        }
+    }
+}
+
+private extension ReservationHostAction {
+    var needsInlineConfirmation: Bool {
+        switch self {
+        case .confirm, .seat, .complete:
+            return true
+        case .assignTable, .cancel, .noShow:
+            return false
+        }
+    }
 }
 
 struct TableAssignmentSheet: View {

@@ -23,13 +23,11 @@ struct HostBoardView: View {
     @State private var compactScope: HostBoardScope = .upcoming
     @State private var pendingAction: ReservationPendingAction?
     @State private var tableAssignmentReservation: ReservationRecord?
-    @State private var seatWithoutTableReservation: ReservationRecord?
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
             || pendingAction != nil
             || tableAssignmentReservation != nil
-            || seatWithoutTableReservation != nil
     }
 
     var body: some View {
@@ -51,14 +49,14 @@ struct HostBoardView: View {
 
                     warningArea(snapshot: snapshot)
 
-                    if proxy.size.width >= 820 {
+                    if proxy.size.width >= 1100 {
                         wideBoard(snapshot: snapshot)
                     } else {
                         compactBoard(snapshot: snapshot)
                     }
                 }
-                .padding(.horizontal, proxy.size.width >= 820 ? 20 : 16)
-                .padding(.vertical, 16)
+                .padding(.horizontal, proxy.size.width >= 1100 ? 16 : 12)
+                .padding(.vertical, proxy.size.width >= 1100 ? 12 : 10)
             }
             .background(Color(.systemGroupedBackground))
         }
@@ -85,34 +83,6 @@ struct HostBoardView: View {
                 Text(pendingAction.action.dialogMessage(for: pendingAction.reservation))
             }
         }
-        .confirmationDialog(
-            "Seat without table assignment?",
-            isPresented: Binding(
-                get: { seatWithoutTableReservation != nil },
-                set: { if !$0 { seatWithoutTableReservation = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            if let reservation = seatWithoutTableReservation {
-                Button("Assign Table") {
-                    tableAssignmentReservation = reservation
-                    seatWithoutTableReservation = nil
-                }
-                Button("Seat Anyway") {
-                    Task {
-                        seatWithoutTableReservation = nil
-                        await controller.updateStatus(reservation: reservation, status: .seated, context: modelContext)
-                    }
-                }
-            }
-            Button("Cancel", role: .cancel) {
-                seatWithoutTableReservation = nil
-            }
-        } message: {
-            if let reservation = seatWithoutTableReservation {
-                Text("\(reservation.guestName) has no table assigned. Assign a table first or seat anyway.")
-            }
-        }
         .sheet(item: $tableAssignmentReservation) { reservation in
             TableAssignmentSheet(reservation: reservation) { tableName in
                 _ = try await controller.updateReservation(
@@ -136,30 +106,30 @@ struct HostBoardView: View {
     }
 
     private func warningArea(snapshot: HostBoardSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                if failedImportCount > 0, controller.capabilities.canViewFailedImports {
-                    FormProblemsBanner(count: failedImportCount, onTap: onShowFormProblems)
-                }
-
-                if !snapshot.needsReview.isEmpty {
-                    HostWarningBanner(
-                        title: "\(snapshot.needsReview.count) need review",
-                        message: "",
-                        symbolName: "exclamationmark.triangle",
-                        tint: .orange
-                    )
-                }
-
-                if snapshot.noTableCount > 0 {
-                    HostWarningBanner(
-                        title: "\(snapshot.noTableCount) without table",
-                        message: "",
-                        symbolName: "table.furniture",
-                        tint: .indigo
-                    )
-                }
+        HStack(spacing: 8) {
+            if failedImportCount > 0, controller.capabilities.canViewFailedImports {
+                FormProblemsBanner(count: failedImportCount, onTap: onShowFormProblems)
             }
+
+            if !snapshot.needsReview.isEmpty {
+                HostWarningBanner(
+                    title: "\(snapshot.needsReview.count) need review",
+                    message: "",
+                    symbolName: "exclamationmark.triangle",
+                    tint: .secondary
+                )
+            }
+
+            if snapshot.noTableCount > 0 {
+                HostWarningBanner(
+                    title: "\(snapshot.noTableCount) without table",
+                    message: "",
+                    symbolName: "table.furniture",
+                    tint: .secondary
+                )
+            }
+
+            Spacer(minLength: 0)
         }
     }
 
@@ -175,12 +145,7 @@ struct HostBoardView: View {
                 environment: environment,
                 onAction: handleAction
             )
-            .frame(
-                minWidth: snapshot.seated.isEmpty ? 240 : 360,
-                idealWidth: snapshot.seated.isEmpty ? 260 : nil,
-                maxWidth: snapshot.seated.isEmpty ? 300 : .infinity,
-                alignment: .topLeading
-            )
+            .frame(maxWidth: .infinity, alignment: .topLeading)
 
             HostBoardColumn(
                 title: "Upcoming Today",
@@ -192,7 +157,7 @@ struct HostBoardView: View {
                 environment: environment,
                 onAction: handleAction
             )
-            .layoutPriority(snapshot.seated.isEmpty ? 2 : 1)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
@@ -237,9 +202,13 @@ struct HostBoardView: View {
         if action == .assignTable {
             tableAssignmentReservation = reservation
         } else if action == .seat, !reservation.hasTableAssignment {
-            seatWithoutTableReservation = reservation
-        } else {
+            tableAssignmentReservation = reservation
+        } else if action == .cancel || action == .noShow {
             pendingAction = ReservationPendingAction(reservation: reservation, action: action)
+        } else {
+            Task {
+                await perform(action, on: reservation)
+            }
         }
     }
 
@@ -344,16 +313,16 @@ private struct HostBoardSummaryCard: View {
             wideSummary
             compactSummary
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 9))
     }
 
     private var wideSummary: some View {
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(Date().formatted(date: .abbreviated, time: .omitted))
-                    .font(.headline.weight(.bold))
+                    .font(.subheadline.weight(.bold))
                     .lineLimit(1)
                 HStack(spacing: 5) {
                         if isSyncing {
@@ -371,12 +340,12 @@ private struct HostBoardSummaryCard: View {
             Spacer(minLength: 8)
 
             HStack(spacing: 8) {
-                SummaryMetricChip(title: "Count", value: reservationCount, symbolName: "calendar", tint: .blue)
-                SummaryMetricChip(title: "Guests", value: guestCount, symbolName: "person.2", tint: .green)
-                SummaryMetricChip(title: "New", value: newCount, symbolName: "sparkle", tint: .cyan)
-                SummaryMetricChip(title: "Review", value: reviewCount, symbolName: "exclamationmark.triangle", tint: .orange)
-                SummaryMetricChip(title: "Forms", value: failedImportCount, symbolName: "exclamationmark.octagon", tint: .red)
-                SummaryMetricChip(title: "No Table", value: noTableCount, symbolName: "table.furniture", tint: .indigo)
+                SummaryMetricChip(title: "Count", value: reservationCount, symbolName: "calendar", tint: .secondary)
+                SummaryMetricChip(title: "Guests", value: guestCount, symbolName: "person.2", tint: .secondary)
+                SummaryMetricChip(title: "New", value: newCount, symbolName: "sparkle", tint: .secondary)
+                SummaryMetricChip(title: "Review", value: reviewCount, symbolName: "exclamationmark.triangle", tint: .secondary)
+                SummaryMetricChip(title: "Forms", value: failedImportCount, symbolName: "exclamationmark.octagon", tint: .secondary)
+                SummaryMetricChip(title: "No Table", value: noTableCount, symbolName: "table.furniture", tint: .secondary)
             }
         }
     }
@@ -386,7 +355,7 @@ private struct HostBoardSummaryCard: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(Date().formatted(date: .abbreviated, time: .omitted))
-                        .font(.headline.weight(.bold))
+                        .font(.subheadline.weight(.bold))
                     HStack(spacing: 6) {
                         if isSyncing {
                             ProgressView()
@@ -401,12 +370,12 @@ private struct HostBoardSummaryCard: View {
             }
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 6)], spacing: 6) {
-                SummaryMetricChip(title: "Count", value: reservationCount, symbolName: "calendar", tint: .blue)
-                SummaryMetricChip(title: "Guests", value: guestCount, symbolName: "person.2", tint: .green)
-                SummaryMetricChip(title: "New", value: newCount, symbolName: "sparkle", tint: .cyan)
-                SummaryMetricChip(title: "Review", value: reviewCount, symbolName: "exclamationmark.triangle", tint: .orange)
-                SummaryMetricChip(title: "Forms", value: failedImportCount, symbolName: "exclamationmark.octagon", tint: .red)
-                SummaryMetricChip(title: "No Table", value: noTableCount, symbolName: "table.furniture", tint: .indigo)
+                SummaryMetricChip(title: "Count", value: reservationCount, symbolName: "calendar", tint: .secondary)
+                SummaryMetricChip(title: "Guests", value: guestCount, symbolName: "person.2", tint: .secondary)
+                SummaryMetricChip(title: "New", value: newCount, symbolName: "sparkle", tint: .secondary)
+                SummaryMetricChip(title: "Review", value: reviewCount, symbolName: "exclamationmark.triangle", tint: .secondary)
+                SummaryMetricChip(title: "Forms", value: failedImportCount, symbolName: "exclamationmark.octagon", tint: .secondary)
+                SummaryMetricChip(title: "No Table", value: noTableCount, symbolName: "table.furniture", tint: .secondary)
             }
         }
     }
@@ -431,13 +400,13 @@ private struct SummaryMetricChip: View {
                 .lineLimit(1)
 
             Text(value, format: .number)
-                .font(.headline.weight(.bold))
+                .font(.subheadline.weight(.bold))
                 .monospacedDigit()
                 .lineLimit(1)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .background(Color(.secondarySystemGroupedBackground), in: Capsule())
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color(.systemGray6), in: Capsule())
     }
 }
 
@@ -499,14 +468,14 @@ private struct HostBoardReservationRow: View {
             context: rowContext
         ) {
             HStack(spacing: 10) {
-            NavigationLink {
-                ReservationDetailView(reservation: reservation, environment: environment)
-            } label: {
+                NavigationLink {
+                    ReservationDetailView(reservation: reservation, environment: environment)
+                } label: {
                     Image(systemName: "ellipsis")
                         .font(.body.weight(.bold))
                         .foregroundStyle(.primary.opacity(0.7))
-            }
-            .buttonStyle(.borderless)
+                }
+                .buttonStyle(.plain)
 
                 ReservationActionButtons(
                     reservation: reservation,
@@ -516,6 +485,27 @@ private struct HostBoardReservationRow: View {
                     isBusy: controller.isActionInProgress(for: reservation)
                 ) { action in
                     onAction(action, reservation)
+                }
+            }
+        }
+        .contextMenu {
+            NavigationLink {
+                ReservationDetailView(reservation: reservation, environment: environment)
+            } label: {
+                Label("Details", systemImage: "info.circle")
+            }
+
+            ForEach(
+                ReservationHostAction.availableActions(
+                    for: reservation,
+                    capabilities: controller.capabilities,
+                    includeSecondary: true
+                )
+            ) { action in
+                Button(role: action.role) {
+                    onAction(action, reservation)
+                } label: {
+                    Label(action.fullTitle, systemImage: action.systemImage)
                 }
             }
         }
@@ -553,22 +543,21 @@ private struct HostWarningBanner: View {
     let tint: Color
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 6) {
             Image(systemName: symbolName)
-                .font(.subheadline)
+                .font(.caption2.weight(.bold))
                 .foregroundStyle(.secondary)
-                .frame(width: 15, height: 15)
-                .background(Color(.systemGray5), in: Circle())
+                .frame(width: 12, height: 12)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline)
-            }
-
-            Spacer(minLength: 0)
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
-        .padding(12)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background(Color(.secondarySystemGroupedBackground), in: Capsule())
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

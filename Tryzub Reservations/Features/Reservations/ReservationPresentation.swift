@@ -49,8 +49,8 @@ enum ReservationScheduleScope: String, CaseIterable, Identifiable {
 }
 
 enum ReservationQueueScope: String, CaseIterable, Identifiable {
-    case needsReview = "Review"
     case new = "New"
+    case needsReview = "Review"
 
     var id: String { rawValue }
 }
@@ -272,5 +272,15 @@ extension ReservationRecord {
         }
 
         return value
+    }
+
+    static func sortedByCreatedAtAscending(_ reservations: [ReservationRecord]) -> [ReservationRecord] {
+        reservations.sorted {
+            if $0.createdAt == $1.createdAt {
+                return $0.remoteID < $1.remoteID
+            }
+
+            return $0.createdAt < $1.createdAt
+        }
     }
 }

@@ -53,6 +53,18 @@ struct AppNoticeOverlay: View {
                 .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
             }
             .buttonStyle(.plain)
+            .task(id: notice.id) {
+                switch notice.severity {
+                case .success, .info:
+                    try? await Task.sleep(for: .seconds(3))
+                case .warning, .error:
+                    try? await Task.sleep(for: .seconds(5))
+                }
+
+                if notices.contains(notice) {
+                    onDismiss(notice)
+                }
+            }
             .sheet(isPresented: $showingDetails) {
                 AppNoticeListView(
                     notices: notices,
@@ -159,4 +171,3 @@ struct NoticeDetailRow: View {
         .padding(.vertical, 4)
     }
 }
-

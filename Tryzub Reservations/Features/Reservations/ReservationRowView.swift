@@ -38,6 +38,7 @@ struct ReservationRowView<Accessory: View>: View {
     let reservation: ReservationRecord
     var showsDate = true
     var context: ReservationRowContext = .schedule
+    var contextNote: String?
 
     @ViewBuilder let accessory: () -> Accessory
 
@@ -47,11 +48,13 @@ struct ReservationRowView<Accessory: View>: View {
         reservation: ReservationRecord,
         showsDate: Bool = true,
         context: ReservationRowContext = .schedule,
+        contextNote: String? = nil,
         @ViewBuilder accessory: @escaping () -> Accessory
     ) {
         self.reservation = reservation
         self.showsDate = showsDate
         self.context = context
+        self.contextNote = contextNote
         self.accessory = accessory
     }
 
@@ -67,10 +70,10 @@ struct ReservationRowView<Accessory: View>: View {
     }
 
     private var wideRow: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
-                if let eyebrow {
-                    Text(eyebrow)
+                if let compactEyebrow {
+                    Text(compactEyebrow)
                         .font(.caption2.weight(.black))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -99,7 +102,7 @@ struct ReservationRowView<Accessory: View>: View {
                 }
 
                 HStack(spacing: 5) {
-                    Image(systemName: "chair.lounge.fill")
+                    Image(systemName: "table.furniture")
                         .font(.caption2.weight(.bold))
                     Text(tableText)
                         .lineLimit(1)
@@ -129,6 +132,14 @@ struct ReservationRowView<Accessory: View>: View {
                         ReservationInlineMeta(text: "LARGE", systemImage: "person.3.fill")
                     }
                 }
+
+                if let contextNote {
+                    Text(contextNote)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
             .layoutPriority(2)
 
@@ -152,76 +163,111 @@ struct ReservationRowView<Accessory: View>: View {
             accessory()
                 .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(minHeight: 58)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(minHeight: 54)
       
         .background(rowBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(rowStroke)
     }
 
     private var compactRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                VStack(alignment: .leading, spacing: 1) {
-                    if let eyebrow {
-                        Text(eyebrow)
-                            .font(.caption2.weight(.black))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-
-                    Text(reservation.displayTime)
-                        .font(.title3.weight(.black))
-                        .monospacedDigit()
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 0) {
+                if let compactEyebrow {
+                    Text(compactEyebrow)
+                        .font(.caption2.weight(.black))
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
                 }
 
-                VStack(alignment: .leading, spacing: 3) {
+                Text(reservation.displayTime)
+                    .font(.title3.weight(.black))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .frame(width: 66, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(reservation.guestName.uppercased())
-                        .font(.headline.weight(.black))
+                        .font(.subheadline.weight(.black))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.82)
                         .truncationMode(.tail)
 
-                    HStack(spacing: 9) {
+                    Spacer(minLength: 2)
+
+                    ReservationStatusBadge(status: reservation.statusValue)
+                }
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 7) {
                         ReservationInlineMeta(text: "\(reservation.partySize)", systemImage: "person.fill")
-                        ReservationInlineMeta(text: tableText, systemImage: "chair.lounge.fill")
+                        ReservationInlineMeta(text: tableText, systemImage: "table.furniture")
                         if !reservation.phone.isEmpty {
                             ReservationInlineMeta(text: reservation.formattedPhone, systemImage: "phone.fill")
                         }
                     }
+
+                    HStack(spacing: 7) {
+                        ReservationInlineMeta(text: "\(reservation.partySize)", systemImage: "person.fill")
+                        ReservationInlineMeta(text: tableText, systemImage: "table.furniture")
+                    }
                 }
-                .layoutPriority(2)
 
-                Spacer(minLength: 0)
+                HStack(spacing: 5) {
+                    if let contextNote {
+                        Text(contextNote)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
 
-                ReservationStatusBadge(status: reservation.statusValue)
+                    if reservation.hasGuestNotes || reservation.hasStaffNotes {
+                        ReservationInlineMeta(text: "NOTES", systemImage: "note.text")
+                    }
+                }
             }
+            .layoutPriority(2)
 
-            HStack(spacing: 8) {
-                if reservation.hasGuestNotes || reservation.hasStaffNotes {
-                    ReservationInlineMeta(text: "NOTES", systemImage: "note.text")
-                }
-
-                if reservation.partySize >= 7 {
-                    ReservationInlineMeta(text: "LARGE PARTY", systemImage: "person.3.fill")
-                }
-
-                Spacer(minLength: 0)
-
-                accessory()
-            }
+            accessory()
+                .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .frame(minHeight: 76)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .frame(minHeight: 58)
         .background(rowBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(rowStroke)
     }
 
     private var eyebrow: String? {
         context.eyebrow(for: reservation, showsDate: showsDate)
+    }
+
+    private var compactEyebrow: String? {
+        switch context {
+        case .schedule, .review:
+            return showsDate ? Self.shortDateLabel(from: reservation.reservationDate) : eyebrow
+        case .todayUpcoming, .todaySeated:
+            return eyebrow
+        }
+    }
+
+    private static func shortDateLabel(from value: String) -> String {
+        let parts = value.split(separator: "-")
+        guard parts.count == 3,
+              let month = Int(parts[1]),
+              let day = Int(parts[2]),
+              (1...12).contains(month) else {
+            return value
+        }
+
+        let months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+        return "\(months[month - 1]) \(day)"
     }
 
     private var tableText: String {
@@ -244,12 +290,12 @@ struct ReservationRowView<Accessory: View>: View {
     private var rowBackground: Color {
         context.isNext
             ? Color(.systemGray5)
-            : Color(.secondarySystemGroupedBackground)
+            : Color(.systemBackground)
     }
 
     private var rowStroke: some View {
         RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .stroke(context.isNext ? Color.primary.opacity(0.32) : Color.clear, lineWidth: 1)
+            .stroke(context.isNext ? Color.primary.opacity(0.32) : Color.primary.opacity(0.08), lineWidth: 1)
     }
 }
 
@@ -257,12 +303,14 @@ extension ReservationRowView where Accessory == EmptyView {
     init(
         reservation: ReservationRecord,
         showsDate: Bool = true,
-        context: ReservationRowContext = .schedule
+        context: ReservationRowContext = .schedule,
+        contextNote: String? = nil
     ) {
         self.init(
             reservation: reservation,
             showsDate: showsDate,
-            context: context
+            context: context,
+            contextNote: contextNote
         ) {
             EmptyView()
         }
@@ -298,7 +346,7 @@ private struct ReservationInlineMeta: View {
                 .truncationMode(.tail)
         }
         .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+        .fixedSize(horizontal: false, vertical: false)
     }
 }
 

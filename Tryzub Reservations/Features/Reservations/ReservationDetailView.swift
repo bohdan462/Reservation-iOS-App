@@ -18,7 +18,6 @@ struct ReservationDetailView: View {
     @State private var errorMessage: String?
     @State private var pendingAction: ReservationHostAction?
     @State private var tableAssignmentReservation: ReservationRecord?
-    @State private var showSeatWithoutTableDialog = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -80,23 +79,6 @@ struct ReservationDetailView: View {
                 Text(pendingAction.dialogMessage(for: reservation))
             }
         }
-        .confirmationDialog(
-            "Seat without table assignment?",
-            isPresented: $showSeatWithoutTableDialog,
-            titleVisibility: .visible
-        ) {
-            Button("Assign Table") {
-                tableAssignmentReservation = reservation
-            }
-            Button("Seat Anyway") {
-                Task {
-                    await perform(.seat, allowSeatWithoutTable: true)
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("\(reservation.guestName) has no table assigned. Assign a table first, or seat the party anyway if the host stand already knows the table.")
-        }
     }
 
     @ViewBuilder
@@ -138,6 +120,7 @@ struct ReservationDetailView: View {
 
                     VStack(spacing: 14) {
                         ReservationContactCard(reservation: reservation)
+                        ReservationEmailHistoryCard(reservation: reservation)
                         ReservationFactsCard(reservation: reservation)
                         ReservationOperationalCard(reservation: reservation)
                     }
@@ -152,6 +135,7 @@ struct ReservationDetailView: View {
                     onEdit: { showEditSheet = true }
                 )
                 ReservationContactCard(reservation: reservation)
+                ReservationEmailHistoryCard(reservation: reservation)
                 ReservationFactsCard(reservation: reservation)
                 ReservationNotesCard(reservation: reservation) {
                     showEditSheet = true
@@ -165,16 +149,20 @@ struct ReservationDetailView: View {
         if action == .assignTable {
             tableAssignmentReservation = reservation
         } else if action == .seat, !reservation.hasTableAssignment {
-            showSeatWithoutTableDialog = true
-        } else {
+            tableAssignmentReservation = reservation
+        } else if action == .cancel || action == .noShow {
             pendingAction = action
+        } else {
+            Task {
+                await perform(action)
+            }
         }
     }
 
     private func perform(_ action: ReservationHostAction, allowSeatWithoutTable: Bool = false) async {
         if action == .seat, !allowSeatWithoutTable, !reservation.hasTableAssignment {
             pendingAction = nil
-            showSeatWithoutTableDialog = true
+            tableAssignmentReservation = reservation
             return
         }
 
@@ -215,7 +203,7 @@ private struct ReservationHeroCard: View {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(reservation.displayTime)
-                        .font(.system(size: 38, weight: .bold, design: .rounded))
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
@@ -233,7 +221,7 @@ private struct ReservationHeroCard: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(reservation.guestName)
-                    .font(.title2.weight(.bold))
+                    .font(.title3.weight(.bold))
                     .lineLimit(1)
                     .truncationMode(.tail)
 
@@ -321,6 +309,61 @@ private struct ReservationFactsCard: View {
                 DetailInfoRow(title: "Party", value: "\(reservation.partySize) guests", monospaced: true)
                 DetailInfoRow(title: "Table", value: reservation.tableDisplay)
                 DetailInfoRow(title: "Status", value: reservation.statusValue.displayName)
+            }
+        }
+    }
+}
+
+private struct ReservationEmailHistoryCard: View {
+    let reservation: ReservationRecord
+
+    private var sentText: String? {
+        guard reservation.confirmationEmailSentAt?.nilIfBlank != nil else {
+            return nil
+        }
+
+        return DetailDateFormatting.server(reservation.confirmationEmailSentAt)
+    }
+
+    private var statusTitle: String {
+        if sentText != nil {
+            return "Confirmation sent"
+        }
+
+        if reservation.statusValue == .confirmed {
+            return "Email not recorded"
+        }
+
+        return "Not sent yet"
+    }
+
+    private var statusMessage: String {
+        if let sentText {
+            return "Backend recorded the confirmation email at \(sentText)."
+        }
+
+        if reservation.statusValue == .confirmed {
+            return "This reservation is confirmed, but the app has no sent-email timestamp. Follow up manually if needed."
+        }
+
+        return "Use Confirm to send the backend confirmation email."
+    }
+
+    var body: some View {
+        DetailCard(title: "Confirmation Email", systemImage: "envelope.badge") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: sentText == nil ? "exclamationmark.triangle" : "checkmark.circle")
+                        .foregroundStyle(.secondary)
+                    Text(statusTitle)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 0)
+                }
+
+                Text(statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

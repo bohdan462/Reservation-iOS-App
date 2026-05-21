@@ -51,7 +51,7 @@ struct ReservationsListView: View {
                 onDismiss: controller.dismissNotice,
                 onClearAll: controller.clearAllNotices
             )
-            .padding(.top, 10)
+            .padding(.top, noticeTopPadding)
             .padding(.trailing, 14)
         }
         .task {
@@ -73,6 +73,15 @@ struct ReservationsListView: View {
             case .importFailures, .admin:
                 return selectedTab == .today || selectedTab == .more
             }
+        }
+    }
+
+    private var noticeTopPadding: CGFloat {
+        switch selectedTab {
+        case .schedule, .review:
+            return 112
+        case .today, .more:
+            return 62
         }
     }
 }
@@ -120,6 +129,7 @@ private struct TodayDashboardView: View {
                 }
             )
             .navigationTitle("Today")
+            .navigationBarTitleDisplayMode(.inline)
             .refreshable {
                 await controller.requestManualTodayRefresh(context: modelContext)
             }
@@ -277,7 +287,10 @@ private struct ReservationScheduleView: View {
                 }
             }
             .navigationTitle("Schedule")
+            .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: "Name, phone, email, table")
+            .listStyle(.plain)
+            .contentMargins(.horizontal, 0, for: .scrollContent)
             .refreshable {
                 await controller.requestScheduleRefresh(context: modelContext)
             }
@@ -329,7 +342,7 @@ private struct ReservationReviewQueueView: View {
     ])
     private var reservations: [ReservationRecord]
 
-    @State private var scope: ReservationQueueScope = .needsReview
+    @State private var scope: ReservationQueueScope = .new
     @State private var searchText = ""
 
     let environment: AppEnvironment
@@ -350,11 +363,7 @@ private struct ReservationReviewQueueView: View {
             ? rows
             : rows.filter { $0.matchesSearch(trimmedSearchText) }
 
-        return ReservationRecord.sortedChronologically(searchedRows)
-    }
-
-    private var sections: [ReservationDateSection] {
-        ReservationRecord.dateSections(from: queueReservations, newestFirst: false)
+        return ReservationRecord.sortedByCreatedAtAscending(searchedRows)
     }
 
     var body: some View {
@@ -369,7 +378,7 @@ private struct ReservationReviewQueueView: View {
                     .pickerStyle(.segmented)
                 }
 
-                if sections.isEmpty {
+                if queueReservations.isEmpty {
                     Section {
                         ContentUnavailableView(
                             scope == .needsReview ? "Nothing Needs Review" : "No New Reservations",
@@ -378,28 +387,30 @@ private struct ReservationReviewQueueView: View {
                         )
                     }
                 } else {
-                    ForEach(sections) { section in
-                        Section {
-                            ForEach(section.reservations) { reservation in
-                                ReservationNavigationRow(
-                                    reservation: reservation,
-                                    environment: environment,
-                                    context: .review
-                                )
-                            }
-                        } header: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(section.title)
-                                Text(section.subtitle)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
+                    Section {
+                        ForEach(queueReservations) { reservation in
+                            ReservationNavigationRow(
+                                reservation: reservation,
+                                environment: environment,
+                                context: .review,
+                                contextNote: reviewContext(for: reservation)
+                            )
+                        }
+                    } header: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(scope == .new ? "New submissions" : "Needs review")
+                            Text("Oldest submitted first")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
             }
             .navigationTitle("Review")
+            .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: "Name, phone, email")
+            .listStyle(.plain)
+            .contentMargins(.horizontal, 0, for: .scrollContent)
             .refreshable {
                 await controller.requestReviewRefresh(context: modelContext)
             }
@@ -425,6 +436,21 @@ private struct ReservationReviewQueueView: View {
                 await controller.reviewBecameActive(context: modelContext)
             }
         }
+    }
+
+    private func reviewContext(for reservation: ReservationRecord) -> String {
+        let activeSameDay = reservations.filter {
+            $0.reservationDate == reservation.reservationDate
+                && $0.statusValue != .cancelled
+                && $0.statusValue != .noShow
+        }
+        let dayGuests = activeSameDay.reduce(0) { $0 + $1.partySize }
+        let sameTime = activeSameDay.filter {
+            String($0.reservationTime.prefix(5)) == String(reservation.reservationTime.prefix(5))
+        }
+        let sameTimeGuests = sameTime.reduce(0) { $0 + $1.partySize }
+
+        return "Booked: \(activeSameDay.count)/\(dayGuests) ppl · Same time: \(sameTime.count)/\(sameTimeGuests) ppl"
     }
 }
 
@@ -500,22 +526,68 @@ private struct ReservationNavigationRow: View {
     let reservation: ReservationRecord
     let environment: AppEnvironment
     var context: ReservationRowContext = .schedule
+    var contextNote: String?
 
     @State private var pendingAction: ReservationHostAction?
+    @State private var tableAssignmentReservation: ReservationRecord?
+    @State private var showDetail = false
 
     var body: some View {
-        NavigationLink {
-            ReservationDetailView(reservation: reservation, environment: environment)
-        } label: {
-            ReservationRowView(reservation: reservation, context: context)
+        ReservationRowView(
+            reservation: reservation,
+            context: context,
+            contextNote: contextNote
+        ) {
+            HStack(spacing: 8) {
+                ReservationActionButtons(
+                    reservation: reservation,
+                    capabilities: controller.capabilities,
+                    compact: true,
+                    includeSecondary: false,
+                    isBusy: controller.isActionInProgress(for: reservation)
+                ) { action in
+                    handleAction(action)
+                }
+
+                Button {
+                    showDetail = true
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Details for \(reservation.guestName)")
+            }
         }
-        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button {
+                showDetail = true
+            } label: {
+                Label("Details", systemImage: "info.circle")
+            }
+
+            ForEach(availableActions) { action in
+                Button(role: action.role) {
+                    handleAction(action)
+                } label: {
+                    Label(action.fullTitle, systemImage: action.systemImage)
+                }
+            }
+        }
+        .navigationDestination(isPresented: $showDetail) {
+            ReservationDetailView(reservation: reservation, environment: environment)
+        }
+        .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             ForEach(availableActions) { action in
                 Button(role: action.role) {
-                    pendingAction = action
+                    handleAction(action)
                 } label: {
                     Label(action.shortTitle, systemImage: action.systemImage)
                 }
@@ -546,6 +618,15 @@ private struct ReservationNavigationRow: View {
                 Text(pendingAction.dialogMessage(for: reservation))
             }
         }
+        .sheet(item: $tableAssignmentReservation) { reservation in
+            TableAssignmentSheet(reservation: reservation) { tableName in
+                _ = try await controller.updateReservation(
+                    id: reservation.remoteID,
+                    request: ReservationUpdateRequest(tableName: tableName),
+                    context: modelContext
+                )
+            }
+        }
     }
 
     private var availableActions: [ReservationHostAction] {
@@ -562,6 +643,13 @@ private struct ReservationNavigationRow: View {
             actions.append(.seat)
         }
 
+        if controller.capabilities.canEditReservationDetails,
+           status != .cancelled,
+           status != .completed,
+           status != .noShow {
+            actions.append(.assignTable)
+        }
+
         if controller.capabilities.canCancelReservations,
            status != .cancelled,
            status != .completed,
@@ -570,6 +658,19 @@ private struct ReservationNavigationRow: View {
         }
 
         return actions
+    }
+
+    private func handleAction(_ action: ReservationHostAction) {
+        switch action {
+        case .assignTable:
+            tableAssignmentReservation = reservation
+        case .cancel, .noShow:
+            pendingAction = action
+        case .confirm, .seat, .complete:
+            Task {
+                await perform(action)
+            }
+        }
     }
 
     private func perform(_ action: ReservationHostAction) async {
@@ -582,8 +683,12 @@ private struct ReservationNavigationRow: View {
             await controller.updateStatus(reservation: reservation, status: .seated, context: modelContext)
         case .cancel:
             await controller.updateStatus(reservation: reservation, status: .cancelled, context: modelContext)
-        case .assignTable, .complete, .noShow:
-            break
+        case .assignTable:
+            tableAssignmentReservation = reservation
+        case .complete:
+            await controller.updateStatus(reservation: reservation, status: .completed, context: modelContext)
+        case .noShow:
+            await controller.updateStatus(reservation: reservation, status: .noShow, context: modelContext)
         }
     }
 }

@@ -291,7 +291,21 @@ The admin screen shows:
 
 Admin tests do not mutate real reservations by default. There are no confirm/cancel/seat/create/email-send tests in this screen.
 
-## 14. SwiftData Performance Changes
+## 14. Restaurant UI / UX Notes
+
+The restaurant-facing screens are kept calm and operational rather than diagnostic.
+
+- Today host board uses a compact top summary strip so the reservation board gets the screen priority, especially on iPad landscape.
+- Form-problem, needs-review, and no-table warnings are compact chips instead of large warning blocks.
+- Today, Schedule, and Review use the same adaptive `ReservationRowView` language with compact metadata, table status, phone, notes, status, and a right-side action/details area.
+- Confirm, Seat, and Complete use inline two-step action buttons: first tap arms the action, second tap within a few seconds performs it. The armed button changes color and uses meaningful text such as `Send email?` or `Seat now?`. Normal confirm/seat actions no longer show a modal confirmation dialog.
+- Review defaults to `New`, sorts by `created_at` ascending, and shows lightweight local context for the reservation day/time so staff has a better sense of current known load before confirming.
+- Review queue context uses staff language: booked reservation count / people and same-time booking count / people.
+- Unassigned tables show as `x` in compact rows to avoid wrapping; detail still spells out the table status.
+- Detail includes a Confirmation Email card showing whether the backend recorded a sent timestamp or whether staff should follow up manually.
+- Notices remain non-blocking and auto-dismiss quickly instead of hanging over search or toolbar controls.
+
+## 15. SwiftData Performance Changes
 
 Repository upsert now fetches existing local records once per batch, builds a dictionary by `remoteID`, updates/inserts rows, and saves once.
 
@@ -305,7 +319,7 @@ Remaining possible optimization:
 
 - Today, Schedule, and Review still use broad `@Query` reads and local filtering. This is acceptable for pilot-sized data but should eventually move toward predicate-backed queries per screen.
 
-## 15. Dead Code Removed
+## 16. Dead Code Removed
 
 Removed:
 
@@ -315,7 +329,7 @@ Removed:
 - unused `syncUpcoming` and `syncNeedsReview` sync helpers;
 - unused HostBoard `done` computed property.
 
-## 16. Current Endpoint Use
+## 17. Current Endpoint Use
 
 The app calls:
 
@@ -334,7 +348,7 @@ The app does not call:
 
 - `POST /managed-reservations/import`
 
-## 17. Remaining Known Limitations
+## 18. Remaining Known Limitations
 
 - No waitlist.
 - No table map.
@@ -347,7 +361,7 @@ The app does not call:
 - Admin screen safe tests are GET-focused; mutation testing remains manual through normal app flows.
 - Request logs are in-memory only and reset when the app process exits.
 
-## 18. Manual Test Checklist
+## 19. Manual Test Checklist
 
 - [ ] App launches and cached rows appear immediately.
 - [ ] Missing credentials show the setup screen.
@@ -376,4 +390,10 @@ The app does not call:
 - [ ] Small notice badge appears for scoped refresh/action errors.
 - [ ] More -> API & App Diagnostics shows request logs and safe GET test results.
 - [ ] iOS does not call the backend import endpoint.
+- [ ] iPhone Today shows a compact summary and readable rows.
+- [ ] iPad landscape Today gives priority to Seated / Upcoming rows.
+- [ ] Review opens on New and sorts oldest submitted first.
+- [ ] Confirm/Seat/Complete use inline two-step buttons instead of modal alerts.
+- [ ] Success/warning/error notices auto-dismiss and do not hang over search.
+- [ ] Detail shows confirmation email history/status.
 - [ ] App builds.
