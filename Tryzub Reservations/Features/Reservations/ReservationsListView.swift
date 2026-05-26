@@ -452,6 +452,12 @@ private struct ReservationMoreView: View {
         NavigationStack {
             List {
                 Section("Operations") {
+                    NavigationLink {
+                        RegularGuestsView()
+                    } label: {
+                        Label("Regulars / Guest Memory", systemImage: "person.2.crop.square.stack")
+                    }
+
                     if controller.capabilities.canCreateManualReservations {
                         Button {
                             showManualCreate = true

@@ -12,6 +12,11 @@ struct ReservationDetailView: View {
 
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
+    @Query(sort: [
+        SortDescriptor(\ReservationRecord.reservationDate),
+        SortDescriptor(\ReservationRecord.reservationTime)
+    ])
+    private var allCachedReservations: [ReservationRecord]
 
     @State private var showEditSheet = false
     @State private var isSavingQuickAction = false
@@ -83,6 +88,11 @@ struct ReservationDetailView: View {
 
     @ViewBuilder
     private func detailContent(isWide: Bool) -> some View {
+        let insightReport = GuestInsightsController().analyze(
+            selected: reservation,
+            allReservations: allCachedReservations
+        )
+
         VStack(alignment: .leading, spacing: 14) {
             if let message = errorMessage ?? controller.errorMessage {
                 DetailWarningCard(
@@ -120,6 +130,15 @@ struct ReservationDetailView: View {
 
                     VStack(spacing: 14) {
                         ReservationContactCard(reservation: reservation)
+                        NavigationLink {
+                            GuestInsightsView(
+                                selectedReservation: reservation,
+                                allReservations: allCachedReservations
+                            )
+                        } label: {
+                            GuestInsightsPreviewCard(report: insightReport)
+                        }
+                        .buttonStyle(.plain)
                         ReservationEmailHistoryCard(reservation: reservation)
                         ReservationFactsCard(reservation: reservation)
                         ReservationOperationalCard(reservation: reservation)
@@ -135,6 +154,15 @@ struct ReservationDetailView: View {
                     onEdit: { showEditSheet = true }
                 )
                 ReservationContactCard(reservation: reservation)
+                NavigationLink {
+                    GuestInsightsView(
+                        selectedReservation: reservation,
+                        allReservations: allCachedReservations
+                    )
+                } label: {
+                    GuestInsightsPreviewCard(report: insightReport)
+                }
+                .buttonStyle(.plain)
                 ReservationEmailHistoryCard(reservation: reservation)
                 ReservationFactsCard(reservation: reservation)
                 ReservationNotesCard(reservation: reservation) {
@@ -189,6 +217,65 @@ struct ReservationDetailView: View {
             await controller.updateStatus(reservation: reservation, status: .noShow, context: modelContext)
         case .assignTable:
             tableAssignmentReservation = reservation
+        }
+    }
+}
+
+private struct GuestInsightsPreviewCard: View {
+    let report: GuestInsightReport
+
+    private var previousReservationText: String {
+        let previousCount = max(report.summary.totalMatchedReservations - 1, 0)
+        if previousCount == 0 {
+            return "No previous reservations found"
+        }
+        return "\(previousCount) previous \(previousCount == 1 ? "reservation" : "reservations")"
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "person.text.rectangle")
+                .font(.headline.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 36, height: 36)
+                .background(Color(.systemGray6), in: Circle())
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text("Guest Insights")
+                        .font(.headline.weight(.medium))
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(previousReservationText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                FlowLayout(spacing: 7) {
+                    GuestRegularityBadge(level: report.regularityLevel)
+                    if !report.staffMentionHistory.isEmpty {
+                        DetailPill(label: "Staff notes", systemImage: "note.text", tint: .secondary)
+                    }
+                    if !report.possibleMatches.isEmpty {
+                        DetailPill(label: "Possible match", systemImage: "person.2", tint: .secondary)
+                    }
+                    if report.collapsedDuplicateReservationCount > 0 {
+                        DetailPill(label: "Copies ignored", systemImage: "doc.on.doc", tint: .secondary)
+                    }
+                }
+                .lineLimit(1)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
 }
