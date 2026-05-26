@@ -70,72 +70,33 @@ struct ReservationRowView<Accessory: View>: View {
     }
 
     private var wideRow: some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 1) {
-                if let compactEyebrow {
-                    Text(compactEyebrow)
-                        .font(.caption2.weight(.black))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+        HStack(alignment: .center, spacing: 0) {
+            timeBlock(width: 92)
 
-                Text(reservation.displayTime)
-                    .font(.title3.weight(.black))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-            .frame(width: 86, alignment: .leading)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: "person.fill")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-
-                    Text("\(reservation.partySize)")
-                        .font(.subheadline.weight(.black))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-
-                HStack(spacing: 5) {
-                    Image(systemName: "table.furniture")
-                        .font(.caption2.weight(.bold))
-                    Text(tableText)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.secondary)
-            }
-            .frame(width: 58, alignment: .leading)
+            ReservationDashedLine(isVertical: true)
+                .frame(width: 1, height: 52)
+                .padding(.trailing, 12)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(reservation.guestName.uppercased())
-                    .font(.headline.weight(.black))
+                Text(reservation.guestName)
+                    .font(.headline.weight(.medium))
                     .lineLimit(1)
                     .truncationMode(.tail)
 
-                HStack(spacing: 10) {
-                    if !reservation.phone.isEmpty {
-                        ReservationInlineMeta(text: reservation.formattedPhone, systemImage: "phone.fill")
-                    }
-
+                HStack(spacing: 9) {
+                    ReservationInlineMeta(text: "\(reservation.partySize) guests", systemImage: "person.2")
+                    ReservationInlineMeta(text: tableText, systemImage: "table.furniture")
                     if let notesIndicatorText {
                         ReservationInlineMeta(text: notesIndicatorText, systemImage: "note.text")
                     }
-
-                    if reservation.partySize >= 7 {
-                        ReservationInlineMeta(text: "LARGE", systemImage: "person.3.fill")
+                    if !reservation.phone.isEmpty {
+                        ReservationInlineMeta(text: reservation.formattedPhone, systemImage: "phone")
                     }
                 }
 
                 if let contextNote {
                     Text(contextNote)
-                        .font(.caption2.weight(.semibold))
+                        .font(.caption2.weight(.medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -143,45 +104,29 @@ struct ReservationRowView<Accessory: View>: View {
             }
             .layoutPriority(2)
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 12)
 
-            VStack(alignment: .trailing, spacing: 6) {
-                ReservationStatusBadge(status: reservation.statusValue)
-            }
-
-            accessory()
-                .fixedSize(horizontal: true, vertical: false)
+            wideActionRail
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .frame(minHeight: 54)
-        .background(rowBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(minHeight: 70)
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(rowStroke)
     }
 
     private var compactRow: some View {
-        HStack(alignment: .center, spacing: 8) {
-            VStack(alignment: .leading, spacing: 0) {
-                if let compactEyebrow {
-                    Text(compactEyebrow)
-                        .font(.caption2.weight(.black))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+        HStack(alignment: .center, spacing: 0) {
+            timeBlock(width: 70)
 
-                Text(reservation.displayTime)
-                    .font(.title3.weight(.black))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-            .frame(width: 66, alignment: .leading)
+            ReservationDashedLine(isVertical: true)
+                .frame(width: 1, height: 50)
+                .padding(.trailing, 10)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(reservation.guestName.uppercased())
-                        .font(.subheadline.weight(.black))
+                    Text(reservation.guestName)
+                        .font(.subheadline.weight(.medium))
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
                         .truncationMode(.tail)
@@ -193,7 +138,7 @@ struct ReservationRowView<Accessory: View>: View {
 
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 7) {
-                        ReservationInlineMeta(text: "\(reservation.partySize)", systemImage: "person.fill")
+                        ReservationInlineMeta(text: "\(reservation.partySize)", systemImage: "person.2")
                         ReservationInlineMeta(text: tableText, systemImage: "table.furniture")
                         if let notesIndicatorText {
                             ReservationInlineMeta(text: notesIndicatorText, systemImage: "note.text")
@@ -201,7 +146,7 @@ struct ReservationRowView<Accessory: View>: View {
                     }
 
                     HStack(spacing: 7) {
-                        ReservationInlineMeta(text: "\(reservation.partySize)", systemImage: "person.fill")
+                        ReservationInlineMeta(text: "\(reservation.partySize)", systemImage: "person.2")
                         ReservationInlineMeta(text: tableText, systemImage: "table.furniture")
                     }
                 }
@@ -209,7 +154,7 @@ struct ReservationRowView<Accessory: View>: View {
                 if let contextNote {
                     HStack(spacing: 5) {
                         Text(contextNote)
-                            .font(.caption2.weight(.semibold))
+                            .font(.caption2.weight(.medium))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -221,11 +166,48 @@ struct ReservationRowView<Accessory: View>: View {
             accessory()
                 .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .frame(minHeight: 58)
-        .background(rowBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .frame(minHeight: 68)
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(rowStroke)
+        .overlay(ticketNotches)
+    }
+
+    private var wideActionRail: some View {
+        VStack(alignment: .trailing, spacing: 7) {
+            ReservationStatusBadge(status: reservation.statusValue)
+
+            accessory()
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .frame(width: 132, alignment: .trailing)
+    }
+
+    private func timeBlock(width: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if let compactEyebrow {
+                Text(compactEyebrow)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Text(reservation.displayTime)
+                .font(.title3.weight(.medium))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Text("\(reservation.partySize) \(reservation.partySize == 1 ? "guest" : "guests")")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+        }
+        .frame(width: width, alignment: .leading)
     }
 
     private var eyebrow: String? {
@@ -257,9 +239,9 @@ struct ReservationRowView<Accessory: View>: View {
     private var tableText: String {
         guard let tableName = reservation.tableName?.trimmingCharacters(in: .whitespacesAndNewlines),
               !tableName.isEmpty else {
-            return "x"
+            return "No table"
         }
-        return tableName.uppercased()
+        return "Table \(tableName)"
     }
 
     private var notesIndicatorText: String? {
@@ -268,7 +250,7 @@ struct ReservationRowView<Accessory: View>: View {
         }
 
         if reservation.hasGuestNotes {
-            return "NOTES"
+            return "Notes"
         }
 
         return nil
@@ -286,12 +268,29 @@ struct ReservationRowView<Accessory: View>: View {
     private var rowBackground: Color {
         context.isNext
             ? Color(.systemGray5)
-            : Color(.systemBackground)
+            : Color(.secondarySystemGroupedBackground)
     }
 
     private var rowStroke: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .stroke(context.isNext ? Color.primary.opacity(0.32) : Color.primary.opacity(0.08), lineWidth: 1)
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .stroke(context.isNext ? Color.primary.opacity(0.22) : Color.primary.opacity(0.08), lineWidth: 1)
+    }
+
+    private var ticketNotches: some View {
+        HStack {
+            Circle()
+                .fill(Color(.systemGroupedBackground))
+                .frame(width: 12, height: 12)
+                .offset(x: -6)
+
+            Spacer()
+
+            Circle()
+                .fill(Color(.systemGroupedBackground))
+                .frame(width: 12, height: 12)
+                .offset(x: 6)
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -317,11 +316,14 @@ struct ReservationStatusBadge: View {
     let status: ReservationStatus
 
     var body: some View {
-        Text(status.shortDisplayName.uppercased())
-            .font(.caption2.weight(.black))
+        Text(status.shortDisplayName)
+            .font(.caption2.weight(.medium))
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(Color(.systemGray6), in: Capsule())
     }
 }
 
@@ -332,11 +334,11 @@ private struct ReservationInlineMeta: View {
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: systemImage)
-                .font(.caption2.weight(.bold))
+                .font(.caption2.weight(.medium))
                 .frame(width: 11)
 
             Text(text)
-                .font(.caption2.weight(.bold))
+                .font(.caption2.weight(.medium))
                 .monospacedDigit()
                 .lineLimit(1)
                 .truncationMode(.tail)

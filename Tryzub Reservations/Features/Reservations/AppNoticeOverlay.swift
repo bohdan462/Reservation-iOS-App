@@ -19,17 +19,17 @@ struct AppNoticeOverlay: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: notice.severity.symbolName)
-                        .font(.caption.weight(.semibold))
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(notice.severity.tint)
 
                     Text(notice.title)
-                        .font(.caption.weight(.semibold))
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
 
                     if notices.count > 1 {
                         Text("+\(notices.count - 1)")
-                            .font(.caption2.weight(.bold))
+                            .font(.caption2.weight(.medium))
                             .foregroundStyle(.secondary)
                     }
 
@@ -37,7 +37,7 @@ struct AppNoticeOverlay: View {
                         onDismiss(notice)
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.caption2.weight(.bold))
+                            .font(.caption2.weight(.medium))
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
@@ -138,7 +138,7 @@ struct NoticeDetailRow: View {
                 Image(systemName: notice.severity.symbolName)
                     .foregroundStyle(notice.severity.tint)
                 Text(notice.title)
-                    .font(.headline)
+                    .font(.headline.weight(.medium))
                 Spacer()
                 Text(notice.createdAt.formatted(date: .omitted, time: .shortened))
                     .font(.caption)
@@ -165,7 +165,7 @@ struct NoticeDetailRow: View {
 
             if let onDismiss {
                 Button("Dismiss", action: onDismiss)
-                    .font(.caption.weight(.semibold))
+                    .font(.caption.weight(.medium))
             }
         }
         .padding(.vertical, 4)

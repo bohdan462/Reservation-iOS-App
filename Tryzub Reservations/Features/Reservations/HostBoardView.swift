@@ -324,7 +324,7 @@ private struct HostBoardSummaryCard: View {
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(Date().formatted(date: .abbreviated, time: .omitted))
-                    .font(.subheadline.weight(.bold))
+                    .font(.subheadline.weight(.medium))
                     .lineLimit(1)
                 HStack(spacing: 5) {
                         if isSyncing {
@@ -357,7 +357,7 @@ private struct HostBoardSummaryCard: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(Date().formatted(date: .abbreviated, time: .omitted))
-                        .font(.subheadline.weight(.bold))
+                        .font(.subheadline.weight(.medium))
                     HStack(spacing: 6) {
                         if isSyncing {
                             ProgressView()
@@ -397,12 +397,12 @@ private struct SummaryMetricChip: View {
                 .frame(width: 16, height: 16)
 
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
 
             Text(value, format: .number)
-                .font(.subheadline.weight(.bold))
+                .font(.subheadline.weight(.medium))
                 .monospacedDigit()
                 .lineLimit(1)
         }
@@ -427,7 +427,7 @@ private struct HostBoardColumn: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.headline.weight(.bold))
+                        .font(.headline.weight(.medium))
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -469,16 +469,7 @@ private struct HostBoardReservationRow: View {
             showsDate: false,
             context: rowContext
         ) {
-            HStack(spacing: 10) {
-                NavigationLink {
-                    ReservationDetailView(reservation: reservation, environment: environment)
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.body.weight(.bold))
-                        .foregroundStyle(.primary.opacity(0.7))
-                }
-                .buttonStyle(.plain)
-
+            HStack(spacing: 8) {
                 ReservationActionButtons(
                     reservation: reservation,
                     capabilities: controller.capabilities,
@@ -488,6 +479,15 @@ private struct HostBoardReservationRow: View {
                 ) { action in
                     onAction(action, reservation)
                 }
+
+                NavigationLink {
+                    ReservationDetailView(reservation: reservation, environment: environment)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.primary.opacity(0.64))
+                }
+                .buttonStyle(.plain)
             }
         }
         .contextMenu {
@@ -547,12 +547,12 @@ private struct HostWarningBanner: View {
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
             Image(systemName: symbolName)
-                .font(.caption2.weight(.bold))
+                .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 12, height: 12)
 
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
@@ -572,7 +572,7 @@ private struct CompactEmptyHostState: View {
             Image(systemName: systemImage)
                 .foregroundStyle(.secondary)
             Text(title)
-                .font(.subheadline.weight(.semibold))
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
             Spacer()
         }

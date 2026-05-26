@@ -102,15 +102,6 @@ struct ReservationDetailView: View {
                 )
             }
 
-            if let staffNotes = reservation.staffNotes?.nilIfBlank {
-                DetailWarningCard(
-                    title: "Staff Notes",
-                    message: staffNotes,
-                    symbolName: "note.text",
-                    tint: .secondary
-                )
-            }
-
             if isWide {
                 HStack(alignment: .top, spacing: 14) {
                     VStack(spacing: 14) {
@@ -210,16 +201,21 @@ private struct ReservationHeroCard: View {
     let onEdit: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
+                    Text("Reservation")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
                     Text(reservation.displayTime)
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .font(.system(size: 32, weight: .medium, design: .rounded))
                         .monospacedDigit()
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                     Text(reservation.displayDate)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -230,9 +226,12 @@ private struct ReservationHeroCard: View {
                 ReservationStatusBadge(status: reservation.statusValue)
             }
 
+            ReservationDashedLine()
+                .frame(height: 1)
+
             VStack(alignment: .leading, spacing: 6) {
                 Text(reservation.guestName)
-                    .font(.title3.weight(.bold))
+                    .font(.title3.weight(.medium))
                     .lineLimit(1)
                     .truncationMode(.tail)
 
@@ -244,6 +243,22 @@ private struct ReservationHeroCard: View {
                     }
                 }
                 .lineLimit(1)
+            }
+
+            if let staffNotes = reservation.staffNotes?.nilIfBlank {
+                VStack(alignment: .leading, spacing: 5) {
+                    Label("Staff notes", systemImage: "note.text")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+
+                    Text(staffNotes)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary.opacity(0.86))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
             ReservationActionButtons(
@@ -259,15 +274,37 @@ private struct ReservationHeroCard: View {
                 onEdit()
             } label: {
                 Label("Edit Details", systemImage: "pencil")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.subheadline.weight(.medium))
                     .lineLimit(1)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
             .disabled(!capabilities.canEditReservationDetails)
         }
-        .padding(14)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+        .overlay(postcardNotches)
+    }
+
+    private var postcardNotches: some View {
+        HStack {
+            Circle()
+                .fill(Color(.systemGroupedBackground))
+                .frame(width: 16, height: 16)
+                .offset(x: -8)
+
+            Spacer()
+
+            Circle()
+                .fill(Color(.systemGroupedBackground))
+                .frame(width: 16, height: 16)
+                .offset(x: 8)
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -367,7 +404,7 @@ private struct ReservationEmailHistoryCard: View {
                     Image(systemName: sentText == nil ? "exclamationmark.triangle" : "checkmark.circle")
                         .foregroundStyle(.secondary)
                     Text(statusTitle)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline.weight(.medium))
                     Spacer(minLength: 0)
                 }
 
@@ -422,12 +459,16 @@ private struct ReservationOperationalCard: View {
             .padding(.top, 8)
         } label: {
             Label("Developer / Sync Info", systemImage: "server.rack")
-                .font(.headline.weight(.bold))
+                .font(.headline.weight(.medium))
                 .foregroundStyle(.secondary)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
     }
 }
 
@@ -447,7 +488,7 @@ private struct DetailWarningCard: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.headline.weight(.bold))
+                    .font(.headline.weight(.medium))
                 Text(message)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -457,7 +498,11 @@ private struct DetailWarningCard: View {
             Spacer(minLength: 0)
         }
         .padding(14)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
     }
 }
 
@@ -469,14 +514,18 @@ private struct DetailCard<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Label(title, systemImage: systemImage)
-                .font(.headline.weight(.bold))
+                .font(.headline.weight(.medium))
                 .foregroundStyle(.secondary)
 
             content
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
     }
 }
 
@@ -496,7 +545,7 @@ private struct DetailContactLine: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(value)
-                    .font(.headline)
+                    .font(.headline.weight(.medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -537,7 +586,7 @@ private struct DetailNoteBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
 
             Text(value?.nilIfBlank ?? "-")
@@ -556,7 +605,7 @@ private struct DetailPill: View {
 
     var body: some View {
         Label(label, systemImage: systemImage)
-            .font(.subheadline.weight(.semibold))
+            .font(.subheadline.weight(.medium))
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)

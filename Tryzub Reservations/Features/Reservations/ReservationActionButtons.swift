@@ -281,8 +281,8 @@ struct ReservationActionButtons: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.body.weight(.bold))
-                        .foregroundStyle(.primary.opacity(0.7))
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.primary.opacity(0.64))
                 }
                 .buttonStyle(.plain)
                 .disabled(isBusy)
@@ -309,7 +309,7 @@ struct ReservationActionButtons: View {
                 } label: {
                     Label("More", systemImage: "ellipsis")
                         .labelStyle(.titleAndIcon)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline.weight(.medium))
                         .lineLimit(1)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
@@ -328,7 +328,7 @@ struct ReservationActionButtons: View {
         } label: {
             if compact {
                 Text(title(for: action, compact: true))
-                    .font(.caption2.weight(.bold))
+                    .font(.caption2.weight(.medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
                     .fixedSize(horizontal: true, vertical: false)
@@ -337,7 +337,7 @@ struct ReservationActionButtons: View {
             } else {
                 Label(title(for: action, compact: false), systemImage: action.systemImage)
                     .labelStyle(.titleAndIcon)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.subheadline.weight(.medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
                     .fixedSize(horizontal: true, vertical: false)
@@ -348,12 +348,12 @@ struct ReservationActionButtons: View {
         .buttonStyle(.plain)
         .foregroundStyle(pendingInlineAction == action ? Color(.systemBackground) : .primary)
         .background(
-            pendingInlineAction == action ? Color.primary : Color(.systemGray6),
+            pendingInlineAction == action ? Color.primary.opacity(0.82) : Color(.systemGray6),
             in: RoundedRectangle(cornerRadius: compact ? 8 : 9, style: .continuous)
         )
         .overlay(
             RoundedRectangle(cornerRadius: compact ? 8 : 9, style: .continuous)
-                .stroke(pendingInlineAction == action ? Color.primary.opacity(0.7) : Color.primary.opacity(isPrimary ? 0.42 : 0.24), lineWidth: 1)
+                .stroke(pendingInlineAction == action ? Color.primary.opacity(0.55) : Color.primary.opacity(isPrimary ? 0.22 : 0.14), lineWidth: 1)
         )
         .disabled(isBusy)
         .accessibilityLabel(accessibilityLabel(for: action))

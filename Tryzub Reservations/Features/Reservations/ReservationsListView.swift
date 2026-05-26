@@ -19,38 +19,26 @@ struct ReservationsListView: View {
     }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            TodayDashboardView(environment: environment, isActive: selectedTab == .today)
-                .tabItem {
-                    Label("Today", systemImage: "calendar")
-                }
-                .tag(ReservationsAppTab.today)
-
-            ReservationScheduleView(environment: environment, isActive: selectedTab == .schedule)
-                .tabItem {
-                    Label("Schedule", systemImage: "list.bullet.rectangle")
-                }
-                .tag(ReservationsAppTab.schedule)
-
-            ReservationReviewQueueView(environment: environment, isActive: selectedTab == .review)
-                .tabItem {
-                    Label("Review", systemImage: "exclamationmark.triangle")
-                }
-                .tag(ReservationsAppTab.review)
-
-            ReservationMoreView(environment: environment)
-                .tabItem {
-                    Label("More", systemImage: "ellipsis.circle")
-                }
-                .tag(ReservationsAppTab.more)
+        ZStack {
+            switch selectedTab {
+            case .today:
+                TodayDashboardView(environment: environment, isActive: true)
+            case .schedule:
+                ReservationScheduleView(environment: environment, isActive: true)
+            case .review:
+                ReservationReviewQueueView(environment: environment, isActive: true)
+            case .more:
+                ReservationMoreView(environment: environment)
+            }
         }
-        .toolbar(.hidden, for: .tabBar)
+        .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom) {
-            FloatingReservationTabBar(selection: $selectedTab)
+            ReservationFloatingTabBar(selection: $selectedTab)
                 .padding(.horizontal, 20)
                 .padding(.top, 6)
                 .padding(.bottom, 8)
         }
+        .fontDesign(.rounded)
         .environmentObject(controller)
         .overlay(alignment: .topTrailing) {
             AppNoticeOverlay(
@@ -90,121 +78,6 @@ struct ReservationsListView: View {
         case .today, .more:
             return 62
         }
-    }
-}
-
-private enum ReservationsAppTab: Hashable, CaseIterable, Identifiable {
-    case today
-    case schedule
-    case review
-    case more
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .today:
-            return "Today"
-        case .schedule:
-            return "Schedule"
-        case .review:
-            return "Pending"
-        case .more:
-            return "More"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .today:
-            return "calendar"
-        case .schedule:
-            return "list.bullet.rectangle"
-        case .review:
-            return "tray.full"
-        case .more:
-            return "ellipsis"
-        }
-    }
-
-    var selectedSystemImage: String {
-        switch self {
-        case .today:
-            return "calendar"
-        case .schedule:
-            return "list.bullet.rectangle.fill"
-        case .review:
-            return "tray.full.fill"
-        case .more:
-            return "ellipsis"
-        }
-    }
-}
-
-private struct FloatingReservationTabBar: View {
-    @Binding var selection: ReservationsAppTab
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ForEach(ReservationsAppTab.allCases) { tab in
-                FloatingReservationTabButton(
-                    tab: tab,
-                    isSelected: selection == tab
-                ) {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                        selection = tab
-                    }
-                }
-            }
-        }
-        .padding(8)
-        .background(.ultraThinMaterial, in: Capsule(style: .continuous))
-        .overlay {
-            Capsule(style: .continuous)
-                .stroke(.white.opacity(0.45), lineWidth: 0.5)
-        }
-        .shadow(color: .black.opacity(0.14), radius: 18, x: 0, y: 8)
-        .accessibilityElement(children: .contain)
-    }
-}
-
-private struct FloatingReservationTabButton: View {
-    let tab: ReservationsAppTab
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: isSelected ? 7 : 0) {
-                Image(systemName: isSelected ? tab.selectedSystemImage : tab.systemImage)
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .foregroundStyle(isSelected ? .white : .primary)
-                    .background(iconBackground, in: Circle())
-
-                if isSelected {
-                    Text(tab.title)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                        .foregroundStyle(.primary)
-                }
-            }
-            .frame(height: 44)
-            .padding(.trailing, isSelected ? 12 : 0)
-            .background(selectedBackground, in: Capsule(style: .continuous))
-            .contentShape(Capsule(style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(tab.title)
-        .accessibilityValue(isSelected ? "Selected" : "")
-    }
-
-    private var iconBackground: Color {
-        isSelected ? Color.accentColor : Color(.systemBackground)
-    }
-
-    private var selectedBackground: Color {
-        isSelected ? Color(.systemBackground) : .clear
     }
 }
 
@@ -664,7 +537,7 @@ private struct ReservationNavigationRow: View {
                     showDetail = true
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.caption.weight(.bold))
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                         .frame(width: 28, height: 28)
                         .contentShape(Rectangle())
