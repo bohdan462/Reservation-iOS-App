@@ -124,8 +124,8 @@ struct ReservationRowView<Accessory: View>: View {
                         ReservationInlineMeta(text: reservation.formattedPhone, systemImage: "phone.fill")
                     }
 
-                    if reservation.hasGuestNotes || reservation.hasStaffNotes {
-                        ReservationInlineMeta(text: "NOTES", systemImage: "note.text")
+                    if let notesIndicatorText {
+                        ReservationInlineMeta(text: notesIndicatorText, systemImage: "note.text")
                     }
 
                     if reservation.partySize >= 7 {
@@ -147,17 +147,6 @@ struct ReservationRowView<Accessory: View>: View {
 
             VStack(alignment: .trailing, spacing: 6) {
                 ReservationStatusBadge(status: reservation.statusValue)
-
-                if reservation.statusValue == .needsReview,
-                   let staffNotes = reservation.staffNotes,
-                   !staffNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(staffNotes)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: 140, alignment: .trailing)
-                }
             }
 
             accessory()
@@ -166,7 +155,6 @@ struct ReservationRowView<Accessory: View>: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .frame(minHeight: 54)
-      
         .background(rowBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(rowStroke)
     }
@@ -207,8 +195,8 @@ struct ReservationRowView<Accessory: View>: View {
                     HStack(spacing: 7) {
                         ReservationInlineMeta(text: "\(reservation.partySize)", systemImage: "person.fill")
                         ReservationInlineMeta(text: tableText, systemImage: "table.furniture")
-                        if !reservation.phone.isEmpty {
-                            ReservationInlineMeta(text: reservation.formattedPhone, systemImage: "phone.fill")
+                        if let notesIndicatorText {
+                            ReservationInlineMeta(text: notesIndicatorText, systemImage: "note.text")
                         }
                     }
 
@@ -218,17 +206,13 @@ struct ReservationRowView<Accessory: View>: View {
                     }
                 }
 
-                HStack(spacing: 5) {
-                    if let contextNote {
+                if let contextNote {
+                    HStack(spacing: 5) {
                         Text(contextNote)
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
-                    }
-
-                    if reservation.hasGuestNotes || reservation.hasStaffNotes {
-                        ReservationInlineMeta(text: "NOTES", systemImage: "note.text")
                     }
                 }
             }
@@ -276,6 +260,18 @@ struct ReservationRowView<Accessory: View>: View {
             return "x"
         }
         return tableName.uppercased()
+    }
+
+    private var notesIndicatorText: String? {
+        if reservation.hasStaffNotes {
+            return "STAFF"
+        }
+
+        if reservation.hasGuestNotes {
+            return "NOTES"
+        }
+
+        return nil
     }
 
     private var isMuted: Bool {

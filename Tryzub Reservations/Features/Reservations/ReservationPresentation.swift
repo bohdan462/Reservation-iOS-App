@@ -49,8 +49,8 @@ enum ReservationScheduleScope: String, CaseIterable, Identifiable {
 }
 
 enum ReservationQueueScope: String, CaseIterable, Identifiable {
-    case new = "New"
-    case needsReview = "Review"
+    case pending = "Pending"
+    case needsReview = "Needs Review"
 
     var id: String { rawValue }
 }
@@ -108,6 +108,10 @@ extension ReservationRecord {
 
     var hasStaffNotes: Bool {
         staffNotes?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    var hasConfirmationEmailRecord: Bool {
+        confirmationEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     var needsOperationalWarning: Bool {

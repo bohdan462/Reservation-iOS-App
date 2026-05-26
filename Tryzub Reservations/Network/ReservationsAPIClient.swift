@@ -45,7 +45,7 @@ enum ReservationAPILogger {
         )
         guard isEnabled else { return startedAt }
 
-        print("[API] START reason=\(reason.rawValue) method=\(request.httpMethod ?? "GET") \(sanitizedPathAndQuery(for: request.url))")
+        print("[API] START Reason ===>\(reason.rawValue) /br Method ===>\(request.httpMethod ?? "GET") \(sanitizedPathAndQuery(for: request.url))")
         return startedAt
     }
 

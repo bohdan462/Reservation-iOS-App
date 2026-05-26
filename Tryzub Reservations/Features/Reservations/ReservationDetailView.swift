@@ -96,9 +96,18 @@ struct ReservationDetailView: View {
             if reservation.statusValue == .needsReview {
                 DetailWarningCard(
                     title: "Needs review",
-                    message: reservation.staffNotes?.nilIfBlank ?? "Check this reservation before confirming.",
+                    message: "Check this reservation before confirming.",
                     symbolName: "exclamationmark.triangle",
                     tint: .orange
+                )
+            }
+
+            if let staffNotes = reservation.staffNotes?.nilIfBlank {
+                DetailWarningCard(
+                    title: "Staff Notes",
+                    message: staffNotes,
+                    symbolName: "note.text",
+                    tint: .secondary
                 )
             }
 
@@ -150,7 +159,7 @@ struct ReservationDetailView: View {
             tableAssignmentReservation = reservation
         } else if action == .seat, !reservation.hasTableAssignment {
             tableAssignmentReservation = reservation
-        } else if action == .cancel || action == .noShow {
+        } else if action == .sendConfirmationEmail || action == .cancel || action == .noShow {
             pendingAction = action
         } else {
             Task {
@@ -176,6 +185,8 @@ struct ReservationDetailView: View {
 
         switch action {
         case .confirm:
+            await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
+        case .sendConfirmationEmail:
             await controller.confirmReservation(reservation: reservation, context: modelContext)
         case .seat:
             await controller.updateStatus(reservation: reservation, status: .seated, context: modelContext)
@@ -228,8 +239,8 @@ private struct ReservationHeroCard: View {
                 HStack(spacing: 8) {
                     DetailPill(label: "\(reservation.partySize)", systemImage: "person.2", tint: .secondary)
                     DetailPill(label: reservation.tableDisplay, systemImage: "table.furniture", tint: .secondary)
-                    if reservation.confirmationEmailSentAt?.nilIfBlank != nil {
-                        DetailPill(label: "Email sent", systemImage: "envelope.badge", tint: .secondary)
+                    if reservation.hasConfirmationEmailRecord {
+                        DetailPill(label: "Email recorded", systemImage: "envelope.badge", tint: .secondary)
                     }
                 }
                 .lineLimit(1)
@@ -327,7 +338,7 @@ private struct ReservationEmailHistoryCard: View {
 
     private var statusTitle: String {
         if sentText != nil {
-            return "Confirmation sent"
+            return "Email recorded"
         }
 
         if reservation.statusValue == .confirmed {
@@ -346,7 +357,7 @@ private struct ReservationEmailHistoryCard: View {
             return "This reservation is confirmed, but the app has no sent-email timestamp. Follow up manually if needed."
         }
 
-        return "Use Confirm to send the backend confirmation email."
+        return "Use Confirm + Email to ask the backend to send the confirmation email."
     }
 
     var body: some View {
@@ -376,8 +387,8 @@ private struct ReservationNotesCard: View {
     var body: some View {
         DetailCard(title: "Notes", systemImage: "note.text") {
             VStack(alignment: .leading, spacing: 14) {
-                DetailNoteBlock(title: "Guest", value: reservation.guestNotes)
                 DetailNoteBlock(title: "Staff", value: reservation.staffNotes)
+                DetailNoteBlock(title: "Guest", value: reservation.guestNotes)
 
                 Button {
                     onEdit()

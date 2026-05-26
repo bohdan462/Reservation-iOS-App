@@ -203,7 +203,7 @@ struct HostBoardView: View {
             tableAssignmentReservation = reservation
         } else if action == .seat, !reservation.hasTableAssignment {
             tableAssignmentReservation = reservation
-        } else if action == .cancel || action == .noShow {
+        } else if action == .sendConfirmationEmail || action == .cancel || action == .noShow {
             pendingAction = ReservationPendingAction(reservation: reservation, action: action)
         } else {
             Task {
@@ -217,6 +217,8 @@ struct HostBoardView: View {
 
         switch action {
         case .confirm:
+            await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
+        case .sendConfirmationEmail:
             await controller.confirmReservation(reservation: reservation, context: modelContext)
         case .seat:
             await controller.updateStatus(reservation: reservation, status: .seated, context: modelContext)

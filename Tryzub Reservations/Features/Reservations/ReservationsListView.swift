@@ -44,6 +44,13 @@ struct ReservationsListView: View {
                 }
                 .tag(ReservationsAppTab.more)
         }
+        .toolbar(.hidden, for: .tabBar)
+        .safeAreaInset(edge: .bottom) {
+            FloatingReservationTabBar(selection: $selectedTab)
+                .padding(.horizontal, 20)
+                .padding(.top, 6)
+                .padding(.bottom, 8)
+        }
         .environmentObject(controller)
         .overlay(alignment: .topTrailing) {
             AppNoticeOverlay(
@@ -86,11 +93,119 @@ struct ReservationsListView: View {
     }
 }
 
-private enum ReservationsAppTab: Hashable {
+private enum ReservationsAppTab: Hashable, CaseIterable, Identifiable {
     case today
     case schedule
     case review
     case more
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .today:
+            return "Today"
+        case .schedule:
+            return "Schedule"
+        case .review:
+            return "Pending"
+        case .more:
+            return "More"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .today:
+            return "calendar"
+        case .schedule:
+            return "list.bullet.rectangle"
+        case .review:
+            return "tray.full"
+        case .more:
+            return "ellipsis"
+        }
+    }
+
+    var selectedSystemImage: String {
+        switch self {
+        case .today:
+            return "calendar"
+        case .schedule:
+            return "list.bullet.rectangle.fill"
+        case .review:
+            return "tray.full.fill"
+        case .more:
+            return "ellipsis"
+        }
+    }
+}
+
+private struct FloatingReservationTabBar: View {
+    @Binding var selection: ReservationsAppTab
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(ReservationsAppTab.allCases) { tab in
+                FloatingReservationTabButton(
+                    tab: tab,
+                    isSelected: selection == tab
+                ) {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                        selection = tab
+                    }
+                }
+            }
+        }
+        .padding(8)
+        .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(.white.opacity(0.45), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.14), radius: 18, x: 0, y: 8)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct FloatingReservationTabButton: View {
+    let tab: ReservationsAppTab
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: isSelected ? 7 : 0) {
+                Image(systemName: isSelected ? tab.selectedSystemImage : tab.systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .foregroundStyle(isSelected ? .white : .primary)
+                    .background(iconBackground, in: Circle())
+
+                if isSelected {
+                    Text(tab.title)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .foregroundStyle(.primary)
+                }
+            }
+            .frame(height: 44)
+            .padding(.trailing, isSelected ? 12 : 0)
+            .background(selectedBackground, in: Capsule(style: .continuous))
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(tab.title)
+        .accessibilityValue(isSelected ? "Selected" : "")
+    }
+
+    private var iconBackground: Color {
+        isSelected ? Color.accentColor : Color(.systemBackground)
+    }
+
+    private var selectedBackground: Color {
+        isSelected ? Color(.systemBackground) : .clear
+    }
 }
 
 private struct TodayDashboardView: View {
@@ -182,9 +297,7 @@ private struct TodayDashboardView: View {
                     onCreateReservation: { request in
                         try await controller.createReservation(request, context: modelContext)
                     },
-                    onCreated: { createdReservation in
-                        controller.save(createdReservation, context: modelContext)
-                    }
+                    onCreated: { _ in }
                 )
                 .environmentObject(controller)
             }
@@ -342,7 +455,7 @@ private struct ReservationReviewQueueView: View {
     ])
     private var reservations: [ReservationRecord]
 
-    @State private var scope: ReservationQueueScope = .new
+    @State private var scope: ReservationQueueScope = .pending
     @State private var searchText = ""
 
     let environment: AppEnvironment
@@ -352,10 +465,10 @@ private struct ReservationReviewQueueView: View {
         let trimmedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let rows = reservations.filter { reservation in
             switch scope {
+            case .pending:
+                return reservation.statusValue == .new || reservation.statusValue == .needsReview
             case .needsReview:
                 return reservation.statusValue == .needsReview
-            case .new:
-                return reservation.statusValue == .new
             }
         }
 
@@ -381,8 +494,8 @@ private struct ReservationReviewQueueView: View {
                 if queueReservations.isEmpty {
                     Section {
                         ContentUnavailableView(
-                            scope == .needsReview ? "Nothing Needs Review" : "No New Reservations",
-                            systemImage: scope == .needsReview ? "checkmark.seal" : "sparkle",
+                            scope == .needsReview ? "Nothing Needs Review" : "No Pending Reservations",
+                            systemImage: scope == .needsReview ? "checkmark.seal" : "tray",
                             description: Text("Pull to refresh or adjust search.")
                         )
                     }
@@ -398,7 +511,7 @@ private struct ReservationReviewQueueView: View {
                         }
                     } header: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(scope == .new ? "New submissions" : "Needs review")
+                            Text(scope == .pending ? "Pending reservations" : "Needs review")
                             Text("Oldest submitted first")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -481,9 +594,7 @@ private struct ReservationMoreView: View {
                                 onCreateReservation: { request in
                                     try await controller.createReservation(request, context: modelContext)
                                 },
-                                onCreated: { createdReservation in
-                                    controller.save(createdReservation, context: modelContext)
-                                }
+                                onCreated: { _ in }
                             )
                             .environmentObject(controller)
                         } label: {
@@ -570,7 +681,7 @@ private struct ReservationNavigationRow: View {
                 Label("Details", systemImage: "info.circle")
             }
 
-            ForEach(availableActions) { action in
+            ForEach(contextMenuActions) { action in
                 Button(role: action.role) {
                     handleAction(action)
                 } label: {
@@ -585,7 +696,7 @@ private struct ReservationNavigationRow: View {
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            ForEach(availableActions) { action in
+            ForEach(swipeActions) { action in
                 Button(role: action.role) {
                     handleAction(action)
                 } label: {
@@ -629,18 +740,36 @@ private struct ReservationNavigationRow: View {
         }
     }
 
-    private var availableActions: [ReservationHostAction] {
+    private var contextMenuActions: [ReservationHostAction] {
+        availableActions(includeEmailAction: true)
+    }
+
+    private var swipeActions: [ReservationHostAction] {
+        availableActions(includeEmailAction: false)
+    }
+
+    private func availableActions(includeEmailAction: Bool) -> [ReservationHostAction] {
         let status = reservation.statusValue
         var actions: [ReservationHostAction] = []
 
         if controller.capabilities.canConfirmReservations,
            status == .new || status == .needsReview {
             actions.append(.confirm)
+            if includeEmailAction {
+                actions.append(.sendConfirmationEmail)
+            }
         }
 
         if controller.capabilities.canSeatReservations,
            status == .confirmed {
             actions.append(.seat)
+        }
+
+        if includeEmailAction,
+           controller.capabilities.canConfirmReservations,
+           status == .confirmed,
+           !reservation.hasConfirmationEmailRecord {
+            actions.append(.sendConfirmationEmail)
         }
 
         if controller.capabilities.canEditReservationDetails,
@@ -664,7 +793,7 @@ private struct ReservationNavigationRow: View {
         switch action {
         case .assignTable:
             tableAssignmentReservation = reservation
-        case .cancel, .noShow:
+        case .sendConfirmationEmail, .cancel, .noShow:
             pendingAction = action
         case .confirm, .seat, .complete:
             Task {
@@ -678,6 +807,8 @@ private struct ReservationNavigationRow: View {
 
         switch action {
         case .confirm:
+            await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
+        case .sendConfirmationEmail:
             await controller.confirmReservation(reservation: reservation, context: modelContext)
         case .seat:
             await controller.updateStatus(reservation: reservation, status: .seated, context: modelContext)

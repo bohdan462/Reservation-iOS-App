@@ -496,9 +496,9 @@ final class ReservationsController: ObservableObject {
 
             switch response.emailStatus {
             case .sent:
-                postNotice(severity: .success, source: .email, title: "Reservation confirmed", message: "Email sent.")
+                postNotice(severity: .success, source: .email, title: "Reservation confirmed", message: "Confirmation email recorded as sent.")
             case .alreadySent:
-                postNotice(severity: .info, source: .email, title: "Already confirmed", message: "Confirmation email was already sent.")
+                postNotice(severity: .info, source: .email, title: "Already confirmed", message: "Confirmation email was already recorded as sent.")
             case .failed:
                 errorMessage = "Reservation confirmed, but confirmation email failed. Follow up manually."
                 postNotice(severity: .warning, source: .email, title: "Email failed", message: "Reservation confirmed, but staff should follow up manually.")

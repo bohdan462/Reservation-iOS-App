@@ -7,6 +7,7 @@ import SwiftUI
 
 enum ReservationHostAction: String, Identifiable {
     case confirm
+    case sendConfirmationEmail
     case seat
     case assignTable
     case complete
@@ -19,6 +20,8 @@ enum ReservationHostAction: String, Identifiable {
         switch self {
         case .confirm:
             return "Confirm"
+        case .sendConfirmationEmail:
+            return "Email"
         case .seat:
             return "Seat"
         case .assignTable:
@@ -36,6 +39,8 @@ enum ReservationHostAction: String, Identifiable {
         switch self {
         case .assignTable:
             return "Table"
+        case .sendConfirmationEmail:
+            return "Email"
         case .confirm, .seat, .complete, .cancel, .noShow:
             return shortTitle
         }
@@ -44,7 +49,9 @@ enum ReservationHostAction: String, Identifiable {
     var fullTitle: String {
         switch self {
         case .confirm:
-            return "Confirm and Send Email"
+            return "Confirm"
+        case .sendConfirmationEmail:
+            return "Confirm + Email"
         case .seat:
             return "Seat Party"
         case .assignTable:
@@ -62,6 +69,8 @@ enum ReservationHostAction: String, Identifiable {
         switch self {
         case .confirm:
             return "checkmark.circle"
+        case .sendConfirmationEmail:
+            return "envelope.badge"
         case .seat:
             return "person.2"
         case .assignTable:
@@ -77,7 +86,7 @@ enum ReservationHostAction: String, Identifiable {
 
     var tint: Color {
         switch self {
-        case .confirm, .seat, .assignTable, .complete:
+        case .confirm, .sendConfirmationEmail, .seat, .assignTable, .complete:
             return Color(.label)
         case .cancel, .noShow:
             return Color(.secondaryLabel)
@@ -88,13 +97,15 @@ enum ReservationHostAction: String, Identifiable {
         switch self {
         case .cancel, .noShow:
             return .destructive
-        case .confirm, .seat, .assignTable, .complete:
+        case .confirm, .sendConfirmationEmail, .seat, .assignTable, .complete:
             return nil
         }
     }
 
     var statusPatch: ReservationStatus? {
         switch self {
+        case .confirm:
+            return .confirmed
         case .seat:
             return .seated
         case .complete:
@@ -103,7 +114,7 @@ enum ReservationHostAction: String, Identifiable {
             return .cancelled
         case .noShow:
             return .noShow
-        case .confirm, .assignTable:
+        case .sendConfirmationEmail, .assignTable:
             return nil
         }
     }
@@ -119,6 +130,9 @@ enum ReservationHostAction: String, Identifiable {
         if capabilities.canConfirmReservations,
            status == .new || status == .needsReview {
             actions.append(.confirm)
+            if includeSecondary {
+                actions.append(.sendConfirmationEmail)
+            }
         }
 
         if capabilities.canSeatReservations,
@@ -132,6 +146,13 @@ enum ReservationHostAction: String, Identifiable {
             } else {
                 actions.append(.seat)
             }
+        }
+
+        if includeSecondary,
+           capabilities.canConfirmReservations,
+           status == .confirmed,
+           !reservation.hasConfirmationEmailRecord {
+            actions.append(.sendConfirmationEmail)
         }
 
         if capabilities.canSeatReservations,
@@ -169,6 +190,8 @@ enum ReservationHostAction: String, Identifiable {
         switch self {
         case .confirm:
             return "Confirm reservation?"
+        case .sendConfirmationEmail:
+            return "Send confirmation email?"
         case .seat:
             return "Seat this party?"
         case .assignTable:
@@ -187,7 +210,9 @@ enum ReservationHostAction: String, Identifiable {
 
         switch self {
         case .confirm:
-            return "\(summary)\n\nThis will mark the reservation confirmed and send a confirmation email to \(reservation.email)."
+            return "\(summary)\n\nThis only marks the reservation confirmed. No email will be sent."
+        case .sendConfirmationEmail:
+            return "\(summary)\n\nThis will mark the reservation confirmed and ask the server to send a confirmation email to \(reservation.email)."
         case .seat:
             return "\(summary)\n\nThis only updates staff status. No email will be sent."
         case .assignTable:
@@ -338,7 +363,9 @@ struct ReservationActionButtons: View {
         if pendingInlineAction == action {
             switch action {
             case .confirm:
-                return hasConfirmationEmailTimestamp ? "Confirm?" : "Send email?"
+                return "Confirm?"
+            case .sendConfirmationEmail:
+                return "Send email?"
             case .seat:
                 return "Seat now?"
             case .complete:
@@ -353,10 +380,6 @@ struct ReservationActionButtons: View {
         }
 
         return compact ? action.rowTitle : action.shortTitle
-    }
-
-    private var hasConfirmationEmailTimestamp: Bool {
-        reservation.confirmationEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     private func handleTap(_ action: ReservationHostAction) {
@@ -380,6 +403,10 @@ struct ReservationActionButtons: View {
             return pendingInlineAction == action
                 ? "Confirm reservation for \(reservation.guestName)"
                 : "Prepare to confirm reservation for \(reservation.guestName)"
+        case .sendConfirmationEmail:
+            return pendingInlineAction == action
+                ? "Send confirmation email for \(reservation.guestName)"
+                : "Prepare to send confirmation email for \(reservation.guestName)"
         case .seat:
             return pendingInlineAction == action
                 ? "Seat party of \(reservation.partySize)"
@@ -399,7 +426,7 @@ struct ReservationActionButtons: View {
 private extension ReservationHostAction {
     var needsInlineConfirmation: Bool {
         switch self {
-        case .confirm, .seat, .complete:
+        case .confirm, .sendConfirmationEmail, .seat, .complete:
             return true
         case .assignTable, .cancel, .noShow:
             return false

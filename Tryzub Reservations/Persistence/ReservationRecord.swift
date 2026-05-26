@@ -42,7 +42,7 @@ class ReservationRecord: Identifiable {
         self.reservationDate = dto.reservationDate
         self.reservationTime = dto.reservationTime
         self.partySize = dto.partySize
-        self.status = dto.operationalStatus.rawValue
+        self.status = dto.status.rawValue
         self.guestNotes = dto.guestNotes?.nilIfEmpty
         self.tableName = dto.tableName?.nilIfEmpty
         self.staffNotes = dto.staffNotes?.nilIfEmpty
@@ -65,7 +65,7 @@ class ReservationRecord: Identifiable {
         reservationDate = dto.reservationDate
         reservationTime = dto.reservationTime
         partySize = dto.partySize
-        status = dto.operationalStatus.rawValue
+        status = dto.status.rawValue
         guestNotes = dto.guestNotes?.nilIfEmpty
         tableName = dto.tableName?.nilIfEmpty
         staffNotes = dto.staffNotes?.nilIfEmpty
@@ -80,34 +80,7 @@ class ReservationRecord: Identifiable {
     }
 
     var statusValue: ReservationStatus {
-        let storedStatus = ReservationStatus(rawValue: status) ?? .new
-
-        if storedStatus.isActive && reservationDate < Date.reservationDateString() {
-            return .completed
-        }
-
-        return storedStatus
-    }
-}
-
-private extension ReservationDTO {
-    var operationalStatus: ReservationStatus {
-        if status.isActive && reservationDate < Date.reservationDateString() {
-            return .completed
-        }
-
-        return status
-    }
-}
-
-private extension ReservationStatus {
-    var isActive: Bool {
-        switch self {
-        case .new, .needsReview, .confirmed, .seated:
-            return true
-        case .completed, .cancelled, .noShow:
-            return false
-        }
+        ReservationStatus(rawValue: status) ?? .new
     }
 }
 
