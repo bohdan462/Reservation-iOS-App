@@ -11,6 +11,8 @@ import SwiftData
 struct ReservationsListView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var controller: ReservationsController
+    @StateObject private var hiddenReservations = HiddenReservationsStore()
+    @StateObject private var restaurantSettings = RestaurantSettingsStore()
     @Query private var rootReservations: [ReservationRecord]
 
     // Source of truth for custom floating navigation; there is no default TabView state.
@@ -50,6 +52,8 @@ struct ReservationsListView: View {
         
         .fontDesign(.rounded)
         .environmentObject(controller)
+        .environmentObject(hiddenReservations)
+        .environmentObject(restaurantSettings)
         .overlay(alignment: .topTrailing) {
             AppNoticeOverlay(
                 notices: visibleNotices,
@@ -84,7 +88,8 @@ struct ReservationsListView: View {
 
     private var pendingReviewCount: Int {
         rootReservations.filter {
-            $0.statusValue == .new || $0.statusValue == .needsReview
+            !hiddenReservations.isHidden($0)
+                && ($0.statusValue == .new || $0.statusValue == .needsReview)
         }.count
     }
 
@@ -104,6 +109,7 @@ private struct HomeDashboardView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate),
         SortDescriptor(\ReservationRecord.reservationTime)
@@ -122,7 +128,9 @@ private struct HomeDashboardView: View {
     private var selectedDateReservations: [ReservationRecord] {
         let selectedDateKey = selectedDate.reservationDateString()
         return ReservationRecord.sortedChronologically(
-            reservations.filter { $0.reservationDate == selectedDateKey }
+            reservations.filter {
+                $0.reservationDate == selectedDateKey && !hiddenReservations.isHidden($0)
+            }
         )
     }
 
@@ -157,8 +165,8 @@ private struct HomeDashboardView: View {
             }
             .fullScreenCover(isPresented: $showManualCreate) {
                 ManualReservationFormView { request in
-                    // Manual call-in create; controller performs server POST and cache upsert.
-                    try await controller.createReservation(request, context: modelContext)
+                    // Manual call-in create is accepted immediately; no email is sent.
+                    try await controller.createAcceptedManualReservation(request, context: modelContext)
                 }
                 .interactiveDismissDisabled()
             }
@@ -167,7 +175,7 @@ private struct HomeDashboardView: View {
                     environment: environment,
                     onCreateReservation: { request in
                         // Failed import repair creates a managed reservation through the controller.
-                        try await controller.createReservation(request, context: modelContext)
+                        try await controller.createAcceptedManualReservation(request, context: modelContext)
                     },
                     onCreated: { _ in }
                 )
@@ -182,6 +190,7 @@ private struct HomeDashboardView: View {
 private struct ReservationScheduleView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate),
         SortDescriptor(\ReservationRecord.reservationTime)
@@ -202,7 +211,7 @@ private struct ReservationScheduleView: View {
         let today = Date.reservationDateString()
         let trimmedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        var rows = reservations
+        var rows = reservations.filter { !hiddenReservations.isHidden($0) }
 
         if scope == .upcoming {
             rows = rows.filter {
@@ -281,6 +290,7 @@ private struct ReservationScheduleView: View {
             .searchable(text: $searchText, prompt: "Name, phone, email, table")
             .listStyle(.plain)
             .contentMargins(.horizontal, 0, for: .scrollContent)
+            .contentMargins(.bottom, 92, for: .scrollContent)
             .refreshable {
                 // Staff manual schedule refresh: GET schedule window through controller/service.
                 await controller.requestScheduleRefresh(context: modelContext)
@@ -314,8 +324,8 @@ private struct ReservationScheduleView: View {
             }
             .fullScreenCover(isPresented: $showManualCreate) {
                 ManualReservationFormView { request in
-                    // Manual call-in create; controller performs server POST and cache upsert.
-                    try await controller.createReservation(request, context: modelContext)
+                    // Manual call-in create is accepted immediately; no email is sent.
+                    try await controller.createAcceptedManualReservation(request, context: modelContext)
                 }
             }
             .task(id: isActive) {
@@ -332,6 +342,7 @@ private struct ReservationScheduleView: View {
 private struct ReservationReviewQueueView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate),
         SortDescriptor(\ReservationRecord.reservationTime)
@@ -350,6 +361,7 @@ private struct ReservationReviewQueueView: View {
     private var queueReservations: [ReservationRecord] {
         let trimmedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let rows = reservations.filter { reservation in
+            guard !hiddenReservations.isHidden(reservation) else { return false }
             switch scope {
             case .pending:
                 return reservation.statusValue == .new || reservation.statusValue == .needsReview
@@ -410,6 +422,7 @@ private struct ReservationReviewQueueView: View {
             .searchable(text: $searchText, prompt: "Name, phone, email")
             .listStyle(.plain)
             .contentMargins(.horizontal, 0, for: .scrollContent)
+            .contentMargins(.bottom, 92, for: .scrollContent)
             .refreshable {
                 // Staff manual queue refresh: controller fetches new + needs_review.
                 await controller.requestReviewRefresh(context: modelContext)
@@ -444,6 +457,7 @@ private struct ReservationReviewQueueView: View {
     private func reviewContext(for reservation: ReservationRecord) -> String {
         let activeSameDay = reservations.filter {
             $0.reservationDate == reservation.reservationDate
+                && !hiddenReservations.isHidden($0)
                 && $0.statusValue != .cancelled
                 && $0.statusValue != .noShow
         }
@@ -462,6 +476,7 @@ private struct ReservationReviewQueueView: View {
 private struct ReservationMoreView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
 
     @State private var showManualCreate = false
 
@@ -475,6 +490,18 @@ private struct ReservationMoreView: View {
                         RegularGuestsView()
                     } label: {
                         Label("Regulars / Guest Memory", systemImage: "person.2.crop.square.stack")
+                    }
+
+                    NavigationLink {
+                        HiddenReservationsView(environment: environment)
+                    } label: {
+                        Label("Hidden Reservations", systemImage: "archivebox")
+                    }
+
+                    NavigationLink {
+                        RestaurantSettingsView()
+                    } label: {
+                        Label("Restaurant Settings", systemImage: "gearshape")
                     }
 
                     if controller.capabilities.canCreateManualReservations {
@@ -491,7 +518,7 @@ private struct ReservationMoreView: View {
                             ImportFailuresView(
                                 environment: environment,
                                 onCreateReservation: { request in
-                                    try await controller.createReservation(request, context: modelContext)
+                                    try await controller.createAcceptedManualReservation(request, context: modelContext)
                                 },
                                 onCreated: { _ in }
                             )
@@ -520,13 +547,80 @@ private struct ReservationMoreView: View {
                 }
             }
             .navigationTitle("More")
+            .contentMargins(.bottom, 92, for: .scrollContent)
             .fullScreenCover(isPresented: $showManualCreate) {
                 ManualReservationFormView { request in
-                    // Manual call-in create; controller performs server POST and cache upsert.
-                    try await controller.createReservation(request, context: modelContext)
+                    // Manual call-in create is accepted immediately; no email is sent.
+                    try await controller.createAcceptedManualReservation(request, context: modelContext)
                 }
             }
         }
+    }
+}
+
+// MARK: - Hidden Reservations View
+
+private struct HiddenReservationsView: View {
+    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
+    @Query(sort: [
+        SortDescriptor(\ReservationRecord.reservationDate, order: .reverse),
+        SortDescriptor(\ReservationRecord.reservationTime, order: .reverse)
+    ])
+    private var reservations: [ReservationRecord]
+
+    let environment: AppEnvironment
+
+    private var hiddenRows: [ReservationRecord] {
+        ReservationRecord.sortedNewestFirst(
+            reservations.filter { hiddenReservations.isHidden($0) }
+        )
+    }
+
+    var body: some View {
+        List {
+            if hiddenRows.isEmpty {
+                ContentUnavailableView(
+                    "No Hidden Reservations",
+                    systemImage: "archivebox",
+                    description: Text("Wrong manual entries hidden from service lists will appear here.")
+                )
+            } else {
+                Section("Hidden from service lists") {
+                    ForEach(hiddenRows) { reservation in
+                        VStack(alignment: .leading, spacing: 10) {
+                            ReservationNavigationRow(
+                                reservation: reservation,
+                                environment: environment,
+                                context: .schedule
+                            )
+
+                            Button {
+                                hiddenReservations.restore(remoteID: reservation.remoteID)
+                                ReservationHaptics.success()
+                            } label: {
+                                Label("Restore to lists", systemImage: "arrow.uturn.backward")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity, minHeight: 38)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.primary.opacity(0.82))
+                            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                            }
+                        }
+                        .listRowInsets(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+        .contentMargins(.bottom, 92, for: .scrollContent)
+        .navigationTitle("Hidden Reservations")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -590,17 +684,6 @@ private struct ReservationNavigationRow: View {
         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            ForEach(swipeActions) { action in
-                Button(role: action.role) {
-                    handleAction(action)
-                } label: {
-                    Label(action.shortTitle, systemImage: action.systemImage)
-                }
-                .tint(action.tint)
-                .disabled(controller.isActionInProgress(for: reservation))
-            }
-        }
         .confirmationDialog(
             pendingAction?.dialogTitle(for: reservation) ?? "Update Reservation?",
             isPresented: Binding(
@@ -610,9 +693,28 @@ private struct ReservationNavigationRow: View {
             titleVisibility: .visible
         ) {
             if let pendingAction {
-                Button(pendingAction.fullTitle, role: pendingAction.role) {
-                    Task {
-                        await perform(pendingAction)
+                if pendingAction == .confirmOnly {
+                    Button("Confirm only") {
+                        Task {
+                            await perform(.confirmOnly)
+                        }
+                    }
+
+                    if reservation.hasUsableConfirmationEmail {
+                        Button("Confirm + Email") {
+                            Task {
+                                await perform(.confirmAndSendEmail)
+                            }
+                        }
+                    } else {
+                        Button(reservation.isManualOrCallIn ? "Call-in / no email" : "No usable email") {}
+                            .disabled(true)
+                    }
+                } else {
+                    Button(pendingAction.fullTitle, role: pendingAction.role) {
+                        Task {
+                            await perform(pendingAction)
+                        }
                     }
                 }
             }
@@ -642,19 +744,15 @@ private struct ReservationNavigationRow: View {
         ReservationHostAction.contextMenuActions(for: reservation, capabilities: controller.capabilities)
     }
 
-    private var swipeActions: [ReservationHostAction] {
-        ReservationHostAction.trailingSwipeActions(for: reservation, capabilities: controller.capabilities)
-    }
-
     // MARK: - Staff Action Routing
 
     private func handleAction(_ action: ReservationHostAction) {
         switch action {
         case .assignTable:
             tableAssignmentReservation = reservation
-        case .cancel, .noShow:
+        case .confirmOnly, .confirmAndSendEmail, .cancel, .noShow:
             pendingAction = action
-        case .confirm, .sendConfirmationEmail, .seat, .complete:
+        case .seat, .complete:
             Task {
                 await perform(action)
             }
@@ -667,10 +765,10 @@ private struct ReservationNavigationRow: View {
         pendingAction = nil
 
         switch action {
-        case .confirm:
+        case .confirmOnly:
             await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
             ReservationHaptics.success()
-        case .sendConfirmationEmail:
+        case .confirmAndSendEmail:
             await controller.confirmReservation(reservation: reservation, context: modelContext)
             ReservationHaptics.success()
         case .seat:

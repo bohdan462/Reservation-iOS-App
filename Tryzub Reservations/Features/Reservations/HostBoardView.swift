@@ -76,6 +76,7 @@ struct HostBoardView: View {
                 }
                 .padding(.horizontal, proxy.size.width >= 1100 ? 16 : 12)
                 .padding(.vertical, proxy.size.width >= 1100 ? 12 : 10)
+                .padding(.bottom, 92)
             }
             .background(Color(.systemGroupedBackground))
         }
@@ -88,9 +89,28 @@ struct HostBoardView: View {
             titleVisibility: .visible
         ) {
             if let pendingAction {
-                Button(pendingAction.action.fullTitle, role: pendingAction.action.role) {
-                    Task {
-                        await perform(pendingAction.action, on: pendingAction.reservation)
+                if pendingAction.action == .confirmOnly {
+                    Button("Confirm only") {
+                        Task {
+                            await perform(.confirmOnly, on: pendingAction.reservation)
+                        }
+                    }
+
+                    if pendingAction.reservation.hasUsableConfirmationEmail {
+                        Button("Confirm + Email") {
+                            Task {
+                                await perform(.confirmAndSendEmail, on: pendingAction.reservation)
+                            }
+                        }
+                    } else {
+                        Button(pendingAction.reservation.isManualOrCallIn ? "Call-in / no email" : "No usable email") {}
+                            .disabled(true)
+                    }
+                } else {
+                    Button(pendingAction.action.fullTitle, role: pendingAction.action.role) {
+                        Task {
+                            await perform(pendingAction.action, on: pendingAction.reservation)
+                        }
                     }
                 }
             }
@@ -221,7 +241,7 @@ struct HostBoardView: View {
             tableAssignmentReservation = reservation
         } else if action == .seat, !reservation.hasTableAssignment {
             tableAssignmentReservation = reservation
-        } else if action == .cancel || action == .noShow {
+        } else if action == .confirmOnly || action == .confirmAndSendEmail || action == .cancel || action == .noShow {
             pendingAction = ReservationPendingAction(reservation: reservation, action: action)
         } else {
             Task {
@@ -236,10 +256,10 @@ struct HostBoardView: View {
         pendingAction = nil
 
         switch action {
-        case .confirm:
+        case .confirmOnly:
             await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
             ReservationHaptics.success()
-        case .sendConfirmationEmail:
+        case .confirmAndSendEmail:
             await controller.confirmReservation(reservation: reservation, context: modelContext)
             ReservationHaptics.success()
         case .seat:
@@ -392,6 +412,8 @@ private struct HostBoardSummaryCard: View {
 // MARK: - Home Service Header
 
 private struct HomeServiceHeader: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
     @Binding var selectedDate: Date
     let lastSyncedAt: Date?
     let isSyncing: Bool
@@ -548,25 +570,40 @@ private struct HomeServiceHeader: View {
     }
 
     private var dateStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
-                    Button {
-                        selectedDate = date
-                        ReservationHaptics.selection()
-                    } label: {
-                        ReservationChoiceChip(
-                            title: chipTitle(for: date),
-                            subtitle: chipSubtitle(for: date),
-                            isSelected: isSameDay(selectedDate, date),
-                            fillsWidth: false
-                        )
+        Group {
+            if horizontalSizeClass == .regular {
+                HStack(spacing: 10) {
+                    ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
+                        dateButton(for: date, fillsWidth: true)
                     }
-                    .buttonStyle(.plain)
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
+                            dateButton(for: date, fillsWidth: false)
+                        }
+                    }
+                    .padding(.vertical, 1)
                 }
             }
-            .padding(.vertical, 1)
         }
+    }
+
+    private func dateButton(for date: Date, fillsWidth: Bool) -> some View {
+        Button {
+            selectedDate = date
+            ReservationHaptics.selection()
+        } label: {
+            ReservationChoiceChip(
+                title: chipTitle(for: date),
+                subtitle: chipSubtitle(for: date),
+                isSelected: isSameDay(selectedDate, date),
+                fillsWidth: fillsWidth
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var openCalendarButton: some View {

@@ -121,6 +121,15 @@ extension ReservationRecord {
         confirmationEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
+    var isManualOrCallIn: Bool {
+        sourceSubmissionID <= 0 || email.isManualPlaceholderEmail
+    }
+
+    var hasUsableConfirmationEmail: Bool {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedEmail.contains("@") && !trimmedEmail.isManualPlaceholderEmail
+    }
+
     var needsOperationalWarning: Bool {
         statusValue == .needsReview || !hasTableAssignment || partySize >= 7 || hasGuestNotes || hasStaffNotes
     }
@@ -317,5 +326,15 @@ extension ReservationRecord {
 
             return $0.createdAt < $1.createdAt
         }
+    }
+}
+
+extension String {
+    var isManualPlaceholderEmail: Bool {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !value.isEmpty else { return true }
+
+        return value.hasPrefix("callin+manual-") && value.hasSuffix("@tryzubchicago.com")
+            || value.hasSuffix("@manualreservation.com")
     }
 }

@@ -26,6 +26,19 @@ enum ReservationsAppTab: Hashable, CaseIterable, Identifiable {
         }
     }
 
+    var compactTitle: String {
+        switch self {
+        case .home:
+            return "Home"
+        case .schedule:
+            return "List"
+        case .review:
+            return "Review"
+        case .more:
+            return "More"
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .home:
@@ -54,16 +67,21 @@ enum ReservationsAppTab: Hashable, CaseIterable, Identifiable {
 }
 
 struct ReservationFloatingTabBar: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
     @Binding var selection: ReservationsAppTab
     var reviewAttentionCount = 0
 
     var body: some View {
-        HStack(spacing: 8) {
+        let isCompact = horizontalSizeClass == .compact
+
+        HStack(spacing: isCompact ? 4 : 8) {
             ForEach(ReservationsAppTab.allCases) { tab in
                 ReservationFloatingTabButton(
                     tab: tab,
                     isSelected: selection == tab,
-                    attentionCount: tab == .review ? reviewAttentionCount : 0
+                    attentionCount: tab == .review ? reviewAttentionCount : 0,
+                    isCompact: isCompact
                 ) {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
                         selection = tab
@@ -72,11 +90,11 @@ struct ReservationFloatingTabBar: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule(style: .continuous))
+        .padding(.horizontal, isCompact ? 8 : 14)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
-            Capsule(style: .continuous)
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     
@@ -89,11 +107,12 @@ private struct ReservationFloatingTabButton: View {
     let tab: ReservationsAppTab
     let isSelected: Bool
     let attentionCount: Int
+    let isCompact: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: isCompact ? 5 : 8) {
                 ZStack(alignment: .topTrailing) {
                     Image(systemName: isSelected ? tab.selectedSystemImage : tab.systemImage)
                         .font(.system(size: 20, weight: .medium, design: .rounded))
@@ -112,18 +131,18 @@ private struct ReservationFloatingTabButton: View {
                     }
                 }
 
-                Text(tab.title)
-                    .font(.subheadline.weight(.semibold))
+                Text(isCompact ? tab.compactTitle : tab.title)
+                    .font((isCompact ? Font.caption : Font.subheadline).weight(.semibold))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.86)
                     .foregroundStyle(isSelected ? ReservationUIStyle.selectedControlColor : .primary.opacity(0.78))
             }
-            .frame(minWidth: 92, minHeight: 42)
-            .padding(.horizontal, 10)
-            .background(selectedBackground, in: Capsule(style: .continuous))
-            .contentShape(Capsule(style: .continuous))
+            .frame(width: isCompact ? 78 : 112, height: 42)
+            .background(selectedBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(tab.title)
+        .accessibilityLabel(isCompact ? tab.compactTitle : tab.title)
         .accessibilityValue(isSelected ? "Selected" : "")
     }
 

@@ -14,6 +14,7 @@ struct ReservationDetailView: View {
 
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     // Guest Insights reads cached reservations only; no network or mutation is involved.
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate),
@@ -28,6 +29,7 @@ struct ReservationDetailView: View {
     @State private var errorMessage: String?
     @State private var pendingAction: ReservationHostAction?
     @State private var tableAssignmentReservation: ReservationRecord?
+    @State private var isShowingHideWrongEntryConfirmation = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -35,6 +37,7 @@ struct ReservationDetailView: View {
                 detailContent(isWide: proxy.size.width >= 760)
                     .padding(.horizontal, proxy.size.width >= 760 ? 20 : 16)
                     .padding(.vertical, 16)
+                    .padding(.bottom, 92)
             }
             .background(Color(.systemGroupedBackground))
         }
@@ -78,9 +81,28 @@ struct ReservationDetailView: View {
             titleVisibility: .visible
         ) {
             if let pendingAction {
-                Button(pendingAction.fullTitle, role: pendingAction.role) {
-                    Task {
-                        await perform(pendingAction)
+                if pendingAction == .confirmOnly {
+                    Button("Confirm only") {
+                        Task {
+                            await perform(.confirmOnly)
+                        }
+                    }
+
+                    if reservation.hasUsableConfirmationEmail {
+                        Button("Confirm + Email") {
+                            Task {
+                                await perform(.confirmAndSendEmail)
+                            }
+                        }
+                    } else {
+                        Button(reservation.isManualOrCallIn ? "Call-in / no email" : "No usable email") {}
+                            .disabled(true)
+                    }
+                } else {
+                    Button(pendingAction.fullTitle, role: pendingAction.role) {
+                        Task {
+                            await perform(pendingAction)
+                        }
                     }
                 }
             }
@@ -91,6 +113,20 @@ struct ReservationDetailView: View {
             if let pendingAction {
                 Text(pendingAction.dialogMessage(for: reservation))
             }
+        }
+        .confirmationDialog(
+            "Hide wrong entry?",
+            isPresented: $isShowingHideWrongEntryConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Hide wrong entry", role: .destructive) {
+                Task {
+                    await hideWrongManualEntry()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This cancels the server reservation first, then hides it from Home, Schedule, and Review on this device.")
         }
     }
 
@@ -153,6 +189,7 @@ struct ReservationDetailView: View {
                         ReservationEmailHistoryCard(reservation: reservation)
                         ReservationFactsCard(reservation: reservation)
                         ReservationOperationalCard(reservation: reservation)
+                        hideWrongEntryCard
                     }
                     .frame(maxWidth: 420, alignment: .topLeading)
                 }
@@ -180,6 +217,36 @@ struct ReservationDetailView: View {
                     showEditScreen = true
                 }
                 ReservationOperationalCard(reservation: reservation)
+                hideWrongEntryCard
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var hideWrongEntryCard: some View {
+        if reservation.isManualOrCallIn && !hiddenReservations.isHidden(reservation) {
+            DetailCard(title: "Wrong Manual Entry", systemImage: "archivebox") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Use this only for a mistaken call-in/manual entry. The server record is cancelled first, then hidden locally.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        isShowingHideWrongEntryConfirmation = true
+                    } label: {
+                        Label("Hide wrong entry", systemImage: "archivebox")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(ReservationUIStyle.cancelColor)
+                            .frame(maxWidth: .infinity, minHeight: 38)
+                    }
+                    .buttonStyle(.plain)
+                    .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                            .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                    }
+                    .disabled(isSavingQuickAction || controller.isActionInProgress(for: reservation))
+                }
             }
         }
     }
@@ -192,7 +259,7 @@ struct ReservationDetailView: View {
             tableAssignmentReservation = reservation
         } else if action == .seat, !reservation.hasTableAssignment {
             tableAssignmentReservation = reservation
-        } else if action == .cancel || action == .noShow {
+        } else if action == .confirmOnly || action == .confirmAndSendEmail || action == .cancel || action == .noShow {
             pendingAction = action
         } else {
             Task {
@@ -219,10 +286,10 @@ struct ReservationDetailView: View {
         }
 
         switch action {
-        case .confirm:
+        case .confirmOnly:
             await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
             ReservationHaptics.success()
-        case .sendConfirmationEmail:
+        case .confirmAndSendEmail:
             await controller.confirmReservation(reservation: reservation, context: modelContext)
             ReservationHaptics.success()
         case .seat:
@@ -239,6 +306,30 @@ struct ReservationDetailView: View {
             ReservationHaptics.warning()
         case .assignTable:
             tableAssignmentReservation = reservation
+        }
+    }
+
+    // Intent: Hide a mistaken manual entry without hard-deleting server data.
+    // Network: PATCH /managed-reservations/{id} status=cancelled before local hiding.
+    private func hideWrongManualEntry() async {
+        isSavingQuickAction = true
+        errorMessage = nil
+
+        defer {
+            isSavingQuickAction = false
+        }
+
+        do {
+            _ = try await controller.updateReservation(
+                id: reservation.remoteID,
+                request: ReservationUpdateRequest(status: .cancelled),
+                context: modelContext
+            )
+            hiddenReservations.hide(remoteID: reservation.remoteID)
+            ReservationHaptics.warning()
+        } catch {
+            errorMessage = "Could not hide this entry. Please retry before relying on service lists."
+            ReservationHaptics.warning()
         }
     }
 }
@@ -491,6 +582,10 @@ private struct ReservationEmailHistoryCard: View {
     }
 
     private var statusTitle: String {
+        if !reservation.hasUsableConfirmationEmail {
+            return reservation.isManualOrCallIn ? "Call-in / no email" : "No usable email"
+        }
+
         if sentText != nil {
             return "Email recorded"
         }
@@ -503,6 +598,10 @@ private struct ReservationEmailHistoryCard: View {
     }
 
     private var statusMessage: String {
+        if !reservation.hasUsableConfirmationEmail {
+            return "No confirmation email can be sent unless staff adds a real guest email."
+        }
+
         if let sentText {
             // Copy says "recorded" because this timestamp is backend state, not inbox proof.
             return "Backend recorded the confirmation email at \(sentText)."
@@ -806,5 +905,7 @@ private extension String {
             environment: AppEnvironment(apiClient: ReservationsAPIClient.preview, role: .developer)
         )
     )
+    .environmentObject(HiddenReservationsStore())
+    .environmentObject(RestaurantSettingsStore())
 }
 #endif

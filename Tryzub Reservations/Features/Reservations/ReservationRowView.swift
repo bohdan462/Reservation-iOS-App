@@ -85,7 +85,8 @@ struct ReservationRowView<Accessory: View>: View {
                 width: ReservationRowLayout.wideTimeWidth
             )
 
-            ReservationDashedLine(isVertical: true)
+            Rectangle()
+                .fill(Color.primary.opacity(0.10))
                 .frame(width: 1, height: 52)
 
             ReservationRowGuestSection(
@@ -122,7 +123,8 @@ struct ReservationRowView<Accessory: View>: View {
                 width: ReservationRowLayout.compactTimeWidth
             )
 
-            ReservationDashedLine(isVertical: true)
+            Rectangle()
+                .fill(Color.primary.opacity(0.10))
                 .frame(width: 1, height: 50)
 
             ReservationRowGuestSection(
@@ -146,7 +148,6 @@ struct ReservationRowView<Accessory: View>: View {
         .frame(minHeight: 68)
         .background(rowBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay(rowStroke)
-        .overlay(ticketNotches)
     }
 
     // MARK: - Action Area
@@ -180,6 +181,10 @@ struct ReservationRowView<Accessory: View>: View {
             items.append(ReservationRowMetaItem(text: notesIndicatorText, systemImage: "note.text"))
         }
 
+        if reservation.isManualOrCallIn {
+            items.append(ReservationRowMetaItem(text: "Call-in", systemImage: "phone.badge.plus"))
+        }
+
         if !reservation.phone.isEmpty {
             items.append(ReservationRowMetaItem(text: reservation.formattedPhone, systemImage: "phone"))
         }
@@ -195,6 +200,10 @@ struct ReservationRowView<Accessory: View>: View {
 
         if let notesIndicatorText {
             items.append(ReservationRowMetaItem(text: notesIndicatorText, systemImage: "note.text"))
+        }
+
+        if reservation.isManualOrCallIn {
+            items.append(ReservationRowMetaItem(text: "Call-in", systemImage: "phone.badge.plus"))
         }
 
         return items
@@ -253,22 +262,6 @@ struct ReservationRowView<Accessory: View>: View {
             .stroke(context.isNext ? Color.primary.opacity(0.22) : Color.primary.opacity(0.08), lineWidth: 1)
     }
 
-    private var ticketNotches: some View {
-        HStack {
-            Circle()
-                .fill(Color(.systemGroupedBackground))
-                .frame(width: 12, height: 12)
-                .offset(x: -6)
-
-            Spacer()
-
-            Circle()
-                .fill(Color(.systemGroupedBackground))
-                .frame(width: 12, height: 12)
-                .offset(x: 6)
-        }
-        .allowsHitTesting(false)
-    }
 }
 
 // MARK: - Row Sections
@@ -385,7 +378,7 @@ private struct ReservationRowMetaLine: View {
     let items: [ReservationRowMetaItem]
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 12) {
             if let item = items[safe: 0] {
                 ReservationInlineMeta(text: item.text, systemImage: item.systemImage)
             }
@@ -408,18 +401,17 @@ private struct ReservationSubmittedBadge: View {
     let text: String
 
     var body: some View {
-        Label(text, systemImage: "exclamationmark.circle")
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-            }
-            .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark")
+                .font(.caption2.weight(.semibold))
+                .frame(width: 8)
+
+            Text("Submitted \(text)")
+                .font(.caption2.weight(.medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
     }
 }
 
@@ -471,10 +463,10 @@ private struct ReservationInlineMeta: View {
     let systemImage: String
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 5) {
             Image(systemName: systemImage)
                 .font(.caption2.weight(.medium))
-                .frame(width: 11)
+                .frame(width: 13)
 
             Text(text)
                 .font(.caption2.weight(.medium))

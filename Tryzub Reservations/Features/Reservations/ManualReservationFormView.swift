@@ -12,6 +12,7 @@ struct ManualReservationFormView: View {
     let onCreateReservation: (ReservationCreateRequest) async throws -> ReservationDTO
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var settingsStore: RestaurantSettingsStore
     @State private var draft: ReservationFormDraft
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -53,7 +54,12 @@ struct ManualReservationFormView: View {
         }
 
         do {
-            _ = try await onCreateReservation(draft.createRequest(sourceSubmissionId: failure?.sourceSubmissionId))
+            _ = try await onCreateReservation(
+                draft.createRequest(
+                    sourceSubmissionId: failure?.sourceSubmissionId,
+                    settings: settingsStore.settings
+                )
+            )
             ReservationHaptics.success()
             dismiss()
         } catch {
@@ -171,9 +177,9 @@ private enum ReservationFormMode {
     var primaryActionTitle: String {
         switch self {
         case .manualCreate, .fixFailedImport:
-            return "Add"
+            return "Add Reservation"
         case .edit:
-            return "Save"
+            return "Save Changes"
         }
     }
 
@@ -194,9 +200,11 @@ private struct ReservationFormContent: View {
     let onCancel: () -> Void
     let onSubmit: () -> Void
 
+    @EnvironmentObject private var settingsStore: RestaurantSettingsStore
     @State private var isEmailExpanded = false
     @State private var isNotesPresented = false
     @State private var isCustomTimePresented = false
+    @State private var didApplyInitialSettings = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -225,6 +233,9 @@ private struct ReservationFormContent: View {
                 guestNotes: $draft.guestNotes,
                 staffNotes: $draft.staffNotes
             )
+        }
+        .onAppear {
+            applyInitialSettingsIfNeeded()
         }
     }
 
@@ -312,21 +323,17 @@ private struct ReservationFormContent: View {
     private var dateCard: some View {
         ReservationServiceCard(title: "Date", systemImage: "calendar") {
             VStack(alignment: .leading, spacing: 10) {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 82), spacing: 20)], spacing: 8) {
-                    ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
-                        Button {
-                            draft.reservationDate = date
-                            ReservationHaptics.selection()
-                        } label: {
-                            ReservationChoiceChip(
-                                title: dateTitle(date),
-                                subtitle: date.formatted(.dateTime.weekday(.abbreviated)),
-                                isSelected: Calendar.current.isDate(draft.reservationDate, inSameDayAs: date),
-                                minWidth: 76,
-                                minHeight: 38
-                            )
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
+                            dateChoiceButton(date)
                         }
-                        .buttonStyle(.plain)
+                    }
+
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                        ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
+                            dateChoiceButton(date)
+                        }
                     }
                 }
 
@@ -367,20 +374,27 @@ private struct ReservationFormContent: View {
     private var timeCard: some View {
         ReservationServiceCard(title: "Time", systemImage: "clock") {
             VStack(alignment: .leading, spacing: 8) {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 70), spacing: 20)], spacing: 8) {
-                    ForEach(timeChoices, id: \.self) { time in
-                        Button {
-                            draft.reservationTime = time
-                            ReservationHaptics.selection()
-                        } label: {
-                            ReservationChoiceChip(
-                                title: timeLabel(time),
-                                isSelected: isSameTime(draft.reservationTime, time),
-                                minWidth: 66,
-                                minHeight: 34
-                            )
+                if timeChoices.isEmpty {
+                    Text("No open reservation slots for this date.")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 70), spacing: 8)], spacing: 8) {
+                        ForEach(timeChoices, id: \.self) { time in
+                            Button {
+                                draft.reservationTime = time
+                                ReservationHaptics.selection()
+                            } label: {
+                                ReservationChoiceChip(
+                                    title: timeLabel(time),
+                                    isSelected: isSameTime(draft.reservationTime, time),
+                                    minWidth: 66,
+                                    minHeight: 34
+                                )
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
 
@@ -561,6 +575,7 @@ private struct ReservationFormContent: View {
                 Spacer()
             }
             .frame(maxWidth: 150)
+            .frame(maxWidth: .infinity)
             .foregroundStyle(Color(.systemBackground))
             .padding(.vertical, 14)
             .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
@@ -574,9 +589,7 @@ private struct ReservationFormContent: View {
     }
 
     private var quickDates: [Date] {
-        (0..<11).compactMap {
-            Calendar.current.date(byAdding: .day, value: $0, to: Date())
-        }
+        settingsStore.settings.availableServiceDates(count: 10)
     }
 
     private func dateTitle(_ date: Date) -> String {
@@ -590,7 +603,7 @@ private struct ReservationFormContent: View {
     }
 
     private var timeChoices: [Date] {
-        ReservationOperationalHours.availableTimes(for: draft.reservationDate)
+        settingsStore.settings.availableTimes(for: draft.reservationDate)
     }
 
     private func timeLabel(_ date: Date) -> String {
@@ -601,6 +614,42 @@ private struct ReservationFormContent: View {
         let lhsParts = Calendar.current.dateComponents([.hour, .minute], from: lhs)
         let rhsParts = Calendar.current.dateComponents([.hour, .minute], from: rhs)
         return lhsParts.hour == rhsParts.hour && lhsParts.minute == rhsParts.minute
+    }
+
+    private func dateChoiceButton(_ date: Date) -> some View {
+        Button {
+            draft.reservationDate = date
+            if let firstTime = settingsStore.settings.availableTimes(for: date).first {
+                draft.reservationTime = firstTime
+            }
+            ReservationHaptics.selection()
+        } label: {
+            ReservationChoiceChip(
+                title: dateTitle(date),
+                subtitle: date.formatted(.dateTime.weekday(.abbreviated)),
+                isSelected: Calendar.current.isDate(draft.reservationDate, inSameDayAs: date),
+                minWidth: 76,
+                minHeight: 38
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func applyInitialSettingsIfNeeded() {
+        guard !didApplyInitialSettings else { return }
+        didApplyInitialSettings = true
+
+        switch mode {
+        case .manualCreate:
+            draft.applyDefaultServiceSlot(settings: settingsStore.settings)
+        case .fixFailedImport:
+            draft.status = .confirmed
+            if settingsStore.settings.availableTimes(for: draft.reservationDate).isEmpty {
+                draft.applyDefaultServiceSlot(settings: settingsStore.settings, keepGuestFields: true)
+            }
+        case .edit:
+            break
+        }
     }
 }
 
@@ -629,7 +678,7 @@ private struct ReservationFormDraft {
         partySize = max(snapshot?.partySize ?? 2, 1)
         guestNotes = snapshot?.notes ?? ""
         tableName = ""
-        status = .new
+        status = .confirmed
         supersededById = ""
 
         if let failure {
@@ -653,11 +702,11 @@ private struct ReservationFormDraft {
         supersededById = reservation.supersededById.map(String.init) ?? ""
     }
 
-    func createRequest(sourceSubmissionId: Int?) -> ReservationCreateRequest {
+    func createRequest(sourceSubmissionId: Int?, settings: RestaurantSettings) -> ReservationCreateRequest {
         ReservationCreateRequest(
             sourceSubmissionId: sourceSubmissionId,
             guestName: guestName.trimmed,
-            email: reliableEmailForSubmission(),
+            email: reliableEmailForSubmission(settings: settings),
             phone: phone.trimmed,
             reservationDate: Self.formatDate(reservationDate),
             reservationTime: Self.formatTime(reservationTime),
@@ -684,13 +733,22 @@ private struct ReservationFormDraft {
         )
     }
 
-    private func reliableEmailForSubmission() -> String {
+    private func reliableEmailForSubmission(settings: RestaurantSettings = .default) -> String {
         let trimmedEmail = email.trimmed
         guard !trimmedEmail.isEmpty else {
-            let stamp = Int(Date().timeIntervalSince1970)
-            return "manual-\(stamp)@manualreservation.com"
+            return settings.placeholderEmail(for: guestName)
         }
         return trimmedEmail
+    }
+
+    mutating func applyDefaultServiceSlot(settings: RestaurantSettings, keepGuestFields: Bool = false) {
+        let slot = settings.defaultServiceSlot()
+        reservationDate = slot.date
+        reservationTime = slot.time
+
+        if !keepGuestFields {
+            partySize = max(slot.partySize, 1)
+        }
     }
 
     private static func parseDate(_ value: String?) -> Date? {
@@ -722,24 +780,6 @@ private struct ReservationFormDraft {
 
     private static func formatTime(_ date: Date) -> String {
         ReservationFormatters.apiTime.string(from: date)
-    }
-}
-
-// MARK: - Operational Hours Placeholder
-
-private enum ReservationOperationalHours {
-    static func availableTimes(for serviceDate: Date) -> [Date] {
-        let calendar = Calendar.current
-        return stride(from: 15, through: 22, by: 1).flatMap { hour in
-            [0, 30].compactMap { minute in
-                calendar.date(
-                    bySettingHour: hour,
-                    minute: minute,
-                    second: 0,
-                    of: serviceDate
-                )
-            }
-        }
     }
 }
 
@@ -923,11 +963,13 @@ private extension String {
     ManualReservationFormView { _ in
         ReservationPreviewData.sampleDTOs[0]
     }
+    .environmentObject(RestaurantSettingsStore())
 }
 
 #Preview("Edit Reservation") {
     ReservationEditFormView(reservation: ReservationPreviewData.sampleRecord) { _ in
         ReservationPreviewData.sampleDTOs[0]
     }
+    .environmentObject(RestaurantSettingsStore())
 }
 #endif

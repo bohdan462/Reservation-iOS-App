@@ -484,6 +484,61 @@ final class ReservationsController: ObservableObject {
         }
     }
 
+    // Intent: Staff creates a call-in/manual reservation that is already accepted.
+    // Network: POST /managed-reservations, then PATCH status=confirmed if needed.
+    // Email: Does not call the confirmation-email endpoint.
+    func createAcceptedManualReservation(
+        _ request: ReservationCreateRequest,
+        context: ModelContext
+    ) async throws -> ReservationDTO {
+        guard !isCreatingReservation else {
+            throw ReservationControllerError.actionAlreadyInProgress
+        }
+
+        isCreatingReservation = true
+        errorMessage = nil
+        noticeMessage = nil
+        defer { isCreatingReservation = false }
+
+        do {
+            let repository = ReservationRepository(context: context)
+            let service = ReservationMutationService(client: environment.apiClient, repository: repository)
+            let createdReservation = try await service.createReservation(request)
+            let acceptedReservation: ReservationDTO
+
+            if createdReservation.status == .confirmed {
+                acceptedReservation = createdReservation
+            } else {
+                acceptedReservation = try await service.updateReservation(
+                    id: createdReservation.id,
+                    request: ReservationUpdateRequest(status: .confirmed)
+                )
+            }
+
+            markScopesTouched(after: acceptedReservation)
+            postNotice(
+                severity: .success,
+                source: .mutation,
+                title: "Manual reservation added",
+                message: "Created as confirmed. No email was sent."
+            )
+            return acceptedReservation
+        } catch {
+            if error.isCancellationLike {
+                throw error
+            }
+
+            errorMessage = "Manual reservation was not created. Please retry before relying on this reservation."
+            postNotice(
+                severity: .error,
+                source: .mutation,
+                title: "Create did not sync",
+                message: "Manual reservation was not created. Please retry before relying on it."
+            )
+            throw error
+        }
+    }
+
     // MARK: - Reservation Mutation Actions
 
     // Intent: Generic server PATCH for reservation edits such as table, time, party, notes, or status.
