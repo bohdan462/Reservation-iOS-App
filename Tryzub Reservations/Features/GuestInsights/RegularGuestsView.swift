@@ -6,7 +6,10 @@
 import SwiftData
 import SwiftUI
 
+// MARK: - Regulars / Guest Memory View
+
 struct RegularGuestsView: View {
+    // Reads cached reservations only; Guest Memory does not call network or mutate data.
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate),
         SortDescriptor(\ReservationRecord.reservationTime)
@@ -17,6 +20,7 @@ struct RegularGuestsView: View {
     @State private var filter: RegularGuestFilter = .allSeenBefore
     @State private var sort: RegularGuestSort = .mostReservations
 
+    // Small read-only analyzer for grouping guests and applying in-memory filters.
     private let controller = RegularGuestsController()
 
     private var allSummaries: [RegularGuestSummary] {
@@ -50,6 +54,8 @@ struct RegularGuestsView: View {
         .fontDesign(.rounded)
     }
 
+    // MARK: - Header
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Regulars / Seen Before")
@@ -61,6 +67,8 @@ struct RegularGuestsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    // MARK: - Summary Cards
 
     private var summaryGrid: some View {
         let regularCount = allSummaries.filter {
@@ -84,6 +92,8 @@ struct RegularGuestsView: View {
         }
     }
 
+    // MARK: - Search / Filter / Sort Controls
+
     private var controls: some View {
         VStack(alignment: .leading, spacing: 10) {
             ScrollView(.horizontal, showsIndicators: false) {
@@ -94,13 +104,13 @@ struct RegularGuestsView: View {
                         } label: {
                             Text(option.displayName)
                                 .font(.caption.weight(.medium))
-                                .foregroundStyle(filter == option ? Color(.label) : Color(.secondaryLabel))
+                                .foregroundStyle(filter == option ? Color(.systemBackground) : Color(.secondaryLabel))
                                 .lineLimit(1)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 7)
-                                .background(filter == option ? Color(.systemGray5) : Color(.secondarySystemGroupedBackground), in: Capsule())
+                                .background(filter == option ? ReservationUIStyle.selectedControlColor : Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
                                 .overlay {
-                                    Capsule()
+                                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
                                         .stroke(Color.primary.opacity(filter == option ? 0.12 : 0.08), lineWidth: 1)
                                 }
                         }
@@ -130,6 +140,8 @@ struct RegularGuestsView: View {
             }
         }
     }
+
+    // MARK: - Results
 
     @ViewBuilder
     private var results: some View {
@@ -164,6 +176,8 @@ struct RegularGuestsView: View {
         reservations.first { $0.remoteID == summary.representativeReservationID }
     }
 }
+
+// MARK: - Regular Guest Row
 
 private struct RegularGuestRow: View {
     let summary: RegularGuestSummary
@@ -220,9 +234,6 @@ private struct RegularGuestRow: View {
                     if summary.upcomingCount > 0 {
                         GuestInsightBadge("Upcoming", systemImage: "calendar")
                     }
-                    if summary.collapsedDuplicateReservationCount > 0 {
-                        GuestInsightBadge("Copies ignored", systemImage: "doc.on.doc")
-                    }
                 }
             }
 
@@ -232,9 +243,9 @@ private struct RegularGuestRow: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
@@ -271,6 +282,8 @@ private struct RegularGuestRow: View {
     }
 }
 
+// MARK: - Metric Card
+
 private struct RegularGuestMetricCard: View {
     let title: String
     let value: String
@@ -298,6 +311,8 @@ private struct RegularGuestMetricCard: View {
         }
     }
 }
+
+// MARK: - Previews
 
 #if DEBUG
 #Preview("Guest Memory") {

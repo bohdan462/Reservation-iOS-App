@@ -5,6 +5,8 @@
 
 import Foundation
 
+// MARK: - Resolved Identity
+
 struct GuestResolvedIdentity {
     let record: ReservationRecord
     let normalizedName: String
@@ -20,6 +22,8 @@ struct GuestResolvedIdentity {
     }
 }
 
+// MARK: - Match Result
+
 struct GuestIdentityMatch {
     let record: ReservationRecord
     let confidence: GuestMatchConfidence
@@ -30,7 +34,13 @@ struct GuestIdentityMatch {
     }
 }
 
+// MARK: - Identity Resolver
+
 struct GuestIdentityResolver {
+    // MARK: - Input Data
+
+    // Intent: Extracts identity signals from one cached ReservationRecord.
+    // Placeholder call-in emails are not useful identity evidence.
     func identity(for record: ReservationRecord) -> GuestResolvedIdentity {
         let usefulEmail = normalizedUsefulEmail(record.email)
         let parts = usefulEmail.map(emailParts)
@@ -47,6 +57,10 @@ struct GuestIdentityResolver {
         )
     }
 
+    // MARK: - Matching Rules
+
+    // Intent: Conservative guest matching for hospitality memory.
+    // Weak matches are possible identity clues, not confirmed guest history.
     func match(
         _ record: ReservationRecord,
         against selected: GuestResolvedIdentity,
@@ -147,6 +161,8 @@ struct GuestIdentityResolver {
         return nil
     }
 
+    // MARK: - Placeholder / Contact Normalization
+
     func isLikelyManualCallIn(_ record: ReservationRecord) -> Bool {
         record.sourceSubmissionID <= 0 || isPlaceholderEmail(record.email)
     }
@@ -195,6 +211,8 @@ struct GuestIdentityResolver {
         return String(digits.suffix(4))
     }
 
+    // MARK: - Date / Time Helpers
+
     func hourBucket(from time: String) -> String? {
         guard let hour = hour(from: time) else { return nil }
         let adjustedHour = hour % 12 == 0 ? 12 : hour % 12
@@ -224,6 +242,8 @@ struct GuestIdentityResolver {
         guard let date = reservationDate(from: record) else { return nil }
         return Self.weekdayFormatter.string(from: date)
     }
+
+    // MARK: - Name / Email Similarity
 
     func namesLookSimilar(_ lhs: String, _ rhs: String) -> Bool {
         guard lhs.count >= 4, rhs.count >= 4 else { return false }
@@ -262,6 +282,8 @@ struct GuestIdentityResolver {
         return (parts[0], parts[1])
     }
 
+    // MARK: - Booking Pattern Similarity
+
     private func reservationPatternLooksSimilar(_ lhs: ReservationRecord, _ rhs: ReservationRecord) -> Bool {
         let samePartySize = lhs.partySize == rhs.partySize
         let sameHour = hour(from: lhs.reservationTime) == hour(from: rhs.reservationTime)
@@ -269,6 +291,8 @@ struct GuestIdentityResolver {
 
         return [samePartySize, sameHour, sameWeekday].filter { $0 }.count >= 2
     }
+
+    // MARK: - Static Lookup / Formatters
 
     private static let commonEmailProviderDomains: Set<String> = [
         "gmail.com",

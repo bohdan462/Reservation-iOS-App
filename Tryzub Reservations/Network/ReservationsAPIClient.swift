@@ -7,6 +7,8 @@
 
 import Foundation
 
+// MARK: - Request Reasons
+
 enum ReservationAPIRequestReason: String {
     case unspecified
     case startupToday = "startup_today"
@@ -27,6 +29,8 @@ enum ReservationAPIRequestReason: String {
     case autoSkipBusy = "auto_skip_busy"
     case autoSkipInactive = "auto_skip_inactive"
 }
+
+// MARK: - Sanitized Request Logging
 
 enum ReservationAPILogger {
     #if DEBUG
@@ -143,6 +147,8 @@ enum ReservationAPILogger {
         }
     }
 
+    // Intent: Debug request paths without credentials or guest search text.
+    // Search query is redacted; Authorization header is never logged.
     private static func sanitizedPathAndQuery(for url: URL?) -> String {
         guard let url else { return "path=<unknown>" }
 
@@ -183,6 +189,8 @@ enum ReservationAPILogger {
     }
 }
 
+// MARK: - API Client Contract
+
 protocol ReservationsAPIClientProtocol: AnyObject {
     var debugBaseURLDescription: String { get }
     var hasConfiguredCredentials: Bool { get }
@@ -216,6 +224,8 @@ protocol ReservationsAPIClientProtocol: AnyObject {
     func fetchImportFailures(page: Int, perPage: Int, reason: ReservationAPIRequestReason) async throws -> ImportFailuresResponse
 }
 
+// MARK: - Default Protocol Convenience
+
 extension ReservationsAPIClientProtocol {
     func fetchReservations(
         page: Int,
@@ -245,19 +255,11 @@ extension ReservationsAPIClientProtocol {
     }
 }
 
-//Build URL
-//
-//Add auth header
-//
-//Call URLSession
-//
-//Validate status code
-//
-//Decode JSON
-//
-//Return ReservationsResponse
+// MARK: - WordPress Reservations API Client
 
 final class ReservationsAPIClient: ReservationsAPIClientProtocol {
+    // MARK: - Dependencies
+
     private let baseURL: URL
     private let username: String
     private let applicationPassword: String
@@ -271,6 +273,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         !username.isEmpty && !applicationPassword.isEmpty
     }
 
+    // MARK: - Coding
+
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -283,26 +287,28 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return encoder
     }()
 
-//    private static let defaultSession: URLSession = {
-//        let configuration = URLSessionConfiguration.default
-//        configuration.waitsForConnectivity = true
-//        configuration.timeoutIntervalForRequest = 30
-//        configuration.timeoutIntervalForResource = 60
-//        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-//        configuration.httpMaximumConnectionsPerHost = 1
-//        return URLSession(configuration: configuration)
-//    }()
-    
     private static let defaultSession: URLSession = {
         let configuration = URLSessionConfiguration.default
-        configuration.waitsForConnectivity = false
-        configuration.timeoutIntervalForRequest = 8
-        configuration.timeoutIntervalForResource = 12
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 60
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.httpMaximumConnectionsPerHost = 2
+        configuration.httpMaximumConnectionsPerHost = 1
         return URLSession(configuration: configuration)
     }()
     
+//    private static let defaultSession: URLSession = {
+//        let configuration = URLSessionConfiguration.default
+//        configuration.waitsForConnectivity = false
+//        configuration.timeoutIntervalForRequest = 8
+//        configuration.timeoutIntervalForResource = 12
+//        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+//        configuration.httpMaximumConnectionsPerHost = 2
+//        return URLSession(configuration: configuration)
+//    }()
+
+    // MARK: - Initialization
+
     init(baseURL: URL,
          username: String,
          applicationPassword: String,
@@ -313,7 +319,11 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         self.applicationPassword = applicationPassword
         self.session = session
     }
-    
+
+    // MARK: - Fetch Reservation Lists
+
+    // Intent: Reads managed reservations for today, schedule windows, review queues, or search.
+    // Network: GET /managed-reservations with query filters.
     func fetchReservations(
         page: Int = 1,
         perPage: Int = 20,
@@ -364,6 +374,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
     }
 
+    // Intent: Paginates list reads so sync services can cache the full matching result.
+    // Network: GET /managed-reservations across all pages.
     func fetchAllReservations(
         perPage: Int = 100,
         date: String? = nil,
@@ -398,6 +410,10 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return allReservations
     }
 
+    // MARK: - Fetch One Reservation
+
+    // Intent: Reconciles one reservation after an uncertain mutation or diagnostics check.
+    // Network: GET /managed-reservations/{id}.
     func fetchReservation(
         id: Int,
         retryCount: Int = 1,
@@ -414,6 +430,10 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
     }
 
+    // MARK: - Reservation Mutations
+
+    // Intent: Server-first reservation edit, including confirm-without-email via status=confirmed.
+    // Network: PATCH /managed-reservations/{id}.
     func updateReservation(
         id: Int,
         request updateRequest: ReservationUpdateRequest,
@@ -431,6 +451,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
     }
 
+    // Intent: Staff creates a manual/call-in reservation.
+    // Network: POST /managed-reservations.
     func createReservation(
         _ createRequest: ReservationCreateRequest,
         reason: ReservationAPIRequestReason = .mutationCreate
@@ -449,6 +471,11 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
     }
 
+    // MARK: - Confirm With Email
+
+    // Intent: Confirms reservation and asks backend to send/record confirmation email.
+    // Network: POST /managed-reservations/{id}/confirm.
+    // Rename note: This method name should mention email in a later cleanup.
     func confirmReservation(
         id: Int,
         reason: ReservationAPIRequestReason = .mutationConfirm
@@ -466,6 +493,10 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
     }
 
+    // MARK: - Import Failure Diagnostics
+
+    // Intent: Developer/manager reads failed public-form imports.
+    // Network: GET /managed-reservations/import-failures.
     func fetchImportFailures(
         page: Int = 1,
         perPage: Int = 50,
@@ -488,6 +519,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
     }
 
+    // MARK: - Request Building
+
     private func managedReservationsURL() -> URL {
         baseURL.appendingPathComponent("managed-reservations")
     }
@@ -506,6 +539,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return url
     }
 
+    // Authorization header is attached here and never passed to sanitized logging output.
     private func makeRequest(url: URL, method: String) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -529,6 +563,9 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return "Basic \(base64LoginString)"
     }
 
+    // MARK: - Network Execution
+
+    // Intent: Performs one API request with bounded retry for transient network errors.
     private func perform(
         _ request: URLRequest,
         retryCount: Int = 0,
@@ -590,6 +627,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         throw apiError
     }
 
+    // MARK: - Response Validation
+
     private func validate(response: URLResponse, data: Data) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ReservationAPIError.invalidResponse
@@ -613,10 +652,14 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
     }
 }
 
+// MARK: - WordPress Error Payload
+
 private struct WordPressAPIError: Decodable {
     let code: String
     let message: String
 }
+
+// MARK: - Retry Classification
 
 private extension URLError {
     var isTransientNetworkError: Bool {

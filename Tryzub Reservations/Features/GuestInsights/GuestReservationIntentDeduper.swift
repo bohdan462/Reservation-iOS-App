@@ -5,14 +5,21 @@
 
 import Foundation
 
+// MARK: - Deduplication Result
+
 struct GuestReservationIntentDeduplicationResult {
     let records: [ReservationRecord]
     let collapsedDuplicateCount: Int
 }
 
+// MARK: - Intent Deduper
+
 struct GuestReservationIntentDeduper {
     private let identityResolver = GuestIdentityResolver()
 
+    // Intent: Collapses duplicate rows that look like the same guest booking intent.
+    // This keeps plugin/form copy errors from inflating "regular" visit counts.
+    // SwiftData: Read-only; no records are changed.
     func collapse(
         _ records: [ReservationRecord],
         keeping selectedID: Int? = nil
@@ -40,12 +47,15 @@ struct GuestReservationIntentDeduper {
         )
     }
 
+    // Intent: Prevents duplicate same-intent rows from appearing as possible matches.
     func isDuplicateIntent(_ record: ReservationRecord, ofAny records: [ReservationRecord]) -> Bool {
         guard let recordKey = intentKey(for: record) else { return false }
         return records.contains { candidate in
             candidate.remoteID != record.remoteID && intentKey(for: candidate) == recordKey
         }
     }
+
+    // MARK: - Booking Intent Key
 
     private func intentKey(for record: ReservationRecord) -> String? {
         guard let identityKey = identityKey(for: record) else { return nil }
@@ -85,6 +95,8 @@ struct GuestReservationIntentDeduper {
         guard parts.count >= 2 else { return value }
         return "\(parts[0]):\(parts[1])"
     }
+
+    // MARK: - Canonical Record Selection
 
     private func canonicalRecord(from records: [ReservationRecord], selectedID: Int?) -> ReservationRecord {
         records.max { lhs, rhs in

@@ -8,23 +8,42 @@ import SwiftData
 
 @MainActor
 final class ReservationsController: ObservableObject {
+    // MARK: - Published UI State
+
+    // Tracks staff-visible refreshes that update the SwiftData reservation cache.
     @Published private(set) var isSyncing = false
+
+    // Tracks the quiet host-board loop that keeps today's cache warm.
     @Published private(set) var isAutoRefreshing = false
+
+    // Remote reservation IDs currently being patched or confirmed.
     @Published private(set) var actionInProgressIDs: Set<Int> = []
+
+    // True while a call-in/manual reservation is being created on the server.
     @Published private(set) var isCreatingReservation = false
     @Published private(set) var isCheckingImportFailureCount = false
+
+    // Last successful server-to-cache reservation sync.
     @Published private(set) var lastSyncedAt: Date?
+
+    // Short staff-facing notices for refreshes, mutations, and diagnostics.
     @Published private(set) var notices: [AppNotice] = []
     @Published var errorMessage: String?
     @Published var noticeMessage: String?
     @Published var importFailureCount: Int = 0
     @Published var importFailureCountError: String?
+
+    // Developer diagnostics show which sync scopes are fresh, busy, or cooling down.
     @Published private(set) var syncScopeSnapshots: [SyncScopeSnapshot] = []
-    
+
+    // MARK: - Sync State
+
     private var lastAutoRefreshAttemptAt: Date?
     private var lastAutoRefreshFailureAt: Date?
     private var manualAttemptByScope: [ReservationSyncScope: Date] = [:]
     private var syncStateByScope: [ReservationSyncScope: SyncScopeState] = [:]
+
+    // MARK: - Refresh Timing
 
     private let autoRefreshInterval: TimeInterval = 60
     private let autoRefreshFailureCooldown: TimeInterval = 180
@@ -32,6 +51,8 @@ final class ReservationsController: ObservableObject {
     private let scheduleFreshnessInterval: TimeInterval = 300
     private let reviewFreshnessInterval: TimeInterval = 120
     private let importFailureCountFreshnessInterval: TimeInterval = 300
+
+    // MARK: - Dependencies
 
     let environment: AppEnvironment
 
@@ -49,15 +70,23 @@ final class ReservationsController: ObservableObject {
 
     private var hasAttemptedInitialLoad = false
 
+    // MARK: - Initialization
+
     init(environment: AppEnvironment) {
         self.environment = environment
     }
 
+    // MARK: - App / Screen Lifecycle
+
+    // Intent: App starts with cached reservations visible, then refreshes today's cache.
+    // Called by: ReservationsListView root task.
+    // Network: GET /managed-reservations?date=today when refresh proceeds.
     func loadIfNeeded(context: ModelContext) async {
         guard !hasAttemptedInitialLoad else { return }
         hasAttemptedInitialLoad = true
 
         do {
+            // Created per operation so the repository uses the current ModelContext.
             let repository = ReservationRepository(context: context)
             if let latestLocalSyncDate = try repository.latestLocalSyncDate() {
                 lastSyncedAt = latestLocalSyncDate
@@ -74,15 +103,27 @@ final class ReservationsController: ObservableObject {
         await performTodayRefresh(context: context, mode: .startup)
     }
 
-    func refreshAll(context: ModelContext) async {
+    // MARK: - Legacy Refresh Entry Points
+
+    // Intent: Refreshes the schedule window cache, not every historical reservation.
+    // Rename note: A later cleanup should call this refreshScheduleWindowCache.
+    func refreshScheduleWindowCache(context: ModelContext) async {
         await requestScheduleRefresh(context: context, source: .manual)
     }
 
+    // MARK: - Today Sync
+
+    // Intent: Staff manually refreshes today's reservation cache.
+    // Called by: Today pull-to-refresh and toolbar refresh.
+    // Network: GET /managed-reservations?date=today.
     @discardableResult
     func refreshDashboard(context: ModelContext) async -> Bool {
         await requestManualTodayRefresh(context: context, source: .manual)
     }
 
+    // Intent: Runs staff-requested today refresh with busy/cooldown guards.
+    // Writes: SwiftData through ReservationSyncService.
+    // Network: GET /managed-reservations?date=today.
     @discardableResult
     func requestManualTodayRefresh(
         context: ModelContext,
@@ -108,12 +149,18 @@ final class ReservationsController: ObservableObject {
         return await performTodayRefresh(context: context, mode: source == .startup ? .startup : .manual)
     }
 
+    // MARK: - Schedule Sync
+
+    // Intent: Schedule tab became visible; refresh only if the schedule cache is stale.
+    // Network: GET /managed-reservations?from=...&to=... when stale.
     func scheduleBecameActive(context: ModelContext) async {
         let scope = scheduleScope()
         guard !isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) else { return }
         await performScheduleWindowRefresh(context: context, force: false)
     }
 
+    // Intent: Staff manually refreshes the schedule window.
+    // Network: GET /managed-reservations?from=...&to=...
     @discardableResult
     func requestScheduleRefresh(
         context: ModelContext,
@@ -122,12 +169,18 @@ final class ReservationsController: ObservableObject {
         await performScheduleWindowRefresh(context: context, force: source == .manual)
     }
 
+    // MARK: - Pending Review Sync
+
+    // Intent: Pending/Review screen became visible; refresh only when cached queue is stale.
+    // Network: GET /managed-reservations?status=new and status=needs_review.
     func reviewBecameActive(context: ModelContext) async {
         let scope = ReservationSyncScope.reviewQueues
         guard !isScopeFresh(scope, freshnessInterval: reviewFreshnessInterval) else { return }
         await performReviewQueuesRefresh(context: context, force: false)
     }
 
+    // Intent: Staff manually refreshes the pending review queue.
+    // Network: GET /managed-reservations?status=new and status=needs_review.
     @discardableResult
     func requestReviewRefresh(
         context: ModelContext,
@@ -136,6 +189,11 @@ final class ReservationsController: ObservableObject {
         await performReviewQueuesRefresh(context: context, force: source == .manual)
     }
 
+    // MARK: - Today Auto Refresh
+
+    // Intent: Quietly keeps the host board current while staff are not mid-action.
+    // Called by: HostBoardView auto-refresh loop.
+    // Network: GET /managed-reservations?date=today when allowed.
     func autoRefreshDashboardIfAllowed(
         context: ModelContext,
         isInteractionActive: Bool,
@@ -207,6 +265,7 @@ final class ReservationsController: ObservableObject {
         clearScopedMessages(for: mode.noticeSource)
 
         do {
+            // Service/repository are per operation so they use the current ModelContext.
             let repository = ReservationRepository(context: context)
             let service = ReservationSyncService(client: environment.apiClient, repository: repository)
             try await service.syncToday(reason: mode.requestReason)
@@ -255,6 +314,8 @@ final class ReservationsController: ObservableObject {
         return true
     }
 
+    // Intent: Legacy view action for refreshing the pending review queues.
+    // Network: GET /managed-reservations?status=new and status=needs_review.
     func refreshReviewQueues(context: ModelContext) async {
         await requestReviewRefresh(context: context, source: .manual)
     }
@@ -286,6 +347,7 @@ final class ReservationsController: ObservableObject {
 
         do {
             let window = scheduleWindow()
+            // Created per operation so schedule sync writes into this view's ModelContext.
             let repository = ReservationRepository(context: context)
             let service = ReservationSyncService(client: environment.apiClient, repository: repository)
             try await service.syncScheduleWindow(
@@ -335,6 +397,7 @@ final class ReservationsController: ObservableObject {
         defer { isSyncing = false }
 
         do {
+            // Created per operation so pending queue sync writes into this view's ModelContext.
             let repository = ReservationRepository(context: context)
             let service = ReservationSyncService(client: environment.apiClient, repository: repository)
             try await service.syncReviewQueues(reason: .reviewQueues)
@@ -354,6 +417,10 @@ final class ReservationsController: ObservableObject {
         }
     }
 
+    // MARK: - Local Cache Upsert
+
+    // Intent: Upserts one server DTO into SwiftData cache without creating a mutation.
+    // Rename note: A later cleanup should call this upsertServerReservationIntoCache.
     func save(_ reservation: ReservationDTO, context: ModelContext) {
         let repository = ReservationRepository(context: context)
         let service = ReservationSyncService(client: environment.apiClient, repository: repository)
@@ -375,6 +442,11 @@ final class ReservationsController: ObservableObject {
         actionInProgressIDs.contains(reservation.remoteID)
     }
 
+    // MARK: - Manual Reservation Creation
+
+    // Intent: Staff creates a call-in/manual reservation on the server.
+    // Writes: Upserts the returned server DTO into SwiftData through MutationService.
+    // Network: POST /managed-reservations.
     func createReservation(
         _ request: ReservationCreateRequest,
         context: ModelContext
@@ -389,6 +461,7 @@ final class ReservationsController: ObservableObject {
         defer { isCreatingReservation = false }
 
         do {
+            // Mutation service owns the server-first create and returned DTO cache upsert.
             let repository = ReservationRepository(context: context)
             let service = ReservationMutationService(client: environment.apiClient, repository: repository)
             let reservation = try await service.createReservation(request)
@@ -411,6 +484,11 @@ final class ReservationsController: ObservableObject {
         }
     }
 
+    // MARK: - Reservation Mutation Actions
+
+    // Intent: Generic server PATCH for reservation edits such as table, time, party, notes, or status.
+    // Writes: Upserts the returned server DTO into SwiftData through MutationService.
+    // Network: PATCH /managed-reservations/{id}.
     func updateReservation(
         id: Int,
         request: ReservationUpdateRequest,
@@ -456,6 +534,8 @@ final class ReservationsController: ObservableObject {
         }
     }
 
+    // Intent: Staff changes reservation status without sending email.
+    // Network: PATCH /managed-reservations/{id} with status.
     func updateStatus(
         reservation: ReservationRecord,
         status: ReservationStatus,
@@ -474,6 +554,11 @@ final class ReservationsController: ObservableObject {
         }
     }
 
+    // MARK: - Confirm With Email
+
+    // Intent: Confirms reservation and asks backend to send/record confirmation email.
+    // Network: POST /managed-reservations/{id}/confirm.
+    // Rename note: A later cleanup should call this confirmReservationAndSendEmail.
     func confirmReservation(
         reservation: ReservationRecord,
         context: ModelContext
@@ -538,10 +623,16 @@ final class ReservationsController: ObservableObject {
         }
     }
 
+    // MARK: - Import Failure Diagnostics
+
+    // Intent: Shows managers/developers whether public form imports are failing.
+    // Network: GET /managed-reservations/import-failures?page=1&per_page=1.
     func refreshImportFailureCount(reason: ReservationAPIRequestReason = .failureCount) async {
         await refreshImportFailureCountIfNeeded(force: false, reason: reason)
     }
 
+    // Intent: Refreshes the failed-import count when capability and freshness allow.
+    // Network: GET /managed-reservations/import-failures.
     func refreshImportFailureCountIfNeeded(
         force: Bool,
         reason: ReservationAPIRequestReason = .failureCount
@@ -592,6 +683,8 @@ final class ReservationsController: ObservableObject {
         }
     }
 
+    // Intent: Developer/manager opens the full import failure list.
+    // Network: GET /managed-reservations/import-failures.
     func fetchImportFailures(page: Int = 1, perPage: Int = 100) async throws -> ImportFailuresResponse {
         guard capabilities.canViewFailedImports else {
             throw ReservationControllerError.permissionDenied
@@ -609,6 +702,11 @@ final class ReservationsController: ObservableObject {
         return response
     }
 
+    // MARK: - Reconcile Uncertain Mutations
+
+    // Intent: After an uncertain mutation failure, fetch server truth for one reservation.
+    // Writes: Upserts the server DTO into SwiftData if the GET succeeds.
+    // Network: GET /managed-reservations/{id}.
     @discardableResult
     func reconcileReservation(id: Int, context: ModelContext) async -> ReservationDTO? {
         let scope = ReservationSyncScope.reservation(id: id)
@@ -635,6 +733,8 @@ final class ReservationsController: ObservableObject {
         }
     }
 
+    // MARK: - Notice Handling
+
     func clearErrorMessage() {
         errorMessage = nil
     }
@@ -655,6 +755,10 @@ final class ReservationsController: ObservableObject {
         notices.removeAll()
     }
 
+    // MARK: - Developer Diagnostics
+
+    // Intent: Developer/manager verifies backend reachability without mutating reservations.
+    // Network: Uses read-only GET endpoints only.
     @discardableResult
     func runAdminFetchTest(_ test: AdminFetchTest, reservationID: Int? = nil) async -> AdminFetchTestResult {
         let startedAt = Date()
@@ -773,6 +877,8 @@ final class ReservationsController: ObservableObject {
             return result
         }
     }
+
+    // MARK: - Private Sync Scope Helpers
 
     private func todayScope() -> ReservationSyncScope {
         .today(date: Date.reservationDateString())
@@ -896,6 +1002,8 @@ final class ReservationsController: ObservableObject {
             .sorted { $0.scope.description < $1.scope.description }
     }
 
+    // MARK: - Private Notice / Error Helpers
+
     private func postRefreshFailureNotice(mode: ReservationRefreshMode, error: Error) {
         postNotice(
             severity: mode.noticeSeverity,
@@ -955,6 +1063,8 @@ final class ReservationsController: ObservableObject {
         return nil
     }
 }
+
+// MARK: - Controller Support Types
 
 private enum ReservationControllerError: LocalizedError {
     case actionAlreadyInProgress
@@ -1047,7 +1157,7 @@ private enum ReservationRefreshMode {
         case .manual:
             return "Refresh failed"
         case .automatic:
-            return "Auto-refresh failed"
+            return "Auto refresh failed"
         case .schedule:
             return "Schedule refresh failed"
         case .review:
@@ -1058,7 +1168,7 @@ private enum ReservationRefreshMode {
     var failureMessage: String {
         switch self {
         case .startup:
-            return "The server did not respond. Cached reservations remain visible."
+            return "The server did not respond. Cached remain visible."
         case .manual:
             return "Could not reach the server. Cached reservations remain visible."
         case .automatic:

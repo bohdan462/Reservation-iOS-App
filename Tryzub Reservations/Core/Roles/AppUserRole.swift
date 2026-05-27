@@ -5,6 +5,8 @@
 
 import Foundation
 
+// MARK: - App User Roles
+
 enum AppUserRole: String, CaseIterable, Identifiable {
     case staff
     case manager
@@ -24,6 +26,9 @@ enum AppUserRole: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Staff Capabilities
+
+// Intent: Keeps restaurant-facing actions gated by role without changing backend contracts.
 struct AppCapabilities {
     let canConfirmReservations: Bool
     let canSeatReservations: Bool

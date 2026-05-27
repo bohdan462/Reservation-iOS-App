@@ -5,10 +5,15 @@
 
 import Foundation
 
+// MARK: - Read-Only Regular Guest Analysis
+
 struct RegularGuestsController {
     private let identityResolver = GuestIdentityResolver()
     private let intentDeduper = GuestReservationIntentDeduper()
 
+    // Intent: Builds guest-memory rows from cached SwiftData reservations only.
+    // Network: None. Mutation: None.
+    // Duplicate same-intent copies are collapsed before visit counts are shown.
     func buildSummaries(from reservations: [ReservationRecord]) -> [RegularGuestSummary] {
         let records = uniqueRecords(reservations)
         guard !records.isEmpty else { return [] }
@@ -19,6 +24,9 @@ struct RegularGuestsController {
             .sorted(by: defaultSort)
     }
 
+    // MARK: - Filters / Sorting
+
+    // Intent: Applies staff search/filter/sort choices in memory.
     func displayedSummaries(
         from reservations: [ReservationRecord],
         searchText: String,
@@ -38,6 +46,9 @@ struct RegularGuestsController {
         }
     }
 
+    // MARK: - Guest Clustering
+
+    // Exact/strong matches form clusters. Weak matches stay separate as possible matches.
     private func exactAndStrongClusters(from records: [ReservationRecord]) -> [[ReservationRecord]] {
         var unionFind = UnionFind(indices: Array(records.indices))
         let identities = records.map(identityResolver.identity)
@@ -62,6 +73,8 @@ struct RegularGuestsController {
 
         return grouped.values.map { $0.sorted(by: newestFirst) }
     }
+
+    // MARK: - Summary Building
 
     private func summary(
         for records: [ReservationRecord],
@@ -123,6 +136,8 @@ struct RegularGuestsController {
         )
     }
 
+    // MARK: - Filter Rules
+
     private func includes(_ summary: RegularGuestSummary, filter: RegularGuestFilter) -> Bool {
         switch filter {
         case .allSeenBefore:
@@ -145,6 +160,8 @@ struct RegularGuestsController {
             return summary.upcomingCount > 0
         }
     }
+
+    // MARK: - Sort Rules
 
     private func compare(
         _ lhs: RegularGuestSummary,
@@ -194,6 +211,8 @@ struct RegularGuestsController {
 
         return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
     }
+
+    // MARK: - Identity / Possible Matches
 
     private func stableID(
         for records: [ReservationRecord],
@@ -248,6 +267,8 @@ struct RegularGuestsController {
 
         return possibleIDs.count
     }
+
+    // MARK: - Date / Search Helpers
 
     private func statusCounts(from records: [ReservationRecord]) -> Int {
         records.filter {
@@ -350,6 +371,8 @@ struct RegularGuestsController {
     ]
 }
 
+// MARK: - Union Find
+
 private struct UnionFind {
     private var parent: [Int: Int]
 
@@ -375,6 +398,8 @@ private struct UnionFind {
         parent[rhsRoot] = lhsRoot
     }
 }
+
+// MARK: - String Helpers
 
 private extension String {
     var nilIfBlank: String? {

@@ -7,6 +7,8 @@
 
 import Foundation
 
+// MARK: - Sync Service Contract
+
 @MainActor
 protocol ReservationSyncServiceProtocol {
     func syncAllReservations(reason: ReservationAPIRequestReason) async throws
@@ -18,6 +20,8 @@ protocol ReservationSyncServiceProtocol {
 
 @MainActor
 final class ReservationSyncService: ReservationSyncServiceProtocol {
+    // MARK: - Dependencies
+
     private let client: any ReservationsAPIClientProtocol
     private let repository: any ReservationRepositoryProtocol
 
@@ -29,6 +33,11 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         self.repository = repository
     }
 
+    // MARK: - Full Cache Sync
+
+    // Intent: Fetches every managed reservation page for diagnostics or broad cache refresh.
+    // Network: GET /managed-reservations across all pages.
+    // SwiftData: Upserts fetched server DTOs; cache only.
     func syncAllReservations(reason: ReservationAPIRequestReason) async throws {
         let reservations = try await client.fetchAllReservations(
             perPage: 100,
@@ -42,6 +51,11 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         try repository.upsert(reservations)
     }
 
+    // MARK: - Today Sync
+
+    // Intent: Refreshes today's host-board reservation cache.
+    // Network: GET /managed-reservations?date=today.
+    // SwiftData: Upserts fetched server DTOs; cache only.
     func syncToday(reason: ReservationAPIRequestReason) async throws {
         let response = try await client.fetchReservations(
             page: 1,
@@ -58,6 +72,11 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         try repository.upsert(response.data)
     }
 
+    // MARK: - Schedule Window Sync
+
+    // Intent: Refreshes the upcoming schedule window used by Schedule.
+    // Network: GET /managed-reservations?from=...&to=... across pages.
+    // SwiftData: Upserts fetched server DTOs; cache only.
     func syncScheduleWindow(from: String, to: String, reason: ReservationAPIRequestReason) async throws {
         let reservations = try await client.fetchAllReservations(
             perPage: 100,
@@ -71,6 +90,11 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         try repository.upsert(reservations)
     }
 
+    // MARK: - Pending Review Sync
+
+    // Intent: Refreshes the staff pending queue from new and needs_review rows.
+    // Network: GET /managed-reservations?status=needs_review and status=new.
+    // SwiftData: Upserts fetched server DTOs; cache only.
     func syncReviewQueues(reason: ReservationAPIRequestReason) async throws {
         let needsReview = try await client.fetchReservations(
             page: 1,
@@ -99,6 +123,10 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         try repository.upsert(needsReview + newReservations)
     }
 
+    // MARK: - Local Cache Upsert
+
+    // Intent: Upserts one server DTO already returned by another operation.
+    // Network: None; this is cache-only.
     func saveReservation(_ reservation: ReservationDTO) throws {
         try repository.upsert(reservation)
     }

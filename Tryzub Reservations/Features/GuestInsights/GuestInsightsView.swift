@@ -5,10 +5,13 @@
 
 import SwiftUI
 
+// MARK: - Guest Insights View
+
 struct GuestInsightsView: View {
     let selectedReservation: ReservationRecord
     let allReservations: [ReservationRecord]
 
+    // Read-only analysis from cached ReservationRecord rows; no network or mutation.
     private var report: GuestInsightReport {
         GuestInsightsController().analyze(
             selected: selectedReservation,
@@ -38,6 +41,8 @@ struct GuestInsightsView: View {
         .fontDesign(.rounded)
     }
 }
+
+// MARK: - Header
 
 private struct GuestInsightHeader: View {
     let report: GuestInsightReport
@@ -94,14 +99,13 @@ private struct GuestInsightHeader: View {
                     if !report.staffMentionHistory.isEmpty {
                         GuestInsightBadge("Staff notes found", systemImage: "note.text")
                     }
-                    if report.collapsedDuplicateReservationCount > 0 {
-                        GuestInsightBadge("Copies ignored", systemImage: "doc.on.doc")
-                    }
                 }
             }
         }
     }
 }
+
+// MARK: - Snapshot Cards
 
 private struct GuestInsightSnapshotGrid: View {
     let report: GuestInsightReport
@@ -205,6 +209,8 @@ private struct GuestInsightSnapshotGrid: View {
     }
 }
 
+// MARK: - Operational Notes
+
 private struct GuestInsightNotesSection: View {
     let report: GuestInsightReport
 
@@ -246,12 +252,15 @@ private struct GuestInsightNotesSection: View {
                     } label: {
                         Text("View all notes")
                             .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.primary.opacity(0.82))
                     }
                 }
             }
         }
     }
 }
+
+// MARK: - Booking History
 
 private struct GuestInsightBookingHistorySection: View {
     let report: GuestInsightReport
@@ -266,6 +275,8 @@ private struct GuestInsightBookingHistorySection: View {
         }
     }
 }
+
+// MARK: - Preferences
 
 private struct GuestInsightPreferencesSection: View {
     let report: GuestInsightReport
@@ -364,6 +375,8 @@ private struct GuestInsightPreferencesSection: View {
     }
 }
 
+// MARK: - Possible Matches
+
 private struct GuestInsightPossibleMatchesSection: View {
     let report: GuestInsightReport
 
@@ -383,6 +396,8 @@ private struct GuestInsightPossibleMatchesSection: View {
         }
     }
 }
+
+// MARK: - Watchouts
 
 private struct GuestInsightWarningsSection: View {
     let warnings: [GuestInsightWarning]
@@ -413,6 +428,8 @@ private struct GuestInsightWarningsSection: View {
         }
     }
 }
+
+// MARK: - History Rows
 
 private struct GuestInsightBookingRow: View {
     let item: GuestBookingHistoryItem
@@ -454,7 +471,11 @@ private struct GuestInsightBookingRow: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
-                .background(Color(.systemGray6), in: Capsule())
+                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                }
         }
         .padding(.vertical, 4)
     }
@@ -475,7 +496,11 @@ private struct GuestInsightMatchRow: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 4)
-                    .background(Color(.systemGray6), in: Capsule())
+                    .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    }
             }
 
             Text("\(match.displayDate) at \(match.displayTime) · \(match.partySize) \(match.partySize == 1 ? "guest" : "guests")")
@@ -524,6 +549,8 @@ private struct GuestInsightNoteBlock: View {
     }
 }
 
+// MARK: - Shared Guest Insight Components
+
 private struct GuestInsightMetricCard: View {
     let title: String
     let value: String
@@ -545,9 +572,9 @@ private struct GuestInsightMetricCard: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
@@ -580,9 +607,9 @@ private struct GuestInsightCard<Content: View>: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
@@ -598,9 +625,9 @@ struct GuestRegularityBadge: View {
             .lineLimit(1)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(background, in: Capsule())
+            .background(background, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
             .overlay {
-                Capsule()
+                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
                     .stroke(Color.primary.opacity(level.rank >= GuestRegularityLevel.regular.rank ? 0.16 : 0.08), lineWidth: 1)
             }
     }
@@ -665,9 +692,15 @@ struct GuestInsightBadge: View {
         .lineLimit(1)
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(Color(.systemGray6), in: Capsule())
+        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
     }
 }
+
+// MARK: - Shared Flow Layout
 
 struct FlowLayout<Content: View>: View {
     let spacing: CGFloat
@@ -684,6 +717,8 @@ struct FlowLayout<Content: View>: View {
         }
     }
 }
+
+// MARK: - Previews
 
 #if DEBUG
 #Preview("Guest Insights") {

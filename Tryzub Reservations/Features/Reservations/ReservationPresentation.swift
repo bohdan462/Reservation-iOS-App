@@ -29,6 +29,13 @@ enum ReservationFormatters {
         formatter.timeStyle = .short
         return formatter
     }()
+
+    static let serverDateTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
 }
 
 extension Date {
@@ -143,6 +150,30 @@ extension ReservationRecord {
 
     var displayTime: String {
         Self.displayTime(from: reservationTime)
+    }
+
+    var submittedAgoText: String? {
+        guard statusValue == .new,
+              let createdDate = ReservationFormatters.serverDateTime.date(from: createdAt) else {
+            return nil
+        }
+
+        let elapsed = max(0, Date().timeIntervalSince(createdDate))
+        if elapsed < 60 {
+            return "Just submitted"
+        }
+
+        let minutes = Int(elapsed / 60)
+        if minutes < 60 {
+            return "\(minutes) min ago"
+        }
+
+        let hours = Int(elapsed / 3600)
+        if hours < 24 {
+            return "\(hours) hr ago"
+        }
+
+        return nil
     }
 
     var shortContactLine: String {

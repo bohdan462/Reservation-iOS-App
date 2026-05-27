@@ -5,6 +5,10 @@
 
 import SwiftUI
 
+// MARK: - Staff Host Actions
+
+// Business intent enum for staff actions.
+// .confirm is confirm-only/no email; .sendConfirmationEmail calls the email endpoint elsewhere.
 enum ReservationHostAction: String, Identifiable {
     case confirm
     case sendConfirmationEmail
@@ -16,12 +20,14 @@ enum ReservationHostAction: String, Identifiable {
 
     var id: String { rawValue }
 
+    // MARK: - Action Labels
+
     var shortTitle: String {
         switch self {
         case .confirm:
-            return "Confirm"
+            return "Confirm Only"
         case .sendConfirmationEmail:
-            return "Email"
+            return "Confirm"
         case .seat:
             return "Seat"
         case .assignTable:
@@ -40,7 +46,7 @@ enum ReservationHostAction: String, Identifiable {
         case .assignTable:
             return "Table"
         case .sendConfirmationEmail:
-            return "Email"
+            return "Confirm"
         case .confirm, .seat, .complete, .cancel, .noShow:
             return shortTitle
         }
@@ -49,7 +55,7 @@ enum ReservationHostAction: String, Identifiable {
     var fullTitle: String {
         switch self {
         case .confirm:
-            return "Confirm"
+            return "Confirm Only"
         case .sendConfirmationEmail:
             return "Confirm + Email"
         case .seat:
@@ -102,6 +108,9 @@ enum ReservationHostAction: String, Identifiable {
         }
     }
 
+    // MARK: - Status Patch Mapping
+
+    // Only direct status updates live here. Confirm + Email uses POST /confirm elsewhere.
     var statusPatch: ReservationStatus? {
         switch self {
         case .confirm:
@@ -119,6 +128,10 @@ enum ReservationHostAction: String, Identifiable {
         }
     }
 
+    // MARK: - Action Availability
+
+    // Intent: Decides which staff actions are visible for the current status/capabilities.
+    // Network: None; callers route the selected action to the controller.
     static func availableActions(
         for reservation: ReservationRecord,
         capabilities: AppCapabilities,
@@ -129,9 +142,9 @@ enum ReservationHostAction: String, Identifiable {
 
         if capabilities.canConfirmReservations,
            status == .new || status == .needsReview {
-            actions.append(.confirm)
+            actions.append(.sendConfirmationEmail)
             if includeSecondary {
-                actions.append(.sendConfirmationEmail)
+                actions.append(.confirm)
             }
         }
 
@@ -186,6 +199,31 @@ enum ReservationHostAction: String, Identifiable {
         return actions
     }
 
+    static func trailingSwipeActions(
+        for reservation: ReservationRecord,
+        capabilities: AppCapabilities
+    ) -> [ReservationHostAction] {
+        guard capabilities.canConfirmReservations,
+              reservation.statusValue == .new || reservation.statusValue == .needsReview else {
+            return []
+        }
+
+        return [.confirm]
+    }
+
+    static func contextMenuActions(
+        for reservation: ReservationRecord,
+        capabilities: AppCapabilities
+    ) -> [ReservationHostAction] {
+        availableActions(
+            for: reservation,
+            capabilities: capabilities,
+            includeSecondary: true
+        )
+    }
+
+    // MARK: - Confirmation Copy
+
     func dialogTitle(for reservation: ReservationRecord) -> String {
         switch self {
         case .confirm:
@@ -227,6 +265,8 @@ enum ReservationHostAction: String, Identifiable {
     }
 }
 
+// MARK: - Action Buttons View
+
 struct ReservationActionButtons: View {
     let reservation: ReservationRecord
     let capabilities: AppCapabilities
@@ -235,6 +275,7 @@ struct ReservationActionButtons: View {
     var isBusy = false
     let onAction: (ReservationHostAction) -> Void
 
+    // Two-tap safety state for quick service actions in compact rows.
     @State private var pendingInlineAction: ReservationHostAction?
 
     private var actions: [ReservationHostAction] {
@@ -263,6 +304,8 @@ struct ReservationActionButtons: View {
             }
         }
     }
+
+    // MARK: - Compact / Full Layouts
 
     private var compactActions: some View {
         HStack(spacing: 6) {
@@ -322,6 +365,8 @@ struct ReservationActionButtons: View {
         }
     }
 
+    // MARK: - Button Rendering
+
     private func actionButton(_ action: ReservationHostAction, compact: Bool, isPrimary: Bool) -> some View {
         Button {
             handleTap(action)
@@ -359,13 +404,15 @@ struct ReservationActionButtons: View {
         .accessibilityLabel(accessibilityLabel(for: action))
     }
 
+    // MARK: - Inline Confirmation
+
     private func title(for action: ReservationHostAction, compact: Bool) -> String {
         if pendingInlineAction == action {
             switch action {
             case .confirm:
                 return "Confirm?"
             case .sendConfirmationEmail:
-                return "Send email?"
+                return "Email?"
             case .seat:
                 return "Seat now?"
             case .complete:
@@ -382,17 +429,21 @@ struct ReservationActionButtons: View {
         return compact ? action.rowTitle : action.shortTitle
     }
 
+    // Intent: Requires a second tap for actions that can change service state quickly.
     private func handleTap(_ action: ReservationHostAction) {
         guard action.needsInlineConfirmation else {
             pendingInlineAction = nil
+            ReservationHaptics.lightImpact()
             onAction(action)
             return
         }
 
         if pendingInlineAction == action {
             pendingInlineAction = nil
+            ReservationHaptics.success()
             onAction(action)
         } else {
+            ReservationHaptics.lightImpact()
             pendingInlineAction = action
         }
     }
@@ -423,6 +474,8 @@ struct ReservationActionButtons: View {
     }
 }
 
+// MARK: - Inline Confirmation Rules
+
 private extension ReservationHostAction {
     var needsInlineConfirmation: Bool {
         switch self {
@@ -433,6 +486,8 @@ private extension ReservationHostAction {
         }
     }
 }
+
+// MARK: - Table Assignment Sheet
 
 struct TableAssignmentSheet: View {
     let reservation: ReservationRecord
@@ -506,6 +561,7 @@ struct TableAssignmentSheet: View {
         }
     }
 
+    // Intent: Staff assigns a table through the caller's PATCH handler.
     private func save() async {
         isSaving = true
         errorMessage = nil

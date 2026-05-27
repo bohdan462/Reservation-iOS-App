@@ -6,19 +6,24 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Reservation Detail
+
 struct ReservationDetailView: View {
     let reservation: ReservationRecord
     let environment: AppEnvironment
 
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
+    // Guest Insights reads cached reservations only; no network or mutation is involved.
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate),
         SortDescriptor(\ReservationRecord.reservationTime)
     ])
     private var allCachedReservations: [ReservationRecord]
 
-    @State private var showEditSheet = false
+    // MARK: - Local UI State
+
+    @State private var showEditScreen = false
     @State private var isSavingQuickAction = false
     @State private var errorMessage: String?
     @State private var pendingAction: ReservationHostAction?
@@ -38,13 +43,15 @@ struct ReservationDetailView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Edit") {
-                    showEditSheet = true
+                    showEditScreen = true
                 }
+                .foregroundStyle(.primary)
                 .disabled(!controller.capabilities.canEditReservationDetails)
             }
         }
         .sheet(item: $tableAssignmentReservation) { reservation in
             TableAssignmentSheet(reservation: reservation) { tableName in
+                // Table assignment is a server PATCH through the controller.
                 _ = try await controller.updateReservation(
                     id: reservation.remoteID,
                     request: ReservationUpdateRequest(tableName: tableName),
@@ -52,8 +59,9 @@ struct ReservationDetailView: View {
                 )
             }
         }
-        .sheet(isPresented: $showEditSheet) {
-            ReservationEditView(reservation: reservation) { request in
+        .navigationDestination(isPresented: $showEditScreen) {
+            ReservationEditFormView(reservation: reservation) { request in
+                // Detail edits are server PATCH operations through the controller.
                 try await controller.updateReservation(
                     id: reservation.remoteID,
                     request: request,
@@ -86,8 +94,11 @@ struct ReservationDetailView: View {
         }
     }
 
+    // MARK: - Detail Layout
+
     @ViewBuilder
     private func detailContent(isWide: Bool) -> some View {
+        // Read-only hospitality analysis from the local SwiftData cache.
         let insightReport = GuestInsightsController().analyze(
             selected: reservation,
             allReservations: allCachedReservations
@@ -120,10 +131,10 @@ struct ReservationDetailView: View {
                             capabilities: controller.capabilities,
                             isBusy: isSavingQuickAction || controller.isActionInProgress(for: reservation),
                             onAction: handleAction,
-                            onEdit: { showEditSheet = true }
+                            onEdit: { showEditScreen = true }
                         )
                         ReservationNotesCard(reservation: reservation) {
-                            showEditSheet = true
+                            showEditScreen = true
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -151,7 +162,7 @@ struct ReservationDetailView: View {
                     capabilities: controller.capabilities,
                     isBusy: isSavingQuickAction || controller.isActionInProgress(for: reservation),
                     onAction: handleAction,
-                    onEdit: { showEditSheet = true }
+                    onEdit: { showEditScreen = true }
                 )
                 ReservationContactCard(reservation: reservation)
                 NavigationLink {
@@ -166,19 +177,22 @@ struct ReservationDetailView: View {
                 ReservationEmailHistoryCard(reservation: reservation)
                 ReservationFactsCard(reservation: reservation)
                 ReservationNotesCard(reservation: reservation) {
-                    showEditSheet = true
+                    showEditScreen = true
                 }
                 ReservationOperationalCard(reservation: reservation)
             }
         }
     }
 
+    // MARK: - Staff Action Routing
+
+    // View sends staff intent only; controller owns network and cache writes.
     private func handleAction(_ action: ReservationHostAction) {
         if action == .assignTable {
             tableAssignmentReservation = reservation
         } else if action == .seat, !reservation.hasTableAssignment {
             tableAssignmentReservation = reservation
-        } else if action == .sendConfirmationEmail || action == .cancel || action == .noShow {
+        } else if action == .cancel || action == .noShow {
             pendingAction = action
         } else {
             Task {
@@ -187,6 +201,8 @@ struct ReservationDetailView: View {
         }
     }
 
+    // Intent: Converts detail actions into controller calls.
+    // Confirm = PATCH status confirmed; Confirm + Email = POST /confirm.
     private func perform(_ action: ReservationHostAction, allowSeatWithoutTable: Bool = false) async {
         if action == .seat, !allowSeatWithoutTable, !reservation.hasTableAssignment {
             pendingAction = nil
@@ -205,21 +221,29 @@ struct ReservationDetailView: View {
         switch action {
         case .confirm:
             await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
+            ReservationHaptics.success()
         case .sendConfirmationEmail:
             await controller.confirmReservation(reservation: reservation, context: modelContext)
+            ReservationHaptics.success()
         case .seat:
             await controller.updateStatus(reservation: reservation, status: .seated, context: modelContext)
+            ReservationHaptics.success()
         case .complete:
             await controller.updateStatus(reservation: reservation, status: .completed, context: modelContext)
+            ReservationHaptics.success()
         case .cancel:
             await controller.updateStatus(reservation: reservation, status: .cancelled, context: modelContext)
+            ReservationHaptics.warning()
         case .noShow:
             await controller.updateStatus(reservation: reservation, status: .noShow, context: modelContext)
+            ReservationHaptics.warning()
         case .assignTable:
             tableAssignmentReservation = reservation
         }
     }
 }
+
+// MARK: - Guest Insights Entry
 
 private struct GuestInsightsPreviewCard: View {
     let report: GuestInsightReport
@@ -263,22 +287,21 @@ private struct GuestInsightsPreviewCard: View {
                     if !report.possibleMatches.isEmpty {
                         DetailPill(label: "Possible match", systemImage: "person.2", tint: .secondary)
                     }
-                    if report.collapsedDuplicateReservationCount > 0 {
-                        DetailPill(label: "Copies ignored", systemImage: "doc.on.doc", tint: .secondary)
-                    }
                 }
                 .lineLimit(1)
             }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
 }
+
+// MARK: - Reservation Hero Postcard
 
 private struct ReservationHeroCard: View {
     let reservation: ReservationRecord
@@ -361,17 +384,22 @@ private struct ReservationHeroCard: View {
                 onEdit()
             } label: {
                 Label("Edit Details", systemImage: "pencil")
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary.opacity(0.82))
+                    .frame(maxWidth: .infinity, minHeight: 40)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.plain)
+            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+            }
             .disabled(!capabilities.canEditReservationDetails)
         }
         .padding(16)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
         .overlay(postcardNotches)
@@ -394,6 +422,8 @@ private struct ReservationHeroCard: View {
         .allowsHitTesting(false)
     }
 }
+
+// MARK: - Contact / Facts / Notes Cards
 
 private struct ReservationContactCard: View {
     let reservation: ReservationRecord
@@ -474,6 +504,7 @@ private struct ReservationEmailHistoryCard: View {
 
     private var statusMessage: String {
         if let sentText {
+            // Copy says "recorded" because this timestamp is backend state, not inbox proof.
             return "Backend recorded the confirmation email at \(sentText)."
         }
 
@@ -518,8 +549,16 @@ private struct ReservationNotesCard: View {
                     onEdit()
                 } label: {
                     Label("Edit Notes", systemImage: "square.and.pencil")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary.opacity(0.82))
+                        .frame(maxWidth: .infinity, minHeight: 38)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
+                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                }
             }
         }
     }
@@ -551,13 +590,15 @@ private struct ReservationOperationalCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
 }
+
+// MARK: - Shared Detail Components
 
 private struct DetailWarningCard: View {
     let title: String
@@ -585,9 +626,9 @@ private struct DetailWarningCard: View {
             Spacer(minLength: 0)
         }
         .padding(14)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
@@ -608,9 +649,9 @@ private struct DetailCard<Content: View>: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
@@ -699,9 +740,15 @@ private struct DetailPill: View {
             .truncationMode(.tail)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color(.systemGray6), in: Capsule())
+            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+            }
     }
 }
+
+// MARK: - Detail Date Formatting
 
 private enum DetailDateFormatting {
     static func server(_ dateString: String?) -> String {
@@ -730,233 +777,7 @@ private enum DetailDateFormatting {
     }
 }
 
-private struct ReservationEditView: View {
-    let reservation: ReservationRecord
-    let onSave: (ReservationUpdateRequest) async throws -> ReservationDTO
-
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var guestName: String
-    @State private var email: String
-    @State private var phone: String
-    @State private var reservationDate: Date
-    @State private var reservationTime: Date
-    @State private var partySize: Int
-    @State private var selectedStatus: ReservationStatus
-    @State private var tableName: String
-    @State private var guestNotes: String
-    @State private var staffNotes: String
-    @State private var supersededById: String
-    @State private var isSaving = false
-    @State private var errorMessage: String?
-
-    init(
-        reservation: ReservationRecord,
-        onSave: @escaping (ReservationUpdateRequest) async throws -> ReservationDTO
-    ) {
-        self.reservation = reservation
-        self.onSave = onSave
-
-        _guestName = State(initialValue: reservation.guestName)
-        _email = State(initialValue: reservation.email)
-        _phone = State(initialValue: reservation.phone)
-        _reservationDate = State(initialValue: Self.parseDate(reservation.reservationDate) ?? Date())
-        _reservationTime = State(initialValue: Self.parseTime(reservation.reservationTime) ?? Date())
-        _partySize = State(initialValue: reservation.partySize)
-        _selectedStatus = State(initialValue: reservation.statusValue)
-        _tableName = State(initialValue: reservation.tableName ?? "")
-        _guestNotes = State(initialValue: reservation.guestNotes ?? "")
-        _staffNotes = State(initialValue: reservation.staffNotes ?? "")
-        _supersededById = State(initialValue: reservation.supersededById.map(String.init) ?? "")
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                if let errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                    }
-                }
-
-                Section("Guest") {
-                    TextField("Name", text: $guestName)
-                        .textContentType(.name)
-                    TextField("Email", text: $email)
-                        .keyboardType(.emailAddress)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    TextField("Phone", text: $phone)
-                        .keyboardType(.phonePad)
-                }
-
-                Section("Reservation") {
-                    DatePicker("Date", selection: $reservationDate, displayedComponents: .date)
-                    DatePicker("Time", selection: $reservationTime, displayedComponents: .hourAndMinute)
-
-                    Stepper(value: $partySize, in: 1...60) {
-                        HStack {
-                            Text("Party")
-                            Spacer()
-                            Text("\(partySize)")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    Picker("Status", selection: $selectedStatus) {
-                        ForEach(ReservationStatus.allCases) { status in
-                            Text(status.displayName).tag(status)
-                        }
-                    }
-
-                    TextField("Table", text: $tableName, prompt: Text("Unassigned"))
-                }
-
-                Section("Notes") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Guest Notes")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextEditor(text: $guestNotes)
-                            .frame(minHeight: 70)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Staff Notes")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextEditor(text: $staffNotes)
-                            .frame(minHeight: 90)
-                    }
-                }
-
-                Section("Duplicate Resolution") {
-                    TextField("Superseded by reservation ID", text: $supersededById)
-                        .keyboardType(.numberPad)
-                    Text("Use this only on the duplicate/cancelled record. The ID should be the reservation you are keeping.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .navigationTitle("Edit Reservation")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        Task {
-                            await save()
-                        }
-                    } label: {
-                        if isSaving {
-                            ProgressView()
-                        } else {
-                            Text("Save")
-                        }
-                    }
-                    .disabled(isSaving)
-                }
-            }
-        }
-    }
-
-    private func save() async {
-        let trimmedName = guestName.trimmed
-        let trimmedEmail = email.trimmed
-        let trimmedPhone = phone.trimmed
-        let trimmedSupersededById = supersededById.trimmed
-
-        guard !trimmedName.isEmpty else {
-            errorMessage = "Guest name is required."
-            return
-        }
-
-        guard !trimmedEmail.isEmpty else {
-            errorMessage = "Email is required."
-            return
-        }
-
-        guard !trimmedPhone.isEmpty else {
-            errorMessage = "Phone is required."
-            return
-        }
-
-        let supersededByReservationId: Int?
-        if trimmedSupersededById.isEmpty {
-            supersededByReservationId = nil
-        } else if let id = Int(trimmedSupersededById), id > 0 {
-            supersededByReservationId = id
-        } else {
-            errorMessage = "Superseded By must be a reservation ID."
-            return
-        }
-
-        isSaving = true
-        errorMessage = nil
-
-        defer {
-            isSaving = false
-        }
-
-        let request = ReservationUpdateRequest(
-            guestName: trimmedName,
-            email: trimmedEmail,
-            phone: trimmedPhone,
-            reservationDate: Self.formatDate(reservationDate),
-            reservationTime: Self.formatTime(reservationTime),
-            partySize: partySize,
-            guestNotes: guestNotes.trimmed,
-            staffNotes: staffNotes.trimmed,
-            status: selectedStatus,
-            tableName: tableName.trimmed,
-            supersededById: supersededByReservationId
-        )
-
-        do {
-            _ = try await onSave(request)
-            dismiss()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private static func parseDate(_ value: String) -> Date? {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.date(from: value)
-    }
-
-    private static func parseTime(_ value: String) -> Date? {
-        let formatter = DateFormatter()
-
-        for format in ["HH:mm:ss", "HH:mm", "h:mm a"] {
-            formatter.dateFormat = format
-            if let date = formatter.date(from: value) {
-                return date
-            }
-        }
-
-        return nil
-    }
-
-    private static func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
-    }
-
-    private static func formatTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter.string(from: date)
-    }
-}
+// MARK: - Detail String Helpers
 
 private extension String {
     var trimmed: String {
@@ -968,6 +789,8 @@ private extension String {
         return trimmed.isEmpty ? nil : trimmed
     }
 }
+
+// MARK: - Previews
 
 #if DEBUG
 #Preview("Reservation Detail") {

@@ -5,10 +5,15 @@
 
 import Foundation
 
+// MARK: - Read-Only Guest Insight Analysis
+
 struct GuestInsightsController {
     private let identityResolver = GuestIdentityResolver()
     private let intentDeduper = GuestReservationIntentDeduper()
 
+    // Intent: Builds hospitality memory from cached SwiftData reservations only.
+    // Network: None. Mutation: None.
+    // Duplicate intent rows are collapsed before visit counts are calculated.
     func analyze(
         selected reservation: ReservationRecord,
         allReservations: [ReservationRecord]
@@ -128,6 +133,8 @@ struct GuestInsightsController {
         )
     }
 
+    // MARK: - Matching Rules
+
     private func matchedReservation(_ result: GuestIdentityMatch) -> GuestMatchedReservation {
         GuestMatchedReservation(
             reservationID: result.record.remoteID,
@@ -144,6 +151,8 @@ struct GuestInsightsController {
         )
     }
 
+    // MARK: - Booking History
+
     private func bookingHistoryItem(_ record: ReservationRecord) -> GuestBookingHistoryItem {
         GuestBookingHistoryItem(
             reservationID: record.remoteID,
@@ -159,6 +168,8 @@ struct GuestInsightsController {
             hasStaffNotes: record.hasStaffNotes
         )
     }
+
+    // MARK: - Notes History
 
     private func noteHistoryItems(from records: [ReservationRecord]) -> [GuestNoteHistoryItem] {
         records.flatMap { record in
@@ -197,6 +208,8 @@ struct GuestInsightsController {
         }
         .sorted(by: newestFirst)
     }
+
+    // MARK: - Preferences / Stats
 
     private func timePreferences(from records: [ReservationRecord]) -> [GuestTimePreference] {
         let buckets = records.reduce(into: [String: Int]()) { result, record in
@@ -279,6 +292,8 @@ struct GuestInsightsController {
         )
     }
 
+    // MARK: - Hospitality Summary
+
     private func summary(
         from records: [ReservationRecord],
         noteHistory: [GuestNoteHistoryItem],
@@ -359,6 +374,9 @@ struct GuestInsightsController {
         )
     }
 
+    // MARK: - Watchouts
+
+    // Intent: Calm operational watchouts for staff, not judgmental guest scoring.
     private func warnings(
         selectedIdentity: GuestResolvedIdentity,
         isLikelyManualGuest: Bool,
@@ -477,6 +495,8 @@ struct GuestInsightsController {
         return warnings
     }
 
+    // MARK: - Date / Sorting Helpers
+
     private func commonTable(from records: [ReservationRecord]) -> String? {
         let counts = records.reduce(into: [String: Int]()) { result, record in
             guard let table = record.tableName?.nilIfBlank else { return }
@@ -564,6 +584,8 @@ struct GuestInsightsController {
         return unique
     }
 
+    // MARK: - Formatting Helpers
+
     private func hourBucket(from time: String) -> String? {
         guard let hour = hour(from: time) else { return nil }
         let adjustedHour = hour % 12 == 0 ? 12 : hour % 12
@@ -635,6 +657,8 @@ struct GuestInsightsController {
         return formatter
     }()
 }
+
+// MARK: - String Helpers
 
 private extension String {
     var nilIfBlank: String? {

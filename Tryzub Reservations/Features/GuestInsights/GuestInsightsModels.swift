@@ -5,6 +5,8 @@
 
 import Foundation
 
+// MARK: - Match Confidence
+
 enum GuestMatchConfidence: String, CaseIterable, Identifiable {
     case exact
     case strong
@@ -26,6 +28,8 @@ enum GuestMatchConfidence: String, CaseIterable, Identifiable {
         }
     }
 }
+
+// MARK: - Notes / Booking Source
 
 enum GuestInsightNoteType: String, Identifiable {
     case guest
@@ -57,6 +61,8 @@ enum GuestBookingSource: String {
     }
 }
 
+// MARK: - Regularity Classification
+
 enum GuestRegularityLevel: Int, CaseIterable, Identifiable {
     case firstTime
     case seenBefore
@@ -85,6 +91,7 @@ enum GuestRegularityLevel: Int, CaseIterable, Identifiable {
         rawValue
     }
 
+    // Intent: Simple hospitality labels based on clean, deduplicated reservation count.
     static func level(for reservationCount: Int) -> GuestRegularityLevel {
         switch reservationCount {
         case ..<2:
@@ -100,6 +107,8 @@ enum GuestRegularityLevel: Int, CaseIterable, Identifiable {
         }
     }
 }
+
+// MARK: - Detail Report Models
 
 struct GuestInsightReport {
     let selectedReservationID: Int
@@ -135,6 +144,8 @@ struct GuestInsightReport {
         primaryPhone != nil || primaryEmail != nil
     }
 }
+
+// MARK: - Hospitality Summary
 
 struct GuestInsightSummary {
     let totalMatchedReservations: Int
@@ -176,6 +187,8 @@ struct GuestBookingBehavior {
     let pastServedCount: Int
     let cancelledNoShowCount: Int
 }
+
+// MARK: - History / Notes Models
 
 struct GuestMatchedReservation: Identifiable {
     let reservationID: Int
@@ -227,6 +240,8 @@ struct GuestNoteHistoryItem: Identifiable {
         "\(reservationID)-\(noteType.rawValue)"
     }
 }
+
+// MARK: - Preference / Stats Models
 
 struct GuestTimePreference: Identifiable {
     let bucket: String
@@ -284,12 +299,16 @@ struct GuestStatusStats {
     }
 }
 
+// MARK: - Watchouts
+
 struct GuestInsightWarning: Identifiable {
     let id: String
     let title: String
     let message: String
     let systemImage: String
 }
+
+// MARK: - Regular Guests Filters / Sorting
 
 enum RegularGuestFilter: String, CaseIterable, Identifiable {
     case allSeenBefore
@@ -355,6 +374,8 @@ enum RegularGuestSort: String, CaseIterable, Identifiable {
         }
     }
 }
+
+// MARK: - Regular Guest Summary
 
 struct RegularGuestSummary: Identifiable {
     let id: String

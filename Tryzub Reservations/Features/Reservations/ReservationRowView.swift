@@ -7,6 +7,8 @@
 
 import SwiftUI
 
+// MARK: - Row Context
+
 enum ReservationRowContext: Equatable {
     case schedule
     case todayUpcoming(isNext: Bool)
@@ -34,6 +36,8 @@ enum ReservationRowContext: Equatable {
     }
 }
 
+// MARK: - Shared Reservation Row
+
 struct ReservationRowView<Accessory: View>: View {
     let reservation: ReservationRecord
     var showsDate = true
@@ -44,6 +48,7 @@ struct ReservationRowView<Accessory: View>: View {
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
+    // Accessory lets Today, Schedule, and Review reuse the same compact cell with different actions.
     init(
         reservation: ReservationRecord,
         showsDate: Bool = true,
@@ -69,146 +74,84 @@ struct ReservationRowView<Accessory: View>: View {
         .opacity(isMuted ? 0.58 : 1)
     }
 
+    // MARK: - Wide / Compact Layouts
+
     private var wideRow: some View {
-        HStack(alignment: .center, spacing: 0) {
-            timeBlock(width: 92)
+        HStack(alignment: .center, spacing: ReservationRowLayout.wideSectionSpacing) {
+            ReservationRowTimeSection(
+                eyebrow: compactEyebrow,
+                time: reservation.displayTime,
+                guestCountText: guestCountText,
+                width: ReservationRowLayout.wideTimeWidth
+            )
 
             ReservationDashedLine(isVertical: true)
                 .frame(width: 1, height: 52)
-                .padding(.trailing, 12)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(reservation.guestName)
-                    .font(.headline.weight(.medium))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                HStack(spacing: 9) {
-                    ReservationInlineMeta(text: "\(reservation.partySize) guests", systemImage: "person.2")
-                    ReservationInlineMeta(text: tableText, systemImage: "table.furniture")
-                    if let notesIndicatorText {
-                        ReservationInlineMeta(text: notesIndicatorText, systemImage: "note.text")
-                    }
-                    if !reservation.phone.isEmpty {
-                        ReservationInlineMeta(text: reservation.formattedPhone, systemImage: "phone")
-                    }
-                }
-
-                if let contextNote {
-                    Text(contextNote)
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            }
+            ReservationRowGuestSection(
+                guestName: reservation.guestName,
+                status: nil,
+                metaItems: wideMetaItems,
+                submittedAgoText: reservation.submittedAgoText,
+                contextNote: contextNote,
+                usesCompactName: false
+            )
             .layoutPriority(2)
 
-            Spacer(minLength: 12)
+            Spacer(minLength: ReservationRowLayout.minimumSpacer)
 
-            wideActionRail
+            ReservationRowAccessorySection(
+                status: reservation.statusValue,
+                width: ReservationRowLayout.wideActionWidth,
+                accessory: accessory
+            )
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .frame(minHeight: 70)
-        .background(rowBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay(rowStroke)
     }
 
     private var compactRow: some View {
-        HStack(alignment: .center, spacing: 0) {
-            timeBlock(width: 70)
+        HStack(alignment: .center, spacing: ReservationRowLayout.compactSectionSpacing) {
+            ReservationRowTimeSection(
+                eyebrow: compactEyebrow,
+                time: reservation.displayTime,
+                guestCountText: guestCountText,
+                width: ReservationRowLayout.compactTimeWidth
+            )
 
             ReservationDashedLine(isVertical: true)
                 .frame(width: 1, height: 50)
-                .padding(.trailing, 10)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(reservation.guestName)
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-                        .truncationMode(.tail)
-
-                    Spacer(minLength: 2)
-
-                    ReservationStatusBadge(status: reservation.statusValue)
-                }
-
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 7) {
-                        ReservationInlineMeta(text: "\(reservation.partySize)", systemImage: "person.2")
-                        ReservationInlineMeta(text: tableText, systemImage: "table.furniture")
-                        if let notesIndicatorText {
-                            ReservationInlineMeta(text: notesIndicatorText, systemImage: "note.text")
-                        }
-                    }
-
-                    HStack(spacing: 7) {
-                        ReservationInlineMeta(text: "\(reservation.partySize)", systemImage: "person.2")
-                        ReservationInlineMeta(text: tableText, systemImage: "table.furniture")
-                    }
-                }
-
-                if let contextNote {
-                    HStack(spacing: 5) {
-                        Text(contextNote)
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-            }
+            ReservationRowGuestSection(
+                guestName: reservation.guestName,
+                status: reservation.statusValue,
+                metaItems: compactMetaItems,
+                submittedAgoText: reservation.submittedAgoText,
+                contextNote: contextNote,
+                usesCompactName: true
+            )
             .layoutPriority(2)
 
-            accessory()
-                .fixedSize(horizontal: true, vertical: false)
+            ReservationRowAccessorySection(
+                status: nil,
+                width: nil,
+                accessory: accessory
+            )
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 9)
         .frame(minHeight: 68)
-        .background(rowBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay(rowStroke)
         .overlay(ticketNotches)
     }
 
-    private var wideActionRail: some View {
-        VStack(alignment: .trailing, spacing: 7) {
-            ReservationStatusBadge(status: reservation.statusValue)
+    // MARK: - Action Area
 
-            accessory()
-                .fixedSize(horizontal: true, vertical: false)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-        }
-        .frame(width: 132, alignment: .trailing)
-    }
-
-    private func timeBlock(width: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if let compactEyebrow {
-                Text(compactEyebrow)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Text(reservation.displayTime)
-                .font(.title3.weight(.medium))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
-                .fixedSize(horizontal: true, vertical: false)
-
-            Text("\(reservation.partySize) \(reservation.partySize == 1 ? "guest" : "guests")")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
-        }
-        .frame(width: width, alignment: .leading)
-    }
+    // MARK: - Display Helpers
 
     private var eyebrow: String? {
         context.eyebrow(for: reservation, showsDate: showsDate)
@@ -221,6 +164,40 @@ struct ReservationRowView<Accessory: View>: View {
         case .todayUpcoming, .todaySeated:
             return eyebrow
         }
+    }
+
+    private var guestCountText: String {
+        "\(reservation.partySize) \(reservation.partySize == 1 ? "guest" : "guests")"
+    }
+
+    private var wideMetaItems: [ReservationRowMetaItem] {
+        var items: [ReservationRowMetaItem] = [
+            ReservationRowMetaItem(text: guestCountText, systemImage: "person.2"),
+            ReservationRowMetaItem(text: tableText, systemImage: "table.furniture")
+        ]
+
+        if let notesIndicatorText {
+            items.append(ReservationRowMetaItem(text: notesIndicatorText, systemImage: "note.text"))
+        }
+
+        if !reservation.phone.isEmpty {
+            items.append(ReservationRowMetaItem(text: reservation.formattedPhone, systemImage: "phone"))
+        }
+
+        return items
+    }
+
+    private var compactMetaItems: [ReservationRowMetaItem] {
+        var items: [ReservationRowMetaItem] = [
+            ReservationRowMetaItem(text: "\(reservation.partySize)", systemImage: "person.2"),
+            ReservationRowMetaItem(text: tableText, systemImage: "table.furniture")
+        ]
+
+        if let notesIndicatorText {
+            items.append(ReservationRowMetaItem(text: notesIndicatorText, systemImage: "note.text"))
+        }
+
+        return items
     }
 
     private static func shortDateLabel(from value: String) -> String {
@@ -272,7 +249,7 @@ struct ReservationRowView<Accessory: View>: View {
     }
 
     private var rowStroke: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
+        RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
             .stroke(context.isNext ? Color.primary.opacity(0.22) : Color.primary.opacity(0.08), lineWidth: 1)
     }
 
@@ -294,6 +271,160 @@ struct ReservationRowView<Accessory: View>: View {
     }
 }
 
+// MARK: - Row Sections
+
+private enum ReservationRowLayout {
+    static let wideTimeWidth: CGFloat = 92
+    static let compactTimeWidth: CGFloat = 70
+    static let wideActionWidth: CGFloat = 132
+    static let wideSectionSpacing: CGFloat = 12
+    static let compactSectionSpacing: CGFloat = 10
+    static let minimumSpacer: CGFloat = 12
+}
+
+private struct ReservationRowMetaItem: Identifiable {
+    let id = UUID()
+    let text: String
+    let systemImage: String
+}
+
+private struct ReservationRowTimeSection: View {
+    let eyebrow: String?
+    let time: String
+    let guestCountText: String
+    let width: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(eyebrow ?? "")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(height: 14, alignment: .leading)
+
+            Text(time)
+                .font(.title3.weight(.medium))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(height: 25, alignment: .leading)
+
+            Text(guestCountText)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .frame(height: 14, alignment: .leading)
+        }
+        .frame(width: width, alignment: .leading)
+    }
+}
+
+private struct ReservationRowGuestSection: View {
+    let guestName: String
+    let status: ReservationStatus?
+    let metaItems: [ReservationRowMetaItem]
+    let submittedAgoText: String?
+    let contextNote: String?
+    let usesCompactName: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(guestName)
+                    .font(usesCompactName ? .subheadline.weight(.medium) : .headline.weight(.medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let status {
+                    ReservationStatusBadge(status: status)
+                }
+            }
+            .frame(minHeight: 22, alignment: .center)
+
+            ReservationRowMetaLine(items: metaItems)
+
+            if let submittedAgoText {
+                ReservationSubmittedBadge(text: submittedAgoText)
+            } else if let contextNote {
+                Text(contextNote)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ReservationRowAccessorySection<Accessory: View>: View {
+    let status: ReservationStatus?
+    let width: CGFloat?
+    @ViewBuilder let accessory: () -> Accessory
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 7) {
+            if let status {
+                ReservationStatusBadge(status: status)
+            }
+
+            accessory()
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .frame(width: width, alignment: .trailing)
+    }
+}
+
+private struct ReservationRowMetaLine: View {
+    let items: [ReservationRowMetaItem]
+
+    var body: some View {
+        HStack(spacing: 9) {
+            if let item = items[safe: 0] {
+                ReservationInlineMeta(text: item.text, systemImage: item.systemImage)
+            }
+            if let item = items[safe: 1] {
+                ReservationInlineMeta(text: item.text, systemImage: item.systemImage)
+            }
+            if let item = items[safe: 2] {
+                ReservationInlineMeta(text: item.text, systemImage: item.systemImage)
+            }
+            if let item = items[safe: 3] {
+                ReservationInlineMeta(text: item.text, systemImage: item.systemImage)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
+        .clipped()
+    }
+}
+
+private struct ReservationSubmittedBadge: View {
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: "exclamationmark.circle")
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+            }
+            .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
+    }
+}
+
+// MARK: - Empty Accessory Convenience
+
 extension ReservationRowView where Accessory == EmptyView {
     init(
         reservation: ReservationRecord,
@@ -312,6 +443,8 @@ extension ReservationRowView where Accessory == EmptyView {
     }
 }
 
+// MARK: - Status Badge
+
 struct ReservationStatusBadge: View {
     let status: ReservationStatus
 
@@ -323,9 +456,15 @@ struct ReservationStatusBadge: View {
             .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
-            .background(Color(.systemGray6), in: Capsule())
+            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+            }
     }
 }
+
+// MARK: - Inline Metadata
 
 private struct ReservationInlineMeta: View {
     let text: String
@@ -348,6 +487,14 @@ private struct ReservationInlineMeta: View {
     }
 }
 
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
+
+// MARK: - Compact Status Copy
+
 extension ReservationStatus {
     var shortDisplayName: String {
         switch self {
@@ -360,6 +507,8 @@ extension ReservationStatus {
         }
     }
 }
+
+// MARK: - Previews
 
 #if DEBUG
 #Preview("Row") {

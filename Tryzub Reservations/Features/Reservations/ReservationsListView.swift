@@ -6,10 +6,15 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Root Reservation Shell
+
 struct ReservationsListView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var controller: ReservationsController
-    @State private var selectedTab: ReservationsAppTab = .today
+    @Query private var rootReservations: [ReservationRecord]
+
+    // Source of truth for custom floating navigation; there is no default TabView state.
+    @State private var selectedTab: ReservationsAppTab = .home
 
     let environment: AppEnvironment
 
@@ -21,8 +26,8 @@ struct ReservationsListView: View {
     var body: some View {
         ZStack {
             switch selectedTab {
-            case .today:
-                TodayDashboardView(environment: environment, isActive: true)
+            case .home:
+                HomeDashboardView(environment: environment, isActive: true)
             case .schedule:
                 ReservationScheduleView(environment: environment, isActive: true)
             case .review:
@@ -33,11 +38,16 @@ struct ReservationsListView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom) {
-            ReservationFloatingTabBar(selection: $selectedTab)
+            // Custom staff navigation stays visible while each screen owns its own NavigationStack.
+            ReservationFloatingTabBar(
+                selection: $selectedTab,
+                reviewAttentionCount: pendingReviewCount
+            )
                 .padding(.horizontal, 20)
                 .padding(.top, 6)
-                .padding(.bottom, 8)
+                .padding(.bottom, 5)
         }
+        
         .fontDesign(.rounded)
         .environmentObject(controller)
         .overlay(alignment: .topTrailing) {
@@ -50,6 +60,7 @@ struct ReservationsListView: View {
             .padding(.trailing, 14)
         }
         .task {
+            // Initial app load: show SwiftData cache immediately, then refresh today if needed.
             await controller.loadIfNeeded(context: modelContext)
         }
     }
@@ -60,28 +71,36 @@ struct ReservationsListView: View {
             case .mutation, .email, .credentials:
                 return true
             case .startup, .manualToday, .autoToday:
-                return selectedTab == .today
+                return selectedTab == .home
             case .schedule:
                 return selectedTab == .schedule
             case .review:
                 return selectedTab == .review
             case .importFailures, .admin:
-                return selectedTab == .today || selectedTab == .more
+                return selectedTab == .home || selectedTab == .more
             }
         }
+    }
+
+    private var pendingReviewCount: Int {
+        rootReservations.filter {
+            $0.statusValue == .new || $0.statusValue == .needsReview
+        }.count
     }
 
     private var noticeTopPadding: CGFloat {
         switch selectedTab {
         case .schedule, .review:
             return 112
-        case .today, .more:
+        case .home, .more:
             return 62
         }
     }
 }
 
-private struct TodayDashboardView: View {
+// MARK: - Home Dashboard
+
+private struct HomeDashboardView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var controller: ReservationsController
@@ -91,83 +110,63 @@ private struct TodayDashboardView: View {
     ])
     private var reservations: [ReservationRecord]
 
+    // MARK: - Local UI State
+
     @State private var showManualCreate = false
     @State private var showImportFailures = false
+    @State private var selectedDate = Date()
 
     let environment: AppEnvironment
     let isActive: Bool
 
-    private var todayReservations: [ReservationRecord] {
-        ReservationRecord.sortedChronologically(reservations.filter(\.isToday))
+    private var selectedDateReservations: [ReservationRecord] {
+        let selectedDateKey = selectedDate.reservationDateString()
+        return ReservationRecord.sortedChronologically(
+            reservations.filter { $0.reservationDate == selectedDateKey }
+        )
     }
 
     var body: some View {
         NavigationStack {
+            // Child view reads SwiftData cache and sends staff intent back to the controller.
             HostBoardView(
-                reservations: todayReservations,
+                reservations: selectedDateReservations,
                 environment: environment,
+                selectedDate: $selectedDate,
                 lastSyncedAt: controller.lastSyncedAt,
                 isSyncing: controller.isSyncing,
                 failedImportCount: controller.importFailureCount,
                 isVisible: isActive,
-                isAppActive: scenePhase == .active,
+                isAppActive: scenePhase == .active && selectedDate.reservationDateString() == Date.reservationDateString(),
                 externalInteractionActive: showManualCreate || showImportFailures,
+                onAddReservation: {
+                    showManualCreate = true
+                },
+                onManualRefresh: {
+                    Task {
+                        await controller.requestManualTodayRefresh(context: modelContext)
+                    }
+                },
                 onShowFormProblems: {
                     showImportFailures = true
                 }
             )
-            .navigationTitle("Today")
-            .navigationBarTitleDisplayMode(.inline)
             .refreshable {
+                // Staff manual refresh: controller decides whether this becomes a network GET.
                 await controller.requestManualTodayRefresh(context: modelContext)
             }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    if controller.capabilities.canViewFailedImports {
-                        Button {
-                            showImportFailures = true
-                        } label: {
-                            Label("Failed imports", systemImage: "exclamationmark.triangle")
-                        }
-                        .badge(controller.importFailureCount)
-                        .accessibilityLabel("Failed imports")
-                    }
-                }
-
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if controller.capabilities.canCreateManualReservations {
-                        Button {
-                            showManualCreate = true
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .accessibilityLabel("Create reservation")
-                    }
-
-                    Button {
-                        Task {
-                            await controller.requestManualTodayRefresh(context: modelContext)
-                        }
-                    } label: {
-                        if controller.isSyncing {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                    }
-                    .disabled(controller.isSyncing)
-                    .accessibilityLabel("Refresh")
-                }
-            }
-            .sheet(isPresented: $showManualCreate) {
+            .fullScreenCover(isPresented: $showManualCreate) {
                 ManualReservationFormView { request in
+                    // Manual call-in create; controller performs server POST and cache upsert.
                     try await controller.createReservation(request, context: modelContext)
                 }
+                .interactiveDismissDisabled()
             }
             .sheet(isPresented: $showImportFailures) {
                 ImportFailuresView(
                     environment: environment,
                     onCreateReservation: { request in
+                        // Failed import repair creates a managed reservation through the controller.
                         try await controller.createReservation(request, context: modelContext)
                     },
                     onCreated: { _ in }
@@ -178,6 +177,8 @@ private struct TodayDashboardView: View {
     }
 }
 
+// MARK: - Schedule View
+
 private struct ReservationScheduleView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
@@ -187,6 +188,8 @@ private struct ReservationScheduleView: View {
     ])
     private var reservations: [ReservationRecord]
 
+    // MARK: - Local UI State
+
     @State private var scope: ReservationScheduleScope = .upcoming
     @State private var searchText = ""
     @State private var showManualCreate = false
@@ -194,6 +197,7 @@ private struct ReservationScheduleView: View {
     let environment: AppEnvironment
     let isActive: Bool
 
+    // Schedule reads cached rows; sync freshness is handled by ReservationsController.
     private var displayedReservations: [ReservationRecord] {
         let today = Date.reservationDateString()
         let trimmedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -278,6 +282,7 @@ private struct ReservationScheduleView: View {
             .listStyle(.plain)
             .contentMargins(.horizontal, 0, for: .scrollContent)
             .refreshable {
+                // Staff manual schedule refresh: GET schedule window through controller/service.
                 await controller.requestScheduleRefresh(context: modelContext)
             }
             .toolbar {
@@ -293,6 +298,7 @@ private struct ReservationScheduleView: View {
 
                     Button {
                         Task {
+                            // Same schedule-window refresh path as pull-to-refresh.
                             await controller.requestScheduleRefresh(context: modelContext)
                         }
                     } label: {
@@ -306,18 +312,22 @@ private struct ReservationScheduleView: View {
                     .accessibilityLabel("Refresh")
                 }
             }
-            .sheet(isPresented: $showManualCreate) {
+            .fullScreenCover(isPresented: $showManualCreate) {
                 ManualReservationFormView { request in
+                    // Manual call-in create; controller performs server POST and cache upsert.
                     try await controller.createReservation(request, context: modelContext)
                 }
             }
             .task(id: isActive) {
                 guard isActive else { return }
+                // Schedule tab activation: controller fetches only when cached window is stale.
                 await controller.scheduleBecameActive(context: modelContext)
             }
         }
     }
 }
+
+// MARK: - Pending Review View
 
 private struct ReservationReviewQueueView: View {
     @Environment(\.modelContext) private var modelContext
@@ -328,12 +338,15 @@ private struct ReservationReviewQueueView: View {
     ])
     private var reservations: [ReservationRecord]
 
+    // MARK: - Local UI State
+
     @State private var scope: ReservationQueueScope = .pending
     @State private var searchText = ""
 
     let environment: AppEnvironment
     let isActive: Bool
 
+    // Pending is the staff default: new and needs_review, oldest submitted first.
     private var queueReservations: [ReservationRecord] {
         let trimmedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let rows = reservations.filter { reservation in
@@ -398,12 +411,14 @@ private struct ReservationReviewQueueView: View {
             .listStyle(.plain)
             .contentMargins(.horizontal, 0, for: .scrollContent)
             .refreshable {
+                // Staff manual queue refresh: controller fetches new + needs_review.
                 await controller.requestReviewRefresh(context: modelContext)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Task {
+                            // Same pending queue refresh path as pull-to-refresh.
                             await controller.requestReviewRefresh(context: modelContext)
                         }
                     } label: {
@@ -419,11 +434,13 @@ private struct ReservationReviewQueueView: View {
             }
             .task(id: isActive) {
                 guard isActive else { return }
+                // Review tab activation: controller refreshes only when queue cache is stale.
                 await controller.reviewBecameActive(context: modelContext)
             }
         }
     }
 
+    // Intent: Small operational context for pending queue triage.
     private func reviewContext(for reservation: ReservationRecord) -> String {
         let activeSameDay = reservations.filter {
             $0.reservationDate == reservation.reservationDate
@@ -439,6 +456,8 @@ private struct ReservationReviewQueueView: View {
         return "Booked: \(activeSameDay.count)/\(dayGuests) ppl · Same time: \(sameTime.count)/\(sameTimeGuests) ppl"
     }
 }
+
+// MARK: - More View
 
 private struct ReservationMoreView: View {
     @Environment(\.modelContext) private var modelContext
@@ -466,7 +485,8 @@ private struct ReservationMoreView: View {
                         }
                     }
 
-                    if controller.capabilities.canViewFailedImports {
+                    if controller.capabilities.canViewFailedImports,
+                       controller.capabilities.canViewDeveloperDiagnostics {
                         NavigationLink {
                             ImportFailuresView(
                                 environment: environment,
@@ -500,14 +520,17 @@ private struct ReservationMoreView: View {
                 }
             }
             .navigationTitle("More")
-            .sheet(isPresented: $showManualCreate) {
+            .fullScreenCover(isPresented: $showManualCreate) {
                 ManualReservationFormView { request in
+                    // Manual call-in create; controller performs server POST and cache upsert.
                     try await controller.createReservation(request, context: modelContext)
                 }
             }
         }
     }
 }
+
+// MARK: - Reservation Navigation Row
 
 private struct ReservationNavigationRow: View {
     @Environment(\.modelContext) private var modelContext
@@ -528,31 +551,24 @@ private struct ReservationNavigationRow: View {
             context: context,
             contextNote: contextNote
         ) {
-            HStack(spacing: 8) {
-                ReservationActionButtons(
-                    reservation: reservation,
-                    capabilities: controller.capabilities,
-                    compact: true,
-                    includeSecondary: false,
-                    isBusy: controller.isActionInProgress(for: reservation)
-                ) { action in
-                    handleAction(action)
-                }
-
-                Button {
-                    showDetail = true
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Details for \(reservation.guestName)")
+            ReservationActionButtons(
+                reservation: reservation,
+                capabilities: controller.capabilities,
+                compact: true,
+                includeSecondary: false,
+                isBusy: controller.isActionInProgress(for: reservation)
+            ) { action in
+                handleAction(action)
             }
         }
         .contentShape(Rectangle())
+        .onTapGesture {
+            ReservationHaptics.selection()
+            showDetail = true
+        }
+        .onLongPressGesture {
+            ReservationHaptics.lightImpact()
+        }
         .contextMenu {
             Button {
                 showDetail = true
@@ -574,7 +590,7 @@ private struct ReservationNavigationRow: View {
         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             ForEach(swipeActions) { action in
                 Button(role: action.role) {
                     handleAction(action)
@@ -619,89 +635,63 @@ private struct ReservationNavigationRow: View {
         }
     }
 
+    // MARK: - Available Staff Actions
+
+    // Intent: Rows expose compact staff actions; no API clients/services are created here.
     private var contextMenuActions: [ReservationHostAction] {
-        availableActions(includeEmailAction: true)
+        ReservationHostAction.contextMenuActions(for: reservation, capabilities: controller.capabilities)
     }
 
     private var swipeActions: [ReservationHostAction] {
-        availableActions(includeEmailAction: false)
+        ReservationHostAction.trailingSwipeActions(for: reservation, capabilities: controller.capabilities)
     }
 
-    private func availableActions(includeEmailAction: Bool) -> [ReservationHostAction] {
-        let status = reservation.statusValue
-        var actions: [ReservationHostAction] = []
-
-        if controller.capabilities.canConfirmReservations,
-           status == .new || status == .needsReview {
-            actions.append(.confirm)
-            if includeEmailAction {
-                actions.append(.sendConfirmationEmail)
-            }
-        }
-
-        if controller.capabilities.canSeatReservations,
-           status == .confirmed {
-            actions.append(.seat)
-        }
-
-        if includeEmailAction,
-           controller.capabilities.canConfirmReservations,
-           status == .confirmed,
-           !reservation.hasConfirmationEmailRecord {
-            actions.append(.sendConfirmationEmail)
-        }
-
-        if controller.capabilities.canEditReservationDetails,
-           status != .cancelled,
-           status != .completed,
-           status != .noShow {
-            actions.append(.assignTable)
-        }
-
-        if controller.capabilities.canCancelReservations,
-           status != .cancelled,
-           status != .completed,
-           status != .noShow {
-            actions.append(.cancel)
-        }
-
-        return actions
-    }
+    // MARK: - Staff Action Routing
 
     private func handleAction(_ action: ReservationHostAction) {
         switch action {
         case .assignTable:
             tableAssignmentReservation = reservation
-        case .sendConfirmationEmail, .cancel, .noShow:
+        case .cancel, .noShow:
             pendingAction = action
-        case .confirm, .seat, .complete:
+        case .confirm, .sendConfirmationEmail, .seat, .complete:
             Task {
                 await perform(action)
             }
         }
     }
 
+    // Intent: Converts row actions into controller calls.
+    // Confirm = PATCH status confirmed; Confirm + Email = POST /confirm.
     private func perform(_ action: ReservationHostAction) async {
         pendingAction = nil
 
         switch action {
         case .confirm:
             await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
+            ReservationHaptics.success()
         case .sendConfirmationEmail:
             await controller.confirmReservation(reservation: reservation, context: modelContext)
+            ReservationHaptics.success()
         case .seat:
             await controller.updateStatus(reservation: reservation, status: .seated, context: modelContext)
+            ReservationHaptics.success()
         case .cancel:
             await controller.updateStatus(reservation: reservation, status: .cancelled, context: modelContext)
+            ReservationHaptics.warning()
         case .assignTable:
             tableAssignmentReservation = reservation
         case .complete:
             await controller.updateStatus(reservation: reservation, status: .completed, context: modelContext)
+            ReservationHaptics.success()
         case .noShow:
             await controller.updateStatus(reservation: reservation, status: .noShow, context: modelContext)
+            ReservationHaptics.warning()
         }
     }
 }
+
+// MARK: - Previews
 
 #if DEBUG
 #Preview("Reservations") {
