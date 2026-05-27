@@ -46,6 +46,7 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             to: nil,
             status: nil,
             search: nil,
+            includeHidden: false,
             reason: reason
         )
         try repository.upsert(reservations)
@@ -55,28 +56,30 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
 
     // Intent: Refreshes today's host-board reservation cache.
     // Network: GET /managed-reservations?date=today.
-    // SwiftData: Upserts fetched server DTOs; cache only.
+    // SwiftData: Replaces this date scope with fetched server DTOs.
     func syncToday(reason: ReservationAPIRequestReason) async throws {
+        let today = Date.reservationDateString()
         let response = try await client.fetchReservations(
             page: 1,
             perPage: 50,
-            date: Date.reservationDateString(),
+            date: today,
             from: nil,
             to: nil,
             status: nil,
             search: nil,
+            includeHidden: false,
             retryCount: 0,
             reason: reason
         )
 
-        try repository.upsert(response.data)
+        try repository.replaceDateScope(date: today, with: response.data, includeHidden: false)
     }
 
     // MARK: - Schedule Window Sync
 
     // Intent: Refreshes the upcoming schedule window used by Schedule.
     // Network: GET /managed-reservations?from=...&to=... across pages.
-    // SwiftData: Upserts fetched server DTOs; cache only.
+    // SwiftData: Replaces only the requested date window with fetched server DTOs.
     func syncScheduleWindow(from: String, to: String, reason: ReservationAPIRequestReason) async throws {
         let reservations = try await client.fetchAllReservations(
             perPage: 100,
@@ -85,16 +88,17 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             to: to,
             status: nil,
             search: nil,
+            includeHidden: false,
             reason: reason
         )
-        try repository.upsert(reservations)
+        try repository.replaceDateWindow(from: from, to: to, with: reservations, includeHidden: false)
     }
 
     // MARK: - Pending Review Sync
 
     // Intent: Refreshes the staff pending queue from new and needs_review rows.
     // Network: GET /managed-reservations?status=needs_review and status=new.
-    // SwiftData: Upserts fetched server DTOs; cache only.
+    // SwiftData: Upserts fetched server DTOs without deleting records missing from this status snapshot.
     func syncReviewQueues(reason: ReservationAPIRequestReason) async throws {
         let needsReview = try await client.fetchReservations(
             page: 1,
@@ -104,6 +108,7 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             to: nil,
             status: .needsReview,
             search: nil,
+            includeHidden: false,
             retryCount: 0,
             reason: reason
         ).data
@@ -116,11 +121,12 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             to: nil,
             status: .new,
             search: nil,
+            includeHidden: false,
             retryCount: 0,
             reason: reason
         ).data
 
-        try repository.upsert(needsReview + newReservations)
+        try repository.replaceReviewQueue(with: needsReview + newReservations)
     }
 
     // MARK: - Local Cache Upsert

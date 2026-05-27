@@ -29,6 +29,13 @@ class ReservationRecord: Identifiable {
     var confirmationEmailSentAt: String?
     var reminderEmailSentAt: String?
     var supersededById: Int?
+    var sourceType: String?
+    var createdByUserId: Int?
+    var createdByDevice: String?
+    var isHidden: Bool = false
+    var hiddenAt: String?
+    var hiddenReason: String?
+    var hiddenByUserId: Int?
     var lastSyncedAt: Date
     var updatedAt: Date?
     
@@ -52,6 +59,13 @@ class ReservationRecord: Identifiable {
         self.confirmationEmailSentAt = dto.confirmationEmailSentAt
         self.reminderEmailSentAt = dto.reminderEmailSentAt
         self.supersededById = dto.supersededById
+        self.sourceType = dto.sourceType?.rawValue
+        self.createdByUserId = dto.createdByUserId
+        self.createdByDevice = dto.createdByDevice
+        self.isHidden = dto.isHidden ?? false
+        self.hiddenAt = dto.hiddenAt
+        self.hiddenReason = dto.hiddenReason?.nilIfEmpty
+        self.hiddenByUserId = dto.hiddenByUserId
         self.lastSyncedAt = Date()
         self.updatedAt = nil
     }
@@ -75,12 +89,26 @@ class ReservationRecord: Identifiable {
         confirmationEmailSentAt = dto.confirmationEmailSentAt
         reminderEmailSentAt = dto.reminderEmailSentAt
         supersededById = dto.supersededById
+        sourceType = dto.sourceType?.rawValue
+        createdByUserId = dto.createdByUserId
+        createdByDevice = dto.createdByDevice
+        isHidden = dto.isHidden ?? false
+        hiddenAt = dto.hiddenAt
+        hiddenReason = dto.hiddenReason?.nilIfEmpty
+        hiddenByUserId = dto.hiddenByUserId
         lastSyncedAt = Date()
         updatedAt = Date()
     }
 
     var statusValue: ReservationStatus {
         ReservationStatus(rawValue: status) ?? .new
+    }
+
+    var sourceTypeValue: ReservationSourceType {
+        guard let sourceType else {
+            return sourceSubmissionID > 0 ? .form : .manualCallIn
+        }
+        return ReservationSourceType(rawValue: sourceType) ?? .unknown
     }
 }
 

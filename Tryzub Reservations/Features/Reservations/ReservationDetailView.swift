@@ -14,7 +14,6 @@ struct ReservationDetailView: View {
 
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
-    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     // Guest Insights reads cached reservations only; no network or mutation is involved.
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate),
@@ -45,11 +44,24 @@ struct ReservationDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Edit") {
-                    showEditScreen = true
+                Menu {
+                    Button {
+                        showEditScreen = true
+                    } label: {
+                        Label("Edit Details", systemImage: "pencil")
+                    }
+                    .disabled(!controller.capabilities.canEditReservationDetails)
+
+                    if reservation.canSoftHideAsWrongEntry && !reservation.isHidden {
+                        Button(role: .destructive) {
+                            isShowingHideWrongEntryConfirmation = true
+                        } label: {
+                            Label("Hide wrong entry", systemImage: "archivebox")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
-                .foregroundStyle(.primary)
-                .disabled(!controller.capabilities.canEditReservationDetails)
             }
         }
         .sheet(item: $tableAssignmentReservation) { reservation in
@@ -95,7 +107,7 @@ struct ReservationDetailView: View {
                             }
                         }
                     } else {
-                        Button(reservation.isManualOrCallIn ? "Call-in / no email" : "No usable email") {}
+                        Button("Confirm + Email") {}
                             .disabled(true)
                     }
                 } else {
@@ -126,7 +138,7 @@ struct ReservationDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This cancels the server reservation first, then hides it from Home, Schedule, and Review on this device.")
+            Text("This hides the server reservation from normal lists while keeping it in backend history.")
         }
     }
 
@@ -186,10 +198,12 @@ struct ReservationDetailView: View {
                             GuestInsightsPreviewCard(report: insightReport)
                         }
                         .buttonStyle(.plain)
-                        ReservationEmailHistoryCard(reservation: reservation)
+                        ReservationEmailHistoryCard(
+                            reservation: reservation,
+                            latestEmailStatus: controller.latestEmailStatusByReservationID[reservation.remoteID]
+                        )
                         ReservationFactsCard(reservation: reservation)
                         ReservationOperationalCard(reservation: reservation)
-                        hideWrongEntryCard
                     }
                     .frame(maxWidth: 420, alignment: .topLeading)
                 }
@@ -211,42 +225,15 @@ struct ReservationDetailView: View {
                     GuestInsightsPreviewCard(report: insightReport)
                 }
                 .buttonStyle(.plain)
-                ReservationEmailHistoryCard(reservation: reservation)
+                ReservationEmailHistoryCard(
+                    reservation: reservation,
+                    latestEmailStatus: controller.latestEmailStatusByReservationID[reservation.remoteID]
+                )
                 ReservationFactsCard(reservation: reservation)
                 ReservationNotesCard(reservation: reservation) {
                     showEditScreen = true
                 }
                 ReservationOperationalCard(reservation: reservation)
-                hideWrongEntryCard
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var hideWrongEntryCard: some View {
-        if reservation.isManualOrCallIn && !hiddenReservations.isHidden(reservation) {
-            DetailCard(title: "Wrong Manual Entry", systemImage: "archivebox") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Use this only for a mistaken call-in/manual entry. The server record is cancelled first, then hidden locally.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Button {
-                        isShowingHideWrongEntryConfirmation = true
-                    } label: {
-                        Label("Hide wrong entry", systemImage: "archivebox")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(ReservationUIStyle.cancelColor)
-                            .frame(maxWidth: .infinity, minHeight: 38)
-                    }
-                    .buttonStyle(.plain)
-                    .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                            .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-                    }
-                    .disabled(isSavingQuickAction || controller.isActionInProgress(for: reservation))
-                }
             }
         }
     }
@@ -310,7 +297,7 @@ struct ReservationDetailView: View {
     }
 
     // Intent: Hide a mistaken manual entry without hard-deleting server data.
-    // Network: PATCH /managed-reservations/{id} status=cancelled before local hiding.
+    // Network: PATCH /managed-reservations/{id} is_hidden=true.
     private func hideWrongManualEntry() async {
         isSavingQuickAction = true
         errorMessage = nil
@@ -320,12 +307,10 @@ struct ReservationDetailView: View {
         }
 
         do {
-            _ = try await controller.updateReservation(
-                id: reservation.remoteID,
-                request: ReservationUpdateRequest(status: .cancelled),
+            _ = try await controller.hideWrongEntry(
+                reservation: reservation,
                 context: modelContext
             )
-            hiddenReservations.hide(remoteID: reservation.remoteID)
             ReservationHaptics.warning()
         } catch {
             errorMessage = "Could not hide this entry. Please retry before relying on service lists."
@@ -526,7 +511,10 @@ private struct ReservationContactCard: View {
     }
 
     private var emailURL: URL? {
-        URL(string: "mailto:\(reservation.email)")
+        guard let email = reservation.email.nilIfBlank else {
+            return nil
+        }
+        return URL(string: "mailto:\(email)")
     }
 
     var body: some View {
@@ -547,7 +535,7 @@ private struct ReservationContactCard: View {
                     }
                     .buttonStyle(.plain)
                 } else {
-                    DetailContactLine(title: "Email", value: reservation.email, systemImage: "envelope")
+                    DetailContactLine(title: "Email", value: reservation.email.nilIfBlank ?? "No email", systemImage: "envelope")
                 }
             }
         }
@@ -572,6 +560,7 @@ private struct ReservationFactsCard: View {
 
 private struct ReservationEmailHistoryCard: View {
     let reservation: ReservationRecord
+    let latestEmailStatus: ReservationEmailStatus?
 
     private var sentText: String? {
         guard reservation.confirmationEmailSentAt?.nilIfBlank != nil else {
@@ -582,36 +571,53 @@ private struct ReservationEmailHistoryCard: View {
     }
 
     private var statusTitle: String {
-        if !reservation.hasUsableConfirmationEmail {
-            return reservation.isManualOrCallIn ? "Call-in / no email" : "No usable email"
+        if sentText != nil {
+            return "Confirmation email recorded"
         }
 
-        if sentText != nil {
-            return "Email recorded"
+        if reservation.statusValue == .confirmed, reservation.email.nilIfBlank == nil {
+            return "No guest email"
         }
 
         if reservation.statusValue == .confirmed {
             return "Email not recorded"
         }
 
-        return "Not sent yet"
+        return "Not confirmed yet"
     }
 
     private var statusMessage: String {
-        if !reservation.hasUsableConfirmationEmail {
-            return "No confirmation email can be sent unless staff adds a real guest email."
-        }
-
         if let sentText {
             // Copy says "recorded" because this timestamp is backend state, not inbox proof.
             return "Backend recorded the confirmation email at \(sentText)."
+        }
+
+        if reservation.statusValue == .confirmed, reservation.email.nilIfBlank == nil {
+            return "Reservation is confirmed, but no confirmation email can be sent."
         }
 
         if reservation.statusValue == .confirmed {
             return "This reservation is confirmed, but the app has no sent-email timestamp. Follow up manually if needed."
         }
 
-        return "Use Confirm + Email to ask the backend to send the confirmation email."
+        return "Use Confirm to update this reservation."
+    }
+
+    private var latestActionMessage: String? {
+        switch latestEmailStatus {
+        case .sent?:
+            return "Latest action: confirmation email was recorded as sent."
+        case .alreadySent?:
+            return "Latest action: confirmation email was already recorded as sent."
+        case .skipped?:
+            return "Latest action: no confirmation email sent because there is no guest email."
+        case .failed?:
+            return "Latest action: email failed; follow up manually."
+        case .unknown?:
+            return "Latest action: email status was not recognized."
+        case nil:
+            return nil
+        }
     }
 
     var body: some View {
@@ -629,6 +635,13 @@ private struct ReservationEmailHistoryCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if let latestActionMessage {
+                    Text(latestActionMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -672,8 +685,11 @@ private struct ReservationOperationalCard: View {
             VStack(spacing: 9) {
                 Divider()
                 DetailInfoRow(title: "Remote ID", value: "#\(reservation.remoteID)", monospaced: true)
-                DetailInfoRow(title: "Source", value: reservation.sourceSubmissionID > 0 ? "#\(reservation.sourceSubmissionID)" : "Manual", monospaced: true)
+                DetailInfoRow(title: "Source", value: reservation.sourceDisplayName)
+                DetailInfoRow(title: "Source ID", value: reservation.sourceSubmissionID > 0 ? "#\(reservation.sourceSubmissionID)" : "-", monospaced: true)
                 DetailInfoRow(title: "Superseded By", value: reservation.supersededById.map { "#\($0)" } ?? "-", monospaced: true)
+                DetailInfoRow(title: "Hidden", value: reservation.isHidden ? "Yes" : "No")
+                DetailInfoRow(title: "Hidden Reason", value: reservation.hiddenReason?.nilIfBlank ?? "-")
                 DetailInfoRow(title: "Created", value: DetailDateFormatting.server(reservation.createdAt))
                 DetailInfoRow(title: "Updated", value: DetailDateFormatting.server(reservation.apiUpdatedAt))
                 DetailInfoRow(title: "Confirmed", value: DetailDateFormatting.server(reservation.confirmedAt))
@@ -906,6 +922,5 @@ private extension String {
         )
     )
     .environmentObject(HiddenReservationsStore())
-    .environmentObject(RestaurantSettingsStore())
 }
 #endif

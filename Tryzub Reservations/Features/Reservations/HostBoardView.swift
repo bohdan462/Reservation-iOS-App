@@ -22,12 +22,11 @@ struct HostBoardView: View {
     let onAddReservation: () -> Void
     let onManualRefresh: () -> Void
     let onShowFormProblems: () -> Void
+    let onOpenReservation: (ReservationRecord) -> Void
 
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
 
-    @State private var compactScope: HostBoardScope = .upcoming
-    @State private var servicePanel: HomeServicePanel = .reservations
     @State private var pendingAction: ReservationPendingAction?
     @State private var tableAssignmentReservation: ReservationRecord?
 
@@ -103,7 +102,7 @@ struct HostBoardView: View {
                             }
                         }
                     } else {
-                        Button(pendingAction.reservation.isManualOrCallIn ? "Call-in / no email" : "No usable email") {}
+                        Button("Confirm + Email") {}
                             .disabled(true)
                     }
                 } else {
@@ -186,15 +185,16 @@ struct HostBoardView: View {
                 emptySystemImage: "person.2.slash",
                 nextReservationID: nil,
                 environment: environment,
-                onAction: handleAction
+                onAction: handleAction,
+                onOpenReservation: onOpenReservation
             )
             .frame(maxWidth: .infinity, alignment: .topLeading)
 
             HomeReservationsPanel(
-                selection: $servicePanel,
                 snapshot: snapshot,
                 environment: environment,
-                onAction: handleAction
+                onAction: handleAction,
+                onOpenReservation: onOpenReservation
             )
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
@@ -210,26 +210,16 @@ struct HostBoardView: View {
                 emptySystemImage: "person.2.slash",
                 nextReservationID: nil,
                 environment: environment,
-                onAction: handleAction
+                onAction: handleAction,
+                onOpenReservation: onOpenReservation
             )
 
             HomeReservationsPanel(
-                selection: $servicePanel,
                 snapshot: snapshot,
                 environment: environment,
-                onAction: handleAction
+                onAction: handleAction,
+                onOpenReservation: onOpenReservation
             )
-        }
-    }
-
-    private func compactReservations(from snapshot: HostBoardSnapshot) -> [ReservationRecord] {
-        switch compactScope {
-        case .upcoming:
-            return snapshot.upcoming
-        case .seated:
-            return snapshot.seated
-        case .review:
-            return snapshot.needsReview
         }
     }
 
@@ -642,6 +632,7 @@ private struct HostBoardColumn: View {
     let nextReservationID: Int?
     let environment: AppEnvironment
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
+    let onOpenReservation: (ReservationRecord) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -666,7 +657,8 @@ private struct HostBoardColumn: View {
                             reservation: reservation,
                             environment: environment,
                             isNext: reservation.remoteID == nextReservationID,
-                            onAction: onAction
+                            onAction: onAction,
+                            onOpenReservation: onOpenReservation
                         )
                     }
                 }
@@ -676,62 +668,25 @@ private struct HostBoardColumn: View {
     }
 }
 
-private enum HomeServicePanel: String, CaseIterable, Identifiable {
-    case reservations = "Reservations"
-    case waitlist = "Waitlist"
-
-    var id: String { rawValue }
-}
-
 private struct HomeReservationsPanel: View {
-    @Binding var selection: HomeServicePanel
     let snapshot: HostBoardSnapshot
     let environment: AppEnvironment
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
+    let onOpenReservation: (ReservationRecord) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Service list", selection: $selection) {
-                ForEach(HomeServicePanel.allCases) { panel in
-                    Text(panel.rawValue).tag(panel)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            switch selection {
-            case .reservations:
-                HostBoardColumn(
-                    title: "Reservations",
-                    subtitle: "\(snapshot.upcoming.count) active for selected date",
-                    reservations: snapshot.upcoming,
-                    emptyTitle: "No active reservations",
-                    emptySystemImage: "calendar.badge.checkmark",
-                    nextReservationID: snapshot.nextReservationID,
-                    environment: environment,
-                    onAction: onAction
-                )
-            case .waitlist:
-                WaitlistPlaceholderCard()
-            }
-        }
-    }
-}
-
-private struct WaitlistPlaceholderCard: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Waitlist", systemImage: "person.2.badge.clock")
-                .font(.headline.weight(.medium))
-            Text("No waitlist yet")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            HostBoardColumn(
+                title: "Reservations",
+                subtitle: "\(snapshot.upcoming.count) active for selected date",
+                reservations: snapshot.upcoming,
+                emptyTitle: "No active reservations",
+                emptySystemImage: "calendar.badge.checkmark",
+                nextReservationID: snapshot.nextReservationID,
+                environment: environment,
+                onAction: onAction,
+                onOpenReservation: onOpenReservation
+            )
         }
     }
 }
@@ -743,7 +698,7 @@ private struct HostBoardReservationRow: View {
     let environment: AppEnvironment
     let isNext: Bool
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
-    @State private var showDetail = false
+    let onOpenReservation: (ReservationRecord) -> Void
 
     var body: some View {
         // Reuses the same compact reservation cell used by Schedule and Review.
@@ -765,14 +720,14 @@ private struct HostBoardReservationRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             ReservationHaptics.selection()
-            showDetail = true
+            onOpenReservation(reservation)
         }
         .onLongPressGesture {
             ReservationHaptics.lightImpact()
         }
         .contextMenu {
             Button {
-                showDetail = true
+                onOpenReservation(reservation)
             } label: {
                 Label("Details", systemImage: "info.circle")
             }
@@ -790,9 +745,6 @@ private struct HostBoardReservationRow: View {
                     Label(action.fullTitle, systemImage: action.systemImage)
                 }
             }
-        }
-        .navigationDestination(isPresented: $showDetail) {
-            ReservationDetailView(reservation: reservation, environment: environment)
         }
     }
 
@@ -865,60 +817,6 @@ private struct CompactEmptyHostState: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-
-// MARK: - Compact Board Scope
-
-private enum HostBoardScope: String, CaseIterable, Identifiable {
-    case upcoming
-    case seated
-    case review
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .upcoming:
-            return "Upcoming"
-        case .seated:
-            return "Seated"
-        case .review:
-            return "Review"
-        }
-    }
-
-    var emptyTitle: String {
-        switch self {
-        case .upcoming:
-            return "No upcoming reservations"
-        case .seated:
-            return "No one seated"
-        case .review:
-            return "Nothing needs review"
-        }
-    }
-
-    var emptySystemImage: String {
-        switch self {
-        case .upcoming:
-            return "calendar.badge.checkmark"
-        case .seated:
-            return "person.2.slash"
-        case .review:
-            return "checkmark.seal"
-        }
-    }
-
-    func subtitle(upcoming: Int, seated: Int, review: Int) -> String {
-        switch self {
-        case .upcoming:
-            return "\(upcoming) upcoming"
-        case .seated:
-            return "\(seated) seated"
-        case .review:
-            return "\(review) need review"
-        }
     }
 }
 

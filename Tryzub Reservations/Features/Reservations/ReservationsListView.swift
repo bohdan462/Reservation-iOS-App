@@ -12,7 +12,6 @@ struct ReservationsListView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var controller: ReservationsController
     @StateObject private var hiddenReservations = HiddenReservationsStore()
-    @StateObject private var restaurantSettings = RestaurantSettingsStore()
     @Query private var rootReservations: [ReservationRecord]
 
     // Source of truth for custom floating navigation; there is no default TabView state.
@@ -45,7 +44,7 @@ struct ReservationsListView: View {
                 selection: $selectedTab,
                 reviewAttentionCount: pendingReviewCount
             )
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 8)
                 .padding(.top, 6)
                 .padding(.bottom, 5)
         }
@@ -53,7 +52,6 @@ struct ReservationsListView: View {
         .fontDesign(.rounded)
         .environmentObject(controller)
         .environmentObject(hiddenReservations)
-        .environmentObject(restaurantSettings)
         .overlay(alignment: .topTrailing) {
             AppNoticeOverlay(
                 notices: visibleNotices,
@@ -66,6 +64,7 @@ struct ReservationsListView: View {
         .task {
             // Initial app load: show SwiftData cache immediately, then refresh today if needed.
             await controller.loadIfNeeded(context: modelContext)
+            _ = try? await controller.loadRestaurantSetup(context: modelContext)
         }
     }
 
@@ -121,6 +120,7 @@ private struct HomeDashboardView: View {
     @State private var showManualCreate = false
     @State private var showImportFailures = false
     @State private var selectedDate = Date()
+    @State private var navigationPath: [Int] = []
 
     let environment: AppEnvironment
     let isActive: Bool
@@ -135,7 +135,7 @@ private struct HomeDashboardView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             // Child view reads SwiftData cache and sends staff intent back to the controller.
             HostBoardView(
                 reservations: selectedDateReservations,
@@ -157,6 +157,9 @@ private struct HomeDashboardView: View {
                 },
                 onShowFormProblems: {
                     showImportFailures = true
+                },
+                onOpenReservation: { reservation in
+                    navigationPath.append(reservation.remoteID)
                 }
             )
             .refreshable {
@@ -181,7 +184,75 @@ private struct HomeDashboardView: View {
                 )
                 .environmentObject(controller)
             }
+            .navigationDestination(for: Int.self) { remoteID in
+                reservationDestination(remoteID: remoteID)
+            }
+            .task(id: homeVisibleDiagnosticID) {
+                logHomeVisibleDiagnostics()
+            }
         }
+    }
+
+    @ViewBuilder
+    private func reservationDestination(remoteID: Int) -> some View {
+        if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
+            ReservationDetailView(reservation: reservation, environment: environment)
+        } else {
+            ContentUnavailableView(
+                "Reservation Not Found",
+                systemImage: "calendar.badge.exclamationmark",
+                description: Text("Refresh reservations and try again.")
+            )
+        }
+    }
+
+    private var homeVisibleDiagnosticID: String {
+        let selectedDateKey = selectedDate.reservationDateString()
+        let localRows = reservations
+            .filter { $0.reservationDate == selectedDateKey }
+            .sorted { $0.remoteID < $1.remoteID }
+        let rowsSignature = localRows
+            .map { "\($0.remoteID):\($0.status):\($0.isHidden)" }
+            .joined(separator: ",")
+        return "\(selectedDateKey)|\(rowsSignature)"
+    }
+
+    private func logHomeVisibleDiagnostics() {
+        let selectedDateKey = selectedDate.reservationDateString()
+        let localRows = reservations.filter { $0.reservationDate == selectedDateKey }
+        let hiddenExcludedCount = localRows.filter(\.isHidden).count
+        let nonHiddenRows = localRows.filter { !$0.isHidden }
+        let finalVisibleRows = nonHiddenRows.filter { reservation in
+            switch reservation.statusValue {
+            case .new, .needsReview, .confirmed, .seated:
+                return true
+            case .completed, .cancelled, .noShow:
+                return false
+            }
+        }
+        let statusExcludedCount = nonHiddenRows.count - finalVisibleRows.count
+        let excludedStatusCounts = nonHiddenRows.reduce(into: [String: Int]()) { counts, reservation in
+            switch reservation.statusValue {
+            case .completed:
+                counts["completed", default: 0] += 1
+            case .cancelled:
+                counts["cancelled", default: 0] += 1
+            case .noShow:
+                counts["no_show", default: 0] += 1
+            case .new, .needsReview, .confirmed, .seated:
+                break
+            }
+        }
+
+        ReservationSyncDiagnostics.homeVisible(
+            selectedDate: selectedDateKey,
+            allLocalForDateCount: localRows.count,
+            hiddenExcludedCount: hiddenExcludedCount,
+            statusExcludedCount: statusExcludedCount,
+            finalVisibleCount: finalVisibleRows.count,
+            ids: finalVisibleRows.map(\.remoteID).sorted(),
+            excludedStatusCounts: excludedStatusCounts
+        )
     }
 }
 
@@ -202,6 +273,7 @@ private struct ReservationScheduleView: View {
     @State private var scope: ReservationScheduleScope = .upcoming
     @State private var searchText = ""
     @State private var showManualCreate = false
+    @State private var navigationPath: [Int] = []
 
     let environment: AppEnvironment
     let isActive: Bool
@@ -236,7 +308,7 @@ private struct ReservationScheduleView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             List {
                 Section {
                     Picker("Schedule", selection: $scope) {
@@ -271,7 +343,8 @@ private struct ReservationScheduleView: View {
                                 ReservationNavigationRow(
                                     reservation: reservation,
                                     environment: environment,
-                                    context: .schedule
+                                    context: .schedule,
+                                    onOpenDetails: { navigationPath.append($0.remoteID) }
                                 )
                             }
                         } header: {
@@ -333,6 +406,22 @@ private struct ReservationScheduleView: View {
                 // Schedule tab activation: controller fetches only when cached window is stale.
                 await controller.scheduleBecameActive(context: modelContext)
             }
+            .navigationDestination(for: Int.self) { remoteID in
+                reservationDestination(remoteID: remoteID)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func reservationDestination(remoteID: Int) -> some View {
+        if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
+            ReservationDetailView(reservation: reservation, environment: environment)
+        } else {
+            ContentUnavailableView(
+                "Reservation Not Found",
+                systemImage: "calendar.badge.exclamationmark",
+                description: Text("Refresh the schedule and try again.")
+            )
         }
     }
 }
@@ -353,6 +442,7 @@ private struct ReservationReviewQueueView: View {
 
     @State private var scope: ReservationQueueScope = .pending
     @State private var searchText = ""
+    @State private var navigationPath: [Int] = []
 
     let environment: AppEnvironment
     let isActive: Bool
@@ -378,7 +468,7 @@ private struct ReservationReviewQueueView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             List {
                 Section {
                     Picker("Queue", selection: $scope) {
@@ -404,7 +494,8 @@ private struct ReservationReviewQueueView: View {
                                 reservation: reservation,
                                 environment: environment,
                                 context: .review,
-                                contextNote: reviewContext(for: reservation)
+                                contextNote: reviewContext(for: reservation),
+                                onOpenDetails: { navigationPath.append($0.remoteID) }
                             )
                         }
                     } header: {
@@ -450,6 +541,22 @@ private struct ReservationReviewQueueView: View {
                 // Review tab activation: controller refreshes only when queue cache is stale.
                 await controller.reviewBecameActive(context: modelContext)
             }
+            .navigationDestination(for: Int.self) { remoteID in
+                reservationDestination(remoteID: remoteID)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func reservationDestination(remoteID: Int) -> some View {
+        if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
+            ReservationDetailView(reservation: reservation, environment: environment)
+        } else {
+            ContentUnavailableView(
+                "Reservation Not Found",
+                systemImage: "calendar.badge.exclamationmark",
+                description: Text("Refresh review and try again.")
+            )
         }
     }
 
@@ -561,7 +668,8 @@ private struct ReservationMoreView: View {
 // MARK: - Hidden Reservations View
 
 private struct HiddenReservationsView: View {
-    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var controller: ReservationsController
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate, order: .reverse),
         SortDescriptor(\ReservationRecord.reservationTime, order: .reverse)
@@ -570,15 +678,34 @@ private struct HiddenReservationsView: View {
 
     let environment: AppEnvironment
 
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
     private var hiddenRows: [ReservationRecord] {
         ReservationRecord.sortedNewestFirst(
-            reservations.filter { hiddenReservations.isHidden($0) }
+            reservations.filter(\.isHidden)
         )
     }
 
     var body: some View {
         List {
-            if hiddenRows.isEmpty {
+            if let errorMessage {
+                Section {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                }
+            }
+
+            if isLoading && hiddenRows.isEmpty {
+                Section {
+                    HStack {
+                        Spacer()
+                        ProgressView("Loading hidden reservations...")
+                        Spacer()
+                    }
+                    .padding(.vertical, 24)
+                }
+            } else if hiddenRows.isEmpty {
                 ContentUnavailableView(
                     "No Hidden Reservations",
                     systemImage: "archivebox",
@@ -588,15 +715,17 @@ private struct HiddenReservationsView: View {
                 Section("Hidden from service lists") {
                     ForEach(hiddenRows) { reservation in
                         VStack(alignment: .leading, spacing: 10) {
-                            ReservationNavigationRow(
-                                reservation: reservation,
-                                environment: environment,
-                                context: .schedule
-                            )
+                            NavigationLink {
+                                ReservationDetailView(reservation: reservation, environment: environment)
+                            } label: {
+                                HiddenReservationRow(reservation: reservation)
+                            }
+                            .buttonStyle(.plain)
 
                             Button {
-                                hiddenReservations.restore(remoteID: reservation.remoteID)
-                                ReservationHaptics.success()
+                                Task {
+                                    await restore(reservation)
+                                }
                             } label: {
                                 Label("Restore to lists", systemImage: "arrow.uturn.backward")
                                     .font(.subheadline.weight(.semibold))
@@ -621,6 +750,140 @@ private struct HiddenReservationsView: View {
         .contentMargins(.bottom, 92, for: .scrollContent)
         .navigationTitle("Hidden Reservations")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task {
+                        await loadHiddenReservations()
+                    }
+                } label: {
+                    if isLoading {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .disabled(isLoading)
+            }
+        }
+        .task {
+            await loadHiddenReservations()
+        }
+        .refreshable {
+            await loadHiddenReservations()
+        }
+    }
+
+    private func loadHiddenReservations() async {
+        guard !isLoading else { return }
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            _ = try await controller.loadHiddenReservations(context: modelContext)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func restore(_ reservation: ReservationRecord) async {
+        errorMessage = nil
+        do {
+            _ = try await controller.restoreHiddenReservation(
+                reservation: reservation,
+                context: modelContext
+            )
+            ReservationHaptics.success()
+        } catch {
+            errorMessage = error.localizedDescription
+            ReservationHaptics.warning()
+        }
+    }
+}
+
+private struct HiddenReservationRow: View {
+    let reservation: ReservationRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(reservation.guestName)
+                    .font(.headline.weight(.medium))
+                    .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                Text(reservation.sourceDisplayName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 12) {
+                Label(reservation.displayDate, systemImage: "calendar")
+                Label(reservation.displayTime, systemImage: "clock")
+                if !reservation.phone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Label(reservation.formattedPhone, systemImage: "phone")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+
+            HiddenReservationInfoLine(title: "Reason", value: reservation.hiddenReason?.nilIfBlank ?? "Hidden wrong entry")
+            HiddenReservationInfoLine(title: "Hidden", value: HiddenReservationDateFormatting.server(reservation.hiddenAt))
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct HiddenReservationInfoLine: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+private enum HiddenReservationDateFormatting {
+    static func server(_ dateString: String?) -> String {
+        guard let dateString = dateString?.nilIfBlank else {
+            return "-"
+        }
+
+        let parser = DateFormatter()
+        parser.dateFormat = "yyyy-MM-dd HH:mm:ss"
+
+        guard let date = parser.date(from: dateString) else {
+            return dateString
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -634,10 +897,10 @@ private struct ReservationNavigationRow: View {
     let environment: AppEnvironment
     var context: ReservationRowContext = .schedule
     var contextNote: String?
+    let onOpenDetails: (ReservationRecord) -> Void
 
     @State private var pendingAction: ReservationHostAction?
     @State private var tableAssignmentReservation: ReservationRecord?
-    @State private var showDetail = false
 
     var body: some View {
         ReservationRowView(
@@ -658,14 +921,14 @@ private struct ReservationNavigationRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             ReservationHaptics.selection()
-            showDetail = true
+            onOpenDetails(reservation)
         }
         .onLongPressGesture {
             ReservationHaptics.lightImpact()
         }
         .contextMenu {
             Button {
-                showDetail = true
+                onOpenDetails(reservation)
             } label: {
                 Label("Details", systemImage: "info.circle")
             }
@@ -677,9 +940,6 @@ private struct ReservationNavigationRow: View {
                     Label(action.fullTitle, systemImage: action.systemImage)
                 }
             }
-        }
-        .navigationDestination(isPresented: $showDetail) {
-            ReservationDetailView(reservation: reservation, environment: environment)
         }
         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
         .listRowSeparator(.hidden)
@@ -707,7 +967,7 @@ private struct ReservationNavigationRow: View {
                             }
                         }
                     } else {
-                        Button(reservation.isManualOrCallIn ? "Call-in / no email" : "No usable email") {}
+                        Button("Confirm + Email") {}
                             .disabled(true)
                     }
                 } else {

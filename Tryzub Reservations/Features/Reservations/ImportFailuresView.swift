@@ -238,6 +238,5 @@ private extension String {
         onCreated: { _ in }
     )
     .environmentObject(ReservationsController(environment: environment))
-    .environmentObject(RestaurantSettingsStore())
 }
 #endif

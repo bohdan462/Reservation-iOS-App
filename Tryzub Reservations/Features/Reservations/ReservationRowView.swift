@@ -181,8 +181,8 @@ struct ReservationRowView<Accessory: View>: View {
             items.append(ReservationRowMetaItem(text: notesIndicatorText, systemImage: "note.text"))
         }
 
-        if reservation.isManualOrCallIn {
-            items.append(ReservationRowMetaItem(text: "Call-in", systemImage: "phone.badge.plus"))
+        if let sourceLabel = reservation.rowSourceLabel {
+            items.append(ReservationRowMetaItem(text: sourceLabel, systemImage: reservation.rowSourceSystemImage))
         }
 
         if !reservation.phone.isEmpty {
@@ -202,8 +202,8 @@ struct ReservationRowView<Accessory: View>: View {
             items.append(ReservationRowMetaItem(text: notesIndicatorText, systemImage: "note.text"))
         }
 
-        if reservation.isManualOrCallIn {
-            items.append(ReservationRowMetaItem(text: "Call-in", systemImage: "phone.badge.plus"))
+        if let sourceLabel = reservation.rowSourceLabel {
+            items.append(ReservationRowMetaItem(text: sourceLabel, systemImage: reservation.rowSourceSystemImage))
         }
 
         return items

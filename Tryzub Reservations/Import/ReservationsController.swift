@@ -32,6 +32,10 @@ final class ReservationsController: ObservableObject {
     @Published var noticeMessage: String?
     @Published var importFailureCount: Int = 0
     @Published var importFailureCountError: String?
+    @Published private(set) var restaurantSetup: RestaurantSetup = .default
+    @Published private(set) var isLoadingRestaurantSetup = false
+    @Published private(set) var isSavingRestaurantSetup = false
+    @Published private(set) var latestEmailStatusByReservationID: [Int: ReservationEmailStatus] = [:]
 
     // Developer diagnostics show which sync scopes are fresh, busy, or cooling down.
     @Published private(set) var syncScopeSnapshots: [SyncScopeSnapshot] = []
@@ -438,6 +442,70 @@ final class ReservationsController: ObservableObject {
         }
     }
 
+    // MARK: - Restaurant Setup
+
+    // Intent: Loads the lightweight setup row used by manual-create defaults and settings.
+    // Network: GET /restaurant-setup.
+    @discardableResult
+    func loadRestaurantSetup(context: ModelContext? = nil) async throws -> RestaurantSetup {
+        guard !isLoadingRestaurantSetup else {
+            return restaurantSetup
+        }
+
+        isLoadingRestaurantSetup = true
+        defer { isLoadingRestaurantSetup = false }
+
+        do {
+            let dto = try await environment.apiClient.fetchRestaurantSetup(reason: .restaurantSetup)
+            let setup = RestaurantSetup(dto: dto)
+            restaurantSetup = setup
+            return setup
+        } catch {
+            postNotice(
+                severity: .warning,
+                source: .admin,
+                title: "Restaurant setup unavailable",
+                message: "Using saved defaults until the setup endpoint responds.",
+                requestReason: .restaurantSetup,
+                errorCode: errorLogCode(error)
+            )
+            throw error
+        }
+    }
+
+    // Intent: Saves manager-editable setup fields.
+    // Network: PATCH /restaurant-setup.
+    @discardableResult
+    func updateRestaurantSetup(request: RestaurantSetupUpdateRequest) async throws -> RestaurantSetup {
+        guard !isSavingRestaurantSetup else {
+            throw ReservationControllerError.actionAlreadyInProgress
+        }
+
+        isSavingRestaurantSetup = true
+        defer { isSavingRestaurantSetup = false }
+
+        do {
+            let dto = try await environment.apiClient.updateRestaurantSetup(
+                request,
+                reason: .restaurantSetupPatch
+            )
+            let setup = RestaurantSetup(dto: dto)
+            restaurantSetup = setup
+            postNotice(severity: .success, source: .admin, title: "Restaurant settings saved")
+            return setup
+        } catch {
+            postNotice(
+                severity: .error,
+                source: .admin,
+                title: "Restaurant settings did not save",
+                message: error.localizedDescription,
+                requestReason: .restaurantSetupPatch,
+                errorCode: errorLogCode(error)
+            )
+            throw error
+        }
+    }
+
     func isActionInProgress(for reservation: ReservationRecord) -> Bool {
         actionInProgressIDs.contains(reservation.remoteID)
     }
@@ -485,7 +553,7 @@ final class ReservationsController: ObservableObject {
     }
 
     // Intent: Staff creates a call-in/manual reservation that is already accepted.
-    // Network: POST /managed-reservations, then PATCH status=confirmed if needed.
+    // Network: POST /managed-reservations with status=confirmed.
     // Email: Does not call the confirmation-email endpoint.
     func createAcceptedManualReservation(
         _ request: ReservationCreateRequest,
@@ -503,18 +571,7 @@ final class ReservationsController: ObservableObject {
         do {
             let repository = ReservationRepository(context: context)
             let service = ReservationMutationService(client: environment.apiClient, repository: repository)
-            let createdReservation = try await service.createReservation(request)
-            let acceptedReservation: ReservationDTO
-
-            if createdReservation.status == .confirmed {
-                acceptedReservation = createdReservation
-            } else {
-                acceptedReservation = try await service.updateReservation(
-                    id: createdReservation.id,
-                    request: ReservationUpdateRequest(status: .confirmed)
-                )
-            }
-
+            let acceptedReservation = try await service.createReservation(request)
             markScopesTouched(after: acceptedReservation)
             postNotice(
                 severity: .success,
@@ -636,15 +693,20 @@ final class ReservationsController: ObservableObject {
 
             switch response.emailStatus {
             case .sent:
-                postNotice(severity: .success, source: .email, title: "Reservation confirmed", message: "Confirmation email recorded as sent.")
+                latestEmailStatusByReservationID[id] = .sent
+                postNotice(severity: .success, source: .email, title: "Reservation confirmed", message: "Confirmation email was recorded as sent.")
             case .alreadySent:
+                latestEmailStatusByReservationID[id] = .alreadySent
                 postNotice(severity: .info, source: .email, title: "Already confirmed", message: "Confirmation email was already recorded as sent.")
             case .failed:
-                errorMessage = "Reservation confirmed, but confirmation email failed. Follow up manually."
-                postNotice(severity: .warning, source: .email, title: "Email failed", message: "Reservation confirmed, but staff should follow up manually.")
+                latestEmailStatusByReservationID[id] = .failed
+                errorMessage = "Reservation confirmed, but email failed. Follow up manually."
+                postNotice(severity: .warning, source: .email, title: "Email failed", message: "Reservation confirmed, but email failed. Follow up manually.")
             case .skipped:
-                postNotice(severity: .info, source: .email, title: "Email skipped", message: response.message)
+                latestEmailStatusByReservationID[id] = .skipped
+                postNotice(severity: .info, source: .email, title: "Email skipped", message: "No confirmation email sent: no guest email.")
             case .unknown:
+                latestEmailStatusByReservationID[id] = .unknown
                 postNotice(severity: .info, source: .email, title: "Reservation confirmed", message: "Check email status in details.")
             }
         } catch {
@@ -675,6 +737,104 @@ final class ReservationsController: ObservableObject {
                 title: "Reservation was not confirmed",
                 message: "Confirmation email may not have been sent. Retry or check details."
             )
+        }
+    }
+
+    // MARK: - Hidden Reservations
+
+    // Intent: Loads backend-hidden rows into the cache for the Hidden Reservations screen.
+    // Network: GET /managed-reservations?include_hidden=1.
+    @discardableResult
+    func loadHiddenReservations(context: ModelContext) async throws -> [ReservationDTO] {
+        let reservations = try await environment.apiClient.fetchAllReservations(
+            perPage: 100,
+            date: nil,
+            from: nil,
+            to: nil,
+            status: nil,
+            search: nil,
+            includeHidden: true,
+            reason: .hiddenReservations
+        )
+        let repository = ReservationRepository(context: context)
+        try repository.upsert(reservations)
+        return reservations.filter { $0.isHidden == true }
+    }
+
+    // Intent: Soft-hides a mistaken manual row on the server; no DELETE route is used.
+    // Network: PATCH /managed-reservations/{id} with is_hidden=true.
+    @discardableResult
+    func hideWrongEntry(
+        reservation: ReservationRecord,
+        reason hiddenReason: String = "Wrong manual entry",
+        context: ModelContext
+    ) async throws -> ReservationDTO {
+        let id = reservation.remoteID
+        guard !actionInProgressIDs.contains(id) else {
+            throw ReservationControllerError.actionAlreadyInProgress
+        }
+
+        actionInProgressIDs.insert(id)
+        errorMessage = nil
+        noticeMessage = nil
+        defer { actionInProgressIDs.remove(id) }
+
+        do {
+            let repository = ReservationRepository(context: context)
+            let service = ReservationMutationService(client: environment.apiClient, repository: repository)
+            let hiddenReservation = try await service.updateReservation(
+                id: id,
+                request: ReservationUpdateRequest(isHidden: true, hiddenReason: hiddenReason)
+            )
+            markScopesTouched(after: hiddenReservation)
+            postNotice(
+                severity: .success,
+                source: .mutation,
+                title: "Reservation hidden",
+                message: "Reservation hidden. It remains in backend history."
+            )
+            return hiddenReservation
+        } catch {
+            errorMessage = "Could not hide this entry. Please retry before relying on service lists."
+            postMutationFailureNotice(
+                title: "Hide did not sync",
+                message: "Could not hide this entry. Please retry before relying on service lists."
+            )
+            throw error
+        }
+    }
+
+    // Intent: Restores a backend-hidden row.
+    // Network: PATCH /managed-reservations/{id} with is_hidden=false.
+    @discardableResult
+    func restoreHiddenReservation(
+        reservation: ReservationRecord,
+        context: ModelContext
+    ) async throws -> ReservationDTO {
+        let id = reservation.remoteID
+        guard !actionInProgressIDs.contains(id) else {
+            throw ReservationControllerError.actionAlreadyInProgress
+        }
+
+        actionInProgressIDs.insert(id)
+        defer { actionInProgressIDs.remove(id) }
+
+        do {
+            let repository = ReservationRepository(context: context)
+            let service = ReservationMutationService(client: environment.apiClient, repository: repository)
+            let restoredReservation = try await service.updateReservation(
+                id: id,
+                request: ReservationUpdateRequest(isHidden: false)
+            )
+            markScopesTouched(after: restoredReservation)
+            postNotice(severity: .success, source: .mutation, title: "Reservation restored")
+            return restoredReservation
+        } catch {
+            postMutationFailureNotice(
+                title: "Restore did not sync",
+                message: "Could not restore this reservation. Please retry."
+            )
+            throw error
         }
     }
 
@@ -831,6 +991,7 @@ final class ReservationsController: ObservableObject {
                     to: nil,
                     status: nil,
                     search: nil,
+                    includeHidden: false,
                     retryCount: 0,
                     reason: .startupToday
                 )
@@ -844,6 +1005,7 @@ final class ReservationsController: ObservableObject {
                     to: nil,
                     status: nil,
                     search: nil,
+                    includeHidden: false,
                     retryCount: 1,
                     reason: .manualToday
                 )
@@ -865,6 +1027,7 @@ final class ReservationsController: ObservableObject {
                     to: window.to,
                     status: nil,
                     search: nil,
+                    includeHidden: false,
                     retryCount: 1,
                     reason: .scheduleWindow
                 )
@@ -878,6 +1041,7 @@ final class ReservationsController: ObservableObject {
                     to: nil,
                     status: .needsReview,
                     search: nil,
+                    includeHidden: false,
                     retryCount: 0,
                     reason: .reviewQueues
                 )
@@ -889,6 +1053,7 @@ final class ReservationsController: ObservableObject {
                     to: nil,
                     status: .new,
                     search: nil,
+                    includeHidden: false,
                     retryCount: 0,
                     reason: .reviewQueues
                 )

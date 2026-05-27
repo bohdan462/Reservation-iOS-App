@@ -18,19 +18,6 @@ enum ReservationsAppTab: Hashable, CaseIterable, Identifiable {
         case .home:
             return "Home"
         case .schedule:
-            return "Schedule"
-        case .review:
-            return "Review"
-        case .more:
-            return "More"
-        }
-    }
-
-    var compactTitle: String {
-        switch self {
-        case .home:
-            return "Home"
-        case .schedule:
             return "List"
         case .review:
             return "Review"
@@ -75,7 +62,7 @@ struct ReservationFloatingTabBar: View {
     var body: some View {
         let isCompact = horizontalSizeClass == .compact
 
-        HStack(spacing: isCompact ? 4 : 8) {
+        HStack(spacing: isCompact ? 2 : 8) {
             ForEach(ReservationsAppTab.allCases) { tab in
                 ReservationFloatingTabButton(
                     tab: tab,
@@ -90,8 +77,9 @@ struct ReservationFloatingTabBar: View {
                 }
             }
         }
-        .padding(.horizontal, isCompact ? 8 : 14)
-        .padding(.vertical, 8)
+        .padding(.horizontal, isCompact ? 6 : 14)
+        .padding(.vertical, isCompact ? 6 : 8)
+        .frame(maxWidth: .infinity)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
@@ -126,23 +114,25 @@ private struct ReservationFloatingTabButton: View {
                             .frame(minWidth: 15, minHeight: 15)
                             .padding(.horizontal, attentionCount > 9 ? 3 : 0)
                             .background(ReservationUIStyle.selectedControlColor, in: Capsule())
-                            .offset(x: 7, y: -6)
+                            .offset(x: 6, y: -5)
                             .accessibilityHidden(true)
                     }
                 }
 
-                Text(isCompact ? tab.compactTitle : tab.title)
+                Text(tab.title)
                     .font((isCompact ? Font.caption : Font.subheadline).weight(.semibold))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.86)
+                    .minimumScaleFactor(0.82)
                     .foregroundStyle(isSelected ? ReservationUIStyle.selectedControlColor : .primary.opacity(0.78))
             }
-            .frame(width: isCompact ? 78 : 112, height: 42)
+            .frame(maxWidth: .infinity, minHeight: isCompact ? 38 : 42)
+            .padding(.horizontal, isCompact ? 2 : 6)
             .background(selectedBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isCompact ? tab.compactTitle : tab.title)
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel(tab.title)
         .accessibilityValue(isSelected ? "Selected" : "")
     }
 

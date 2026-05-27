@@ -122,7 +122,34 @@ extension ReservationRecord {
     }
 
     var isManualOrCallIn: Bool {
-        sourceSubmissionID <= 0 || email.isManualPlaceholderEmail
+        sourceTypeValue.isManualSource || sourceSubmissionID <= 0 || email.isManualPlaceholderEmail
+    }
+
+    var canSoftHideAsWrongEntry: Bool {
+        sourceTypeValue.isManualSource || sourceSubmissionID <= 0 || email.isManualPlaceholderEmail
+    }
+
+    var sourceDisplayName: String {
+        sourceTypeValue.displayName
+    }
+
+    var rowSourceLabel: String? {
+        sourceTypeValue.isManualSource ? sourceTypeValue.displayName : nil
+    }
+
+    var rowSourceSystemImage: String {
+        switch sourceTypeValue {
+        case .manualCallIn:
+            return "phone.badge.plus"
+        case .manualWalkIn:
+            return "figure.walk"
+        case .knownGuestManual:
+            return "person.text.rectangle"
+        case .importRepair:
+            return "wrench.and.screwdriver"
+        case .form, .unknown:
+            return "globe"
+        }
     }
 
     var hasUsableConfirmationEmail: Bool {

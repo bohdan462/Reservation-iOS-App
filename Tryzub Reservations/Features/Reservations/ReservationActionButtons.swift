@@ -239,7 +239,10 @@ enum ReservationHostAction: String, Identifiable {
 
         switch self {
         case .confirmOnly:
-            return "\(summary)\n\nChoose Confirm only for a status update without email, or Confirm + Email to ask the backend to send the email."
+            let helper = reservation.email.nilIfBlank == nil
+                ? "\n\nNo guest email on this reservation."
+                : ""
+            return "Choose Confirm only to update the reservation without email, or Confirm + Email to ask the backend to send the confirmation email.\(helper)"
         case .confirmAndSendEmail:
             return "\(summary)\n\nThis will mark the reservation confirmed and ask the server to send a confirmation email to \(reservation.email)."
         case .seat:
@@ -475,6 +478,13 @@ private extension ReservationHostAction {
         case .confirmOnly, .confirmAndSendEmail, .assignTable, .cancel, .noShow:
             return false
         }
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

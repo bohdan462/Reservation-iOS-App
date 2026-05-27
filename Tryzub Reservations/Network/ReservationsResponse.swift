@@ -39,6 +39,11 @@ struct ReservationConfirmResponse: Codable {
     let data: ReservationDTO
 }
 
+struct RestaurantSetupResponse: Codable {
+    let success: Bool?
+    let data: RestaurantSetupDTO?
+}
+
 struct ImportFailuresResponse: Codable {
     let success: Bool
     let page: Int

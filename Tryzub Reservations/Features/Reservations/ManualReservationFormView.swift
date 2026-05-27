@@ -12,7 +12,7 @@ struct ManualReservationFormView: View {
     let onCreateReservation: (ReservationCreateRequest) async throws -> ReservationDTO
 
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var settingsStore: RestaurantSettingsStore
+    @EnvironmentObject private var controller: ReservationsController
     @State private var draft: ReservationFormDraft
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -57,7 +57,8 @@ struct ManualReservationFormView: View {
             _ = try await onCreateReservation(
                 draft.createRequest(
                     sourceSubmissionId: failure?.sourceSubmissionId,
-                    settings: settingsStore.settings
+                    sourceType: failure == nil ? .manualCallIn : .importRepair,
+                    setup: controller.restaurantSetup
                 )
             )
             ReservationHaptics.success()
@@ -200,7 +201,7 @@ private struct ReservationFormContent: View {
     let onCancel: () -> Void
     let onSubmit: () -> Void
 
-    @EnvironmentObject private var settingsStore: RestaurantSettingsStore
+    @EnvironmentObject private var controller: ReservationsController
     @State private var isEmailExpanded = false
     @State private var isNotesPresented = false
     @State private var isCustomTimePresented = false
@@ -288,7 +289,7 @@ private struct ReservationFormContent: View {
 
                 if isEmailExpanded || !draft.email.trimmed.isEmpty {
                     HStack(alignment: .bottom, spacing: 8) {
-                        ReservationFormTextField(title: "Email optional", text: $draft.email, prompt: "Auto-filled if blank")
+                        ReservationFormTextField(title: "Email optional", text: $draft.email, prompt: "Leave blank if none")
                             .keyboardType(.emailAddress)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -589,7 +590,7 @@ private struct ReservationFormContent: View {
     }
 
     private var quickDates: [Date] {
-        settingsStore.settings.availableServiceDates(count: 10)
+        controller.restaurantSetup.suggestedServiceDates(count: 10)
     }
 
     private func dateTitle(_ date: Date) -> String {
@@ -603,7 +604,7 @@ private struct ReservationFormContent: View {
     }
 
     private var timeChoices: [Date] {
-        settingsStore.settings.availableTimes(for: draft.reservationDate)
+        controller.restaurantSetup.suggestedTimes(for: draft.reservationDate)
     }
 
     private func timeLabel(_ date: Date) -> String {
@@ -619,7 +620,7 @@ private struct ReservationFormContent: View {
     private func dateChoiceButton(_ date: Date) -> some View {
         Button {
             draft.reservationDate = date
-            if let firstTime = settingsStore.settings.availableTimes(for: date).first {
+            if let firstTime = controller.restaurantSetup.suggestedTimes(for: date).first {
                 draft.reservationTime = firstTime
             }
             ReservationHaptics.selection()
@@ -641,11 +642,11 @@ private struct ReservationFormContent: View {
 
         switch mode {
         case .manualCreate:
-            draft.applyDefaultServiceSlot(settings: settingsStore.settings)
+            draft.applyDefaultServiceSlot(setup: controller.restaurantSetup)
         case .fixFailedImport:
             draft.status = .confirmed
-            if settingsStore.settings.availableTimes(for: draft.reservationDate).isEmpty {
-                draft.applyDefaultServiceSlot(settings: settingsStore.settings, keepGuestFields: true)
+            if controller.restaurantSetup.suggestedTimes(for: draft.reservationDate).isEmpty {
+                draft.applyDefaultServiceSlot(setup: controller.restaurantSetup, keepGuestFields: true)
             }
         case .edit:
             break
@@ -702,25 +703,32 @@ private struct ReservationFormDraft {
         supersededById = reservation.supersededById.map(String.init) ?? ""
     }
 
-    func createRequest(sourceSubmissionId: Int?, settings: RestaurantSettings) -> ReservationCreateRequest {
+    func createRequest(
+        sourceSubmissionId: Int?,
+        sourceType: ReservationSourceType,
+        setup: RestaurantSetup
+    ) -> ReservationCreateRequest {
         ReservationCreateRequest(
             sourceSubmissionId: sourceSubmissionId,
             guestName: guestName.trimmed,
-            email: reliableEmailForSubmission(settings: settings),
+            email: email.trimmed,
             phone: phone.trimmed,
             reservationDate: Self.formatDate(reservationDate),
             reservationTime: Self.formatTime(reservationTime),
             partySize: partySize,
             guestNotes: guestNotes.trimmed.nilIfBlank,
             staffNotes: staffNotes.trimmed.nilIfBlank,
-            tableName: tableName.trimmed.nilIfBlank
+            tableName: tableName.trimmed.nilIfBlank,
+            sourceType: sourceType,
+            createdByDevice: "ios",
+            status: status
         )
     }
 
     func updateRequest() -> ReservationUpdateRequest {
         ReservationUpdateRequest(
             guestName: guestName.trimmed,
-            email: reliableEmailForSubmission(),
+            email: email.trimmed,
             phone: phone.trimmed,
             reservationDate: Self.formatDate(reservationDate),
             reservationTime: Self.formatTime(reservationTime),
@@ -733,16 +741,8 @@ private struct ReservationFormDraft {
         )
     }
 
-    private func reliableEmailForSubmission(settings: RestaurantSettings = .default) -> String {
-        let trimmedEmail = email.trimmed
-        guard !trimmedEmail.isEmpty else {
-            return settings.placeholderEmail(for: guestName)
-        }
-        return trimmedEmail
-    }
-
-    mutating func applyDefaultServiceSlot(settings: RestaurantSettings, keepGuestFields: Bool = false) {
-        let slot = settings.defaultServiceSlot()
+    mutating func applyDefaultServiceSlot(setup: RestaurantSetup, keepGuestFields: Bool = false) {
+        let slot = setup.defaultServiceSlot()
         reservationDate = slot.date
         reservationTime = slot.time
 
@@ -960,16 +960,18 @@ private extension String {
 
 #if DEBUG
 #Preview("Manual Reservation") {
+    let environment = AppEnvironment(apiClient: ReservationsAPIClient.preview, role: .developer)
     ManualReservationFormView { _ in
         ReservationPreviewData.sampleDTOs[0]
     }
-    .environmentObject(RestaurantSettingsStore())
+    .environmentObject(ReservationsController(environment: environment))
 }
 
 #Preview("Edit Reservation") {
+    let environment = AppEnvironment(apiClient: ReservationsAPIClient.preview, role: .developer)
     ReservationEditFormView(reservation: ReservationPreviewData.sampleRecord) { _ in
         ReservationPreviewData.sampleDTOs[0]
     }
-    .environmentObject(RestaurantSettingsStore())
+    .environmentObject(ReservationsController(environment: environment))
 }
 #endif
