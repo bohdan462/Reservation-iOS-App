@@ -482,13 +482,16 @@ private extension ReservationHostAction {
 }
 
 private extension String {
+    var trimmed: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var nilIfBlank: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        trimmed.isEmpty ? nil : trimmed
     }
 }
 
-// MARK: - Table Assignment Sheet
+// MARK: - Table Assignment Popover
 
 struct TableAssignmentSheet: View {
     let reservation: ReservationRecord
@@ -509,57 +512,119 @@ struct TableAssignmentSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                if let errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                    }
+        VStack(alignment: .leading, spacing: 12) {
+            header
+
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+
+            TextField("Table", text: $tableName)
+                .font(.title3.weight(.semibold))
+                .textInputAutocapitalization(.characters)
+                .autocorrectionDisabled()
+                .padding(.horizontal, 12)
+                .frame(height: 44)
+                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
                 }
 
-                Section("Reservation") {
-                    HStack {
-                        Text(reservation.displayTime)
-                            .font(.headline.monospacedDigit())
-                        Text(reservation.guestName)
-                            .lineLimit(1)
-                        Spacer()
-                        Text("\(reservation.partySize)")
-                            .font(.headline.monospacedDigit())
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 54), spacing: 7)], spacing: 7) {
+                ForEach(tableSuggestions, id: \.self) { suggestion in
+                    Button {
+                        tableName = suggestion
+                        ReservationHaptics.selection()
+                    } label: {
+                        ReservationChoiceChip(
+                            title: suggestion,
+                            isSelected: tableName.trimmed.caseInsensitiveCompare(suggestion) == .orderedSame,
+                            minWidth: 50,
+                            minHeight: 32,
+                            fillsWidth: false
+                        )
                     }
-                }
-
-                Section("Table") {
-                    TextField("Table number or name", text: $tableName)
-                        .textInputAutocapitalization(.characters)
+                    .buttonStyle(.plain)
                 }
             }
-            .navigationTitle("Assign Table")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
+
+            HStack(spacing: 8) {
+                if reservation.hasTableAssignment || !tableName.trimmed.isEmpty {
+                    Button {
+                        tableName = ""
+                        ReservationHaptics.selection()
+                    } label: {
+                        Label("Clear", systemImage: "xmark.circle")
+                            .font(.caption.weight(.semibold))
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                 }
 
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        Task {
-                            await save()
-                        }
-                    } label: {
-                        if isSaving {
-                            ProgressView()
-                        } else {
-                            Text("Save")
-                        }
-                    }
-                    .disabled(isSaving)
+                Spacer()
+
+                Button("Cancel") {
+                    dismiss()
                 }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary.opacity(0.72))
+                .buttonStyle(.plain)
+
+                Button {
+                    Task {
+                        await save()
+                    }
+                } label: {
+                    if isSaving {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(Color(.systemBackground))
+                    } else {
+                        Text("Save")
+                    }
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color(.systemBackground))
+                .frame(minWidth: 72, minHeight: 34)
+                .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                .buttonStyle(.plain)
+                .disabled(isSaving)
             }
         }
+        .padding(14)
+        .frame(width: 360, alignment: .topLeading)
+        .background(Color(.systemGroupedBackground))
+        .presentationCompactAdaptation(.popover)
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text(reservation.displayTime)
+                .font(.title3.weight(.semibold))
+                .monospacedDigit()
+                .fixedSize(horizontal: true, vertical: false)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(reservation.guestName)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Text("\(reservation.partySize) \(reservation.partySize == 1 ? "guest" : "guests")")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            ReservationStatusBadge(status: reservation.statusValue)
+        }
+    }
+
+    private var tableSuggestions: [String] {
+        ["A1", "A2", "A3", "B1", "B2", "B3", "Bar", "Patio"]
     }
 
     // Intent: Staff assigns a table through the caller's PATCH handler.

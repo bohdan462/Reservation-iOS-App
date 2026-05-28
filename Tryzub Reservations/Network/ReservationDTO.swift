@@ -423,11 +423,54 @@ struct RestaurantSetupDTO: Codable, Equatable {
     let businessName: String
     let timezone: String
     let defaultPartySize: Int
+    let bookingWindowDays: Int
+    let slotIntervalMinutes: Int
+    let maxOnlinePartySize: Int
+    let largePartyReviewThreshold: Int
+    let sameDayBookingEnabled: Bool
+    let minimumLeadTimeMinutes: Int
     let callInPlaceholderEmail: String
     let fromEmail: String
     let replyToEmail: String
     let createdAt: String?
     let updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case restaurantKey
+        case businessName
+        case timezone
+        case defaultPartySize
+        case bookingWindowDays
+        case slotIntervalMinutes
+        case maxOnlinePartySize
+        case largePartyReviewThreshold
+        case sameDayBookingEnabled
+        case minimumLeadTimeMinutes
+        case callInPlaceholderEmail
+        case fromEmail
+        case replyToEmail
+        case createdAt
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        restaurantKey = try container.decodeIfPresent(String.self, forKey: .restaurantKey) ?? "tryzub"
+        businessName = try container.decodeIfPresent(String.self, forKey: .businessName) ?? "Tryzub Ukrainian Kitchen"
+        timezone = try container.decodeIfPresent(String.self, forKey: .timezone) ?? "America/Chicago"
+        defaultPartySize = try container.decodeFlexibleIntIfPresent(forKey: .defaultPartySize) ?? 2
+        bookingWindowDays = try container.decodeFlexibleIntIfPresent(forKey: .bookingWindowDays) ?? 60
+        slotIntervalMinutes = try container.decodeFlexibleIntIfPresent(forKey: .slotIntervalMinutes) ?? 30
+        maxOnlinePartySize = try container.decodeFlexibleIntIfPresent(forKey: .maxOnlinePartySize) ?? 8
+        largePartyReviewThreshold = try container.decodeFlexibleIntIfPresent(forKey: .largePartyReviewThreshold) ?? 7
+        sameDayBookingEnabled = try container.decodeFlexibleBoolIfPresent(forKey: .sameDayBookingEnabled) ?? true
+        minimumLeadTimeMinutes = try container.decodeFlexibleIntIfPresent(forKey: .minimumLeadTimeMinutes) ?? 60
+        callInPlaceholderEmail = try container.decodeIfPresent(String.self, forKey: .callInPlaceholderEmail) ?? "callinreservation@tryzubchicago.com"
+        fromEmail = try container.decodeIfPresent(String.self, forKey: .fromEmail) ?? "reservations@tryzubchicago.com"
+        replyToEmail = try container.decodeIfPresent(String.self, forKey: .replyToEmail) ?? "reservations@tryzubchicago.com"
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
+        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+    }
 }
 
 struct RestaurantSetup: Codable, Equatable {
@@ -435,6 +478,12 @@ struct RestaurantSetup: Codable, Equatable {
     var businessName: String
     var timezone: String
     var defaultPartySize: Int
+    var bookingWindowDays: Int
+    var slotIntervalMinutes: Int
+    var maxOnlinePartySize: Int
+    var largePartyReviewThreshold: Int
+    var sameDayBookingEnabled: Bool
+    var minimumLeadTimeMinutes: Int
     var callInPlaceholderEmail: String
     var fromEmail: String
     var replyToEmail: String
@@ -446,6 +495,12 @@ struct RestaurantSetup: Codable, Equatable {
         businessName: "Tryzub Ukrainian Kitchen",
         timezone: "America/Chicago",
         defaultPartySize: 2,
+        bookingWindowDays: 60,
+        slotIntervalMinutes: 30,
+        maxOnlinePartySize: 8,
+        largePartyReviewThreshold: 7,
+        sameDayBookingEnabled: true,
+        minimumLeadTimeMinutes: 60,
         callInPlaceholderEmail: "callinreservation@tryzubchicago.com",
         fromEmail: "reservations@tryzubchicago.com",
         replyToEmail: "reservations@tryzubchicago.com",
@@ -458,6 +513,12 @@ struct RestaurantSetup: Codable, Equatable {
         businessName = dto.businessName
         timezone = dto.timezone
         defaultPartySize = dto.defaultPartySize
+        bookingWindowDays = dto.bookingWindowDays
+        slotIntervalMinutes = dto.slotIntervalMinutes
+        maxOnlinePartySize = dto.maxOnlinePartySize
+        largePartyReviewThreshold = dto.largePartyReviewThreshold
+        sameDayBookingEnabled = dto.sameDayBookingEnabled
+        minimumLeadTimeMinutes = dto.minimumLeadTimeMinutes
         callInPlaceholderEmail = dto.callInPlaceholderEmail
         fromEmail = dto.fromEmail
         replyToEmail = dto.replyToEmail
@@ -470,6 +531,12 @@ struct RestaurantSetup: Codable, Equatable {
         businessName: String,
         timezone: String,
         defaultPartySize: Int,
+        bookingWindowDays: Int,
+        slotIntervalMinutes: Int,
+        maxOnlinePartySize: Int,
+        largePartyReviewThreshold: Int,
+        sameDayBookingEnabled: Bool,
+        minimumLeadTimeMinutes: Int,
         callInPlaceholderEmail: String,
         fromEmail: String,
         replyToEmail: String,
@@ -480,6 +547,12 @@ struct RestaurantSetup: Codable, Equatable {
         self.businessName = businessName
         self.timezone = timezone
         self.defaultPartySize = defaultPartySize
+        self.bookingWindowDays = bookingWindowDays
+        self.slotIntervalMinutes = slotIntervalMinutes
+        self.maxOnlinePartySize = maxOnlinePartySize
+        self.largePartyReviewThreshold = largePartyReviewThreshold
+        self.sameDayBookingEnabled = sameDayBookingEnabled
+        self.minimumLeadTimeMinutes = minimumLeadTimeMinutes
         self.callInPlaceholderEmail = callInPlaceholderEmail
         self.fromEmail = fromEmail
         self.replyToEmail = replyToEmail
@@ -492,9 +565,422 @@ struct RestaurantSetupUpdateRequest: Encodable {
     var businessName: String? = nil
     var timezone: String? = nil
     var defaultPartySize: Int? = nil
+    var bookingWindowDays: Int? = nil
+    var slotIntervalMinutes: Int? = nil
+    var maxOnlinePartySize: Int? = nil
+    var largePartyReviewThreshold: Int? = nil
+    var sameDayBookingEnabled: Bool? = nil
+    var minimumLeadTimeMinutes: Int? = nil
     var callInPlaceholderEmail: String? = nil
     var fromEmail: String? = nil
     var replyToEmail: String? = nil
+}
+
+struct RestaurantHoursDTO: Codable, Equatable {
+    let restaurantKey: String
+    let weeklyHours: [WeeklyHourDTO]
+    let specialHours: [SpecialHourDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case restaurantKey
+        case weeklyHours
+        case specialHours
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        restaurantKey = try container.decodeIfPresent(String.self, forKey: .restaurantKey) ?? "tryzub"
+        weeklyHours = try container.decodeIfPresent([WeeklyHourDTO].self, forKey: .weeklyHours) ?? []
+        specialHours = try container.decodeIfPresent([SpecialHourDTO].self, forKey: .specialHours) ?? []
+    }
+}
+
+struct WeeklyHourDTO: Codable, Equatable {
+    let weekday: Int
+    let isOpen: Bool
+    let openTime: String?
+    let closeTime: String?
+
+    enum CodingKeys: String, CodingKey {
+        case weekday
+        case isOpen
+        case openTime
+        case closeTime
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        weekday = try container.decodeFlexibleIntIfPresent(forKey: .weekday) ?? 0
+        isOpen = try container.decodeFlexibleBoolIfPresent(forKey: .isOpen) ?? false
+        openTime = try container.decodeIfPresent(String.self, forKey: .openTime)
+        closeTime = try container.decodeIfPresent(String.self, forKey: .closeTime)
+    }
+}
+
+struct WeeklyHoursUpdateRequest: Encodable {
+    var weeklyHours: [WeeklyHourUpdateDTO]
+}
+
+struct WeeklyHourUpdateDTO: Encodable, Equatable {
+    var weekday: Int
+    var isOpen: Bool
+    var openTime: String?
+    var closeTime: String?
+}
+
+struct SpecialHourDTO: Codable, Equatable {
+    let reservationDate: String
+    let isOpen: Bool
+    let openTime: String?
+    let closeTime: String?
+    let reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case reservationDate
+        case isOpen
+        case openTime
+        case closeTime
+        case reason
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        reservationDate = try container.decodeIfPresent(String.self, forKey: .reservationDate) ?? ""
+        isOpen = try container.decodeFlexibleBoolIfPresent(forKey: .isOpen) ?? false
+        openTime = try container.decodeIfPresent(String.self, forKey: .openTime)
+        closeTime = try container.decodeIfPresent(String.self, forKey: .closeTime)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+    }
+}
+
+struct RestaurantDayAvailabilityDTO: Codable, Equatable {
+    let date: String
+    let weekday: Int
+    let source: String
+    let isOpen: Bool
+    let openTime: String?
+    let closeTime: String?
+    let reason: String?
+    let slotIntervalMinutes: Int
+    let maxOnlinePartySize: Int
+    let minimumLeadTimeMinutes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case weekday
+        case source
+        case isOpen
+        case openTime
+        case closeTime
+        case reason
+        case slotIntervalMinutes
+        case maxOnlinePartySize
+        case minimumLeadTimeMinutes
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        date = try container.decodeIfPresent(String.self, forKey: .date) ?? ""
+        weekday = try container.decodeFlexibleIntIfPresent(forKey: .weekday) ?? 0
+        source = try container.decodeIfPresent(String.self, forKey: .source) ?? "weekly"
+        isOpen = try container.decodeFlexibleBoolIfPresent(forKey: .isOpen) ?? false
+        openTime = try container.decodeIfPresent(String.self, forKey: .openTime)
+        closeTime = try container.decodeIfPresent(String.self, forKey: .closeTime)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        slotIntervalMinutes = try container.decodeFlexibleIntIfPresent(forKey: .slotIntervalMinutes) ?? 30
+        maxOnlinePartySize = try container.decodeFlexibleIntIfPresent(forKey: .maxOnlinePartySize) ?? 8
+        minimumLeadTimeMinutes = try container.decodeFlexibleIntIfPresent(forKey: .minimumLeadTimeMinutes) ?? 60
+    }
+}
+
+struct RestaurantDayAvailabilityUpdateRequest: Encodable {
+    var isOpen: Bool
+    var openTime: String?
+    var closeTime: String?
+    var reason: String?
+}
+
+struct ReservationSlotsResponseDTO: Codable, Equatable {
+    let success: Bool
+    let date: String
+    let isOpen: Bool
+    let source: String
+    let slots: [ReservationSlotDTO]
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case success
+        case date
+        case isOpen
+        case source
+        case slots
+        case message
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        success = try container.decodeFlexibleBoolIfPresent(forKey: .success) ?? true
+        date = try container.decodeIfPresent(String.self, forKey: .date) ?? ""
+        isOpen = try container.decodeFlexibleBoolIfPresent(forKey: .isOpen) ?? false
+        source = try container.decodeIfPresent(String.self, forKey: .source) ?? "weekly"
+        slots = try container.decodeIfPresent([ReservationSlotDTO].self, forKey: .slots) ?? []
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+    }
+}
+
+struct ReservationSlotDTO: Codable, Equatable, Identifiable {
+    let value: String
+    let label: String
+
+    var id: String { value }
+}
+
+struct ReservationAnalyticsSummaryDTO: Decodable, Equatable {
+    let range: ReservationAnalyticsRangeDTO?
+    let summary: ReservationAnalyticsMetricsDTO?
+    let byStatus: [ReservationAnalyticsStatusRowDTO]
+    let byMonth: [ReservationAnalyticsMonthRowDTO]
+    let byWeekday: [ReservationAnalyticsWeekdayRowDTO]
+    let byHour: [ReservationAnalyticsHourRowDTO]
+    let byPartySize: [ReservationAnalyticsPartySizeRowDTO]
+    let leadTimeBuckets: [ReservationAnalyticsLeadTimeRowDTO]
+    let fieldCompleteness: [String: JSONValue]
+    let pipelineHealth: ReservationAnalyticsPipelineHealthDTO?
+
+    enum CodingKeys: String, CodingKey {
+        case range
+        case summary
+        case byStatus
+        case byMonth
+        case byWeekday
+        case byHour
+        case byPartySize
+        case leadTimeBuckets
+        case fieldCompleteness
+        case pipelineHealth
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        range = try container.decodeIfPresent(ReservationAnalyticsRangeDTO.self, forKey: .range)
+        summary = try container.decodeIfPresent(ReservationAnalyticsMetricsDTO.self, forKey: .summary)
+        byStatus = try container.decodeIfPresent([ReservationAnalyticsStatusRowDTO].self, forKey: .byStatus) ?? []
+        byMonth = try container.decodeIfPresent([ReservationAnalyticsMonthRowDTO].self, forKey: .byMonth) ?? []
+        byWeekday = try container.decodeIfPresent([ReservationAnalyticsWeekdayRowDTO].self, forKey: .byWeekday) ?? []
+        byHour = try container.decodeIfPresent([ReservationAnalyticsHourRowDTO].self, forKey: .byHour) ?? []
+        byPartySize = try container.decodeIfPresent([ReservationAnalyticsPartySizeRowDTO].self, forKey: .byPartySize) ?? []
+        leadTimeBuckets = try container.decodeIfPresent([ReservationAnalyticsLeadTimeRowDTO].self, forKey: .leadTimeBuckets) ?? []
+        fieldCompleteness = try container.decodeIfPresent([String: JSONValue].self, forKey: .fieldCompleteness) ?? [:]
+        pipelineHealth = try container.decodeIfPresent(ReservationAnalyticsPipelineHealthDTO.self, forKey: .pipelineHealth)
+    }
+}
+
+struct ReservationAnalyticsRangeDTO: Decodable, Equatable {
+    let from: String?
+    let to: String?
+}
+
+struct ReservationAnalyticsMetricsDTO: Decodable, Equatable {
+    let reservationsCount: Int
+    let guestsCount: Int
+    let avgPartySize: Double?
+    let firstReservationDate: String?
+    let lastReservationDate: String?
+    let firstSubmissionDate: String?
+    let lastSubmissionDate: String?
+
+    enum CodingKeys: String, CodingKey {
+        case reservationsCount
+        case guestsCount
+        case avgPartySize
+        case firstReservationDate
+        case lastReservationDate
+        case firstSubmissionDate
+        case lastSubmissionDate
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        reservationsCount = try container.decodeFlexibleIntIfPresent(forKey: .reservationsCount) ?? 0
+        guestsCount = try container.decodeFlexibleIntIfPresent(forKey: .guestsCount) ?? 0
+        avgPartySize = try container.decodeFlexibleDoubleIfPresent(forKey: .avgPartySize)
+        firstReservationDate = try container.decodeIfPresent(String.self, forKey: .firstReservationDate)
+        lastReservationDate = try container.decodeIfPresent(String.self, forKey: .lastReservationDate)
+        firstSubmissionDate = try container.decodeIfPresent(String.self, forKey: .firstSubmissionDate)
+        lastSubmissionDate = try container.decodeIfPresent(String.self, forKey: .lastSubmissionDate)
+    }
+}
+
+struct ReservationAnalyticsStatusRowDTO: Decodable, Equatable, Identifiable {
+    let status: String
+    let reservationsCount: Int
+    let guestsCount: Int
+
+    var id: String { status }
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case reservationsCount
+        case guestsCount
+        case count
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? "unknown"
+        reservationsCount = try container.decodeFlexibleIntIfPresent(forKey: .reservationsCount)
+            ?? container.decodeFlexibleIntIfPresent(forKey: .count)
+            ?? 0
+        guestsCount = try container.decodeFlexibleIntIfPresent(forKey: .guestsCount) ?? 0
+    }
+}
+
+struct ReservationAnalyticsMonthRowDTO: Decodable, Equatable, Identifiable {
+    let month: String
+    let reservationsCount: Int
+    let guestsCount: Int
+
+    var id: String { month }
+
+    enum CodingKeys: String, CodingKey {
+        case month
+        case reservationsCount
+        case guestsCount
+        case count
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        month = try container.decodeIfPresent(String.self, forKey: .month) ?? "Unknown"
+        reservationsCount = try container.decodeFlexibleIntIfPresent(forKey: .reservationsCount)
+            ?? container.decodeFlexibleIntIfPresent(forKey: .count)
+            ?? 0
+        guestsCount = try container.decodeFlexibleIntIfPresent(forKey: .guestsCount) ?? 0
+    }
+}
+
+struct ReservationAnalyticsWeekdayRowDTO: Decodable, Equatable, Identifiable {
+    let weekday: Int?
+    let label: String?
+    let reservationsCount: Int
+    let guestsCount: Int
+
+    var id: String { label ?? weekday.map(String.init) ?? "unknown" }
+
+    enum CodingKeys: String, CodingKey {
+        case weekday
+        case label
+        case day
+        case reservationsCount
+        case guestsCount
+        case count
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        weekday = try container.decodeFlexibleIntIfPresent(forKey: .weekday)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+            ?? container.decodeIfPresent(String.self, forKey: .day)
+        reservationsCount = try container.decodeFlexibleIntIfPresent(forKey: .reservationsCount)
+            ?? container.decodeFlexibleIntIfPresent(forKey: .count)
+            ?? 0
+        guestsCount = try container.decodeFlexibleIntIfPresent(forKey: .guestsCount) ?? 0
+    }
+}
+
+struct ReservationAnalyticsHourRowDTO: Decodable, Equatable, Identifiable {
+    let hour: String
+    let reservationsCount: Int
+    let guestsCount: Int
+
+    var id: String { hour }
+
+    enum CodingKeys: String, CodingKey {
+        case hour
+        case reservationsCount
+        case guestsCount
+        case count
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let intHour = try container.decodeFlexibleIntIfPresent(forKey: .hour) {
+            hour = String(format: "%02d:00", intHour)
+        } else {
+            hour = try container.decodeIfPresent(String.self, forKey: .hour) ?? "Unknown"
+        }
+        reservationsCount = try container.decodeFlexibleIntIfPresent(forKey: .reservationsCount)
+            ?? container.decodeFlexibleIntIfPresent(forKey: .count)
+            ?? 0
+        guestsCount = try container.decodeFlexibleIntIfPresent(forKey: .guestsCount) ?? 0
+    }
+}
+
+struct ReservationAnalyticsPartySizeRowDTO: Decodable, Equatable, Identifiable {
+    let partySize: Int
+    let reservationsCount: Int
+    let guestsCount: Int
+
+    var id: Int { partySize }
+
+    enum CodingKeys: String, CodingKey {
+        case partySize
+        case reservationsCount
+        case guestsCount
+        case count
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        partySize = try container.decodeFlexibleIntIfPresent(forKey: .partySize) ?? 0
+        reservationsCount = try container.decodeFlexibleIntIfPresent(forKey: .reservationsCount)
+            ?? container.decodeFlexibleIntIfPresent(forKey: .count)
+            ?? 0
+        guestsCount = try container.decodeFlexibleIntIfPresent(forKey: .guestsCount) ?? 0
+    }
+}
+
+struct ReservationAnalyticsLeadTimeRowDTO: Decodable, Equatable, Identifiable {
+    let bucket: String
+    let reservationsCount: Int
+    let guestsCount: Int
+
+    var id: String { bucket }
+
+    enum CodingKeys: String, CodingKey {
+        case bucket
+        case reservationsCount
+        case guestsCount
+        case count
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        bucket = try container.decodeIfPresent(String.self, forKey: .bucket) ?? "unknown"
+        reservationsCount = try container.decodeFlexibleIntIfPresent(forKey: .reservationsCount)
+            ?? container.decodeFlexibleIntIfPresent(forKey: .count)
+            ?? 0
+        guestsCount = try container.decodeFlexibleIntIfPresent(forKey: .guestsCount) ?? 0
+    }
+}
+
+struct ReservationAnalyticsPipelineHealthDTO: Decodable, Equatable {
+    let flamingoInboundTotal: Int
+    let managedRowsWithSourceSubmissionId: Int
+    let missingNonSpamFlamingo: Int
+
+    enum CodingKeys: String, CodingKey {
+        case flamingoInboundTotal
+        case managedRowsWithSourceSubmissionId
+        case missingNonSpamFlamingo
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        flamingoInboundTotal = try container.decodeFlexibleIntIfPresent(forKey: .flamingoInboundTotal) ?? 0
+        managedRowsWithSourceSubmissionId = try container.decodeFlexibleIntIfPresent(forKey: .managedRowsWithSourceSubmissionId) ?? 0
+        missingNonSpamFlamingo = try container.decodeFlexibleIntIfPresent(forKey: .missingNonSpamFlamingo) ?? 0
+    }
 }
 
 extension KeyedDecodingContainer {
@@ -510,6 +996,38 @@ extension KeyedDecodingContainer {
         if let stringValue = try? decodeIfPresent(String.self, forKey: key) {
             let normalized = stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             return normalized == "1" || normalized == "true" || normalized == "yes"
+        }
+
+        return nil
+    }
+
+    func decodeFlexibleIntIfPresent(forKey key: Key) throws -> Int? {
+        if let intValue = try? decodeIfPresent(Int.self, forKey: key) {
+            return intValue
+        }
+
+        if let doubleValue = try? decodeIfPresent(Double.self, forKey: key) {
+            return Int(doubleValue)
+        }
+
+        if let stringValue = try? decodeIfPresent(String.self, forKey: key) {
+            return Int(stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        return nil
+    }
+
+    func decodeFlexibleDoubleIfPresent(forKey key: Key) throws -> Double? {
+        if let doubleValue = try? decodeIfPresent(Double.self, forKey: key) {
+            return doubleValue
+        }
+
+        if let intValue = try? decodeIfPresent(Int.self, forKey: key) {
+            return Double(intValue)
+        }
+
+        if let stringValue = try? decodeIfPresent(String.self, forKey: key) {
+            return Double(stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
         }
 
         return nil

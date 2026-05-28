@@ -19,6 +19,7 @@ enum ReservationAPIRequestReason: String {
     case failureCount = "failure_count"
     case importFailuresFull = "import_failures_full"
     case scheduleWindow = "schedule_window"
+    case scheduleAllPage = "schedule_all_page"
     case reviewQueues = "review_queues"
     case mutationPatch = "mutation_patch"
     case mutationConfirm = "mutation_confirm"
@@ -26,6 +27,12 @@ enum ReservationAPIRequestReason: String {
     case hiddenReservations = "hidden_reservations"
     case restaurantSetup = "restaurant_setup"
     case restaurantSetupPatch = "restaurant_setup_patch"
+    case restaurantHours = "restaurant_hours"
+    case restaurantHoursPatch = "restaurant_hours_patch"
+    case restaurantDayAvailability = "restaurant_day_availability"
+    case restaurantDayAvailabilityPatch = "restaurant_day_availability_patch"
+    case reservationSlots = "reservation_slots"
+    case reservationAnalyticsSummary = "reservation_analytics_summary"
     case reconcileByID = "reconcile_by_id"
     case manualSkipBusy = "manual_skip_busy"
     case manualSkipCooldown = "manual_skip_cooldown"
@@ -251,6 +258,12 @@ protocol ReservationsAPIClientProtocol: AnyObject {
     func confirmReservation(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationConfirmResponse
     func fetchRestaurantSetup(reason: ReservationAPIRequestReason) async throws -> RestaurantSetupDTO
     func updateRestaurantSetup(_ request: RestaurantSetupUpdateRequest, reason: ReservationAPIRequestReason) async throws -> RestaurantSetupDTO
+    func fetchRestaurantHours(from: String?, to: String?, reason: ReservationAPIRequestReason) async throws -> RestaurantHoursDTO
+    func updateRestaurantHours(_ request: WeeklyHoursUpdateRequest, reason: ReservationAPIRequestReason) async throws -> RestaurantHoursDTO
+    func fetchRestaurantDayAvailability(date: String, reason: ReservationAPIRequestReason) async throws -> RestaurantDayAvailabilityDTO
+    func updateRestaurantDayAvailability(date: String, request: RestaurantDayAvailabilityUpdateRequest, reason: ReservationAPIRequestReason) async throws -> RestaurantDayAvailabilityDTO
+    func fetchReservationSlots(date: String, reason: ReservationAPIRequestReason) async throws -> ReservationSlotsResponseDTO
+    func fetchReservationAnalyticsSummary(from: String?, to: String?, reason: ReservationAPIRequestReason) async throws -> ReservationAnalyticsSummaryDTO
     func fetchImportFailures(page: Int, perPage: Int, reason: ReservationAPIRequestReason) async throws -> ImportFailuresResponse
 }
 
@@ -573,6 +586,125 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return try decodeRestaurantSetup(from: data)
     }
 
+    // MARK: - Restaurant Hours / Availability
+
+    // Intent: Reads backend weekly/special hours for staff settings.
+    // Network: GET /restaurant-hours.
+    func fetchRestaurantHours(
+        from: String? = nil,
+        to: String? = nil,
+        reason: ReservationAPIRequestReason = .restaurantHours
+    ) async throws -> RestaurantHoursDTO {
+        var queryItems: [URLQueryItem] = []
+        if let from {
+            queryItems.append(URLQueryItem(name: "from", value: from))
+        }
+        if let to {
+            queryItems.append(URLQueryItem(name: "to", value: to))
+        }
+
+        let url = try makeURL(path: "restaurant-hours", queryItems: queryItems)
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+
+        return try decodeRestaurantHours(from: data)
+    }
+
+    // Intent: Saves manager-facing weekly hours.
+    // Network: PATCH /restaurant-hours.
+    func updateRestaurantHours(
+        _ hoursRequest: WeeklyHoursUpdateRequest,
+        reason: ReservationAPIRequestReason = .restaurantHoursPatch
+    ) async throws -> RestaurantHoursDTO {
+        let request = try makeJSONRequest(
+            url: baseURL.appendingPathComponent("restaurant-hours"),
+            method: "PATCH",
+            body: hoursRequest
+        )
+        let data = try await perform(request, reason: reason)
+
+        return try decodeRestaurantHours(from: data)
+    }
+
+    // Intent: Reads effective availability for one service date.
+    // Network: GET /restaurant-day-availability?date=YYYY-MM-DD.
+    func fetchRestaurantDayAvailability(
+        date: String,
+        reason: ReservationAPIRequestReason = .restaurantDayAvailability
+    ) async throws -> RestaurantDayAvailabilityDTO {
+        let url = try makeURL(
+            path: "restaurant-day-availability",
+            queryItems: [URLQueryItem(name: "date", value: date)]
+        )
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+
+        return try decodeRestaurantDayAvailability(from: data)
+    }
+
+    // Intent: Saves a manual open/closed override for one date.
+    // Network: PATCH /restaurant-day-availability?date=YYYY-MM-DD.
+    func updateRestaurantDayAvailability(
+        date: String,
+        request availabilityRequest: RestaurantDayAvailabilityUpdateRequest,
+        reason: ReservationAPIRequestReason = .restaurantDayAvailabilityPatch
+    ) async throws -> RestaurantDayAvailabilityDTO {
+        let url = try makeURL(
+            path: "restaurant-day-availability",
+            queryItems: [URLQueryItem(name: "date", value: date)]
+        )
+        let request = try makeJSONRequest(url: url, method: "PATCH", body: availabilityRequest)
+        let data = try await perform(request, reason: reason)
+
+        return try decodeRestaurantDayAvailability(from: data)
+    }
+
+    // Intent: Previews backend-computed slots for one date.
+    // Network: GET /reservation-slots?date=YYYY-MM-DD.
+    func fetchReservationSlots(
+        date: String,
+        reason: ReservationAPIRequestReason = .reservationSlots
+    ) async throws -> ReservationSlotsResponseDTO {
+        let url = try makeURL(
+            path: "reservation-slots",
+            queryItems: [URLQueryItem(name: "date", value: date)]
+        )
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+
+        do {
+            return try decoder.decode(ReservationSlotsResponseDTO.self, from: data)
+        } catch {
+            throw ReservationAPIError.decodingFailure(error)
+        }
+    }
+
+    // Intent: Reads backend aggregate metrics without downloading historical reservations.
+    // Network: GET /reservation-analytics/summary.
+    func fetchReservationAnalyticsSummary(
+        from: String? = nil,
+        to: String? = nil,
+        reason: ReservationAPIRequestReason = .reservationAnalyticsSummary
+    ) async throws -> ReservationAnalyticsSummaryDTO {
+        var queryItems: [URLQueryItem] = []
+        if let from {
+            queryItems.append(URLQueryItem(name: "from", value: from))
+        }
+        if let to {
+            queryItems.append(URLQueryItem(name: "to", value: to))
+        }
+
+        let url = try makeURL(path: "reservation-analytics/summary", queryItems: queryItems)
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+
+        do {
+            return try decoder.decode(ReservationAnalyticsSummaryDTO.self, from: data)
+        } catch {
+            throw ReservationAPIError.decodingFailure(error)
+        }
+    }
+
     // MARK: - Import Failure Diagnostics
 
     // Intent: Developer/manager reads failed public-form imports.
@@ -643,6 +775,32 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
             }
 
             return try decoder.decode(RestaurantSetupDTO.self, from: data)
+        } catch {
+            throw ReservationAPIError.decodingFailure(error)
+        }
+    }
+
+    private func decodeRestaurantHours(from data: Data) throws -> RestaurantHoursDTO {
+        do {
+            if let envelope = try? decoder.decode(RestaurantHoursResponse.self, from: data),
+               let hours = envelope.data {
+                return hours
+            }
+
+            return try decoder.decode(RestaurantHoursDTO.self, from: data)
+        } catch {
+            throw ReservationAPIError.decodingFailure(error)
+        }
+    }
+
+    private func decodeRestaurantDayAvailability(from data: Data) throws -> RestaurantDayAvailabilityDTO {
+        do {
+            if let envelope = try? decoder.decode(RestaurantDayAvailabilityResponse.self, from: data),
+               let availability = envelope.data {
+                return availability
+            }
+
+            return try decoder.decode(RestaurantDayAvailabilityDTO.self, from: data)
         } catch {
             throw ReservationAPIError.decodingFailure(error)
         }

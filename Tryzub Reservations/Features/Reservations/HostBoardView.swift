@@ -28,55 +28,57 @@ struct HostBoardView: View {
     @EnvironmentObject private var controller: ReservationsController
 
     @State private var pendingAction: ReservationPendingAction?
-    @State private var tableAssignmentReservation: ReservationRecord?
+    @State private var clockTick = Date()
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
             || pendingAction != nil
-            || tableAssignmentReservation != nil
     }
 
     var body: some View {
         GeometryReader { proxy in
             // Snapshot keeps time/status grouping out of the view layout code.
-            let snapshot = HostBoardSnapshot(reservations: reservations, selectedDate: selectedDate)
+            let snapshot = HostBoardSnapshot(
+                reservations: reservations,
+                selectedDate: selectedDate,
+                now: clockTick
+            )
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    HomeServiceHeader(
-                        selectedDate: $selectedDate,
-                        lastSyncedAt: lastSyncedAt,
-                        isSyncing: isSyncing,
-                        canCreateReservation: controller.capabilities.canCreateManualReservations,
-                        canViewFormProblems: controller.capabilities.canViewFailedImports
-                            && controller.capabilities.canViewDeveloperDiagnostics,
-                        failedImportCount: failedImportCount,
-                        onAddReservation: onAddReservation,
-                        onManualRefresh: onManualRefresh,
-                        onShowFormProblems: onShowFormProblems
-                    )
+            VStack(alignment: .leading, spacing: 12) {
+                HomeServiceHeader(
+                    selectedDate: $selectedDate,
+                    lastSyncedAt: lastSyncedAt,
+                    isSyncing: isSyncing,
+                    canCreateReservation: controller.capabilities.canCreateManualReservations,
+                    canViewFormProblems: controller.capabilities.canViewFailedImports
+                        && controller.capabilities.canViewDeveloperDiagnostics,
+                    failedImportCount: failedImportCount,
+                    onAddReservation: onAddReservation,
+                    onManualRefresh: onManualRefresh,
+                    onShowFormProblems: onShowFormProblems
+                )
 
-                    HostBoardSummaryCard(
-                        reservationCount: snapshot.upcoming.count + snapshot.seated.count,
-                        guestCount: snapshot.expectedGuestCount,
-                        newCount: snapshot.newReservations.count,
-                        reviewCount: snapshot.needsReview.count,
-                        failedImportCount: controller.capabilities.canViewDeveloperDiagnostics ? failedImportCount : 0,
-                        noTableCount: snapshot.noTableCount,
-                        peakTimeText: snapshot.peakTimeText,
-                        nextReservationText: snapshot.nextReservationText
-                    )
+                HostBoardSummaryCard(
+                    reservationCount: snapshot.upcoming.count + snapshot.seated.count,
+                    guestCount: snapshot.expectedGuestCount,
+                    newCount: snapshot.newReservations.count,
+                    reviewCount: snapshot.needsReview.count,
+                    failedImportCount: controller.capabilities.canViewDeveloperDiagnostics ? failedImportCount : 0,
+                    noTableCount: snapshot.noTableCount,
+                    peakTimeText: snapshot.peakTimeText,
+                    nextReservationText: snapshot.nextReservationText
+                )
 
-                    if proxy.size.width >= 1100 {
-                        wideBoard(snapshot: snapshot)
-                    } else {
-                        compactBoard(snapshot: snapshot)
-                    }
+                if proxy.size.width >= 1100 {
+                    wideBoard(snapshot: snapshot)
+                } else {
+                    compactBoard(snapshot: snapshot)
                 }
-                .padding(.horizontal, proxy.size.width >= 1100 ? 16 : 12)
-                .padding(.vertical, proxy.size.width >= 1100 ? 12 : 10)
-                .padding(.bottom, 92)
             }
+            .padding(.horizontal, proxy.size.width >= 1100 ? 16 : 12)
+            .padding(.top, proxy.size.width >= 1100 ? 12 : 10)
+            .padding(.bottom, 92)
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
             .background(Color(.systemGroupedBackground))
         }
         .confirmationDialog(
@@ -121,19 +123,12 @@ struct HostBoardView: View {
                 Text(pendingAction.action.dialogMessage(for: pendingAction.reservation))
             }
         }
-        .sheet(item: $tableAssignmentReservation) { reservation in
-            TableAssignmentSheet(reservation: reservation) { tableName in
-                // Table assignment is a server PATCH through the controller.
-                _ = try await controller.updateReservation(
-                    id: reservation.remoteID,
-                    request: ReservationUpdateRequest(tableName: tableName),
-                    context: modelContext
-                )
-            }
-        }
         .task(id: isVisible && isAppActive) {
             // Starts/stops the auto-refresh loop when Today is visible and app is active.
             await runAutoRefreshLoop()
+        }
+        .task(id: isVisible) {
+            await runClockLoop()
         }
     }
 
@@ -145,36 +140,6 @@ struct HostBoardView: View {
         return pendingAction.action.dialogTitle(for: pendingAction.reservation)
     }
 
-    private func warningArea(snapshot: HostBoardSnapshot) -> some View {
-        HStack(spacing: 8) {
-            if failedImportCount > 0,
-               controller.capabilities.canViewFailedImports,
-               controller.capabilities.canViewDeveloperDiagnostics {
-                FormProblemsBanner(count: failedImportCount, onTap: onShowFormProblems)
-            }
-
-            if !snapshot.needsReview.isEmpty {
-                HostWarningBanner(
-                    title: "\(snapshot.needsReview.count) need review",
-                    message: "",
-                    symbolName: "exclamationmark.triangle",
-                    tint: .secondary
-                )
-            }
-
-            if snapshot.noTableCount > 0 {
-                HostWarningBanner(
-                    title: "\(snapshot.noTableCount) without table",
-                    message: "",
-                    symbolName: "table.furniture",
-                    tint: .secondary
-                )
-            }
-
-            Spacer(minLength: 0)
-        }
-    }
-
     private func wideBoard(snapshot: HostBoardSnapshot) -> some View {
         HStack(alignment: .top, spacing: 16) {
             HostBoardColumn(
@@ -183,7 +148,6 @@ struct HostBoardView: View {
                 reservations: snapshot.seated,
                 emptyTitle: "No one seated",
                 emptySystemImage: "person.2.slash",
-                nextReservationID: nil,
                 environment: environment,
                 onAction: handleAction,
                 onOpenReservation: onOpenReservation
@@ -198,42 +162,44 @@ struct HostBoardView: View {
             )
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private func compactBoard(snapshot: HostBoardSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HostBoardColumn(
-                title: "Seated",
-                subtitle: "\(snapshot.seated.count) seated",
-                reservations: snapshot.seated,
-                emptyTitle: "No one seated",
-                emptySystemImage: "person.2.slash",
-                nextReservationID: nil,
-                environment: environment,
-                onAction: handleAction,
-                onOpenReservation: onOpenReservation
-            )
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HostBoardColumn(
+                    title: "Seated",
+                    subtitle: "\(snapshot.seated.count) seated",
+                    reservations: snapshot.seated,
+                    emptyTitle: "No one seated",
+                    emptySystemImage: "person.2.slash",
+                    scrollsInternally: false,
+                    environment: environment,
+                    onAction: handleAction,
+                    onOpenReservation: onOpenReservation
+                )
 
-            HomeReservationsPanel(
-                snapshot: snapshot,
-                environment: environment,
-                onAction: handleAction,
-                onOpenReservation: onOpenReservation
-            )
+                HomeReservationsPanel(
+                    snapshot: snapshot,
+                    scrollsInternally: false,
+                    environment: environment,
+                    onAction: handleAction,
+                    onOpenReservation: onOpenReservation
+                )
+            }
+            .padding(.bottom, 12)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - Staff Action Routing
 
     // View sends staff intent only; controller/service decide the network operation.
     private func handleAction(_ action: ReservationHostAction, reservation: ReservationRecord) {
-        if action == .assignTable {
-            tableAssignmentReservation = reservation
-        } else if action == .seat, !reservation.hasTableAssignment {
-            tableAssignmentReservation = reservation
-        } else if action == .confirmOnly || action == .confirmAndSendEmail || action == .cancel || action == .noShow {
+        if action == .confirmOnly || action == .confirmAndSendEmail || action == .cancel || action == .noShow {
             pendingAction = ReservationPendingAction(reservation: reservation, action: action)
-        } else {
+        } else if action != .assignTable {
             Task {
                 await perform(action, on: reservation)
             }
@@ -265,7 +231,7 @@ struct HostBoardView: View {
             await controller.updateStatus(reservation: reservation, status: .noShow, context: modelContext)
             ReservationHaptics.warning()
         case .assignTable:
-            tableAssignmentReservation = reservation
+            break
         }
     }
 
@@ -293,30 +259,49 @@ struct HostBoardView: View {
             )
         }
     }
+
+    @MainActor
+    private func runClockLoop() async {
+        guard isVisible else { return }
+        clockTick = Date()
+
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                return
+            }
+
+            guard isVisible else { return }
+            clockTick = Date()
+        }
+    }
 }
 
 // MARK: - Host Snapshot
 
 private struct HostBoardSnapshot {
     let selectedDate: Date
+    let now: Date
     let upcoming: [ReservationRecord]
     let seated: [ReservationRecord]
     let needsReview: [ReservationRecord]
     let newReservations: [ReservationRecord]
     let noTableCount: Int
     let expectedGuestCount: Int
-    let nextReservationID: Int?
     let peakTimeText: String
     let nextReservationText: String
 
     // Active same-day reservations remain visible until staff changes status.
     // Time only chooses the "next" highlight; it does not auto-complete or hide rows.
-    init(reservations: [ReservationRecord], selectedDate: Date) {
+    init(reservations: [ReservationRecord], selectedDate: Date, now: Date) {
         self.selectedDate = selectedDate
+        self.now = now
         upcoming = ReservationRecord.sortedForHostBoard(
             reservations.filter {
                 $0.statusValue == .new || $0.statusValue == .needsReview || $0.statusValue == .confirmed
-            }
+            },
+            now: now
         )
         seated = ReservationRecord.sortedChronologically(
             reservations.filter { $0.statusValue == .seated }
@@ -326,13 +311,26 @@ private struct HostBoardSnapshot {
         noTableCount = upcoming.filter { !$0.hasTableAssignment }.count
         expectedGuestCount = upcoming.reduce(0) { $0 + $1.partySize } + seated.reduce(0) { $0 + $1.partySize }
 
-        let currentTime = Date.currentReservationTimeString()
         let isToday = selectedDate.reservationDateString() == Date.reservationDateString()
         let nextReservation = isToday
-            ? upcoming.first { $0.reservationTime >= currentTime } ?? upcoming.first
+            ? upcoming.first { reservation in
+                guard let serviceDate = reservation.serviceDateTime else { return false }
+                return serviceDate >= now
+            } ?? upcoming.first
             : upcoming.first
-        nextReservationID = nextReservation?.remoteID
-        nextReservationText = nextReservation.map { "\($0.displayTime) · \($0.guestName)" } ?? "-"
+        nextReservationText = nextReservation.map { reservation in
+            if isToday, let serviceDate = reservation.serviceDateTime {
+                let minutes = Int(ceil(abs(serviceDate.timeIntervalSince(now)) / 60))
+                if serviceDate < now {
+                    return "\(Self.durationText(minutes: minutes)) late"
+                }
+                if minutes <= 15 {
+                    return "now"
+                }
+                return "in \(Self.durationText(minutes: minutes))"
+            }
+            return reservation.displayTime
+        } ?? "-"
         peakTimeText = Self.peakTimeText(from: upcoming + seated)
     }
 
@@ -353,6 +351,20 @@ private struct HostBoardSnapshot {
 
         let display = ReservationPresentationTime.hourLabel(from: peak.key)
         return "\(display) · \(peak.value) guests"
+    }
+
+    private static func durationText(minutes: Int) -> String {
+        let minutes = max(minutes, 1)
+        if minutes < 60 {
+            return "\(minutes)m"
+        }
+
+        let hours = minutes / 60
+        let remainingMinutes = minutes % 60
+        if remainingMinutes == 0 {
+            return "\(hours)h"
+        }
+        return "\(hours)h \(remainingMinutes)m"
     }
 }
 
@@ -391,7 +403,7 @@ private struct HostBoardSummaryCard: View {
             }
             ReservationInfoChip(title: "No Table", value: "\(noTableCount)", systemImage: "table.furniture")
             ReservationInfoChip(title: "Peak", value: peakTimeText, systemImage: "chart.line.uptrend.xyaxis")
-            ReservationInfoChip(title: "Next", value: nextReservationText, systemImage: "clock")
+            ReservationInfoChip(title: "Due", value: nextReservationText, systemImage: "clock")
         }
        
         .padding(10)
@@ -402,8 +414,6 @@ private struct HostBoardSummaryCard: View {
 // MARK: - Home Service Header
 
 private struct HomeServiceHeader: View {
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-
     @Binding var selectedDate: Date
     let lastSyncedAt: Date?
     let isSyncing: Bool
@@ -532,15 +542,6 @@ private struct HomeServiceHeader: View {
                 }
                 .disabled(isSyncing)
 
-                if canCreateReservation {
-                    Button {
-                        ReservationHaptics.selection()
-                        onAddReservation()
-                    } label: {
-                        Label("Add Reservation", systemImage: "plus")
-                    }
-                }
-
                 if canViewFormProblems, failedImportCount > 0 {
                     Button {
                         ReservationHaptics.warning()
@@ -560,23 +561,20 @@ private struct HomeServiceHeader: View {
     }
 
     private var dateStrip: some View {
-        Group {
-            if horizontalSizeClass == .regular {
-                HStack(spacing: 10) {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
+                    dateButton(for: date, fillsWidth: false)
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
                     ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
-                        dateButton(for: date, fillsWidth: true)
+                        dateButton(for: date, fillsWidth: false)
                     }
                 }
-                .frame(maxWidth: .infinity)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
-                            dateButton(for: date, fillsWidth: false)
-                        }
-                    }
-                    .padding(.vertical, 1)
-                }
+                .padding(.vertical, 1)
             }
         }
     }
@@ -629,7 +627,7 @@ private struct HostBoardColumn: View {
     let reservations: [ReservationRecord]
     let emptyTitle: String
     let emptySystemImage: String
-    let nextReservationID: Int?
+    var scrollsInternally = true
     let environment: AppEnvironment
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
     let onOpenReservation: (ReservationRecord) -> Void
@@ -648,64 +646,85 @@ private struct HostBoardColumn: View {
                 Spacer()
             }
 
-            if reservations.isEmpty {
-                CompactEmptyHostState(title: emptyTitle, systemImage: emptySystemImage)
+            if scrollsInternally {
+                ScrollView {
+                    columnContent
+                        .padding(.bottom, 12)
+                }
+                .scrollIndicators(.hidden)
+                .frame(maxHeight: .infinity, alignment: .top)
             } else {
-                LazyVStack(spacing: 8) {
-                    ForEach(reservations) { reservation in
-                        HostBoardReservationRow(
-                            reservation: reservation,
-                            environment: environment,
-                            isNext: reservation.remoteID == nextReservationID,
-                            onAction: onAction,
-                            onOpenReservation: onOpenReservation
-                        )
-                    }
+                columnContent
+            }
+        }
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: scrollsInternally ? CGFloat.infinity : nil,
+            alignment: .topLeading
+        )
+    }
+
+    @ViewBuilder
+    private var columnContent: some View {
+        if reservations.isEmpty {
+            CompactEmptyHostState(title: emptyTitle, systemImage: emptySystemImage)
+        } else {
+            LazyVStack(spacing: 8) {
+                ForEach(reservations) { reservation in
+                    HostBoardReservationRow(
+                        reservation: reservation,
+                        environment: environment,
+                        onAction: onAction,
+                        onOpenReservation: onOpenReservation
+                    )
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
 
 private struct HomeReservationsPanel: View {
     let snapshot: HostBoardSnapshot
+    var scrollsInternally = true
     let environment: AppEnvironment
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
     let onOpenReservation: (ReservationRecord) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HostBoardColumn(
-                title: "Reservations",
-                subtitle: "\(snapshot.upcoming.count) active for selected date",
-                reservations: snapshot.upcoming,
-                emptyTitle: "No active reservations",
-                emptySystemImage: "calendar.badge.checkmark",
-                nextReservationID: snapshot.nextReservationID,
-                environment: environment,
-                onAction: onAction,
-                onOpenReservation: onOpenReservation
-            )
-        }
+        HostBoardColumn(
+            title: "Reservations",
+            subtitle: "\(snapshot.upcoming.count) active for selected date",
+            reservations: snapshot.upcoming,
+            emptyTitle: "No active reservations",
+            emptySystemImage: "calendar.badge.checkmark",
+            scrollsInternally: scrollsInternally,
+            environment: environment,
+            onAction: onAction,
+            onOpenReservation: onOpenReservation
+        )
     }
 }
 
 private struct HostBoardReservationRow: View {
+    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
 
     let reservation: ReservationRecord
     let environment: AppEnvironment
-    let isNext: Bool
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
     let onOpenReservation: (ReservationRecord) -> Void
+
+    @State private var tableAssignmentReservation: ReservationRecord?
 
     var body: some View {
         // Reuses the same compact reservation cell used by Schedule and Review.
         ReservationRowView(
             reservation: reservation,
             showsDate: false,
-            context: rowContext
+            context: rowContext,
+            onTableTap: controller.capabilities.canEditReservationDetails
+                ? { tableAssignmentReservation = reservation }
+                : nil
         ) {
             ReservationActionButtons(
                 reservation: reservation,
@@ -714,7 +733,7 @@ private struct HostBoardReservationRow: View {
                 includeSecondary: false,
                 isBusy: controller.isActionInProgress(for: reservation)
             ) { action in
-                onAction(action, reservation)
+                handle(action)
             }
         }
         .contentShape(Rectangle())
@@ -740,10 +759,19 @@ private struct HostBoardReservationRow: View {
                 )
             ) { action in
                 Button(role: action.role) {
-                    onAction(action, reservation)
+                    handle(action)
                 } label: {
                     Label(action.fullTitle, systemImage: action.systemImage)
                 }
+            }
+        }
+        .popover(item: $tableAssignmentReservation, arrowEdge: .trailing) { reservation in
+            TableAssignmentSheet(reservation: reservation) { tableName in
+                _ = try await controller.updateReservation(
+                    id: reservation.remoteID,
+                    request: ReservationUpdateRequest(tableName: tableName),
+                    context: modelContext
+                )
             }
         }
     }
@@ -752,51 +780,15 @@ private struct HostBoardReservationRow: View {
         if reservation.statusValue == .seated {
             return .todaySeated
         }
-        return .todayUpcoming(isNext: isNext)
+        return .todayUpcoming
     }
-}
 
-// MARK: - Warning Banners
-
-private struct FormProblemsBanner: View {
-    let count: Int
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            HostWarningBanner(
-                title: "\(count) form \(count == 1 ? "problem" : "problems")",
-                message: "A website submission could not be converted. Review before service.",
-                symbolName: "exclamationmark.octagon",
-                tint: .red
-            )
+    private func handle(_ action: ReservationHostAction) {
+        if action == .assignTable || (action == .seat && !reservation.hasTableAssignment) {
+            tableAssignmentReservation = reservation
+        } else {
+            onAction(action, reservation)
         }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct HostWarningBanner: View {
-    let title: String
-    let message: String
-    let symbolName: String
-    let tint: Color
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 6) {
-            Image(systemName: symbolName)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 12, height: 12)
-
-            Text(title)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -817,14 +809,6 @@ private struct CompactEmptyHostState: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-
-// MARK: - Formatting Helpers
-
-private extension Date {
-    static func currentReservationTimeString() -> String {
-        ReservationFormatters.apiTime.string(from: Date())
     }
 }
 

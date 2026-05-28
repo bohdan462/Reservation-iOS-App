@@ -11,14 +11,14 @@ import SwiftUI
 
 enum ReservationRowContext: Equatable {
     case schedule
-    case todayUpcoming(isNext: Bool)
+    case todayUpcoming
     case todaySeated
     case review
 
     func eyebrow(for reservation: ReservationRecord, showsDate: Bool) -> String? {
         switch self {
-        case .todayUpcoming(let isNext):
-            return isNext ? "NEXT" : nil
+        case .todayUpcoming:
+            return nil
         case .todaySeated:
             return nil
         case .review:
@@ -28,12 +28,6 @@ enum ReservationRowContext: Equatable {
         }
     }
 
-    var isNext: Bool {
-        if case .todayUpcoming(let isNext) = self {
-            return isNext
-        }
-        return false
-    }
 }
 
 // MARK: - Shared Reservation Row
@@ -43,6 +37,7 @@ struct ReservationRowView<Accessory: View>: View {
     var showsDate = true
     var context: ReservationRowContext = .schedule
     var contextNote: String?
+    var onTableTap: (() -> Void)?
 
     @ViewBuilder let accessory: () -> Accessory
 
@@ -54,12 +49,14 @@ struct ReservationRowView<Accessory: View>: View {
         showsDate: Bool = true,
         context: ReservationRowContext = .schedule,
         contextNote: String? = nil,
+        onTableTap: (() -> Void)? = nil,
         @ViewBuilder accessory: @escaping () -> Accessory
     ) {
         self.reservation = reservation
         self.showsDate = showsDate
         self.context = context
         self.contextNote = contextNote
+        self.onTableTap = onTableTap
         self.accessory = accessory
     }
 
@@ -93,8 +90,8 @@ struct ReservationRowView<Accessory: View>: View {
                 guestName: reservation.guestName,
                 status: nil,
                 metaItems: wideMetaItems,
-                submittedAgoText: reservation.submittedAgoText,
-                contextNote: contextNote,
+                insight: primaryInsight,
+                onTableTap: onTableTap,
                 usesCompactName: false
             )
             .layoutPriority(2)
@@ -131,8 +128,8 @@ struct ReservationRowView<Accessory: View>: View {
                 guestName: reservation.guestName,
                 status: reservation.statusValue,
                 metaItems: compactMetaItems,
-                submittedAgoText: reservation.submittedAgoText,
-                contextNote: contextNote,
+                insight: primaryInsight,
+                onTableTap: onTableTap,
                 usesCompactName: true
             )
             .layoutPriority(2)
@@ -171,42 +168,66 @@ struct ReservationRowView<Accessory: View>: View {
         "\(reservation.partySize) \(reservation.partySize == 1 ? "guest" : "guests")"
     }
 
-    private var wideMetaItems: [ReservationRowMetaItem] {
-        var items: [ReservationRowMetaItem] = [
-            ReservationRowMetaItem(text: guestCountText, systemImage: "person.2"),
-            ReservationRowMetaItem(text: tableText, systemImage: "table.furniture")
+    private var wideMetaItems: [ReservationRowDetailLabelData] {
+        var items: [ReservationRowDetailLabelData] = [
+            ReservationRowDetailLabelData(text: guestCountText, systemImage: "person.2"),
+            ReservationRowDetailLabelData(text: tableText, systemImage: "table.furniture", isTable: true)
         ]
 
         if let notesIndicatorText {
-            items.append(ReservationRowMetaItem(text: notesIndicatorText, systemImage: "note.text"))
-        }
-
-        if let sourceLabel = reservation.rowSourceLabel {
-            items.append(ReservationRowMetaItem(text: sourceLabel, systemImage: reservation.rowSourceSystemImage))
+            items.append(ReservationRowDetailLabelData(text: notesIndicatorText, systemImage: "note.text"))
         }
 
         if !reservation.phone.isEmpty {
-            items.append(ReservationRowMetaItem(text: reservation.formattedPhone, systemImage: "phone"))
+            items.append(ReservationRowDetailLabelData(text: reservation.formattedPhone, systemImage: "phone"))
         }
 
         return items
     }
 
-    private var compactMetaItems: [ReservationRowMetaItem] {
-        var items: [ReservationRowMetaItem] = [
-            ReservationRowMetaItem(text: "\(reservation.partySize)", systemImage: "person.2"),
-            ReservationRowMetaItem(text: tableText, systemImage: "table.furniture")
+    private var compactMetaItems: [ReservationRowDetailLabelData] {
+        var items: [ReservationRowDetailLabelData] = [
+            ReservationRowDetailLabelData(text: "\(reservation.partySize)", systemImage: "person.2"),
+            ReservationRowDetailLabelData(text: tableText, systemImage: "table.furniture", isTable: true)
         ]
 
         if let notesIndicatorText {
-            items.append(ReservationRowMetaItem(text: notesIndicatorText, systemImage: "note.text"))
-        }
-
-        if let sourceLabel = reservation.rowSourceLabel {
-            items.append(ReservationRowMetaItem(text: sourceLabel, systemImage: reservation.rowSourceSystemImage))
+            items.append(ReservationRowDetailLabelData(text: notesIndicatorText, systemImage: "note.text"))
         }
 
         return items
+    }
+
+    private var primaryInsight: ReservationRowInsight? {
+        let timingState = reservation.operationalTimingState()
+        if let timingText = timingState.insightText {
+            return ReservationRowInsight(
+                text: timingText,
+                systemImage: timingState.isAttention ? "exclamationmark.triangle" : "clock",
+                tint: timingState.isAttention ? .red : .orange,
+                prominence: timingState.isAttention ? .attention : .dueSoon
+            )
+        }
+
+        if let contextNote = contextNote?.nilIfBlank {
+            return ReservationRowInsight(
+                text: contextNote,
+                systemImage: "exclamationmark.circle",
+                tint: .secondary,
+                prominence: .normal
+            )
+        }
+
+        if let submittedAgoText = reservation.submittedAgoText {
+            return ReservationRowInsight(
+                text: "Submitted \(submittedAgoText)",
+                systemImage: "exclamationmark",
+                tint: .secondary,
+                prominence: .normal
+            )
+        }
+
+        return nil
     }
 
     private static func shortDateLabel(from value: String) -> String {
@@ -252,14 +273,32 @@ struct ReservationRowView<Accessory: View>: View {
     }
 
     private var rowBackground: Color {
-        context.isNext
-            ? Color(.systemGray5)
-            : Color(.secondarySystemGroupedBackground)
+        if primaryInsight?.prominence == .attention {
+            return Color(.systemRed).opacity(0.10)
+        }
+
+        if primaryInsight?.prominence == .dueSoon {
+            return Color(.systemGray5)
+        }
+
+        return Color(.secondarySystemGroupedBackground)
     }
 
     private var rowStroke: some View {
         RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
-            .stroke(context.isNext ? Color.primary.opacity(0.22) : Color.primary.opacity(0.08), lineWidth: 1)
+            .stroke(rowStrokeColor, lineWidth: 1)
+    }
+
+    private var rowStrokeColor: Color {
+        if primaryInsight?.prominence == .attention {
+            return Color(.systemRed).opacity(0.30)
+        }
+
+        if primaryInsight?.prominence == .dueSoon {
+            return Color.primary.opacity(0.22)
+        }
+
+        return Color.primary.opacity(0.08)
     }
 
 }
@@ -269,16 +308,30 @@ struct ReservationRowView<Accessory: View>: View {
 private enum ReservationRowLayout {
     static let wideTimeWidth: CGFloat = 92
     static let compactTimeWidth: CGFloat = 70
-    static let wideActionWidth: CGFloat = 132
+    static let wideActionWidth: CGFloat = 108
     static let wideSectionSpacing: CGFloat = 12
     static let compactSectionSpacing: CGFloat = 10
     static let minimumSpacer: CGFloat = 12
 }
 
-private struct ReservationRowMetaItem: Identifiable {
+private struct ReservationRowDetailLabelData: Identifiable {
     let id = UUID()
     let text: String
     let systemImage: String
+    var isTable = false
+}
+
+private struct ReservationRowInsight {
+    enum Prominence: Equatable {
+        case normal
+        case dueSoon
+        case attention
+    }
+
+    let text: String
+    let systemImage: String
+    let tint: Color
+    let prominence: Prominence
 }
 
 private struct ReservationRowTimeSection: View {
@@ -304,7 +357,7 @@ private struct ReservationRowTimeSection: View {
                 .frame(height: 25, alignment: .leading)
 
             Text(guestCountText)
-                .font(.caption2.weight(.medium))
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.82)
@@ -317,9 +370,9 @@ private struct ReservationRowTimeSection: View {
 private struct ReservationRowGuestSection: View {
     let guestName: String
     let status: ReservationStatus?
-    let metaItems: [ReservationRowMetaItem]
-    let submittedAgoText: String?
-    let contextNote: String?
+    let metaItems: [ReservationRowDetailLabelData]
+    let insight: ReservationRowInsight?
+    let onTableTap: (() -> Void)?
     let usesCompactName: Bool
 
     var body: some View {
@@ -338,17 +391,10 @@ private struct ReservationRowGuestSection: View {
             }
             .frame(minHeight: 22, alignment: .center)
 
-            ReservationRowMetaLine(items: metaItems)
+            ReservationRowDetailsLine(items: metaItems, onTableTap: onTableTap)
 
-            if let submittedAgoText {
-                ReservationSubmittedBadge(text: submittedAgoText)
-            } else if let contextNote {
-                Text(contextNote)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
+            if let insight {
+                ReservationRowInsightLine(insight: insight)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -374,43 +420,60 @@ private struct ReservationRowAccessorySection<Accessory: View>: View {
     }
 }
 
-private struct ReservationRowMetaLine: View {
-    let items: [ReservationRowMetaItem]
+private struct ReservationRowDetailsLine: View {
+    let items: [ReservationRowDetailLabelData]
+    let onTableTap: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 9) {
             if let item = items[safe: 0] {
-                ReservationInlineMeta(text: item.text, systemImage: item.systemImage)
+                metaView(item)
             }
             if let item = items[safe: 1] {
-                ReservationInlineMeta(text: item.text, systemImage: item.systemImage)
+                metaView(item)
             }
             if let item = items[safe: 2] {
-                ReservationInlineMeta(text: item.text, systemImage: item.systemImage)
+                metaView(item)
             }
             if let item = items[safe: 3] {
-                ReservationInlineMeta(text: item.text, systemImage: item.systemImage)
+                metaView(item)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
         .clipped()
     }
+
+    @ViewBuilder
+    private func metaView(_ item: ReservationRowDetailLabelData) -> some View {
+        if item.isTable, let onTableTap {
+            Button {
+                ReservationHaptics.selection()
+                onTableTap()
+            } label: {
+                ReservationRowDetailLabel(text: item.text, systemImage: item.systemImage)
+            }
+            .buttonStyle(.plain)
+        } else {
+            ReservationRowDetailLabel(text: item.text, systemImage: item.systemImage)
+        }
+    }
 }
 
-private struct ReservationSubmittedBadge: View {
-    let text: String
+private struct ReservationRowInsightLine: View {
+    let insight: ReservationRowInsight
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "exclamationmark")
+            Image(systemName: insight.systemImage)
                 .font(.caption2.weight(.semibold))
-                .frame(width: 8)
+                .frame(width: 12)
 
-            Text("Submitted \(text)")
+            Text(insight.text)
                 .font(.caption2.weight(.medium))
                 .lineLimit(1)
+                .truncationMode(.tail)
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(insight.tint)
         .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
     }
 }
@@ -422,13 +485,15 @@ extension ReservationRowView where Accessory == EmptyView {
         reservation: ReservationRecord,
         showsDate: Bool = true,
         context: ReservationRowContext = .schedule,
-        contextNote: String? = nil
+        contextNote: String? = nil,
+        onTableTap: (() -> Void)? = nil
     ) {
         self.init(
             reservation: reservation,
             showsDate: showsDate,
             context: context,
-            contextNote: contextNote
+            contextNote: contextNote,
+            onTableTap: onTableTap
         ) {
             EmptyView()
         }
@@ -458,7 +523,7 @@ struct ReservationStatusBadge: View {
 
 // MARK: - Inline Metadata
 
-private struct ReservationInlineMeta: View {
+private struct ReservationRowDetailLabel: View {
     let text: String
     let systemImage: String
 
@@ -482,6 +547,13 @@ private struct ReservationInlineMeta: View {
 private extension Array {
     subscript(safe index: Int) -> Element? {
         indices.contains(index) ? self[index] : nil
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

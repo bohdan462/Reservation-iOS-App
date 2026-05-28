@@ -44,6 +44,16 @@ struct RestaurantSetupResponse: Codable {
     let data: RestaurantSetupDTO?
 }
 
+struct RestaurantHoursResponse: Codable {
+    let success: Bool?
+    let data: RestaurantHoursDTO?
+}
+
+struct RestaurantDayAvailabilityResponse: Codable {
+    let success: Bool?
+    let data: RestaurantDayAvailabilityDTO?
+}
+
 struct ImportFailuresResponse: Codable {
     let success: Bool
     let page: Int

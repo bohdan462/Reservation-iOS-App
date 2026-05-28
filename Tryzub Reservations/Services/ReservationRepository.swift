@@ -173,9 +173,19 @@ enum ReservationSyncDiagnostics {
     ) {
         guard isEnabled else { return }
 
-        emit(
-            "[API DATA] reason=\(reason.rawValue) label=\(label) total=\(total.map(String.init) ?? "-") decoded=\(reservations.count) ids=\(reservations.map(\.id)) dates=\(reservations.map(\.reservationDate)) statuses=\(reservations.map { $0.status.rawValue }) sourceTypes=\(reservations.map { $0.sourceType?.rawValue ?? "nil" }) hidden=\(reservations.map { $0.isHidden.map(String.init) ?? "nil" })"
-        )
+        if reservations.count > 25 {
+            let statusCounts = Dictionary(grouping: reservations, by: { $0.status.rawValue })
+                .mapValues(\.count)
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key):\($0.value)" }
+                .joined(separator: ",")
+            let hiddenCount = reservations.filter { $0.isHidden == true }.count
+            emit("[API DATA] reason=\(reason.rawValue) label=\(label) total=\(total.map(String.init) ?? "-") decoded=\(reservations.count) firstIDs=\(reservations.prefix(10).map(\.id)) statusCounts=[\(statusCounts)] hiddenCount=\(hiddenCount)")
+        } else {
+            emit(
+                "[API DATA] reason=\(reason.rawValue) label=\(label) total=\(total.map(String.init) ?? "-") decoded=\(reservations.count) ids=\(reservations.map(\.id)) dates=\(reservations.map(\.reservationDate)) statuses=\(reservations.map { $0.status.rawValue }) sourceTypes=\(reservations.map { $0.sourceType?.rawValue ?? "nil" }) hidden=\(reservations.map { $0.isHidden.map(String.init) ?? "nil" })"
+            )
+        }
     }
 
     static func repositoryUpsert(

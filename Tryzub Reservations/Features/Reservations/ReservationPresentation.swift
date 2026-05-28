@@ -36,6 +36,13 @@ enum ReservationFormatters {
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return formatter
     }()
+
+    static let serverDateMinute: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
 }
 
 extension Date {
@@ -60,6 +67,70 @@ enum ReservationQueueScope: String, CaseIterable, Identifiable {
     case needsReview = "Needs Review"
 
     var id: String { rawValue }
+}
+
+enum ReservationOperationalTimingState: Equatable {
+    case none
+    case normal
+    case dueSoon(minutes: Int)
+    case dueNow
+    case overdue(minutes: Int)
+
+    var insightText: String? {
+        switch self {
+        case .none, .normal:
+            return nil
+        case .dueSoon(let minutes):
+            return "Due in \(Self.durationText(minutes: minutes))"
+        case .dueNow:
+            return "Due now"
+        case .overdue(let minutes):
+            return "Needs attention · \(Self.durationText(minutes: minutes)) past due"
+        }
+    }
+
+    var sortBucket: Int {
+        switch self {
+        case .overdue:
+            return 0
+        case .dueNow:
+            return 1
+        case .dueSoon:
+            return 2
+        case .normal, .none:
+            return 3
+        }
+    }
+
+    var isAttention: Bool {
+        if case .overdue = self {
+            return true
+        }
+        return false
+    }
+
+    var isDueSoon: Bool {
+        switch self {
+        case .dueSoon, .dueNow:
+            return true
+        case .none, .normal, .overdue:
+            return false
+        }
+    }
+
+    private static func durationText(minutes: Int) -> String {
+        let minutes = max(minutes, 1)
+        if minutes < 60 {
+            return "\(minutes)m"
+        }
+
+        let hours = minutes / 60
+        let remainingMinutes = minutes % 60
+        if remainingMinutes == 0 {
+            return "\(hours)h"
+        }
+        return "\(hours)h \(remainingMinutes)m"
+    }
 }
 
 struct ReservationDateSection: Identifiable {
@@ -90,6 +161,38 @@ extension ReservationRecord {
         case .seated, .completed, .cancelled, .noShow:
             return false
         }
+    }
+
+    var isActiveReservationStatus: Bool {
+        switch statusValue {
+        case .new, .needsReview, .confirmed:
+            return true
+        case .seated, .completed, .cancelled, .noShow:
+            return false
+        }
+    }
+
+    func operationalTimingState(now: Date = Date()) -> ReservationOperationalTimingState {
+        guard !isHidden,
+              isActiveReservationStatus,
+              let serviceDate = serviceDateTime else {
+            return .none
+        }
+
+        let secondsUntilReservation = serviceDate.timeIntervalSince(now)
+        if secondsUntilReservation < 0 {
+            return .overdue(minutes: Int(ceil(abs(secondsUntilReservation) / 60)))
+        }
+
+        if secondsUntilReservation <= 15 * 60 {
+            return .dueNow
+        }
+
+        if secondsUntilReservation <= 2 * 60 * 60 {
+            return .dueSoon(minutes: Int(ceil(secondsUntilReservation / 60)))
+        }
+
+        return .normal
     }
 
     var hasTableAssignment: Bool {
@@ -131,25 +234,6 @@ extension ReservationRecord {
 
     var sourceDisplayName: String {
         sourceTypeValue.displayName
-    }
-
-    var rowSourceLabel: String? {
-        sourceTypeValue.isManualSource ? sourceTypeValue.displayName : nil
-    }
-
-    var rowSourceSystemImage: String {
-        switch sourceTypeValue {
-        case .manualCallIn:
-            return "phone.badge.plus"
-        case .manualWalkIn:
-            return "figure.walk"
-        case .knownGuestManual:
-            return "person.text.rectangle"
-        case .importRepair:
-            return "wrench.and.screwdriver"
-        case .form, .unknown:
-            return "globe"
-        }
     }
 
     var hasUsableConfirmationEmail: Bool {
@@ -254,9 +338,13 @@ extension ReservationRecord {
         }
     }
 
-    static func sortedForHostBoard(_ reservations: [ReservationRecord]) -> [ReservationRecord] {
+    static func sortedForHostBoard(_ reservations: [ReservationRecord], now: Date = Date()) -> [ReservationRecord] {
         reservations.sorted {
-            if $0.activeTodayStatusSortBucket == $1.activeTodayStatusSortBucket {
+            let lhsTimingBucket = $0.operationalTimingState(now: now).sortBucket
+            let rhsTimingBucket = $1.operationalTimingState(now: now).sortBucket
+
+            if lhsTimingBucket == rhsTimingBucket,
+               $0.activeTodayStatusSortBucket == $1.activeTodayStatusSortBucket {
                 if $0.reservationTime == $1.reservationTime {
                     return $0.remoteID < $1.remoteID
                 }
@@ -264,7 +352,11 @@ extension ReservationRecord {
                 return $0.reservationTime < $1.reservationTime
             }
 
-            return $0.activeTodayStatusSortBucket < $1.activeTodayStatusSortBucket
+            if lhsTimingBucket == rhsTimingBucket {
+                return $0.activeTodayStatusSortBucket < $1.activeTodayStatusSortBucket
+            }
+
+            return lhsTimingBucket < rhsTimingBucket
         }
     }
 
@@ -322,6 +414,15 @@ extension ReservationRecord {
         }
 
         return ReservationFormatters.shortTime.string(from: date)
+    }
+
+    var serviceDateTime: Date? {
+        let time = reservationTime.count >= 5 ? String(reservationTime.prefix(5)) : reservationTime
+        if let date = ReservationFormatters.serverDateTime.date(from: "\(reservationDate) \(reservationTime)") {
+            return date
+        }
+
+        return ReservationFormatters.serverDateMinute.date(from: "\(reservationDate) \(time)")
     }
 
     private static func formatPhone(_ value: String) -> String {

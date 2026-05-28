@@ -208,15 +208,9 @@ private struct ReservationFormContent: View {
     @State private var didApplyInitialSettings = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            ViewThatFits(in: .vertical) {
-                formFields
-                ScrollView {
-                    formFields
-                }
-            }
-
-            primaryActionButton
+        ScrollView {
+            formFields
+                .padding(.bottom, 88)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle(mode.title)
@@ -237,6 +231,9 @@ private struct ReservationFormContent: View {
         }
         .onAppear {
             applyInitialSettingsIfNeeded()
+        }
+        .safeAreaInset(edge: .bottom) {
+            primaryActionButton
         }
     }
 
@@ -345,7 +342,6 @@ private struct ReservationFormContent: View {
 
                     Text(draft.reservationDate.formatted(.dateTime.month(.abbreviated).day().year()))
                         .font(.caption.weight(.bold))
-//                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
                         .frame(minHeight: 34)
                         .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
@@ -881,37 +877,6 @@ private struct ReservationFormTextEditor: View {
                         .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                 }
         }
-    }
-}
-
-private struct ReservationFormChoiceButton: View {
-    let title: String
-    let subtitle: String?
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .padding(.horizontal, 8)
-            .background(isSelected ? Color(.systemGray5) : Color(.systemGray6), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.primary.opacity(isSelected ? 0.18 : 0.08), lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
     }
 }
 

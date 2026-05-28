@@ -35,6 +35,11 @@ final class ReservationsController: ObservableObject {
     @Published private(set) var restaurantSetup: RestaurantSetup = .default
     @Published private(set) var isLoadingRestaurantSetup = false
     @Published private(set) var isSavingRestaurantSetup = false
+    @Published private(set) var isLoadingRestaurantHours = false
+    @Published private(set) var isSavingRestaurantHours = false
+    @Published private(set) var isLoadingRestaurantDayAvailability = false
+    @Published private(set) var isSavingRestaurantDayAvailability = false
+    @Published private(set) var isLoadingReservationAnalytics = false
     @Published private(set) var latestEmailStatusByReservationID: [Int: ReservationEmailStatus] = [:]
 
     // Developer diagnostics show which sync scopes are fresh, busy, or cooling down.
@@ -171,6 +176,31 @@ final class ReservationsController: ObservableObject {
         source: ReservationSyncIntent = .manual
     ) async -> Bool {
         await performScheduleWindowRefresh(context: context, force: source == .manual)
+    }
+
+    // Intent: Schedule All mode pages historical rows on demand without replacing local cache.
+    // Network: GET /managed-reservations?page=...&per_page=100.
+    func loadScheduleAllPage(
+        context: ModelContext,
+        page: Int,
+        search: String?
+    ) async throws -> ReservationsResponse {
+        let response = try await environment.apiClient.fetchReservations(
+            page: page,
+            perPage: 100,
+            date: nil,
+            from: nil,
+            to: nil,
+            status: nil,
+            search: search,
+            includeHidden: false,
+            reason: .scheduleAllPage
+        )
+
+        let repository = ReservationRepository(context: context)
+        try repository.upsert(response.data)
+        lastSyncedAt = Date()
+        return response
     }
 
     // MARK: - Pending Review Sync
@@ -504,6 +534,138 @@ final class ReservationsController: ObservableObject {
             )
             throw error
         }
+    }
+
+    // Intent: Reads backend weekly/special hours for manager settings.
+    // Network: GET /restaurant-hours.
+    @discardableResult
+    func loadRestaurantHours(from: String? = nil, to: String? = nil) async throws -> RestaurantHoursDTO {
+        guard !isLoadingRestaurantHours else {
+            throw ReservationControllerError.actionAlreadyInProgress
+        }
+
+        isLoadingRestaurantHours = true
+        defer { isLoadingRestaurantHours = false }
+
+        return try await environment.apiClient.fetchRestaurantHours(
+            from: from,
+            to: to,
+            reason: .restaurantHours
+        )
+    }
+
+    // Intent: Saves backend weekly hours.
+    // Network: PATCH /restaurant-hours.
+    @discardableResult
+    func updateRestaurantHours(request: WeeklyHoursUpdateRequest) async throws -> RestaurantHoursDTO {
+        guard !isSavingRestaurantHours else {
+            throw ReservationControllerError.actionAlreadyInProgress
+        }
+
+        isSavingRestaurantHours = true
+        defer { isSavingRestaurantHours = false }
+
+        do {
+            let hours = try await environment.apiClient.updateRestaurantHours(
+                request,
+                reason: .restaurantHoursPatch
+            )
+            postNotice(severity: .success, source: .admin, title: "Weekly hours saved")
+            return hours
+        } catch {
+            postNotice(
+                severity: .error,
+                source: .admin,
+                title: "Weekly hours did not save",
+                message: error.localizedDescription,
+                requestReason: .restaurantHoursPatch,
+                errorCode: errorLogCode(error)
+            )
+            throw error
+        }
+    }
+
+    // Intent: Reads effective backend availability for one service date.
+    // Network: GET /restaurant-day-availability?date=YYYY-MM-DD.
+    @discardableResult
+    func loadRestaurantDayAvailability(date: String) async throws -> RestaurantDayAvailabilityDTO {
+        guard !isLoadingRestaurantDayAvailability else {
+            throw ReservationControllerError.actionAlreadyInProgress
+        }
+
+        isLoadingRestaurantDayAvailability = true
+        defer { isLoadingRestaurantDayAvailability = false }
+
+        return try await environment.apiClient.fetchRestaurantDayAvailability(
+            date: date,
+            reason: .restaurantDayAvailability
+        )
+    }
+
+    // Intent: Saves a manual availability override for one date.
+    // Network: PATCH /restaurant-day-availability?date=YYYY-MM-DD.
+    @discardableResult
+    func updateRestaurantDayAvailability(
+        date: String,
+        request: RestaurantDayAvailabilityUpdateRequest
+    ) async throws -> RestaurantDayAvailabilityDTO {
+        guard !isSavingRestaurantDayAvailability else {
+            throw ReservationControllerError.actionAlreadyInProgress
+        }
+
+        isSavingRestaurantDayAvailability = true
+        defer { isSavingRestaurantDayAvailability = false }
+
+        do {
+            let availability = try await environment.apiClient.updateRestaurantDayAvailability(
+                date: date,
+                request: request,
+                reason: .restaurantDayAvailabilityPatch
+            )
+            postNotice(severity: .success, source: .admin, title: "Today availability saved")
+            return availability
+        } catch {
+            postNotice(
+                severity: .error,
+                source: .admin,
+                title: "Availability did not save",
+                message: error.localizedDescription,
+                requestReason: .restaurantDayAvailabilityPatch,
+                errorCode: errorLogCode(error)
+            )
+            throw error
+        }
+    }
+
+    // Intent: Previews backend-computed slots for one service date.
+    // Network: GET /reservation-slots?date=YYYY-MM-DD.
+    @discardableResult
+    func loadReservationSlots(date: String) async throws -> ReservationSlotsResponseDTO {
+        try await environment.apiClient.fetchReservationSlots(
+            date: date,
+            reason: .reservationSlots
+        )
+    }
+
+    // Intent: Reads backend aggregate business metrics; does not scan local SwiftData.
+    // Network: GET /reservation-analytics/summary.
+    @discardableResult
+    func loadReservationAnalyticsSummary(
+        from: String? = nil,
+        to: String? = nil
+    ) async throws -> ReservationAnalyticsSummaryDTO {
+        guard !isLoadingReservationAnalytics else {
+            throw ReservationControllerError.actionAlreadyInProgress
+        }
+
+        isLoadingReservationAnalytics = true
+        defer { isLoadingReservationAnalytics = false }
+
+        return try await environment.apiClient.fetchReservationAnalyticsSummary(
+            from: from,
+            to: to,
+            reason: .reservationAnalyticsSummary
+        )
     }
 
     func isActionInProgress(for reservation: ReservationRecord) -> Bool {

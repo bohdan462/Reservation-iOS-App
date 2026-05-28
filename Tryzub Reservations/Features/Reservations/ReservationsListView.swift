@@ -272,6 +272,13 @@ private struct ReservationScheduleView: View {
 
     @State private var scope: ReservationScheduleScope = .upcoming
     @State private var searchText = ""
+    @State private var debouncedSearchText = ""
+    @State private var statusFilter: ReservationStatus?
+    @State private var isLoadingAllPage = false
+    @State private var allModeLoadedPage = 0
+    @State private var allModeTotal: Int?
+    @State private var allModeTotalPages = 0
+    @State private var allModeErrorMessage: String?
     @State private var showManualCreate = false
     @State private var navigationPath: [Int] = []
 
@@ -281,14 +288,21 @@ private struct ReservationScheduleView: View {
     // Schedule reads cached rows; sync freshness is handled by ReservationsController.
     private var displayedReservations: [ReservationRecord] {
         let today = Date.reservationDateString()
-        let trimmedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSearchText = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         var rows = reservations.filter { !hiddenReservations.isHidden($0) }
 
         if scope == .upcoming {
             rows = rows.filter {
-                $0.reservationDate >= today && $0.statusValue != .cancelled && $0.statusValue != .noShow
+                $0.reservationDate >= today
+                    && $0.statusValue != .completed
+                    && $0.statusValue != .cancelled
+                    && $0.statusValue != .noShow
             }
+        }
+
+        if scope == .all, let statusFilter {
+            rows = rows.filter { $0.statusValue == statusFilter }
         }
 
         if !trimmedSearchText.isEmpty {
@@ -311,12 +325,14 @@ private struct ReservationScheduleView: View {
         NavigationStack(path: $navigationPath) {
             List {
                 Section {
-                    Picker("Schedule", selection: $scope) {
-                        ForEach(ReservationScheduleScope.allCases) { scope in
-                            Text(scope.rawValue).tag(scope)
-                        }
+                    scheduleControls
+                }
+
+                if let allModeErrorMessage {
+                    Section {
+                        Label(allModeErrorMessage, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
                     }
-                    .pickerStyle(.segmented)
                 }
 
                 if controller.isSyncing && reservations.isEmpty {
@@ -353,6 +369,44 @@ private struct ReservationScheduleView: View {
                                 Text(section.subtitle)
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+
+                if scope == .all {
+                    Section {
+                        HStack(spacing: 12) {
+                            Text(allModeSummaryText)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+
+                            Spacer(minLength: 8)
+
+                            if allModeHasMore {
+                                Button {
+                                    Task {
+                                        await loadAllPage(reset: false)
+                                    }
+                                } label: {
+                                    if isLoadingAllPage {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    } else {
+                                        Text("Load More")
+                                            .font(.caption.weight(.semibold))
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.primary.opacity(0.82))
+                                .padding(.horizontal, 10)
+                                .frame(minHeight: 30)
+                                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                                }
+                                .disabled(isLoadingAllPage)
                             }
                         }
                     }
@@ -406,9 +460,112 @@ private struct ReservationScheduleView: View {
                 // Schedule tab activation: controller fetches only when cached window is stale.
                 await controller.scheduleBecameActive(context: modelContext)
             }
+            .task(id: searchText) {
+                let value = searchText
+                try? await Task.sleep(for: .milliseconds(250))
+                if !Task.isCancelled {
+                    debouncedSearchText = value
+                }
+            }
+            .onChange(of: scope) { _, newScope in
+                if newScope == .all, allModeLoadedPage == 0 {
+                    Task {
+                        await loadAllPage(reset: true)
+                    }
+                }
+            }
+            .onChange(of: debouncedSearchText) { _, _ in
+                guard scope == .all else { return }
+                Task {
+                    await loadAllPage(reset: true)
+                }
+            }
             .navigationDestination(for: Int.self) { remoteID in
                 reservationDestination(remoteID: remoteID)
             }
+        }
+    }
+
+    private var scheduleControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Schedule", selection: $scope) {
+                ForEach(ReservationScheduleScope.allCases) { scope in
+                    Text(scope.rawValue).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if scope == .all {
+                Menu {
+                    Button("Any Status") {
+                        statusFilter = nil
+                    }
+
+                    ForEach(ReservationStatus.allCases) { status in
+                        Button(status.displayName) {
+                            statusFilter = status
+                        }
+                    }
+                } label: {
+                    Label(statusFilterTitle, systemImage: "line.3.horizontal.decrease.circle")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary.opacity(0.80))
+                        .padding(.horizontal, 10)
+                        .frame(minHeight: 32)
+                        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var statusFilterTitle: String {
+        guard let statusFilter else {
+            return "Status: Any"
+        }
+        return "Status: \(statusFilter.shortDisplayName)"
+    }
+
+    private var allModeSummaryText: String {
+        if let statusFilter {
+            return "Showing \(displayedReservations.count) matching \(statusFilter.shortDisplayName)"
+        }
+
+        guard let allModeTotal else {
+            return isLoadingAllPage ? "Loading history..." : "History not loaded"
+        }
+
+        return "Showing \(min(displayedReservations.count, allModeTotal)) of \(allModeTotal)"
+    }
+
+    private var allModeHasMore: Bool {
+        scope == .all && allModeLoadedPage > 0 && allModeLoadedPage < allModeTotalPages
+    }
+
+    private func loadAllPage(reset: Bool) async {
+        guard !isLoadingAllPage else { return }
+        isLoadingAllPage = true
+        allModeErrorMessage = nil
+        defer { isLoadingAllPage = false }
+
+        let page = reset ? 1 : allModeLoadedPage + 1
+        let search = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+
+        do {
+            let response = try await controller.loadScheduleAllPage(
+                context: modelContext,
+                page: page,
+                search: search
+            )
+            allModeLoadedPage = page
+            allModeTotal = response.total
+            allModeTotalPages = response.totalPages
+        } catch {
+            allModeErrorMessage = error.localizedDescription
         }
     }
 
@@ -442,6 +599,7 @@ private struct ReservationReviewQueueView: View {
 
     @State private var scope: ReservationQueueScope = .pending
     @State private var searchText = ""
+    @State private var debouncedSearchText = ""
     @State private var navigationPath: [Int] = []
 
     let environment: AppEnvironment
@@ -449,7 +607,7 @@ private struct ReservationReviewQueueView: View {
 
     // Pending is the staff default: new and needs_review, oldest submitted first.
     private var queueReservations: [ReservationRecord] {
-        let trimmedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSearchText = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let rows = reservations.filter { reservation in
             guard !hiddenReservations.isHidden(reservation) else { return false }
             switch scope {
@@ -541,6 +699,13 @@ private struct ReservationReviewQueueView: View {
                 // Review tab activation: controller refreshes only when queue cache is stale.
                 await controller.reviewBecameActive(context: modelContext)
             }
+            .task(id: searchText) {
+                let value = searchText
+                try? await Task.sleep(for: .milliseconds(250))
+                if !Task.isCancelled {
+                    debouncedSearchText = value
+                }
+            }
             .navigationDestination(for: Int.self) { remoteID in
                 reservationDestination(remoteID: remoteID)
             }
@@ -561,7 +726,15 @@ private struct ReservationReviewQueueView: View {
     }
 
     // Intent: Small operational context for pending queue triage.
-    private func reviewContext(for reservation: ReservationRecord) -> String {
+    private func reviewContext(for reservation: ReservationRecord) -> String? {
+        if reservation.statusValue == .needsReview {
+            return "Needs review"
+        }
+
+        if reservation.partySize >= 7 {
+            return "Large party"
+        }
+
         let activeSameDay = reservations.filter {
             $0.reservationDate == reservation.reservationDate
                 && !hiddenReservations.isHidden($0)
@@ -572,9 +745,16 @@ private struct ReservationReviewQueueView: View {
         let sameTime = activeSameDay.filter {
             String($0.reservationTime.prefix(5)) == String(reservation.reservationTime.prefix(5))
         }
-        let sameTimeGuests = sameTime.reduce(0) { $0 + $1.partySize }
 
-        return "Booked: \(activeSameDay.count)/\(dayGuests) ppl · Same time: \(sameTime.count)/\(sameTimeGuests) ppl"
+        if sameTime.count > 1 {
+            return "Same time conflict"
+        }
+
+        if dayGuests >= 20 {
+            return "Busy service day"
+        }
+
+        return nil
     }
 }
 
@@ -609,6 +789,12 @@ private struct ReservationMoreView: View {
                         RestaurantSettingsView()
                     } label: {
                         Label("Restaurant Settings", systemImage: "gearshape")
+                    }
+
+                    NavigationLink {
+                        BusinessAnalyticsView()
+                    } label: {
+                        Label("Business Analytics", systemImage: "chart.bar")
                     }
 
                     if controller.capabilities.canCreateManualReservations {
@@ -906,7 +1092,10 @@ private struct ReservationNavigationRow: View {
         ReservationRowView(
             reservation: reservation,
             context: context,
-            contextNote: contextNote
+            contextNote: contextNote,
+            onTableTap: controller.capabilities.canEditReservationDetails
+                ? { tableAssignmentReservation = reservation }
+                : nil
         ) {
             ReservationActionButtons(
                 reservation: reservation,
@@ -986,7 +1175,7 @@ private struct ReservationNavigationRow: View {
                 Text(pendingAction.dialogMessage(for: reservation))
             }
         }
-        .sheet(item: $tableAssignmentReservation) { reservation in
+        .popover(item: $tableAssignmentReservation, arrowEdge: .trailing) { reservation in
             TableAssignmentSheet(reservation: reservation) { tableName in
                 _ = try await controller.updateReservation(
                     id: reservation.remoteID,
