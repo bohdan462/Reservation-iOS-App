@@ -136,7 +136,7 @@ struct DeveloperDiagnosticsView: View {
         } header: {
             Text("Safe GET Tests")
         } footer: {
-            Text("These buttons only perform GET requests. They do not confirm, cancel, seat, create, or import reservations.")
+            Text("These buttons only perform GET requests. Contract tests cover ping, setup, hours, availability, public slots, managed reservations, analytics, and sync scopes.")
         }
     }
 
@@ -157,7 +157,7 @@ struct DeveloperDiagnosticsView: View {
         } header: {
             Text("Request Log")
         } footer: {
-            Text("The log stores method, endpoint, reason, status/error, and duration only. Credentials and payloads are not logged.")
+            Text("The log stores method, endpoint, reason, status/error, body snippet, decode error, and duration. Credentials and guest payloads are not logged.")
         }
     }
 
@@ -196,6 +196,13 @@ struct DeveloperDiagnosticsView: View {
 
     private var endpointChecklistSection: some View {
         Section("Endpoint Contract Checklist") {
+            endpointRow("GET /ping", pathFragment: "/ping")
+            endpointRow("GET /restaurant-setup", pathFragment: "/restaurant-setup")
+            endpointRow("GET /restaurant-hours", pathFragment: "/restaurant-hours")
+            endpointRow("GET /restaurant-day-availability", pathFragment: "/restaurant-day-availability")
+            endpointRow("GET /reservation-slots", pathFragment: "/reservation-slots")
+            endpointRow("GET /restaurant-blocked-slots", pathFragment: "/restaurant-blocked-slots")
+            endpointRow("GET /reservation-analytics/summary", pathFragment: "/reservation-analytics/summary")
             endpointRow("GET /managed-reservations?date=YYYY-MM-DD", pathFragment: "/managed-reservations")
             endpointRow("GET /managed-reservations", pathFragment: "/managed-reservations")
             endpointRow("GET /managed-reservations/{id}", pathFragment: "/managed-reservations/")
@@ -203,7 +210,6 @@ struct DeveloperDiagnosticsView: View {
             endpointRow("POST /managed-reservations", pathFragment: "/managed-reservations")
             endpointRow("POST /managed-reservations/{id}/confirm", pathFragment: "/confirm")
             endpointRow("GET /managed-reservations/import-failures", pathFragment: "/managed-reservations/import-failures")
-            endpointRow("GET /restaurant-blocked-slots?date=YYYY-MM-DD", pathFragment: "/restaurant-blocked-slots")
             endpointRow("POST /restaurant-blocked-slots", pathFragment: "/restaurant-blocked-slots")
             endpointRow("DELETE /restaurant-blocked-slots", pathFragment: "/restaurant-blocked-slots")
 
@@ -323,6 +329,20 @@ private struct APIRequestLogRow: View {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.orange)
+            }
+
+            if let responseBodySnippet = event.responseBodySnippet, !responseBodySnippet.isEmpty {
+                Text("body: \(responseBodySnippet)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+
+            if let decodingError = event.decodingError, !decodingError.isEmpty {
+                Text("decode: \(decodingError)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
         }
         .padding(.vertical, 4)

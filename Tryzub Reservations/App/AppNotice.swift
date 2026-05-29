@@ -60,6 +60,7 @@ struct AppNotice: Identifiable, Equatable {
     let message: String?
     let requestReason: ReservationAPIRequestReason?
     let errorCode: String?
+    let developerDiagnostics: String?
     let createdAt: Date
 
     init(
@@ -69,6 +70,7 @@ struct AppNotice: Identifiable, Equatable {
         message: String? = nil,
         requestReason: ReservationAPIRequestReason? = nil,
         errorCode: String? = nil,
+        developerDiagnostics: String? = nil,
         createdAt: Date = Date()
     ) {
         self.id = UUID()
@@ -78,6 +80,7 @@ struct AppNotice: Identifiable, Equatable {
         self.message = message
         self.requestReason = requestReason
         self.errorCode = errorCode
+        self.developerDiagnostics = developerDiagnostics
         self.createdAt = createdAt
     }
 }

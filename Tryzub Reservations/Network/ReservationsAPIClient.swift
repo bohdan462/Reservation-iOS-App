@@ -12,6 +12,7 @@ import OSLog
 
 enum ReservationAPIRequestReason: String {
     case unspecified
+    case ping
     case startupToday = "startup_today"
     case manualToday = "manual_today"
     case autoToday = "auto_today"
@@ -96,12 +97,15 @@ enum ReservationAPILogger {
         error: Error,
         startedAt: Date
     ) {
+        let diagnostics = (error as? ReservationAPIError)?.diagnostics
         append(
             outcome: .failed,
             request: request,
             reason: reason,
             error: errorLogValue(error),
-            duration: duration(since: startedAt)
+            duration: duration(since: startedAt),
+            responseBodySnippet: diagnostics?.responseBodySnippet,
+            decodingError: diagnostics?.decodingError
         )
         guard isEnabled else { return }
 
@@ -158,7 +162,9 @@ enum ReservationAPILogger {
         reason: ReservationAPIRequestReason,
         statusCode: Int? = nil,
         error: String? = nil,
-        duration: String? = nil
+        duration: String? = nil,
+        responseBodySnippet: String? = nil,
+        decodingError: String? = nil
     ) {
         let method = request.httpMethod ?? "GET"
         let pathAndQuery = sanitizedPathAndQuery(for: request.url)
@@ -172,7 +178,9 @@ enum ReservationAPILogger {
                     pathAndQuery: pathAndQuery,
                     statusCode: statusCode,
                     error: error,
-                    duration: duration
+                    duration: duration,
+                    responseBodySnippet: responseBodySnippet,
+                    decodingError: decodingError
                 )
             )
         }
@@ -231,6 +239,7 @@ protocol ReservationsAPIClientProtocol: AnyObject {
     var debugBaseURLDescription: String { get }
     var hasConfiguredCredentials: Bool { get }
 
+    func ping(reason: ReservationAPIRequestReason) async throws -> PingResponseDTO
     func fetchReservations(
         page: Int,
         perPage: Int,
@@ -371,6 +380,19 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         self.session = session
     }
 
+    // MARK: - Health
+
+    // Intent: Verifies public API reachability without protected credentials.
+    // Network: GET /ping.
+    func ping(reason: ReservationAPIRequestReason = .ping) async throws -> PingResponseDTO {
+        let url = try apiURL(path: "ping")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let data = try await perform(request, retryCount: 0, reason: reason, requiresAuth: false)
+        return try decode(PingResponseDTO.self, from: data, request: request)
+    }
+
     // MARK: - Reservations
 
     // Intent: Reads managed reservations for today, schedule windows, review queues, or search.
@@ -387,9 +409,6 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         retryCount: Int = 0,
         reason: ReservationAPIRequestReason = .unspecified
     ) async throws -> ReservationsResponse {
-        
-        var components = URLComponents(url: managedReservationsURL(), resolvingAgainstBaseURL: false)
-        
         var queryItems: [URLQueryItem] = [
             URLQueryItem(name: "page", value: String(page)),
             URLQueryItem(name: "per_page", value: String(perPage))
@@ -412,28 +431,23 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         if includeHidden {
             queryItems.append(URLQueryItem(name: "include_hidden", value: "1"))
         }
-        components?.queryItems = queryItems
-        
-        guard let url = components?.url else {
-            throw ReservationAPIError.invalidURL
-        }
-        
+
+        let url = try makeURL(path: "managed-reservations", queryItems: queryItems)
         let request = makeRequest(url: url, method: "GET")
         let data = try await perform(request, retryCount: retryCount, reason: reason)
-        
-        do {
-            let response = try decoder.decode(ReservationsResponse.self, from: data)
-            ReservationSyncDiagnostics.apiListResponse(
-                reason: reason,
-                total: response.total,
-                reservations: response.data,
-                label: "fetchReservations(page=\(page))"
-            )
-            return response
-        }
-        catch {
-            throw ReservationAPIError.decodingFailure(error)
-        }
+
+        let response = try decode(
+            ReservationsResponse.self,
+            from: data,
+            request: request
+        )
+        ReservationSyncDiagnostics.apiListResponse(
+            reason: reason,
+            total: response.total,
+            reservations: response.data,
+            label: "fetchReservations(page=\(page))"
+        )
+        return response
     }
 
     // Intent: Paginates list reads so sync services can cache the full matching result.
@@ -489,15 +503,11 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         retryCount: Int = 1,
         reason: ReservationAPIRequestReason = .unspecified
     ) async throws -> ReservationDTO {
-        let url = managedReservationsURL().appendingPathComponent(String(id))
+        let url = try apiURL(path: "managed-reservations/\(id)")
         let request = makeRequest(url: url, method: "GET")
         let data = try await perform(request, retryCount: retryCount, reason: reason)
 
-        do {
-            return try decoder.decode(ReservationFetchResponse.self, from: data).data
-        } catch {
-            throw ReservationAPIError.decodingFailure(error)
-        }
+        return try decode(ReservationFetchResponse.self, from: data, request: request).data
     }
 
     // MARK: - Reservation Mutations
@@ -509,16 +519,12 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         request updateRequest: ReservationUpdateRequest,
         reason: ReservationAPIRequestReason = .mutationPatch
     ) async throws -> ReservationDTO {
-        let url = managedReservationsURL().appendingPathComponent(String(id))
+        let url = try apiURL(path: "managed-reservations/\(id)")
 
         let request = try makeJSONRequest(url: url, method: "PATCH", body: updateRequest)
         let data = try await perform(request, reason: reason)
 
-        do {
-            return try decoder.decode(ReservationUpdateResponse.self, from: data).data
-        } catch {
-            throw ReservationAPIError.decodingFailure(error)
-        }
+        return try decode(ReservationUpdateResponse.self, from: data, request: request).data
     }
 
     // Intent: Staff creates a manual/call-in reservation.
@@ -527,18 +533,15 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         _ createRequest: ReservationCreateRequest,
         reason: ReservationAPIRequestReason = .mutationCreate
     ) async throws -> ReservationDTO {
+        let url = try apiURL(path: "managed-reservations")
         let request = try makeJSONRequest(
-            url: managedReservationsURL(),
+            url: url,
             method: "POST",
             body: createRequest
         )
         let data = try await perform(request, reason: reason)
 
-        do {
-            return try decoder.decode(ReservationCreateResponse.self, from: data).data
-        } catch {
-            throw ReservationAPIError.decodingFailure(error)
-        }
+        return try decode(ReservationCreateResponse.self, from: data, request: request).data
     }
 
     // MARK: - Confirm With Email
@@ -550,17 +553,11 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         id: Int,
         reason: ReservationAPIRequestReason = .mutationConfirm
     ) async throws -> ReservationConfirmResponse {
-        let url = managedReservationsURL()
-            .appendingPathComponent(String(id))
-            .appendingPathComponent("confirm")
+        let url = try apiURL(path: "managed-reservations/\(id)/confirm")
         let request = makeRequest(url: url, method: "POST")
         let data = try await perform(request, reason: reason)
 
-        do {
-            return try decoder.decode(ReservationConfirmResponse.self, from: data)
-        } catch {
-            throw ReservationAPIError.decodingFailure(error)
-        }
+        return try decode(ReservationConfirmResponse.self, from: data, request: request)
     }
 
     // MARK: - Restaurant Setup
@@ -570,10 +567,11 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
     func fetchRestaurantSetup(
         reason: ReservationAPIRequestReason = .restaurantSetup
     ) async throws -> RestaurantSetupDTO {
-        let request = makeRequest(url: baseURL.appendingPathComponent("restaurant-setup"), method: "GET")
+        let url = try apiURL(path: "restaurant-setup")
+        let request = makeRequest(url: url, method: "GET")
         let data = try await perform(request, reason: reason)
 
-        return try decodeRestaurantSetup(from: data)
+        return try decodeRestaurantSetup(from: data, request: request)
     }
 
     // Intent: Updates minimal manager-facing restaurant setup fields.
@@ -582,14 +580,15 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         _ setupRequest: RestaurantSetupUpdateRequest,
         reason: ReservationAPIRequestReason = .restaurantSetupPatch
     ) async throws -> RestaurantSetupDTO {
+        let url = try apiURL(path: "restaurant-setup")
         let request = try makeJSONRequest(
-            url: baseURL.appendingPathComponent("restaurant-setup"),
+            url: url,
             method: "PATCH",
             body: setupRequest
         )
         let data = try await perform(request, reason: reason)
 
-        return try decodeRestaurantSetup(from: data)
+        return try decodeRestaurantSetup(from: data, request: request)
     }
 
     // MARK: - Restaurant Hours
@@ -613,7 +612,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let request = makeRequest(url: url, method: "GET")
         let data = try await perform(request, reason: reason)
 
-        return try decodeRestaurantHours(from: data)
+        return try decodeRestaurantHours(from: data, request: request)
     }
 
     // Intent: Saves manager-facing weekly hours.
@@ -622,14 +621,15 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         _ hoursRequest: WeeklyHoursUpdateRequest,
         reason: ReservationAPIRequestReason = .restaurantHoursPatch
     ) async throws -> RestaurantHoursDTO {
+        let url = try apiURL(path: "restaurant-hours")
         let request = try makeJSONRequest(
-            url: baseURL.appendingPathComponent("restaurant-hours"),
+            url: url,
             method: "PATCH",
             body: hoursRequest
         )
         let data = try await perform(request, reason: reason)
 
-        return try decodeRestaurantHours(from: data)
+        return try decodeRestaurantHours(from: data, request: request)
     }
 
     // MARK: - Availability
@@ -647,7 +647,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let request = makeRequest(url: url, method: "GET")
         let data = try await perform(request, reason: reason)
 
-        return try decodeRestaurantDayAvailability(from: data)
+        return try decodeRestaurantDayAvailability(from: data, request: request)
     }
 
     // Intent: Saves a manual open/closed override for one date.
@@ -664,7 +664,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let request = try makeJSONRequest(url: url, method: "PATCH", body: availabilityRequest)
         let data = try await perform(request, reason: reason)
 
-        return try decodeRestaurantDayAvailability(from: data)
+        return try decodeRestaurantDayAvailability(from: data, request: request)
     }
 
     // MARK: - Slots
@@ -679,14 +679,10 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
             path: "reservation-slots",
             queryItems: [URLQueryItem(name: "date", value: date)]
         )
-        let request = makeRequest(url: url, method: "GET")
-        let data = try await perform(request, reason: reason)
+        let request = makeRequest(url: url, method: "GET", requiresAuth: false)
+        let data = try await perform(request, reason: reason, requiresAuth: false)
 
-        do {
-            return try decoder.decode(ReservationSlotsResponseDTO.self, from: data)
-        } catch {
-            throw ReservationAPIError.decodingFailure(error)
-        }
+        return try decode(ReservationSlotsResponseDTO.self, from: data, request: request)
     }
 
     // MARK: - Blocked Slots
@@ -704,7 +700,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let request = makeRequest(url: url, method: "GET")
         let data = try await perform(request, reason: reason)
 
-        return try decodeRestaurantBlockedSlots(from: data, fallbackDate: date)
+        return try decodeRestaurantBlockedSlots(from: data, fallbackDate: date, request: request)
     }
 
     // Intent: Removes specific generated public slots from one service date.
@@ -715,8 +711,9 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         reason blockReason: String?,
         requestReason: ReservationAPIRequestReason = .restaurantBlockedSlotsCreate
     ) async throws -> RestaurantBlockedSlotsResponseDTO {
+        let url = try apiURL(path: "restaurant-blocked-slots")
         let request = try makeJSONRequest(
-            url: baseURL.appendingPathComponent("restaurant-blocked-slots"),
+            url: url,
             method: "POST",
             body: RestaurantBlockedSlotsCreateRequest(
                 date: date,
@@ -726,7 +723,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         )
         let data = try await perform(request, reason: requestReason)
 
-        return try decodeRestaurantBlockedSlots(from: data, fallbackDate: date)
+        return try decodeRestaurantBlockedSlots(from: data, fallbackDate: date, request: request)
     }
 
     // Intent: Restores specific public slots for one service date.
@@ -736,14 +733,15 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         slots: [String],
         reason: ReservationAPIRequestReason = .restaurantBlockedSlotsDelete
     ) async throws -> RestaurantBlockedSlotsResponseDTO {
+        let url = try apiURL(path: "restaurant-blocked-slots")
         let request = try makeJSONRequest(
-            url: baseURL.appendingPathComponent("restaurant-blocked-slots"),
+            url: url,
             method: "DELETE",
             body: RestaurantBlockedSlotsDeleteRequest(date: date, slots: slots)
         )
         let data = try await perform(request, reason: reason)
 
-        return try decodeRestaurantBlockedSlots(from: data, fallbackDate: date)
+        return try decodeRestaurantBlockedSlots(from: data, fallbackDate: date, request: request)
     }
 
     // Intent: Clears every blocked public slot for one service date.
@@ -759,7 +757,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let request = makeRequest(url: url, method: "DELETE")
         let data = try await perform(request, reason: reason)
 
-        return try decodeRestaurantBlockedSlots(from: data, fallbackDate: date)
+        return try decodeRestaurantBlockedSlots(from: data, fallbackDate: date, request: request)
     }
 
     // MARK: - Analytics
@@ -783,11 +781,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let request = makeRequest(url: url, method: "GET")
         let data = try await perform(request, reason: reason)
 
-        do {
-            return try decoder.decode(ReservationAnalyticsSummaryDTO.self, from: data)
-        } catch {
-            throw ReservationAPIError.decodingFailure(error)
-        }
+        return try decode(ReservationAnalyticsSummaryDTO.self, from: data, request: request)
     }
 
     // MARK: - Import Failure Diagnostics
@@ -809,50 +803,76 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let request = makeRequest(url: url, method: "GET")
         let data = try await perform(request, retryCount: 0, reason: reason)
 
-        do {
-            return try decoder.decode(ImportFailuresResponse.self, from: data)
-        } catch {
-            throw ReservationAPIError.decodingFailure(error)
-        }
+        return try decode(ImportFailuresResponse.self, from: data, request: request)
     }
 
     // MARK: - Request Helpers
 
-    private func managedReservationsURL() -> URL {
-        baseURL.appendingPathComponent("managed-reservations")
-    }
+    private func apiURL(path: String, queryItems: [URLQueryItem] = []) throws -> URL {
+        let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        var url = baseURL
+        for segment in trimmedPath.split(separator: "/") where !segment.isEmpty {
+            url = url.appendingPathComponent(String(segment))
+        }
 
-    private func makeURL(path: String, queryItems: [URLQueryItem] = []) throws -> URL {
-        var components = URLComponents(
-            url: baseURL.appendingPathComponent(path),
-            resolvingAgainstBaseURL: false
-        )
-        components?.queryItems = queryItems.isEmpty ? nil : queryItems
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw ReservationAPIError.invalidURL
+        }
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
 
-        guard let url = components?.url else {
+        guard let finalURL = components.url else {
             throw ReservationAPIError.invalidURL
         }
 
-        return url
+        return finalURL
+    }
+
+    private func makeURL(path: String, queryItems: [URLQueryItem] = []) throws -> URL {
+        try apiURL(path: path, queryItems: queryItems)
     }
 
     // Authorization header is attached here and never passed to sanitized logging output.
-    private func makeRequest(url: URL, method: String) -> URLRequest {
+    private func makeRequest(url: URL, method: String, requiresAuth: Bool = true) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(makeAuthHeader(), forHTTPHeaderField: "Authorization")
+        if requiresAuth {
+            request.setValue(makeAuthHeader(), forHTTPHeaderField: "Authorization")
+        }
         return request
     }
 
-    private func makeJSONRequest<T: Encodable>(url: URL, method: String, body: T) throws -> URLRequest {
-        var request = makeRequest(url: url, method: method)
+    private func makeJSONRequest<T: Encodable>(
+        url: URL,
+        method: String,
+        body: T,
+        requiresAuth: Bool = true
+    ) throws -> URLRequest {
+        var request = makeRequest(url: url, method: method, requiresAuth: requiresAuth)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(body)
         return request
     }
 
-    private func decodeRestaurantSetup(from data: Data) throws -> RestaurantSetupDTO {
+    private func decode<T: Decodable>(
+        _ type: T.Type,
+        from data: Data,
+        request: URLRequest
+    ) throws -> T {
+        do {
+            return try decoder.decode(type, from: data)
+        } catch {
+            let diagnostics = ReservationAPIDiagnostics.make(
+                request: request,
+                response: nil,
+                data: data,
+                decodingError: error
+            )
+            throw ReservationAPIError.decodingFailure(error, diagnostics: diagnostics)
+        }
+    }
+
+    private func decodeRestaurantSetup(from data: Data, request: URLRequest) throws -> RestaurantSetupDTO {
         do {
             if let envelope = try? decoder.decode(RestaurantSetupResponse.self, from: data),
                let setup = envelope.data {
@@ -861,11 +881,17 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
 
             return try decoder.decode(RestaurantSetupDTO.self, from: data)
         } catch {
-            throw ReservationAPIError.decodingFailure(error)
+            let diagnostics = ReservationAPIDiagnostics.make(
+                request: request,
+                response: nil,
+                data: data,
+                decodingError: error
+            )
+            throw ReservationAPIError.decodingFailure(error, diagnostics: diagnostics)
         }
     }
 
-    private func decodeRestaurantHours(from data: Data) throws -> RestaurantHoursDTO {
+    private func decodeRestaurantHours(from data: Data, request: URLRequest) throws -> RestaurantHoursDTO {
         do {
             if let envelope = try? decoder.decode(RestaurantHoursResponse.self, from: data),
                let hours = envelope.data {
@@ -874,11 +900,20 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
 
             return try decoder.decode(RestaurantHoursDTO.self, from: data)
         } catch {
-            throw ReservationAPIError.decodingFailure(error)
+            let diagnostics = ReservationAPIDiagnostics.make(
+                request: request,
+                response: nil,
+                data: data,
+                decodingError: error
+            )
+            throw ReservationAPIError.decodingFailure(error, diagnostics: diagnostics)
         }
     }
 
-    private func decodeRestaurantDayAvailability(from data: Data) throws -> RestaurantDayAvailabilityDTO {
+    private func decodeRestaurantDayAvailability(
+        from data: Data,
+        request: URLRequest
+    ) throws -> RestaurantDayAvailabilityDTO {
         do {
             if let envelope = try? decoder.decode(RestaurantDayAvailabilityResponse.self, from: data),
                let availability = envelope.data {
@@ -887,11 +922,21 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
 
             return try decoder.decode(RestaurantDayAvailabilityDTO.self, from: data)
         } catch {
-            throw ReservationAPIError.decodingFailure(error)
+            let diagnostics = ReservationAPIDiagnostics.make(
+                request: request,
+                response: nil,
+                data: data,
+                decodingError: error
+            )
+            throw ReservationAPIError.decodingFailure(error, diagnostics: diagnostics)
         }
     }
 
-    private func decodeRestaurantBlockedSlots(from data: Data, fallbackDate: String) throws -> RestaurantBlockedSlotsResponseDTO {
+    private func decodeRestaurantBlockedSlots(
+        from data: Data,
+        fallbackDate: String,
+        request: URLRequest
+    ) throws -> RestaurantBlockedSlotsResponseDTO {
         do {
             if let envelope = try? decoder.decode(RestaurantBlockedSlotsResponse.self, from: data),
                let blockedSlots = envelope.data {
@@ -904,7 +949,13 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
 
             return try decoder.decode(RestaurantBlockedSlotsResponseDTO.self, from: data)
         } catch {
-            throw ReservationAPIError.decodingFailure(error)
+            let diagnostics = ReservationAPIDiagnostics.make(
+                request: request,
+                response: nil,
+                data: data,
+                decodingError: error
+            )
+            throw ReservationAPIError.decodingFailure(error, diagnostics: diagnostics)
         }
     }
     
@@ -916,14 +967,25 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return "Basic \(base64LoginString)"
     }
 
+    private func ensureProtectedCredentials() throws {
+        guard hasConfiguredCredentials else {
+            throw ReservationAPIError.missingCredentials
+        }
+    }
+
     // MARK: - Network Execution
 
     // Intent: Performs one API request with bounded retry for transient network errors.
     private func perform(
         _ request: URLRequest,
         retryCount: Int = 0,
-        reason: ReservationAPIRequestReason = .unspecified
+        reason: ReservationAPIRequestReason = .unspecified,
+        requiresAuth: Bool = true
     ) async throws -> Data {
+        if requiresAuth {
+            try ensureProtectedCredentials()
+        }
+
         var attempt = 0
         var lastNetworkError: URLError?
         let startedAt = ReservationAPILogger.start(request: request, reason: reason)
@@ -934,7 +996,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         while attempt <= effectiveRetryCount {
             do {
                 let (data, response) = try await session.data(for: request)
-                try validate(response: response, data: data)
+                try validate(response: response, data: data, request: request)
                 ReservationAPILogger.end(
                     request: request,
                     reason: reason,
@@ -994,25 +1056,41 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
 
     // MARK: - Response Validation
 
-    private func validate(response: URLResponse, data: Data) throws {
+    private func validate(response: URLResponse, data: Data, request: URLRequest) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw ReservationAPIError.invalidResponse
+            throw ReservationAPIError.invalidResponse(
+                diagnostics: ReservationAPIDiagnostics.make(
+                    request: request,
+                    response: nil,
+                    data: data
+                )
+            )
         }
+
+        let diagnostics = ReservationAPIDiagnostics.make(
+            request: request,
+            response: httpResponse,
+            data: data
+        )
 
         switch httpResponse.statusCode {
         case 200...299:
             return
         case 401, 403:
-            throw ReservationAPIError.unauthorized
+            throw ReservationAPIError.unauthorized(diagnostics: diagnostics)
         default:
             if let apiError = try? JSONDecoder().decode(WordPressAPIError.self, from: data) {
                 throw ReservationAPIError.wordpressError(
                     code: apiError.code,
                     message: apiError.message,
-                    statusCode: httpResponse.statusCode
+                    statusCode: httpResponse.statusCode,
+                    diagnostics: diagnostics
                 )
             }
-            throw ReservationAPIError.serverError(statusCode: httpResponse.statusCode)
+            throw ReservationAPIError.serverError(
+                statusCode: httpResponse.statusCode,
+                diagnostics: diagnostics
+            )
         }
     }
 }

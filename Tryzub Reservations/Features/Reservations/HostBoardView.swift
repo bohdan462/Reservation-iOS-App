@@ -334,7 +334,7 @@ struct HostBoardView: View {
             todaySlots = loadedSlots
             todayBlockedSlots = loadedBlocked.data
         } catch {
-            availabilitySummaryError = "Availability summary unavailable."
+            availabilitySummaryError = error.localizedDescription
         }
     }
 }
@@ -567,7 +567,7 @@ private struct HomeAvailabilityIndicator: View {
     }
 
     private var sourceText: String {
-        switch availability?.source.lowercased() ?? slots?.source.lowercased() {
+        switch availability?.source.lowercased() ?? slots?.source?.lowercased() {
         case "special":
             return "Special override"
         case "weekly":

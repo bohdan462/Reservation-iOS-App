@@ -24,6 +24,8 @@ struct APIRequestLogEvent: Identifiable, Equatable {
     let error: String?
     let duration: String?
     let message: String?
+    let responseBodySnippet: String?
+    let decodingError: String?
 
     init(
         outcome: APIRequestLogOutcome,
@@ -34,6 +36,8 @@ struct APIRequestLogEvent: Identifiable, Equatable {
         error: String? = nil,
         duration: String? = nil,
         message: String? = nil,
+        responseBodySnippet: String? = nil,
+        decodingError: String? = nil,
         createdAt: Date = Date()
     ) {
         self.id = UUID()
@@ -46,6 +50,8 @@ struct APIRequestLogEvent: Identifiable, Equatable {
         self.error = error
         self.duration = duration
         self.message = message
+        self.responseBodySnippet = responseBodySnippet
+        self.decodingError = decodingError
     }
 }
 

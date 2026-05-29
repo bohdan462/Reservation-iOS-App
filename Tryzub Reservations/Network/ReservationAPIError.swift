@@ -7,15 +7,134 @@
 
 import Foundation
 
+struct ReservationAPIDiagnostics: Equatable {
+    let method: String
+    let pathAndQuery: String
+    let statusCode: Int?
+    let responseBodySnippet: String?
+    let decodingError: String?
+
+    init(
+        method: String,
+        pathAndQuery: String,
+        statusCode: Int? = nil,
+        responseBodySnippet: String? = nil,
+        decodingError: String? = nil
+    ) {
+        self.method = method
+        self.pathAndQuery = pathAndQuery
+        self.statusCode = statusCode
+        self.responseBodySnippet = responseBodySnippet
+        self.decodingError = decodingError
+    }
+
+    static func make(
+        request: URLRequest,
+        response: HTTPURLResponse?,
+        data: Data?,
+        decodingError: Error? = nil
+    ) -> ReservationAPIDiagnostics {
+        ReservationAPIDiagnostics(
+            method: request.httpMethod ?? "GET",
+            pathAndQuery: sanitizedPathAndQuery(for: request.url),
+            statusCode: response?.statusCode,
+            responseBodySnippet: sanitizedBodySnippet(from: data),
+            decodingError: decodingError.map { String($0.localizedDescription) }
+        )
+    }
+
+    func withDecodingError(_ error: Error) -> ReservationAPIDiagnostics {
+        ReservationAPIDiagnostics(
+            method: method,
+            pathAndQuery: pathAndQuery,
+            statusCode: statusCode,
+            responseBodySnippet: responseBodySnippet,
+            decodingError: error.localizedDescription
+        )
+    }
+
+    var developerSummary: String {
+        var parts = ["\(method) \(pathAndQuery)"]
+        if let statusCode {
+            parts.append("HTTP \(statusCode)")
+        }
+        if let responseBodySnippet, !responseBodySnippet.isEmpty {
+            parts.append("body=\(responseBodySnippet)")
+        }
+        if let decodingError, !decodingError.isEmpty {
+            parts.append("decode=\(decodingError)")
+        }
+        return parts.joined(separator: " | ")
+    }
+
+    private static func sanitizedPathAndQuery(for url: URL?) -> String {
+        guard let url else { return "<unknown>" }
+
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url.path
+        }
+
+        components.scheme = nil
+        components.host = nil
+        components.port = nil
+        components.user = nil
+        components.password = nil
+
+        components.queryItems = components.queryItems?.map { item in
+            if item.name.lowercased() == "search" {
+                return URLQueryItem(name: item.name, value: "<redacted>")
+            }
+            return item
+        }
+
+        let query = components.percentEncodedQuery.map { "?\($0)" } ?? ""
+        return "\(components.path)\(query)"
+    }
+
+    private static func sanitizedBodySnippet(from data: Data?) -> String? {
+        guard let data, !data.isEmpty else { return nil }
+
+        let raw = String(data: data.prefix(320), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let raw, !raw.isEmpty else { return "<non-text body>" }
+
+        let redacted = raw.replacingOccurrences(
+            of: #"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#,
+            with: "[email]",
+            options: [.regularExpression, .caseInsensitive]
+        )
+
+        if redacted.count <= 240 {
+            return redacted
+        }
+
+        return String(redacted.prefix(240)) + "…"
+    }
+}
+
 enum ReservationAPIError: Error, LocalizedError {
     case invalidURL
-    case invalidResponse
-    case unauthorized
+    case invalidResponse(diagnostics: ReservationAPIDiagnostics?)
+    case unauthorized(diagnostics: ReservationAPIDiagnostics?)
     case cancelled
     case networkFailure(URLError)
-    case serverError(statusCode: Int)
-    case wordpressError(code: String, message: String, statusCode: Int)
-    case decodingFailure(Error)
+    case serverError(statusCode: Int, diagnostics: ReservationAPIDiagnostics?)
+    case wordpressError(code: String, message: String, statusCode: Int, diagnostics: ReservationAPIDiagnostics?)
+    case decodingFailure(Error, diagnostics: ReservationAPIDiagnostics?)
+    case missingCredentials
+
+    var diagnostics: ReservationAPIDiagnostics? {
+        switch self {
+        case .invalidResponse(let diagnostics),
+             .unauthorized(let diagnostics),
+             .serverError(_, let diagnostics),
+             .wordpressError(_, _, _, let diagnostics),
+             .decodingFailure(_, let diagnostics):
+            return diagnostics
+        case .invalidURL, .cancelled, .networkFailure, .missingCredentials:
+            return nil
+        }
+    }
 
     var errorDescription: String? {
         switch self {
@@ -24,9 +143,11 @@ enum ReservationAPIError: Error, LocalizedError {
         case .invalidResponse:
             return "The reservation API returned an invalid response."
         case .unauthorized:
-            return "The WordPress username or application password was rejected."
+            return "WordPress credentials were rejected. Check the username and application password."
         case .cancelled:
             return "The reservation API request was cancelled."
+        case .missingCredentials:
+            return "WordPress credentials are missing. Add an application password before calling protected endpoints."
         case .networkFailure(let error):
             switch error.code {
             case .notConnectedToInternet:
@@ -38,13 +159,23 @@ enum ReservationAPIError: Error, LocalizedError {
             default:
                 return "Network error: \(error.localizedDescription)"
             }
-        case .serverError(let statusCode):
+        case .serverError(let statusCode, let diagnostics):
+            if statusCode == 404 {
+                if let path = diagnostics?.pathAndQuery {
+                    return "The reservation API route was not found (\(path))."
+                }
+                return "The reservation API route was not found (HTTP 404)."
+            }
             return "The reservation API returned HTTP \(statusCode)."
-        case .wordpressError(_, let message, _):
+        case .wordpressError(_, let message, _, _):
             return message
-        case .decodingFailure(let error):
-            return "Could not read the reservation response: \(error.localizedDescription)"
+        case .decodingFailure:
+            return "Could not read the reservation response. The server returned an unexpected shape."
         }
+    }
+
+    var developerDetail: String? {
+        diagnostics?.developerSummary
     }
 
     var logValue: String {
@@ -57,11 +188,13 @@ enum ReservationAPIError: Error, LocalizedError {
             return "unauthorized"
         case .cancelled:
             return "cancelled"
+        case .missingCredentials:
+            return "missing_credentials"
         case .networkFailure(let error):
             return "\(error.errorCode)"
-        case .serverError(let statusCode):
+        case .serverError(let statusCode, _):
             return "http_\(statusCode)"
-        case .wordpressError(let code, _, let statusCode):
+        case .wordpressError(let code, _, let statusCode, _):
             return "wordpress_\(code)_http_\(statusCode)"
         case .decodingFailure:
             return "decoding_failure"
@@ -70,6 +203,14 @@ enum ReservationAPIError: Error, LocalizedError {
 }
 
 extension Error {
+    var reservationAPIDiagnostics: ReservationAPIDiagnostics? {
+        (self as? ReservationAPIError)?.diagnostics
+    }
+
+    var reservationAPIDeveloperDetail: String? {
+        (self as? ReservationAPIError)?.developerDetail
+    }
+
     var isCancellationLike: Bool {
         if self is CancellationError {
             return true

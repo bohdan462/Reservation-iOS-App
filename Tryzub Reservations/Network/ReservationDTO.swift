@@ -704,9 +704,9 @@ struct ReservationSlotsResponseDTO: Codable, Equatable {
     let success: Bool
     let date: String
     let isOpen: Bool
-    let source: String
     let slots: [ReservationSlotDTO]
     let message: String?
+    let source: String?
 
     enum CodingKeys: String, CodingKey {
         case success
@@ -722,7 +722,7 @@ struct ReservationSlotsResponseDTO: Codable, Equatable {
         success = try container.decodeFlexibleBoolIfPresent(forKey: .success) ?? true
         date = try container.decodeIfPresent(String.self, forKey: .date) ?? ""
         isOpen = try container.decodeFlexibleBoolIfPresent(forKey: .isOpen) ?? false
-        source = try container.decodeIfPresent(String.self, forKey: .source) ?? "weekly"
+        source = try container.decodeIfPresent(String.self, forKey: .source)
         slots = try container.decodeIfPresent([ReservationSlotDTO].self, forKey: .slots) ?? []
         message = try container.decodeIfPresent(String.self, forKey: .message)
     }

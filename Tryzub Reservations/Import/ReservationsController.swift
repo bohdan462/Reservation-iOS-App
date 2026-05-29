@@ -491,16 +491,37 @@ final class ReservationsController: ObservableObject {
             restaurantSetup = setup
             return setup
         } catch {
+            if error.isCancellationLike {
+                throw error
+            }
+
             postNotice(
                 severity: .warning,
                 source: .admin,
-                title: "Restaurant setup unavailable",
-                message: "Using saved defaults until the setup endpoint responds.",
+                title: setupFailureTitle(for: error),
+                message: error.localizedDescription,
                 requestReason: .restaurantSetup,
-                errorCode: errorLogCode(error)
+                errorCode: errorLogCode(error),
+                developerDiagnostics: error.reservationAPIDeveloperDetail
             )
             throw error
         }
+    }
+
+    private func setupFailureTitle(for error: Error) -> String {
+        if let apiError = error as? ReservationAPIError {
+            switch apiError {
+            case .missingCredentials, .unauthorized:
+                return "Restaurant setup requires valid credentials"
+            case .decodingFailure:
+                return "Restaurant setup response could not be read"
+            case .serverError(let statusCode, _) where statusCode == 404:
+                return "Restaurant setup endpoint not found"
+            default:
+                return "Restaurant setup unavailable"
+            }
+        }
+        return "Restaurant setup unavailable"
     }
 
     // Intent: Saves manager-editable setup fields.
@@ -1154,6 +1175,38 @@ final class ReservationsController: ObservableObject {
             let summary: String
 
             switch test {
+            case .ping:
+                let response = try await environment.apiClient.ping(reason: .ping)
+                summary = response.message
+            case .restaurantSetup:
+                let setup = try await environment.apiClient.fetchRestaurantSetup(reason: .restaurantSetup)
+                summary = "\(setup.businessName), slot interval \(setup.slotIntervalMinutes) min"
+            case .restaurantHours:
+                let hours = try await environment.apiClient.fetchRestaurantHours(
+                    from: nil,
+                    to: nil,
+                    reason: .restaurantHours
+                )
+                summary = "\(hours.weeklyHours.count) weekly rows, \(hours.specialHours.count) special rows"
+            case .restaurantDayAvailability:
+                let availability = try await environment.apiClient.fetchRestaurantDayAvailability(
+                    date: Date.reservationDateString(),
+                    reason: .restaurantDayAvailability
+                )
+                summary = "\(availability.date) \(availability.isOpen ? "open" : "closed"), source \(availability.source)"
+            case .reservationSlots:
+                let slots = try await environment.apiClient.fetchReservationSlots(
+                    date: Date.reservationDateString(),
+                    reason: .reservationSlots
+                )
+                summary = "\(slots.slots.count) public slots, open=\(slots.isOpen)"
+            case .reservationAnalyticsSummary:
+                let analytics = try await environment.apiClient.fetchReservationAnalyticsSummary(
+                    from: nil,
+                    to: nil,
+                    reason: .reservationAnalyticsSummary
+                )
+                summary = "\(analytics.summary?.reservationsCount ?? 0) reservations in summary"
             case .startupToday:
                 let response = try await environment.apiClient.fetchReservations(
                     page: 1,
@@ -1265,7 +1318,13 @@ final class ReservationsController: ObservableObject {
                 summary: error.localizedDescription,
                 duration: Date().timeIntervalSince(startedAt)
             )
-            postNotice(severity: .warning, source: .admin, title: "\(test.title) failed", message: error.localizedDescription)
+            postNotice(
+                severity: .warning,
+                source: .admin,
+                title: "\(test.title) failed",
+                message: error.localizedDescription,
+                developerDiagnostics: error.reservationAPIDeveloperDetail
+            )
             return result
         }
     }
@@ -1401,9 +1460,10 @@ final class ReservationsController: ObservableObject {
             severity: mode.noticeSeverity,
             source: mode.noticeSource,
             title: mode.failureTitle,
-            message: mode.failureMessage,
+            message: error.localizedDescription,
             requestReason: mode.requestReason,
-            errorCode: errorLogCode(error)
+            errorCode: errorLogCode(error),
+            developerDiagnostics: error.reservationAPIDeveloperDetail
         )
     }
 
@@ -1423,7 +1483,8 @@ final class ReservationsController: ObservableObject {
         title: String,
         message: String? = nil,
         requestReason: ReservationAPIRequestReason? = nil,
-        errorCode: String? = nil
+        errorCode: String? = nil,
+        developerDiagnostics: String? = nil
     ) {
         let notice = AppNotice(
             severity: severity,
@@ -1431,7 +1492,8 @@ final class ReservationsController: ObservableObject {
             title: title,
             message: message,
             requestReason: requestReason,
-            errorCode: errorCode
+            errorCode: errorCode,
+            developerDiagnostics: capabilities.canViewDeveloperDiagnostics ? developerDiagnostics : nil
         )
         notices.insert(notice, at: 0)
         if notices.count > 20 {
@@ -1611,6 +1673,12 @@ private enum ReservationRefreshMode {
 }
 
 enum AdminFetchTest: String, CaseIterable, Identifiable {
+    case ping
+    case restaurantSetup
+    case restaurantHours
+    case restaurantDayAvailability
+    case reservationSlots
+    case reservationAnalyticsSummary
     case startupToday
     case manualToday
     case failureCount
@@ -1623,6 +1691,18 @@ enum AdminFetchTest: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .ping:
+            return "Test ping"
+        case .restaurantSetup:
+            return "Test restaurant_setup"
+        case .restaurantHours:
+            return "Test restaurant_hours"
+        case .restaurantDayAvailability:
+            return "Test restaurant_day_availability"
+        case .reservationSlots:
+            return "Test reservation_slots"
+        case .reservationAnalyticsSummary:
+            return "Test reservation_analytics_summary"
         case .startupToday:
             return "Test startup_today"
         case .manualToday:

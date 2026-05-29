@@ -68,3 +68,17 @@ struct ImportFailuresResponse: Codable {
     let totalPages: Int
     let data: [ImportFailureDTO]
 }
+
+struct PingResponseDTO: Decodable, Equatable {
+    let success: Bool
+    let message: String
+    let time: String?
+    let tableExists: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case success
+        case message
+        case time
+        case tableExists = "table_exists"
+    }
+}

@@ -151,6 +151,13 @@ struct NoticeDetailRow: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let developerDiagnostics = notice.developerDiagnostics, !developerDiagnostics.isEmpty {
+                Text(developerDiagnostics)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
             HStack(spacing: 8) {
                 Label(notice.source.rawValue, systemImage: "scope")
                 if let requestReason = notice.requestReason {

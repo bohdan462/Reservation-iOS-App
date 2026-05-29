@@ -1898,7 +1898,8 @@ private struct RestaurantSetupDraft: Equatable {
 }
 
 private struct WeeklyHourDraft: Identifiable, Equatable {
-    static let orderedWeekdays = [1, 2, 3, 4, 5, 6, 0]
+    // Backend convention: 0 = Monday through 6 = Sunday.
+    static let orderedWeekdays = [0, 1, 2, 3, 4, 5, 6]
 
     var weekday: Int
     var isOpen: Bool
@@ -1909,13 +1910,13 @@ private struct WeeklyHourDraft: Identifiable, Equatable {
 
     var dayName: String {
         switch weekday {
-        case 0: return "Sunday"
-        case 1: return "Monday"
-        case 2: return "Tuesday"
-        case 3: return "Wednesday"
-        case 4: return "Thursday"
-        case 5: return "Friday"
-        case 6: return "Saturday"
+        case 0: return "Monday"
+        case 1: return "Tuesday"
+        case 2: return "Wednesday"
+        case 3: return "Thursday"
+        case 4: return "Friday"
+        case 5: return "Saturday"
+        case 6: return "Sunday"
         default: return "Day \(weekday)"
         }
     }
@@ -1940,15 +1941,15 @@ private struct WeeklyHourDraft: Identifiable, Equatable {
 
     static func businessDefault(weekday: Int) -> WeeklyHourDraft {
         switch weekday {
-        case 1:
-            return WeeklyHourDraft(weekday: weekday, isOpen: false, openTime: "", closeTime: "")
-        case 2, 3, 4:
-            return WeeklyHourDraft(weekday: weekday, isOpen: true, openTime: "17:00", closeTime: "21:00")
-        case 5:
-            return WeeklyHourDraft(weekday: weekday, isOpen: true, openTime: "17:00", closeTime: "22:00")
-        case 6:
-            return WeeklyHourDraft(weekday: weekday, isOpen: true, openTime: "11:00", closeTime: "22:00")
         case 0:
+            return WeeklyHourDraft(weekday: weekday, isOpen: false, openTime: "", closeTime: "")
+        case 1, 2, 3:
+            return WeeklyHourDraft(weekday: weekday, isOpen: true, openTime: "17:00", closeTime: "21:00")
+        case 4:
+            return WeeklyHourDraft(weekday: weekday, isOpen: true, openTime: "17:00", closeTime: "22:00")
+        case 5:
+            return WeeklyHourDraft(weekday: weekday, isOpen: true, openTime: "11:00", closeTime: "22:00")
+        case 6:
             return WeeklyHourDraft(weekday: weekday, isOpen: true, openTime: "11:00", closeTime: "21:00")
         default:
             return WeeklyHourDraft(weekday: weekday, isOpen: false, openTime: "", closeTime: "")
