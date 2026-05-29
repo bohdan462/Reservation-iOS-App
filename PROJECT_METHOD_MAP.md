@@ -1,6 +1,15 @@
 # Tryzub Reservations Method Map
 
-This map focuses on methods that matter for app behavior, network calls, persistence, lifecycle triggers, and staff workflows. It intentionally calls out the biggest ambiguity: **`confirmReservation` currently means Confirm + Email**. Plain confirm without email is a PATCH status update to `confirmed`.
+This map focuses on methods that matter for app behavior, network calls, persistence, lifecycle triggers, and staff workflows.
+
+**Confirm semantics (current UI):**
+- **`ReservationHostAction.confirmOnly`** → `updateStatus(..., .confirmed)` → PATCH (no email). UI label: **Confirm Only**.
+- **`ReservationHostAction.confirmAndSendEmail`** → `confirmReservation` → POST `/confirm`. UI label: **Confirm + Email**.
+- **`createAcceptedManualReservation`** → POST with `status=confirmed` (Home manual add; no email).
+
+**Module layout:** `Import/ReservationsController.swift` (workflow), `Features/Reservations/` (UI shell), `Features/GuestInsights/` (cache-only analytics), `RestaurantSettingsStore.swift` (setup/hours/slots), `Network/ReservationsAPIClient.swift` (REST).
+
+---
 
 ## ReservationsController
 
@@ -51,7 +60,7 @@ Is the name clear? Not ideal. Suggested later name: `refreshToday`.
 
 Method: `requestManualTodayRefresh(context:source:)`
 File: `Tryzub Reservations/Import/ReservationsController.swift`
-Who calls this? `TodayDashboardView.refreshable`, Today toolbar refresh, `refreshDashboard`.
+Who calls this? `HomeDashboardView.refreshable`, Home toolbar refresh, `refreshDashboard`.
 What user/business action does it represent? Staff manually refreshes Today.
 Is it public workflow, private helper, API operation, persistence operation, or UI helper? Public workflow.
 Does it trigger network? Yes, if guards allow.
@@ -161,7 +170,7 @@ Is the name clear? Yes.
 
 Method: `save(_:context:)`
 File: `Tryzub Reservations/Import/ReservationsController.swift`
-Who calls this? `TodayDashboardView` and `ReservationMoreView` pass it as `onCreated` after failed-import manual create.
+Who calls this? `HomeDashboardView` and `ReservationMoreView` pass it as `onCreated` after failed-import manual create.
 What user/business action does it represent? Local cache save for a DTO already returned by server.
 Is it public workflow, private helper, API operation, persistence operation, or UI helper? Persistence/cache helper.
 Does it trigger network? No.
@@ -194,7 +203,7 @@ Is the name clear? Yes.
 
 Method: `updateReservation(id:request:context:)`
 File: `Tryzub Reservations/Import/ReservationsController.swift`
-Who calls this? `ReservationDetailView`, `ReservationEditView` closure, `TableAssignmentSheet` closures, `updateStatus`.
+Who calls this? `ManualReservationFormView` (Home create), `ReservationEditFormView` closure, `TableAssignmentSheet` closures, `updateStatus`, hide/restore flows.
 What user/business action does it represent? Staff updates reservation fields on the server.
 Is it public workflow, private helper, API operation, persistence operation, or UI helper? Public workflow/mutation.
 Does it trigger network? Yes.
@@ -215,23 +224,104 @@ What backend endpoint does it eventually use? `PATCH /managed-reservations/{id}`
 Is the name clear? Yes.
 
 Important special case:
-- Calling `updateStatus(..., status: .confirmed)` is the correct backend shape for **Confirm without Email**.
-- The current visible primary confirm UI does not use this path.
+- Calling `updateStatus(..., status: .confirmed)` is **Confirm Only** (PATCH, no email).
+- The primary confirm UI uses this path via `ReservationHostAction.confirmOnly`.
+
+Method: `createAcceptedManualReservation(_:context:)`
+File: `Tryzub Reservations/Import/ReservationsController.swift`
+Who calls this? `HomeDashboardView` manual create closure (accepted call-in reservations).
+What user/business action does it represent? Staff adds a manual reservation already marked confirmed.
+Is it public workflow, private helper, API operation, persistence operation, or UI helper? Public workflow/mutation.
+Does it trigger network? Yes.
+Does it write SwiftData? Yes, indirectly.
+Does it mutate controller/UI state? Yes: `isCreatingReservation`, errors, notices, scope freshness.
+What backend endpoint does it eventually use? `POST /managed-reservations` with `status=confirmed`.
+Is the name clear? Yes.
 
 Method: `confirmReservation(reservation:context:)`
 File: `Tryzub Reservations/Import/ReservationsController.swift`
-Who calls this? `ReservationNavigationRow`, `HostBoardView`, `ReservationDetailView`.
+Who calls this? Row/detail/host board when staff chooses **Confirm + Email**.
 What user/business action does it represent? Confirm reservation and send/attempt confirmation email.
-Is it public workflow, private helper, API operation, persistence operation, or UI helper? Public workflow/mutation.
 Does it trigger network? Yes.
 Does it write SwiftData? Yes, indirectly.
 Does it mutate controller/UI state? Yes: action IDs, errors, notices, scope freshness.
 What backend endpoint does it eventually use? `POST /managed-reservations/{id}/confirm`.
 Is the name clear? No. Suggested later name: `confirmReservationAndSendEmail`.
 
-Critical ambiguity:
-- This method does **not** mean "mark confirmed without email".
-- It posts to the backend confirm endpoint and the backend sends/attempts email.
+Critical note:
+- Use **`confirmOnly`** / `updateStatus(..., .confirmed)` for PATCH confirm without email.
+- This method is only for **Confirm + Email**.
+
+Method: `loadHiddenReservations(context:)`
+File: `Tryzub Reservations/Import/ReservationsController.swift`
+Who calls this? Hidden Reservations screen refresh.
+What user/business action does it represent? Load backend-hidden rows for archive view.
+Is it public workflow, private helper, API operation, persistence operation, or UI helper? Public workflow/API fetch wrapper.
+Does it trigger network? Yes.
+Does it write SwiftData? Yes, upserts returned rows.
+Does it mutate controller/UI state? No directly.
+What backend endpoint does it eventually use? `GET /managed-reservations?include_hidden=1`.
+Is the name clear? Yes.
+
+Method: `hideWrongEntry(reservation:reason:context:)`
+File: `Tryzub Reservations/Import/ReservationsController.swift`
+Who calls this? `ReservationDetailView`, `ReservationEditFormView`.
+What user/business action does it represent? Soft-hide test/duplicate manual entry.
+Is it public workflow, private helper, API operation, persistence operation, or UI helper? Public workflow/mutation.
+Does it trigger network? Yes.
+Does it write SwiftData? Yes, indirectly.
+Does it mutate controller/UI state? Yes: action IDs, errors, notices, scope freshness.
+What backend endpoint does it eventually use? `PATCH /managed-reservations/{id}` with `is_hidden=true`.
+Is the name clear? Yes.
+
+Method: `restoreHiddenReservation(reservation:context:)`
+File: `Tryzub Reservations/Import/ReservationsController.swift`
+Who calls this? Hidden Reservations restore action.
+What user/business action does it represent? Unhide a previously hidden reservation.
+Is it public workflow, private helper, API operation, persistence operation, or UI helper? Public workflow/mutation.
+Does it trigger network? Yes.
+Does it write SwiftData? Yes, indirectly.
+Does it mutate controller/UI state? Yes: action IDs, errors, notices, scope freshness.
+What backend endpoint does it eventually use? `PATCH /managed-reservations/{id}` with `is_hidden=false`.
+Is the name clear? Yes.
+
+Method: `loadRestaurantSetup(context:)`
+File: `Tryzub Reservations/Import/ReservationsController.swift`
+Who calls this? `RestaurantSettingsStore`, diagnostics tests.
+What user/business action does it represent? Fetch restaurant setup config.
+Is it public workflow, private helper, API operation, persistence operation, or UI helper? API fetch wrapper.
+Does it trigger network? Yes.
+Does it write SwiftData? No.
+Does it mutate controller/UI state? No directly.
+What backend endpoint does it eventually use? `GET /restaurant-setup`.
+Is the name clear? Yes.
+
+Method: `updateRestaurantSetup(request:)`
+File: `Tryzub Reservations/Import/ReservationsController.swift`
+Who calls this? `RestaurantSettingsStore.saveRestaurantSetup`.
+What user/business action does it represent? Staff saves setup changes.
+Does it trigger network? Yes.
+What backend endpoint does it eventually use? `PATCH /restaurant-setup`.
+
+Method: `loadRestaurantHours(from:to:)` / `updateRestaurantHours(request:)`
+File: `Tryzub Reservations/Import/ReservationsController.swift`
+Who calls this? `RestaurantSettingsStore` weekly hours views.
+What backend endpoint does it eventually use? `GET/PATCH /restaurant-hours`.
+
+Method: `loadRestaurantDayAvailability(date:)` / `updateRestaurantDayAvailability(date:request:)`
+File: `Tryzub Reservations/Import/ReservationsController.swift`
+Who calls this? `RestaurantSettingsStore`, Home availability.
+What backend endpoint does it eventually use? `GET/PATCH /restaurant-day-availability?date=`.
+
+Method: `loadReservationSlots(date:)`
+File: `Tryzub Reservations/Import/ReservationsController.swift`
+Who calls this? Forms, settings, diagnostics.
+What backend endpoint does it eventually use? `GET /reservation-slots?date=` (public, no auth).
+
+Method: `loadRestaurantBlockedSlots(date:)` / `loadReservationAnalyticsSummary(from:to:)`
+File: `Tryzub Reservations/Import/ReservationsController.swift`
+Who calls this? `RestaurantSettingsStore`, diagnostics.
+What backend endpoint does it eventually use? `GET /restaurant-blocked-slots`, `GET /reservation-analytics/summary`.
 
 Method: `refreshImportFailureCount(reason:)`
 File: `Tryzub Reservations/Import/ReservationsController.swift`
@@ -340,7 +430,7 @@ Is it public workflow, private helper, API operation, persistence operation, or 
 Does it trigger network? Yes.
 Does it write SwiftData? No.
 Does it mutate controller/UI state? Yes: notices only.
-What backend endpoint does it eventually use? GET-only: `/managed-reservations`, `/managed-reservations/{id}`, `/managed-reservations/import-failures`.
+What backend endpoint does it eventually use? GET-only: `/ping`, `/restaurant-setup`, `/restaurant-hours`, `/restaurant-day-availability`, `/reservation-slots`, `/reservation-analytics/summary`, `/managed-reservations`, `/managed-reservations/{id}`, `/managed-reservations/import-failures`.
 Is the name clear? Yes.
 
 Method: `todayScope()`
@@ -884,7 +974,7 @@ Does it mutate controller/UI state? No.
 What backend endpoint does it eventually use? None.
 Is the name clear? Yes.
 
-### TodayDashboardView
+### HomeDashboardView
 
 Method: `todayReservations`
 File: `Tryzub Reservations/Features/Reservations/ReservationsListView.swift`
@@ -900,7 +990,7 @@ Is the name clear? Yes.
 Method: `body`
 File: `Tryzub Reservations/Features/Reservations/ReservationsListView.swift`
 Who calls this? SwiftUI.
-What user/business action does it represent? Today tab, manual create, failed imports, manual refresh.
+What user/business action does it represent? Home tab, manual create, failed imports, manual refresh.
 Is it public workflow, private helper, API operation, persistence operation, or UI helper? UI composition/workflow trigger.
 Does it trigger network? Yes, through refresh/create/import-failure actions.
 Does it write SwiftData? Indirectly through controller create/refresh/save.
@@ -1037,8 +1127,9 @@ Does it mutate controller/UI state? Yes.
 What backend endpoint does it eventually use? `POST /managed-reservations/{id}/confirm` for confirm; `PATCH /managed-reservations/{id}` for seat/cancel/complete/no-show/table.
 Is the name clear? Yes.
 
-Confirm ambiguity:
-- `.confirm` calls `controller.confirmReservation`, so it sends/attempts email.
+Confirm routing:
+- `.confirmOnly` → `updateStatus(..., .confirmed)` (PATCH, no email).
+- `.confirmAndSendEmail` → `confirmReservation` (POST `/confirm`).
 
 ### HostBoardView
 
@@ -1097,8 +1188,9 @@ Does it mutate controller/UI state? Yes.
 What backend endpoint does it eventually use? `POST /managed-reservations/{id}/confirm` for confirm; `PATCH /managed-reservations/{id}` for status/table.
 Is the name clear? Yes.
 
-Confirm ambiguity:
-- `.confirm` calls `controller.confirmReservation`, so it sends/attempts email.
+Confirm routing:
+- `.confirmOnly` → `updateStatus(..., .confirmed)` (PATCH, no email).
+- `.confirmAndSendEmail` → `confirmReservation` (POST `/confirm`).
 
 Method: `runAutoRefreshLoop()`
 File: `Tryzub Reservations/Features/Reservations/HostBoardView.swift`
@@ -1205,8 +1297,9 @@ Does it mutate controller/UI state? Mutates local `pendingInlineAction`.
 What backend endpoint does it eventually use? Depends on parent action handling.
 Is the name clear? Yes.
 
-Confirm ambiguity:
-- The inline label can show "Send email?", but the compact/default action still often says "Confirm".
+Confirm routing:
+- **Confirm Only** and **Confirm + Email** are separate actions with distinct dialogs.
+- Inline compact buttons may show both when status is `new` or `needs_review`.
 
 Method: `TableAssignmentSheet.save()`
 File: `Tryzub Reservations/Features/Reservations/ReservationActionButtons.swift`
@@ -1265,47 +1358,38 @@ Does it mutate controller/UI state? Yes: local saving/action state and controlle
 What backend endpoint does it eventually use? `POST /managed-reservations/{id}/confirm` for confirm; `PATCH /managed-reservations/{id}` for status/table.
 Is the name clear? Yes.
 
-Confirm ambiguity:
-- `.confirm` calls `controller.confirmReservation`, so it sends/attempts email.
+Confirm routing:
+- `.confirmOnly` → `updateStatus(..., .confirmed)` (PATCH, no email).
+- `.confirmAndSendEmail` → `confirmReservation` (POST `/confirm`).
 
-Method: `ReservationEditView.init(reservation:onSave:)`
-File: `Tryzub Reservations/Features/Reservations/ReservationDetailView.swift`
+### ReservationEditFormView
+
+Method: `init(reservation:onSave:onHide:)`
+File: `Tryzub Reservations/Features/Reservations/ManualReservationFormView.swift`
 Who calls this? `ReservationDetailView` edit sheet.
-What user/business action does it represent? Seed edit form from current record.
+What user/business action does it represent? Seed edit form from current record; wire save and hide callbacks.
 Is it public workflow, private helper, API operation, persistence operation, or UI helper? UI setup.
-Does it trigger network? No.
-Does it write SwiftData? No.
+Does it trigger network? No directly.
+Does it write SwiftData? No directly.
 Does it mutate controller/UI state? Mutates local form state.
-What backend endpoint does it eventually use? None.
+What backend endpoint does it eventually use? Save → PATCH; Hide → PATCH `is_hidden=true`.
 Is the name clear? Yes.
 
-Method: `ReservationEditView.save()`
-File: `Tryzub Reservations/Features/Reservations/ReservationDetailView.swift`
-Who calls this? Edit sheet Save toolbar button.
-What user/business action does it represent? Staff saves edited reservation fields.
+Method: `save()` / save confirmation flow
+File: `Tryzub Reservations/Features/Reservations/ManualReservationFormView.swift`
+Who calls this? Edit form Save toolbar button.
+What user/business action does it represent? Staff reviews old → new field diff, then PATCHes if changed.
 Is it public workflow, private helper, API operation, persistence operation, or UI helper? UI workflow helper.
-Does it trigger network? Yes, through `onSave`.
+Does it trigger network? Yes, through `onSave` after confirmation.
 Does it write SwiftData? Indirectly through controller.
-Does it mutate controller/UI state? Yes: local saving/error state and controller state through closure.
 What backend endpoint does it eventually use? `PATCH /managed-reservations/{id}`.
 Is the name clear? Yes.
 
-Method: `ReservationEditView.parseDate`, `parseTime`, `formatDate`, `formatTime`
-File: `Tryzub Reservations/Features/Reservations/ReservationDetailView.swift`
-Who calls this? `ReservationEditView`.
-What user/business action does it represent? Convert form Date values to backend strings and back.
-Is it public workflow, private helper, API operation, persistence operation, or UI helper? UI/data formatting helper.
-Does it trigger network? No.
-Does it write SwiftData? No.
-Does it mutate controller/UI state? No.
-What backend endpoint does it eventually use? None, but output is sent to PATCH.
-Is the name clear? Yes.
-
-### ManualReservationFormView
+Shared with create: `ReservationFormContent`, `ReservationFormDraft`, slot loading via `RestaurantSettingsStore.ensureDateOperations`.
 
 Method: `init(failure:onCreateReservation:)`
 File: `Tryzub Reservations/Features/Reservations/ManualReservationFormView.swift`
-Who calls this? Today, Schedule, More, ImportFailureDetail.
+Who calls this? Home, Schedule, More, ImportFailureDetail.
 What user/business action does it represent? Seed manual reservation form, optionally from a failed import.
 Is it public workflow, private helper, API operation, persistence operation, or UI helper? UI setup.
 Does it trigger network? No.
@@ -1317,9 +1401,9 @@ Is the name clear? Yes.
 Method: `body`
 File: `Tryzub Reservations/Features/Reservations/ManualReservationFormView.swift`
 Who calls this? SwiftUI.
-What user/business action does it represent? Manual create form.
+What user/business action does it represent? Manual create form with review confirmation before POST.
 Is it public workflow, private helper, API operation, persistence operation, or UI helper? UI composition/workflow trigger.
-Does it trigger network? Yes, through Save button calling `createReservation`.
+Does it trigger network? Yes, through Save → confirmation alert → `createAcceptedManualReservation` or `createReservation`.
 Does it write SwiftData? Indirectly through controller.
 Does it mutate controller/UI state? Yes: local form/saving/error state and controller state through closure.
 What backend endpoint does it eventually use? `POST /managed-reservations`.
@@ -1469,7 +1553,7 @@ Is the name clear? Yes.
 
 Method: `ReservationRecord.sortedChronologically`, `sortedForHostBoard`, `sortedNewestFirst`, `sortedByCreatedAtAscending`, `dateSections`
 File: `Tryzub Reservations/Features/Reservations/ReservationPresentation.swift`
-Who calls this? Today, Schedule, Review, HostBoard.
+Who calls this? Home, Schedule, Review, HostBoard.
 What user/business action does it represent? Restaurant-facing row ordering/grouping.
 Is it public workflow, private helper, API operation, persistence operation, or UI helper? UI/business helper.
 Does it trigger network? No.
@@ -1477,3 +1561,37 @@ Does it write SwiftData? No.
 Does it mutate controller/UI state? No.
 What backend endpoint does it eventually use? None.
 Is the name clear? Yes.
+
+## RestaurantSettingsStore
+
+File: `Tryzub Reservations/Features/Reservations/RestaurantSettingsStore.swift`
+
+Central store for restaurant configuration UI and date-scoped slot/availability loading. Delegates network calls to `ReservationsController` / `ReservationsAPIClient`.
+
+Key methods:
+- `loadInitialSettings()` — bootstrap setup on More → Settings open.
+- `loadRestaurantSetup()` / `saveRestaurantSetup()` — GET/PATCH setup.
+- `loadRestaurantHours()` / `saveRestaurantHours()` — weekly hours.
+- `loadDayAvailability(date:)` / `saveDayAvailability(date:)` — per-day overrides.
+- `loadReservationSlots(date:)` — slot preview for forms and blocked-slots UI.
+- `loadBlockedSlots(date:)` / `blockSlots` / `unblockSlots` / `unblockAllSlots` — blocked time management.
+- `ensureDateOperations(date:force:)` — owns slot + availability load lifecycle (prevents stuck spinners on date change).
+- `loadReservationAnalyticsSummary(from:to:)` — business analytics chart data.
+- `suggestedServiceDates`, `suggestedTimes`, `defaultServiceSlot` — form defaults.
+
+Embedded views: `RestaurantSettingsView`, `WeeklyHoursView`, `TodayAvailabilityView`, `BlockedTimeSlotsView`, `BusinessAnalyticsView`.
+
+## GuestInsights (read-only, cache-only)
+
+Files: `Tryzub Reservations/Features/GuestInsights/`
+
+No network calls. Derives guest memory from cached `ReservationRecord` rows.
+
+Key types:
+- `GuestInsightsController` — builds insights for a guest identity.
+- `GuestIdentityResolver` — matches phone/email/name across reservations.
+- `GuestReservationIntentDeduper` — dedupes repeat booking intents.
+- `RegularGuestsController` / `RegularGuestsView` — More → Guest Memory list.
+- `GuestInsightsView` — detail preview card + full insights (Swift Charts preferences, visit history, warnings).
+
+Entry points: More → Guest Memory; reservation Detail → guest insights preview card.

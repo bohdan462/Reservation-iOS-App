@@ -1,6 +1,126 @@
 # Tryzub Reservations Project Map
 
-This is a one-restaurant internal iOS app. The WordPress plugin REST API is the source of truth. SwiftData is a local cache. The app should read managed reservations, create manual reservations, PATCH staff updates, and call the confirm endpoint only when staff intentionally want the backend confirmation email flow. The iOS app must not call `POST /managed-reservations/import` during normal workflow.
+This is a one-restaurant internal iOS app. The WordPress plugin REST API is the source of truth. SwiftData is a local cache. The app reads managed reservations, creates manual reservations, PATCHes staff updates, confirms with or without email, soft-hides test/duplicate rows, and manages restaurant setup/hours/slots through protected endpoints. The iOS app must not call `POST /managed-reservations/import` during normal workflow.
+
+**REST base:** `https://tryzubchicago.com/wp-json/tryzub/v1`
+
+---
+
+## 0. Current App Structure (2026)
+
+### Source tree
+
+```
+Tryzub Reservations/
+├── Tryzub_ReservationsApp.swift       # Entry, credentials gate, SwiftData container
+├── App/
+│   ├── AppCredentials.swift           # AppCredentialStore (env + Keychain)
+│   ├── AppEnvironment.swift           # apiClient, role, AppCapabilities
+│   └── AppNotice.swift
+├── Core/Roles/AppUserRole.swift       # staff | manager | developer
+├── Features/
+│   ├── GuestInsights/                 # Read-only guest memory (6 files)
+│   │   ├── GuestInsightsController.swift
+│   │   ├── GuestInsightsModels.swift
+│   │   ├── GuestInsightsView.swift    # Swift Charts preferences
+│   │   ├── GuestIdentityResolver.swift
+│   │   ├── GuestReservationIntentDeduper.swift
+│   │   ├── RegularGuestsController.swift
+│   │   └── RegularGuestsView.swift    # More → Guest Memory
+│   └── Reservations/                  # Main UI (18 files)
+│       ├── ReservationsListView.swift # Tab shell: Home · List · Review · More
+│       ├── HostBoardView.swift        # Home service dashboard + ServiceLoadChart
+│       ├── ReservationDetailView.swift
+│       ├── ManualReservationFormView.swift  # Create + ReservationEditFormView
+│       ├── ReservationRowView.swift
+│       ├── ReservationSharedUI.swift  # Design tokens, charts, shared components
+│       ├── ReservationActionButtons.swift
+│       ├── ReservationPresentation.swift
+│       ├── RestaurantSettingsStore.swift    # Setup, hours, availability, blocked slots, analytics
+│       ├── DeveloperDiagnosticsView.swift
+│       ├── ImportFailuresView.swift
+│       ├── ReservationFloatingTabBar.swift
+│       ├── HiddenReservationsStore.swift
+│       └── …
+├── Import/
+│   ├── ReservationsController.swift   # Workflow coordinator
+│   └── ReservationImportService.swift # ReservationSyncService (file name is legacy)
+├── Network/
+│   ├── ReservationsAPIClient.swift
+│   ├── ReservationDTO.swift
+│   ├── ReservationsResponse.swift
+│   ├── ReservationAPIError.swift      # ReservationAPIDiagnostics
+│   └── APIRequestLogStore.swift
+├── Persistence/ReservationRecord.swift
+├── Preview/ReservationPreviewData.swift
+└── Services/
+    ├── ReservationRepository.swift
+    ├── ReservationMutationService.swift
+    └── ImportFailureService.swift
+```
+
+### Tab shell — `ReservationsListView`
+
+| Tab | Label | Primary view | Notes |
+| --- | --- | --- | --- |
+| `.home` | Home | `HomeDashboardView` → `HostBoardView` | Date picker, stats + chart, seated/upcoming lists |
+| `.schedule` | List | `ReservationScheduleView` | Upcoming window or paginated All + search |
+| `.review` | Review | `ReservationReviewQueueView` | Default **Pending** = `new` + `needs_review`, oldest first |
+| `.more` | More | `ReservationMoreView` | Settings, analytics, guest memory, diagnostics |
+
+All four tabs stay **mounted** (opacity / hit-testing toggle) to avoid tab-switch lag.
+
+### Key screens
+
+| Screen | File | Purpose |
+| --- | --- | --- |
+| Home dashboard | `HostBoardView.swift` | Service stats, guests-by-time chart, seated + reservation previews |
+| Detail | `ReservationDetailView.swift` | Layered cards: hero, actions, contact, notes, metadata, service load, guest insights |
+| Edit | `ManualReservationFormView.swift` | `ReservationEditFormView` — save diff confirmation, hide button |
+| New manual | `ManualReservationFormView.swift` | Create with review confirmation before POST |
+| Guest insights | `GuestInsightsView.swift` | Preferences charts, history, warnings (cache only) |
+| Restaurant settings | `RestaurantSettingsStore.swift` | Setup, weekly hours, today availability, blocked slots |
+| Business analytics | `RestaurantSettingsStore.swift` | `GET /reservation-analytics/summary` |
+| Developer diagnostics | `DeveloperDiagnosticsView.swift` | Full API log, endpoint checklist, safe GET tests |
+| Hidden reservations | `ReservationsListView.swift` | Archive of soft-hidden rows |
+
+### Shared UI — `ReservationSharedUI.swift`
+
+- **Tokens:** `TryzubColors`, `TryzubTypography`, `TryzubSpacing`, `ReservationLayout`, `ReservationUIStyle`
+- **Charts (Swift Charts):** `ServiceLoadChart`, `ServiceTimeline` / `ServiceTimelineSlot`
+- **Components:** `TryzubSectionCard`, `ReservationServiceCard`, `ReservationChoiceChip`, `BottomSafeActionBar`, `ReservationFormChangeReview`
+- **Slot grids:** `ReservationSlotGridStyle` — consistent chip spacing app-wide
+
+### Confirm semantics (staff actions)
+
+| UI action | Controller / API | Email |
+| --- | --- | --- |
+| **Confirm Only** | `updateStatus(.confirmed)` → PATCH | No |
+| **Confirm + Email** | `confirmReservation` → POST `/confirm` | Yes (backend) |
+| Manual add (Home) | `createAcceptedManualReservation` → POST | No |
+
+### Hide reservation
+
+- PATCH `is_hidden=true` via `hideWrongEntry` / `restoreHiddenReservation`
+- `HiddenReservationsStore` filters lists; **More → Hidden Reservations** for archive
+- Available in Detail (More menu) and Edit form (Hide button)
+
+### Restaurant API endpoints (protected unless noted)
+
+| Method | Path | Used by |
+| --- | --- | --- |
+| GET | `/ping` | Diagnostics (no auth) |
+| GET/PATCH | `/restaurant-setup` | Controller, settings |
+| GET/PATCH | `/restaurant-hours` | Settings |
+| GET/PATCH | `/restaurant-day-availability?date=` | Settings, Home availability |
+| GET | `/reservation-slots?date=` | Public; forms + settings preview (no auth) |
+| GET/POST/DELETE | `/restaurant-blocked-slots` | Settings |
+| GET | `/reservation-analytics/summary` | Business analytics |
+| GET/PATCH/POST | `/managed-reservations` … | Controller (reservations CRUD) |
+| POST | `/managed-reservations/{id}/confirm` | Confirm + email only |
+| GET | `/managed-reservations/import-failures` | Import failures |
+
+---
 
 ## 1. App Startup / Dependency Setup
 
@@ -111,13 +231,13 @@ Direct services/API/repositories:
 Audience:
 - Restaurant-facing shell.
 
-### TodayDashboardView
+### TodayDashboardView → HomeDashboardView
 
-File: `Tryzub Reservations/Features/Reservations/ReservationsListView.swift`
+File: `Tryzub Reservations/Features/Reservations/ReservationsListView.swift` (`HomeDashboardView`)
 
 Purpose:
-- Today tab container.
-- Queries cached reservations and passes today's rows to `HostBoardView`.
+- Home tab container.
+- Queries cached reservations for the selected service date and passes rows to `HostBoardView`.
 - Presents manual reservation and failed import sheets.
 
 Data read:
@@ -357,30 +477,28 @@ Direct services/API/repositories:
 Audience:
 - Restaurant-facing, but `ReservationOperationalCard` is developer/sync info and should probably be hidden outside manager/developer modes before staff pilot.
 
-### ReservationEditView
+### ReservationEditFormView
 
-File: `Tryzub Reservations/Features/Reservations/ReservationDetailView.swift`
+File: `Tryzub Reservations/Features/Reservations/ManualReservationFormView.swift`
 
 Purpose:
-- Edit form for reservation fields.
+- Edit form for reservation fields (shared `ReservationFormContent` with create).
+- Save shows old → new diff confirmation before PATCH.
+- Hide button for test/duplicate rows (soft-hide via backend).
 
 Data read:
-- Copies current `ReservationRecord` fields into `@State` at init.
+- `ReservationFormDraft` initialized from `ReservationRecord`; `originalDraft` for diff.
 
 Controller calls:
-- Indirect through `onSave`, provided by `ReservationDetailView`.
+- Indirect through `onSave` → `updateReservation`
+- `hideWrongEntry` for soft-hide
 
 Lifecycle / triggers:
-- Save toolbar button calls `save()`.
-
-Direct services/API/repositories:
-- None.
+- Save button → diff confirmation → PATCH.
+- Back navigation only (no duplicate Cancel toolbar on edit).
 
 Audience:
-- Restaurant-facing for managers/staff who can edit.
-
-Risk:
-- Uses `@State` copies initialized once. If the record changes while the sheet is open, the form does not automatically pick up the new server state.
+- Restaurant-facing for staff who can edit.
 
 ### ManualReservationFormView
 
@@ -436,16 +554,16 @@ Audience:
 - Restaurant-facing.
 
 Critical naming note:
-- `ReservationHostAction.confirm.fullTitle` is "Confirm and Send Email".
-- `ReservationHostAction.confirm.shortTitle` is "Confirm".
-- The action calls the controller's confirm-email endpoint flow, not a plain status PATCH.
+- `ReservationHostAction.confirmOnly` → PATCH `status=confirmed` (no email).
+- `ReservationHostAction.confirmAndSendEmail` → POST `/managed-reservations/{id}/confirm`.
+- UI labels: **Confirm Only** / **Confirm + Email**.
 
 ### TableAssignmentSheet
 
 File: `Tryzub Reservations/Features/Reservations/ReservationActionButtons.swift`
 
 Purpose:
-- Assign/update table name.
+- Assign/update table name via bottom sheet (not popover).
 
 Data read:
 - Local `tableName` state initialized from `ReservationRecord`.
@@ -454,7 +572,7 @@ Controller calls:
 - Indirect through `onSave`.
 
 Lifecycle / triggers:
-- Save toolbar button.
+- Toolbar Save in sheet navigation bar.
 
 Direct services/API/repositories:
 - None.

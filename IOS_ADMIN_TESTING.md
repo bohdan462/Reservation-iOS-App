@@ -16,8 +16,17 @@ The screen is shown only when the app role has `canViewDeveloperDiagnostics`.
 
 ## 3. Safe Tests
 
-The screen includes safe GET tests:
+The screen includes safe GET tests (via `AdminFetchTest`):
 
+**Restaurant / public endpoints**
+- Test `ping` — `GET /ping` (no auth)
+- Test `restaurant_setup` — `GET /restaurant-setup`
+- Test `restaurant_hours` — `GET /restaurant-hours`
+- Test `restaurant_day_availability` — `GET /restaurant-day-availability`
+- Test `reservation_slots` — `GET /reservation-slots` (public, no auth)
+- Test `reservation_analytics_summary` — `GET /reservation-analytics/summary`
+
+**Reservation sync endpoints**
 - Test `startup_today`
 - Test `manual_today`
 - Test `failure_count`
@@ -40,6 +49,8 @@ Not implemented here:
 - no-show reservation;
 - create fake reservation;
 - send confirmation email;
+- block/unblock time slots;
+- PATCH restaurant setup or hours;
 - call backend import endpoint.
 
 Any real mutation must happen through the normal reservation workflow with explicit staff action.
@@ -91,7 +102,30 @@ The diagnostics screen also shows sync scope snapshots:
 
 Each scope can show last attempt, success, failure, in-flight state, and cooldown.
 
-## 7. Cache Stats
+## 7. Endpoint Contract Checklist
+
+The **Endpoint Contract Checklist** section marks endpoints that succeeded during the current session (green checkmark when `APIRequestLogStore` has a successful call):
+
+- `GET /ping`
+- `GET /restaurant-setup`
+- `GET /restaurant-hours`
+- `GET /restaurant-day-availability`
+- `GET /reservation-slots`
+- `GET /restaurant-blocked-slots`
+- `GET /reservation-analytics/summary`
+- `GET /managed-reservations?date=YYYY-MM-DD`
+- `GET /managed-reservations`
+- `GET /managed-reservations/{id}`
+- `PATCH /managed-reservations/{id}`
+- `POST /managed-reservations`
+- `POST /managed-reservations/{id}/confirm`
+- `GET /managed-reservations/import-failures`
+- `POST /restaurant-blocked-slots`
+- `DELETE /restaurant-blocked-slots`
+
+Also shown: **NOT USED: POST /managed-reservations/import** — should stay **Clean** during normal app use.
+
+## 8. Cache Stats
 
 The SwiftData Cache section shows:
 
@@ -105,7 +139,7 @@ The SwiftData Cache section shows:
 
 SwiftData remains local cache only. The WordPress backend remains source of truth.
 
-## 8. Notification Center Preview
+## 9. Notification Center Preview
 
 The admin screen shows current app notices.
 
@@ -120,10 +154,16 @@ Examples:
 
 Notices can be dismissed or cleared.
 
-## 9. Manual Test Checklist
+## 10. Manual Test Checklist
 
 - [ ] Open the screen as developer.
 - [ ] Confirm credentials show as present without exposing password.
+- [ ] Run `Test ping`.
+- [ ] Run `Test restaurant_setup`.
+- [ ] Run `Test restaurant_hours`.
+- [ ] Run `Test restaurant_day_availability`.
+- [ ] Run `Test reservation_slots`.
+- [ ] Run `Test reservation_analytics_summary`.
 - [ ] Run `Test startup_today`.
 - [ ] Run `Test manual_today`.
 - [ ] Run `Test failure_count`.
@@ -137,7 +177,7 @@ Notices can be dismissed or cleared.
 - [ ] Confirm endpoint checklist marks successful calls during the session.
 - [ ] Confirm `POST /managed-reservations/import` stays clean/not used.
 
-## 10. Known Limitations
+## 11. Known Limitations
 
 - Request logs are in-memory only and clear when the app process restarts.
 - Safe tests are GET-focused.
