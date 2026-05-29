@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Charts
 
 // MARK: - Tryzub Design System
 
@@ -20,6 +21,91 @@ enum TryzubColors {
     static let successBackground = Color(.systemGreen).opacity(0.10)
     static let primaryControl = Color(red: 0.02, green: 0.08, blue: 0.18)
     static let destructiveText = Color(red: 0.55, green: 0.16, blue: 0.13)
+
+    // Semantic accents used by status/warning chips so labels read consistently.
+    static let warning = Color(.systemOrange)
+    static let danger = Color(.systemRed)
+    static let success = Color(.systemGreen)
+    static let info = Color(.systemBlue)
+    static let neutralChip = Color.secondary
+}
+
+// Single source of truth for clearing the floating tab bar so bottom actions
+// in pushed navigation destinations never hide behind it.
+enum ReservationLayout {
+    /// Approximate visual height of the floating tab bar plus its outer padding.
+    static let floatingTabBarClearance: CGFloat = 84
+    /// Bottom inset for scroll content on top-level tab screens.
+    static let scrollBottomInset: CGFloat = 96
+}
+
+/// Consistent spacing for time/table slot chip grids across the app.
+enum ReservationSlotGridStyle {
+    static let columnSpacing: CGFloat = 10
+    static let rowSpacing: CGFloat = 10
+    static let minChipWidth: CGFloat = 68
+
+    static var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: minChipWidth), spacing: columnSpacing)]
+    }
+
+    static var fourColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: columnSpacing), count: 4)
+    }
+}
+
+// MARK: - Form Confirmation Helpers
+
+struct ReservationFormChange: Identifiable {
+    let field: String
+    let oldValue: String
+    let newValue: String
+    var id: String { field }
+}
+
+struct ReservationFormChangeReview: View {
+    let changes: [ReservationFormChange]
+    var createSummary: [(String, String)] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !createSummary.isEmpty {
+                ForEach(createSummary, id: \.0) { item in
+                    summaryRow(label: item.0, value: item.1)
+                }
+            }
+
+            ForEach(changes) { change in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(change.field)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(TryzubColors.mutedText)
+                    HStack(spacing: 6) {
+                        Text(change.oldValue)
+                            .foregroundStyle(TryzubColors.mutedText)
+                        Image(systemName: "arrow.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(TryzubColors.mutedText)
+                        Text(change.newValue)
+                            .fontWeight(.semibold)
+                    }
+                    .font(.subheadline)
+                }
+            }
+        }
+    }
+
+    private func summaryRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(TryzubColors.mutedText)
+                .frame(width: 72, alignment: .leading)
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(TryzubColors.primaryText)
+        }
+    }
 }
 
 enum TryzubTypography {
@@ -242,11 +328,23 @@ struct ReservationServiceCard<Content: View>: View {
     let title: String
     let systemImage: String
     var spacing: CGFloat = 10
+    var compact = true
     @ViewBuilder let content: Content
 
     var body: some View {
-        TryzubSectionCard(title: title, systemImage: systemImage, spacing: spacing) {
+        VStack(alignment: .leading, spacing: spacing) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(TryzubColors.primaryText)
+
             content
+        }
+        .padding(compact ? 10 : TryzubSpacing.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(TryzubColors.cardBackground, in: RoundedRectangle(cornerRadius: TryzubSpacing.cornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: TryzubSpacing.cornerRadius, style: .continuous)
+                .stroke(TryzubColors.border, lineWidth: 1)
         }
     }
 }
@@ -341,6 +439,286 @@ struct ReservationOpenCalendarButton: View {
                 .padding()
                 .frame(minWidth: 320, minHeight: 360)
                 .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
+// MARK: - Responsive Width Helper
+
+private struct CappedWidthModifier: ViewModifier {
+    // nil = no cap (small screens fill naturally, no extra .infinity frame).
+    let maxWidth: CGFloat?
+
+    func body(content: Content) -> some View {
+        if let maxWidth {
+            content
+                .frame(maxWidth: maxWidth)
+                .frame(maxWidth: .infinity)
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    /// Caps and centers content only on wide layouts. On small screens (nil)
+    /// nothing is applied, so no `.infinity` frame affects iPhone sizing.
+    func cappedContentWidth(_ maxWidth: CGFloat?) -> some View {
+        modifier(CappedWidthModifier(maxWidth: maxWidth))
+    }
+}
+
+// MARK: - Service Timeline (busy-by-time graph)
+
+struct ServiceTimelineSlot: Identifiable {
+    let hour: Int
+    var reservationCount: Int
+    var guestCount: Int
+
+    var id: Int { hour }
+
+    var hourLabel: String {
+        let adjusted = hour % 12 == 0 ? 12 : hour % 12
+        return "\(adjusted)\(hour < 12 ? "a" : "p")"
+    }
+}
+
+enum ServiceTimeline {
+    /// Buckets expected guests by service hour for the busy-by-time graph.
+    /// When a service `window` (open...close hour) is provided, the x-axis spans
+    /// the full window even for hours that have no reservations.
+    static func slots(
+        from reservations: [ReservationRecord],
+        window: ClosedRange<Int>? = nil
+    ) -> [ServiceTimelineSlot] {
+        var buckets: [Int: ServiceTimelineSlot] = [:]
+        for reservation in reservations where reservation.isExpectedGuest {
+            guard let hour = Int(reservation.reservationTime.prefix(2)) else { continue }
+            var slot = buckets[hour] ?? ServiceTimelineSlot(hour: hour, reservationCount: 0, guestCount: 0)
+            slot.reservationCount += 1
+            slot.guestCount += reservation.partySize
+            buckets[hour] = slot
+        }
+
+        let lower: Int
+        let upper: Int
+        if let window {
+            lower = min(window.lowerBound, buckets.keys.min() ?? window.lowerBound)
+            upper = max(window.upperBound, buckets.keys.max() ?? window.upperBound)
+        } else if let minHour = buckets.keys.min(), let maxHour = buckets.keys.max() {
+            lower = minHour
+            upper = maxHour
+        } else {
+            return []
+        }
+
+        guard lower <= upper else { return [] }
+
+        return (lower...upper).map { hour in
+            buckets[hour] ?? ServiceTimelineSlot(hour: hour, reservationCount: 0, guestCount: 0)
+        }
+    }
+
+    static func peakHour(in slots: [ServiceTimelineSlot]) -> Int? {
+        slots.filter { $0.guestCount > 0 }.max { $0.guestCount < $1.guestCount }?.hour
+    }
+
+    static func hourLabel(_ hour: Int) -> String {
+        let adjusted = hour % 12 == 0 ? 12 : hour % 12
+        return "\(adjusted)\(hour < 12 ? "a" : "p")"
+    }
+}
+
+/// Native Swift Charts bar chart of guests per service hour. Peak hour is
+/// emphasized and an optional hour can be highlighted (e.g. this reservation).
+struct ServiceLoadChart: View {
+    let slots: [ServiceTimelineSlot]
+    var highlightHour: Int?
+    var height: CGFloat = 82
+
+    private var peakHour: Int? { ServiceTimeline.peakHour(in: slots) }
+    private var maxGuests: Int { max(slots.map(\.guestCount).max() ?? 0, 1) }
+
+    var body: some View {
+        if slots.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "chart.bar")
+                    .foregroundStyle(.secondary)
+                Text("No reservations to chart yet")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        } else {
+            Chart(slots) { slot in
+                BarMark(
+                    x: .value("Time", slot.hour),
+                    y: .value("Guests", slot.guestCount),
+                    width: .fixed(slots.count > 9 ? 9 : 14)
+                )
+                .foregroundStyle(barStyle(for: slot))
+                .cornerRadius(2.5)
+            }
+            .chartXScale(domain: (Double(slots.first?.hour ?? 0) - 0.5)...(Double(slots.last?.hour ?? 0) + 0.5))
+            .chartYScale(domain: 0...Double(maxGuests))
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+                    AxisGridLine().foregroundStyle(TryzubColors.border)
+                    AxisValueLabel {
+                        if let count = value.as(Int.self) {
+                            Text("\(count)")
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundStyle(TryzubColors.mutedText)
+                        }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: slots.map { Double($0.hour) }) { value in
+                    AxisValueLabel {
+                        if let hour = value.as(Double.self) {
+                            Text(ServiceTimeline.hourLabel(Int(hour)))
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundStyle(TryzubColors.mutedText)
+                        }
+                    }
+                }
+            }
+            .frame(height: height)
+        }
+    }
+
+    // Black/white/gray only: emphasis is conveyed by opacity of the brand dark
+    // tone, never by hue (red stays reserved for warnings).
+    private func barStyle(for slot: ServiceTimelineSlot) -> Color {
+        if slot.guestCount == 0 { return TryzubColors.primaryControl.opacity(0.08) }
+        if slot.hour == highlightHour { return TryzubColors.primaryControl }
+        if slot.hour == peakHour { return TryzubColors.primaryControl.opacity(0.85) }
+        return TryzubColors.primaryControl.opacity(0.32)
+    }
+}
+
+/// Compact bar chart showing guests per service hour. Used on Home and Detail
+/// to visualize service pressure without taking much vertical space.
+struct ServiceTimelineGraph: View {
+    let slots: [ServiceTimelineSlot]
+    var highlightHour: Int?
+    var barHeight: CGFloat = 64
+
+    private var maxGuests: Int { max(slots.map(\.guestCount).max() ?? 0, 1) }
+    private var peakHour: Int? { ServiceTimeline.peakHour(in: slots) }
+
+    var body: some View {
+        if slots.isEmpty {
+            Text("No reservations to chart yet")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+        } else {
+            HStack(alignment: .bottom, spacing: 5) {
+                ForEach(slots) { slot in
+                    bar(for: slot)
+                }
+            }
+        }
+    }
+
+    private func bar(for slot: ServiceTimelineSlot) -> some View {
+        let fraction = CGFloat(slot.guestCount) / CGFloat(maxGuests)
+        let isPeak = slot.hour == peakHour && slot.guestCount > 0
+        let isHighlight = highlightHour != nil && slot.hour == highlightHour
+
+        return VStack(spacing: 4) {
+            Text(slot.guestCount > 0 ? "\(slot.guestCount)" : " ")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(isHighlight ? TryzubColors.info : .secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            ZStack(alignment: .bottom) {
+                Color.clear.frame(height: barHeight)
+
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(barFill(isPeak: isPeak, isHighlight: isHighlight, hasGuests: slot.guestCount > 0))
+                    .frame(height: max(barHeight * fraction, slot.guestCount > 0 ? 7 : 3))
+            }
+
+            Text(slot.hourLabel)
+                .font(.system(size: 9, weight: isHighlight || isPeak ? .bold : .regular))
+                .foregroundStyle(isHighlight ? TryzubColors.info : (isPeak ? .primary : .secondary))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func barFill(isPeak: Bool, isHighlight: Bool, hasGuests: Bool) -> Color {
+        if isHighlight { return TryzubColors.info }
+        if !hasGuests { return Color.primary.opacity(0.06) }
+        if isPeak { return TryzubColors.primaryControl }
+        return TryzubColors.primaryControl.opacity(0.40)
+    }
+}
+
+/// Compact metric tile for dense KPI strips (replaces stretched info pills).
+struct ReservationMetricTile: View {
+    let value: String
+    let label: String
+    var systemImage: String?
+    var tint: Color = TryzubColors.primaryText
+    var emphasize: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(emphasize ? tint : TryzubColors.mutedText)
+                }
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(TryzubColors.mutedText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+
+            Text(value)
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .foregroundStyle(emphasize ? tint : TryzubColors.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .background(TryzubColors.secondaryCardBackground, in: RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous)
+                .stroke(emphasize ? tint.opacity(0.28) : TryzubColors.border, lineWidth: 1)
+        }
+    }
+}
+
+/// Bottom action container for pushed navigation destinations. Adds enough
+/// bottom clearance so primary/destructive buttons always sit above the
+/// floating tab bar instead of hiding behind it.
+struct BottomSafeActionBar<Content: View>: View {
+    var clearsTabBar: Bool = true
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(spacing: 8) {
+            content
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, clearsTabBar ? ReservationLayout.floatingTabBarClearance : 12)
+        .frame(maxWidth: .infinity)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) {
+            Divider().opacity(0.5)
         }
     }
 }

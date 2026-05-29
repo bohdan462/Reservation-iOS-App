@@ -573,93 +573,89 @@ struct TableAssignmentSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    header
 
-            if let errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
+                    if let errorMessage {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(TryzubColors.danger)
+                            .lineLimit(2)
+                    }
+
+                    TextField("Table", text: $tableName)
+                        .font(.title3.weight(.semibold))
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                        .padding(.horizontal, 12)
+                        .frame(height: 44)
+                        .background(TryzubColors.secondaryCardBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                                .stroke(TryzubColors.border, lineWidth: 1)
+                        }
+
+                    LazyVGrid(
+                        columns: ReservationSlotGridStyle.fourColumns,
+                        spacing: ReservationSlotGridStyle.rowSpacing
+                    ) {
+                        ForEach(tableSuggestions, id: \.self) { suggestion in
+                            Button {
+                                tableName = suggestion
+                                ReservationHaptics.selection()
+                            } label: {
+                                ReservationChoiceChip(
+                                    title: suggestion,
+                                    isSelected: tableName.trimmed.caseInsensitiveCompare(suggestion) == .orderedSame,
+                                    minWidth: 56,
+                                    minHeight: 36,
+                                    fillsWidth: true
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    if reservation.hasTableAssignment || !tableName.trimmed.isEmpty {
+                        Button {
+                            tableName = ""
+                            ReservationHaptics.selection()
+                        } label: {
+                            Label("Clear table", systemImage: "xmark.circle")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(TryzubColors.mutedText)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(16)
             }
-
-            TextField("Table", text: $tableName)
-                .font(.title3.weight(.semibold))
-                .textInputAutocapitalization(.characters)
-                .autocorrectionDisabled()
-                .padding(.horizontal, 12)
-                .frame(height: 44)
-                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+            .background(TryzubColors.screenBackground)
+            .navigationTitle("Assign Table")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundStyle(TryzubColors.mutedText)
                 }
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 54), spacing: 7)], spacing: 7) {
-                ForEach(tableSuggestions, id: \.self) { suggestion in
+                ToolbarItem(placement: .confirmationAction) {
                     Button {
-                        tableName = suggestion
-                        ReservationHaptics.selection()
+                        Task { await save() }
                     } label: {
-                        ReservationChoiceChip(
-                            title: suggestion,
-                            isSelected: tableName.trimmed.caseInsensitiveCompare(suggestion) == .orderedSame,
-                            minWidth: 50,
-                            minHeight: 32,
-                            fillsWidth: false
-                        )
+                        if isSaving {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("Save")
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .disabled(isSaving)
                 }
-            }
-
-            HStack(spacing: 8) {
-                if reservation.hasTableAssignment || !tableName.trimmed.isEmpty {
-                    Button {
-                        tableName = ""
-                        ReservationHaptics.selection()
-                    } label: {
-                        Label("Clear", systemImage: "xmark.circle")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Button("Cancel") {
-                    dismiss()
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.primary.opacity(0.72))
-                .buttonStyle(.plain)
-
-                Button {
-                    Task {
-                        await save()
-                    }
-                } label: {
-                    if isSaving {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(Color(.systemBackground))
-                    } else {
-                        Text("Save")
-                    }
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Color(.systemBackground))
-                .frame(minWidth: 72, minHeight: 34)
-                .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                .buttonStyle(.plain)
-                .disabled(isSaving)
             }
         }
-        .padding(14)
-        .frame(width: 360, alignment: .topLeading)
-        .background(Color(.systemGroupedBackground))
-        .presentationCompactAdaptation(.popover)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 
     private var header: some View {

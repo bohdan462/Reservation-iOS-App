@@ -49,7 +49,7 @@ struct ReservationDetailPresentation {
             Row(title: "Table", value: reservation.tableDisplay),
             Row(title: "Source", value: reservation.sourceDisplayName),
             Row(title: "Email", value: emailStatus),
-            Row(title: "Submitted", value: serverTimestamp(reservation.createdAt))
+            Row(title: "Submitted", value: submittedValue(for: reservation))
         ]
 
         if let timingText = reservation.operationalTimingState().insightText {
@@ -111,6 +111,14 @@ struct ReservationDetailPresentation {
         }
         return value
     }
+
+    private static func submittedValue(for reservation: ReservationRecord) -> String {
+        let stamp = serverTimestamp(reservation.createdAt)
+        if let ago = reservation.submittedAgoText {
+            return "\(stamp) · \(ago)"
+        }
+        return stamp
+    }
 }
 
 // MARK: - Reservation Detail
@@ -139,17 +147,19 @@ struct ReservationDetailView: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let isWide = proxy.size.width >= 760
             ScrollView {
-                detailContent()
-                    .padding(.horizontal, proxy.size.width >= 760 ? 20 : 16)
+                detailContent(isWide: isWide)
+                    .padding(.horizontal, isWide ? 20 : 16)
                     .padding(.vertical, 16)
                     .padding(.bottom, 92)
+                    .cappedContentWidth(isWide ? 1000 : nil)
             }
             .background(Color(.systemGroupedBackground))
         }
         .navigationTitle(reservation.guestName)
         .navigationBarTitleDisplayMode(.inline)
-        .popover(item: $tableAssignmentReservation, arrowEdge: .top) { reservation in
+        .sheet(item: $tableAssignmentReservation) { reservation in
             TableAssignmentSheet(reservation: reservation) { tableName in
                 // Table assignment is a server PATCH through the controller.
                 _ = try await controller.updateReservation(
@@ -230,55 +240,162 @@ struct ReservationDetailView: View {
     // MARK: - Detail Layout
 
     @ViewBuilder
-    private func detailContent() -> some View {
+    private func detailContent(isWide: Bool) -> some View {
         // Read-only hospitality analysis from the local SwiftData cache.
         let insightReport = GuestInsightsController().analyze(
             selected: reservation,
             allReservations: allCachedReservations
         )
+        let presentation = ReservationDetailPresentation.make(
+            reservation: reservation,
+            capabilities: controller.capabilities
+        )
 
         VStack(alignment: .leading, spacing: 14) {
-            if let message = errorMessage ?? controller.errorMessage {
-                DetailWarningCard(
-                    title: "Action did not finish",
-                    message: message,
-                    symbolName: "exclamationmark.triangle",
-                    tint: .red
-                )
-            }
+            banners
 
-            if reservation.statusValue == .needsReview {
-                DetailWarningCard(
-                    title: "Needs review",
-                    message: "Check this reservation before confirming.",
-                    symbolName: "exclamationmark.triangle",
-                    tint: .orange
-                )
-            }
+            if isWide {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(spacing: 14) {
+                        DetailHeroCard(header: presentation.header)
+                        actionBar
+                        contactCard
+                    }
+                    .frame(width: 360)
 
-            ReservationHeroCard(
-                reservation: reservation,
-                capabilities: controller.capabilities,
-                isBusy: isSavingQuickAction || controller.isActionInProgress(for: reservation),
-                onAction: handleAction,
-                onEdit: { showEditScreen = true },
-                onHideWrongEntry: reservation.canSoftHideAsWrongEntry && !reservation.isHidden
-                    ? { isShowingHideWrongEntryConfirmation = true }
-                    : nil,
-                onRestoreHidden: reservation.isHidden
-                    ? { Task { await restoreHiddenReservation() } }
-                    : nil
-            )
-
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 14) {
-                    guestInsightsLink(report: insightReport)
-                    Spacer(minLength: 0)
+                    VStack(spacing: 14) {
+                        notesCard(presentation)
+                        detailsCard(presentation)
+                        ReservationServiceLoadCard(
+                            reservation: reservation,
+                            sameDayReservations: sameDayReservations
+                        )
+                        guestInsightsLink(report: insightReport)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-
-                guestInsightsLink(report: insightReport)
+            } else {
+                VStack(spacing: 14) {
+                    DetailHeroCard(header: presentation.header)
+                    actionBar
+                    contactCard
+                    notesCard(presentation)
+                    detailsCard(presentation)
+                    ReservationServiceLoadCard(
+                        reservation: reservation,
+                        sameDayReservations: sameDayReservations
+                    )
+                    guestInsightsLink(report: insightReport)
+                }
             }
         }
+    }
+
+    @ViewBuilder
+    private var banners: some View {
+        if let message = errorMessage ?? controller.errorMessage {
+            DetailWarningCard(
+                title: "Action did not finish",
+                message: message,
+                symbolName: "exclamationmark.triangle",
+                tint: .red
+            )
+        }
+
+        if let attention = attentionExplanation {
+            DetailWarningCard(
+                title: attention.title,
+                message: attention.message,
+                symbolName: attention.symbol,
+                tint: attention.tint
+            )
+        }
+    }
+
+    private var actionBar: some View {
+        DetailActionBar(
+            reservation: reservation,
+            capabilities: controller.capabilities,
+            isBusy: isSavingQuickAction || controller.isActionInProgress(for: reservation),
+            onAction: handleAction,
+            onEdit: { showEditScreen = true },
+            onHideWrongEntry: reservation.canSoftHideAsWrongEntry && !reservation.isHidden
+                ? { isShowingHideWrongEntryConfirmation = true }
+                : nil,
+            onRestoreHidden: reservation.isHidden
+                ? { Task { await restoreHiddenReservation() } }
+                : nil
+        )
+    }
+
+    private var contactCard: some View {
+        DetailSectionCard(title: "Contact", systemImage: "phone.fill") {
+            VStack(spacing: 10) {
+                DetailContactRow(
+                    title: "Phone",
+                    value: reservation.formattedPhone,
+                    url: reservation.callURL
+                )
+                Divider().opacity(0.4)
+                DetailContactRow(
+                    title: "Email",
+                    value: reservation.hasUsableConfirmationEmail ? reservation.email : "No email",
+                    url: reservation.mailtoURL
+                )
+            }
+        }
+    }
+
+    private func notesCard(_ presentation: ReservationDetailPresentation) -> some View {
+        DetailSectionCard(title: "Notes", systemImage: "note.text") {
+            if presentation.notesRows.isEmpty {
+                DetailPlainLine("No guest or staff notes")
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(presentation.notesRows) { row in
+                        DetailDataRow(title: row.title, value: row.value, allowsWrap: row.allowsWrap)
+                    }
+                }
+            }
+        }
+    }
+
+    private func detailsCard(_ presentation: ReservationDetailPresentation) -> some View {
+        DetailSectionCard(title: "Reservation details", systemImage: "fork.knife") {
+            VStack(spacing: 10) {
+                ForEach(presentation.reservationRows) { row in
+                    DetailDataRow(title: row.title, value: row.value, allowsWrap: row.allowsWrap)
+                }
+            }
+        }
+    }
+
+    private var sameDayReservations: [ReservationRecord] {
+        allCachedReservations.filter {
+            $0.reservationDate == reservation.reservationDate && !$0.isHidden
+        }
+    }
+
+    // Human explanation of why this reservation needs attention right now.
+    private var attentionExplanation: (title: String, message: String, symbol: String, tint: Color)? {
+        let timing = reservation.operationalTimingState()
+
+        if reservation.statusValue == .needsReview {
+            let reason = reservation.hasStaffNotes
+                ? (reservation.staffNotes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Check this reservation before confirming.")
+                : "Check this reservation before confirming."
+            return ("Needs review", reason, "exclamationmark.triangle", .orange)
+        }
+
+        if case .overdue = timing, let text = timing.insightText {
+            return ("Running late", "\(text). The reservation time has passed and it is not seated yet.", "exclamationmark.triangle", .red)
+        }
+
+        if reservation.statusValue == .new, let ago = reservation.submittedAgoText {
+            return ("Awaiting confirmation", "Submitted \(ago). Confirm to notify the guest and lock the table.", "clock.badge.exclamationmark", TryzubColors.info)
+        }
+
+        return nil
     }
 
     private func guestInsightsLink(report: GuestInsightReport) -> some View {
@@ -291,7 +408,7 @@ struct ReservationDetailView: View {
             GuestInsightsPreviewCard(report: report)
         }
         .buttonStyle(.plain)
-        .frame(maxWidth: 520, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Staff Action Routing
@@ -397,6 +514,52 @@ struct ReservationDetailView: View {
     }
 }
 
+// MARK: - Service Load Card
+
+private struct ReservationServiceLoadCard: View {
+    let reservation: ReservationRecord
+    let sameDayReservations: [ReservationRecord]
+
+    private var slots: [ServiceTimelineSlot] {
+        ServiceTimeline.slots(from: sameDayReservations)
+    }
+
+    private var highlightHour: Int? {
+        Int(reservation.reservationTime.prefix(2))
+    }
+
+    private var summaryText: String {
+        let expected = sameDayReservations.filter(\.isExpectedGuest)
+        let guests = expected.reduce(0) { $0 + $1.partySize }
+        let reservationWord = expected.count == 1 ? "reservation" : "reservations"
+        return "\(expected.count) \(reservationWord) · \(guests) guests on \(reservation.displayDate)"
+    }
+
+    var body: some View {
+        DetailSectionCard(title: "Service load", systemImage: "chart.bar.fill") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 6) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(TryzubColors.primaryControl)
+                        .frame(width: 9, height: 9)
+                    Text("This reservation's hour")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+
+                ServiceLoadChart(slots: slots, highlightHour: highlightHour, height: 130)
+
+                Text(summaryText)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+        }
+    }
+}
+
 // MARK: - Guest Insights Entry
 
 private struct GuestInsightsPreviewCard: View {
@@ -455,9 +618,60 @@ private struct GuestInsightsPreviewCard: View {
     }
 }
 
-// MARK: - Reservation Hero Postcard
+// MARK: - Reservation Hero Card
 
-private struct ReservationHeroCard: View {
+private struct DetailHeroCard: View {
+    let header: ReservationDetailPresentation.Header
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(header.timeText)
+                        .font(.system(size: 40, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+
+                    Text(header.dateText)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                ReservationStatusBadge(status: header.status)
+            }
+
+            Divider().opacity(0.4)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(header.guestName)
+                    .font(.title2.weight(.semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                FlowLayout(spacing: 7) {
+                    DetailPill(label: header.partyText, systemImage: "person.2", tint: .secondary)
+                    DetailPill(label: header.tableText, systemImage: "table.furniture", tint: .secondary)
+                    DetailPill(label: header.sourceText, systemImage: "tray.and.arrow.down", tint: .secondary)
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+    }
+}
+
+// MARK: - Reservation Action Bar
+
+private struct DetailActionBar: View {
     let reservation: ReservationRecord
     let capabilities: AppCapabilities
     let isBusy: Bool
@@ -466,128 +680,16 @@ private struct ReservationHeroCard: View {
     let onHideWrongEntry: (() -> Void)?
     let onRestoreHidden: (() -> Void)?
 
-    var body: some View {
-        let presentation = ReservationDetailPresentation.make(
+    private var policy: ReservationHostActionPolicy {
+        ReservationHostActionPolicy(
             reservation: reservation,
-            capabilities: capabilities
+            capabilities: capabilities,
+            surface: .detail
         )
-
-        VStack(alignment: .leading, spacing: 14) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    timeBlock(presentation.header)
-
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.10))
-                        .frame(width: 1)
-
-                    mainBlock(presentation)
-                        .layoutPriority(2)
-
-                    Spacer(minLength: 8)
-
-                    actionBlock(presentation.actionPolicy)
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .top, spacing: 12) {
-                        timeBlock(presentation.header)
-                        mainBlock(presentation)
-                    }
-                    actionBlock(presentation.actionPolicy)
-                }
-            }
-        }
-        .padding(16)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
     }
 
-    private func timeBlock(_ header: ReservationDetailPresentation.Header) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(header.timeText)
-                .font(.system(size: 34, weight: .medium, design: .rounded))
-                .monospacedDigit()
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-
-            Text(header.dateText)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-
-            ReservationStatusBadge(status: header.status)
-        }
-        .frame(width: 112, alignment: .leading)
-    }
-
-    private func mainBlock(_ presentation: ReservationDetailPresentation) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(presentation.header.guestName)
-                .font(.title2.weight(.semibold))
-                .lineLimit(1)
-                .truncationMode(.tail)
-
-            quickFacts(presentation.header)
-
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 10) {
-                    contactBlock(presentation.guestRows)
-                    notesBlock(presentation.notesRows)
-                    serviceBlock(presentation.reservationRows)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    contactBlock(presentation.guestRows)
-                    notesBlock(presentation.notesRows)
-                    serviceBlock(presentation.reservationRows)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func quickFacts(_ header: ReservationDetailPresentation.Header) -> some View {
-        FlowLayout(spacing: 7) {
-            DetailPill(label: header.partyText, systemImage: "person.2", tint: .secondary)
-            DetailPill(label: header.tableText, systemImage: "table.furniture", tint: .secondary)
-            DetailPill(label: header.sourceText, systemImage: "tray.and.arrow.down", tint: .secondary)
-        }
-    }
-
-    private func contactBlock(_ rows: [ReservationDetailPresentation.Row]) -> some View {
-        DetailDataPanel(title: "Contact", systemImage: "phone") {
-            ForEach(rows) { row in
-                DetailDataRow(title: row.title, value: row.value, allowsWrap: row.allowsWrap)
-            }
-        }
-    }
-
-    private func notesBlock(_ rows: [ReservationDetailPresentation.Row]) -> some View {
-        DetailDataPanel(title: "Notes", systemImage: "note.text") {
-            if rows.isEmpty {
-                DetailPlainLine("No notes")
-            } else {
-                ForEach(rows) { row in
-                    DetailDataRow(title: row.title, value: row.value, allowsWrap: row.allowsWrap)
-                }
-            }
-        }
-    }
-
-    private func serviceBlock(_ rows: [ReservationDetailPresentation.Row]) -> some View {
-        DetailDataPanel(title: "Reservation", systemImage: "fork.knife") {
-            ForEach(rows) { row in
-                DetailDataRow(title: row.title, value: row.value, allowsWrap: row.allowsWrap)
-            }
-        }
-    }
-
-    private func actionBlock(_ policy: ReservationHostActionPolicy) -> some View {
-        VStack(alignment: .trailing, spacing: 8) {
+    var body: some View {
+        VStack(spacing: 10) {
             ReservationActionButtons(
                 reservation: reservation,
                 capabilities: capabilities,
@@ -596,97 +698,107 @@ private struct ReservationHeroCard: View {
                 isBusy: isBusy,
                 onAction: onAction
             )
+            .frame(maxWidth: .infinity)
 
-            Button {
-                onEdit()
-            } label: {
-                Label("Edit", systemImage: "pencil")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary.opacity(0.78))
-                    .frame(minWidth: 86, minHeight: 34)
-            }
-            .buttonStyle(.plain)
-            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-            }
-            .disabled(!capabilities.canEditReservationDetails)
-
-            if showsMoreMenu(policy) {
-                Menu {
-                    ForEach(policy.detailSecondaryActions) { action in
-                        Button(role: action.role) {
-                            onAction(action)
-                        } label: {
-                            Label(action.fullTitle, systemImage: action.systemImage)
-                        }
-                    }
-
-                    if !policy.detailSecondaryActions.isEmpty,
-                       onHideWrongEntry != nil || onRestoreHidden != nil {
-                        Divider()
-                    }
-
-                    if let onHideWrongEntry {
-                        Button(role: .destructive) {
-                            onHideWrongEntry()
-                        } label: {
-                            Label("Hide wrong entry", systemImage: "archivebox")
-                        }
-                    }
-
-                    if let onRestoreHidden {
-                        Button {
-                            onRestoreHidden()
-                        } label: {
-                            Label("Restore to lists", systemImage: "arrow.uturn.backward")
-                        }
-                    }
-                } label: {
-                    Label("More", systemImage: "ellipsis")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.primary.opacity(0.78))
-                        .frame(minWidth: 86, minHeight: 34)
+            HStack(spacing: 10) {
+                secondaryButton(title: "Edit", systemImage: "pencil") {
+                    onEdit()
                 }
-                .buttonStyle(.plain)
-                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                .disabled(!capabilities.canEditReservationDetails)
+
+                if showsMoreMenu {
+                    moreMenu
                 }
-                .disabled(isBusy)
             }
         }
-        .fixedSize(horizontal: true, vertical: false)
     }
 
-    private func showsMoreMenu(_ policy: ReservationHostActionPolicy) -> Bool {
-        return !policy.detailSecondaryActions.isEmpty || onHideWrongEntry != nil || onRestoreHidden != nil
+    private func secondaryButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary.opacity(0.82))
+                .frame(maxWidth: .infinity, minHeight: 40)
+        }
+        .buttonStyle(.plain)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+        }
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            ForEach(policy.detailSecondaryActions) { action in
+                Button(role: action.role) {
+                    onAction(action)
+                } label: {
+                    Label(action.fullTitle, systemImage: action.systemImage)
+                }
+            }
+
+            if !policy.detailSecondaryActions.isEmpty,
+               onHideWrongEntry != nil || onRestoreHidden != nil {
+                Divider()
+            }
+
+            if let onHideWrongEntry {
+                Button(role: .destructive) {
+                    onHideWrongEntry()
+                } label: {
+                    Label("Hide wrong entry", systemImage: "archivebox")
+                }
+            }
+
+            if let onRestoreHidden {
+                Button {
+                    onRestoreHidden()
+                } label: {
+                    Label("Restore to lists", systemImage: "arrow.uturn.backward")
+                }
+            }
+        } label: {
+            Label("More", systemImage: "ellipsis")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary.opacity(0.82))
+                .frame(maxWidth: .infinity, minHeight: 40)
+        }
+        .buttonStyle(.plain)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+        }
+        .disabled(isBusy)
+    }
+
+    private var showsMoreMenu: Bool {
+        !policy.detailSecondaryActions.isEmpty || onHideWrongEntry != nil || onRestoreHidden != nil
     }
 }
 
 // MARK: - Shared Detail Components
 
-private struct DetailDataPanel<Content: View>: View {
+private struct DetailSectionCard<Content: View>: View {
     let title: String
     let systemImage: String
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             Label(title, systemImage: systemImage)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary.opacity(0.8))
                 .lineLimit(1)
 
             content
         }
-        .padding(12)
-        .frame(minWidth: 210, maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
@@ -710,6 +822,43 @@ private struct DetailDataRow: View {
                 .lineLimit(allowsWrap ? 2 : 1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct DetailContactRow: View {
+    let title: String
+    let value: String
+    let url: URL?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 78, alignment: .leading)
+
+            if let url {
+                Link(destination: url) {
+                    HStack(spacing: 5) {
+                        Text(value)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Image(systemName: title == "Phone" ? "phone.fill" : "envelope.fill")
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(TryzubColors.info)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Text(value)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 }

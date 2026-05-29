@@ -91,6 +91,7 @@ enum ReservationRowPresenter {
     ) -> ReservationRowPresentation {
         let insight = primaryInsight(
             reservation: reservation,
+            context: context,
             contextNote: contextNote,
             now: now
         )
@@ -138,6 +139,56 @@ enum ReservationRowPresenter {
     }
 
     private static func primaryInsight(
+        reservation: ReservationRecord,
+        context: ReservationRowContext,
+        contextNote: String?,
+        now: Date
+    ) -> ReservationRowInsight? {
+        switch context {
+        case .review:
+            // Review is a triage queue: emphasize the review reason and how long a
+            // new request has waited. Operational urgency (late/conflict) lives in Detail.
+            return reviewInsight(reservation: reservation, contextNote: contextNote)
+        case .todayUpcoming, .todaySeated, .schedule:
+            return operationalInsight(reservation: reservation, contextNote: contextNote, now: now)
+        }
+    }
+
+    private static func reviewInsight(
+        reservation: ReservationRecord,
+        contextNote: String?
+    ) -> ReservationRowInsight? {
+        if reservation.statusValue == .needsReview {
+            return ReservationRowInsight(
+                text: contextNote?.nilIfBlank ?? "Needs review",
+                systemImage: "exclamationmark.triangle",
+                tint: .orange,
+                prominence: .normal
+            )
+        }
+
+        if let submittedAgoText = reservation.submittedAgoText {
+            return ReservationRowInsight(
+                text: "Submitted \(submittedAgoText)",
+                systemImage: "clock",
+                tint: .secondary,
+                prominence: .normal
+            )
+        }
+
+        if let contextNote = contextNote?.nilIfBlank {
+            return ReservationRowInsight(
+                text: contextNote,
+                systemImage: "info.circle",
+                tint: .secondary,
+                prominence: .normal
+            )
+        }
+
+        return nil
+    }
+
+    private static func operationalInsight(
         reservation: ReservationRecord,
         contextNote: String?,
         now: Date

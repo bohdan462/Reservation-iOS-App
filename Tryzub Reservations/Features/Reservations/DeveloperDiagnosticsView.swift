@@ -146,7 +146,7 @@ struct DeveloperDiagnosticsView: View {
                 Text("No API events logged yet.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(requestLogStore.events.prefix(25)) { event in
+                ForEach(requestLogStore.events.prefix(40)) { event in
                     APIRequestLogRow(event: event)
                 }
 
@@ -155,9 +155,9 @@ struct DeveloperDiagnosticsView: View {
                 }
             }
         } header: {
-            Text("Request Log")
+            Text("Request Log (all methods)")
         } footer: {
-            Text("The log stores method, endpoint, reason, status/error, body snippet, decode error, and duration. Credentials and guest payloads are not logged.")
+            Text("Captures GET, POST, PATCH, and DELETE with method, endpoint, reason, status, response body snippet, decode error, and duration. Emails and phone numbers are redacted; credentials are never logged.")
         }
     }
 
@@ -304,25 +304,31 @@ private struct APIRequestLogRow: View {
             }
 
             HStack(spacing: 8) {
-                Text(event.outcome.rawValue)
+                Text(event.outcome.rawValue.uppercased())
+                    .font(.caption2.weight(.heavy))
+                    .foregroundStyle(outcomeTint)
                 if let method = event.method {
                     Text(method)
+                        .font(.caption2.weight(.bold).monospaced())
+                        .foregroundStyle(.primary)
                 }
                 if let statusCode = event.statusCode {
                     Text("HTTP \(statusCode)")
+                        .foregroundStyle(statusTint(statusCode))
                 }
                 if let duration = event.duration {
                     Text(duration)
+                        .foregroundStyle(.secondary)
                 }
             }
             .font(.caption)
-            .foregroundStyle(.secondary)
 
             if let pathAndQuery = event.pathAndQuery {
                 Text(pathAndQuery)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                    .textSelection(.enabled)
             }
 
             if let error = event.error ?? event.message {
@@ -332,19 +338,47 @@ private struct APIRequestLogRow: View {
             }
 
             if let responseBodySnippet = event.responseBodySnippet, !responseBodySnippet.isEmpty {
-                Text("body: \(responseBodySnippet)")
+                Text("response: \(responseBodySnippet)")
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
-                    .lineLimit(3)
+                    .lineLimit(6)
+                    .textSelection(.enabled)
             }
 
             if let decodingError = event.decodingError, !decodingError.isEmpty {
                 Text("decode: \(decodingError)")
                     .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .foregroundStyle(.orange)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private var outcomeTint: Color {
+        switch event.outcome {
+        case .succeeded:
+            return .green
+        case .failed:
+            return .red
+        case .cancelled:
+            return .orange
+        case .started, .skipped:
+            return .secondary
+        }
+    }
+
+    private func statusTint(_ statusCode: Int) -> Color {
+        switch statusCode {
+        case 200...299:
+            return .green
+        case 400...499:
+            return .orange
+        case 500...599:
+            return .red
+        default:
+            return .secondary
+        }
     }
 }

@@ -26,14 +26,19 @@ struct ReservationsListView: View {
 
     var body: some View {
         ZStack {
-            switch selectedTab {
-            case .home:
-                HomeDashboardView(environment: environment, isActive: true)
-            case .schedule:
-                ReservationScheduleView(environment: environment, isActive: true)
-            case .review:
-                ReservationReviewQueueView(environment: environment, isActive: true)
-            case .more:
+            // Keep each tab mounted and toggle visibility so switching does not
+            // rebuild a whole NavigationStack + SwiftData query (which caused lag).
+            // The isActive flags gate each screen's refresh/clock loops.
+            tabContainer(.home) {
+                HomeDashboardView(environment: environment, isActive: selectedTab == .home)
+            }
+            tabContainer(.schedule) {
+                ReservationScheduleView(environment: environment, isActive: selectedTab == .schedule)
+            }
+            tabContainer(.review) {
+                ReservationReviewQueueView(environment: environment, isActive: selectedTab == .review)
+            }
+            tabContainer(.more) {
                 ReservationMoreView(environment: environment)
             }
         }
@@ -66,6 +71,19 @@ struct ReservationsListView: View {
             await controller.loadIfNeeded(context: modelContext)
             _ = try? await controller.loadRestaurantSetup(context: modelContext)
         }
+    }
+
+    @ViewBuilder
+    private func tabContainer<Content: View>(
+        _ tab: ReservationsAppTab,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let isSelected = selectedTab == tab
+        content()
+            .opacity(isSelected ? 1 : 0)
+            .allowsHitTesting(isSelected)
+            .accessibilityHidden(!isSelected)
+            .zIndex(isSelected ? 1 : 0)
     }
 
     private var visibleNotices: [AppNotice] {
@@ -1213,7 +1231,7 @@ private struct ReservationNavigationRow: View {
                 Text(pendingAction.dialogMessage(for: reservation))
             }
         }
-        .popover(item: $tableAssignmentReservation, arrowEdge: .trailing) { reservation in
+        .sheet(item: $tableAssignmentReservation) { reservation in
             TableAssignmentSheet(reservation: reservation) { tableName in
                 _ = try await controller.updateReservation(
                     id: reservation.remoteID,

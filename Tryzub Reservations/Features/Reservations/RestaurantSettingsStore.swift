@@ -204,7 +204,9 @@ final class RestaurantSettingsStore: ObservableObject {
             selectedDateAvailability = availability
             return availability
         } catch {
-            dayAvailabilityError = error.localizedDescription
+            if !error.isCancellationLike {
+                dayAvailabilityError = error.localizedDescription
+            }
             throw error
         }
     }
@@ -266,7 +268,11 @@ final class RestaurantSettingsStore: ObservableObject {
             selectedDateSlots = slots
             return slots
         } catch {
-            slotPreviewError = error.localizedDescription
+            // A cancelled request (tab switch / re-entry) is not a real failure;
+            // keep the previous preview instead of flashing a scary error.
+            if !error.isCancellationLike {
+                slotPreviewError = error.localizedDescription
+            }
             throw error
         }
     }
@@ -287,7 +293,9 @@ final class RestaurantSettingsStore: ObservableObject {
             selectedDateBlockedSlots = response.data
             return response
         } catch {
-            blockedSlotsError = error.localizedDescription
+            if !error.isCancellationLike {
+                blockedSlotsError = error.localizedDescription
+            }
             throw error
         }
     }
@@ -366,6 +374,27 @@ final class RestaurantSettingsStore: ObservableObject {
         _ = try? await loadDayAvailability(date: date)
         _ = try? await loadReservationSlots(date: date)
         _ = try? await loadBlockedSlots(date: date)
+    }
+
+    // Store-owned loading: the controller owns the request lifecycle so SwiftUI
+    // view re-computation cannot cancel an in-flight load and leave spinners stuck.
+    // The view only asks the store to ensure the date is loaded.
+    private var dateOperationsTask: Task<Void, Never>?
+    private var loadedDateOperationsKey: String?
+
+    func ensureDateOperations(date: String, force: Bool = false) {
+        if !force, loadedDateOperationsKey == date, dateOperationsTask == nil {
+            return
+        }
+        dateOperationsTask?.cancel()
+        dateOperationsTask = Task { [weak self] in
+            guard let self else { return }
+            await self.refreshDateOperations(date: date)
+            if !Task.isCancelled {
+                self.loadedDateOperationsKey = date
+            }
+            self.dateOperationsTask = nil
+        }
     }
 
     // MARK: - Analytics
@@ -991,7 +1020,7 @@ struct BlockedTimeSlotsView: View {
                             errorMessage: settingsStore.slotPreviewError,
                             blockedCount: blockedSlots.count,
                             selectedSlotValues: selectedAvailableSlotValues,
-                            onRetry: { Task { await load() } },
+                            onRetry: { requestDateOperations(force: true) },
                             onSlotTap: { slot in
                                 toggleAvailableSlot(BlockedSlotsPresenter.shortSlotValue(slot.value))
                                 actionMessage = nil
@@ -1013,7 +1042,10 @@ struct BlockedTimeSlotsView: View {
                         )
                         .frame(maxWidth: .infinity, minHeight: 120)
                     } else {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
+                        LazyVGrid(
+                            columns: ReservationSlotGridStyle.columns,
+                            spacing: ReservationSlotGridStyle.rowSpacing
+                        ) {
                             ForEach(blockedSlots) { slot in
                                 let value = BlockedSlotsPresenter.shortSlotValue(slot.slotTime)
                                 Button {
@@ -1050,7 +1082,7 @@ struct BlockedTimeSlotsView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task { await load() }
+                    requestDateOperations(force: true)
                 } label: {
                     if settingsStore.blockedSlotsLoading || settingsStore.slotPreviewLoading || settingsStore.dayAvailabilityLoading {
                         ProgressView()
@@ -1063,8 +1095,11 @@ struct BlockedTimeSlotsView: View {
         .safeAreaInset(edge: .bottom) {
             blockedSlotsActionBar
         }
-        .task(id: dateKey) {
-            await load()
+        .onAppear {
+            requestDateOperations()
+        }
+        .onChange(of: dateKey) { _, _ in
+            requestDateOperations()
         }
     }
 
@@ -1122,8 +1157,10 @@ struct BlockedTimeSlotsView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.top, 10)
+        .padding(.bottom, ReservationLayout.floatingTabBarClearance)
         .background(.regularMaterial)
+        .overlay(alignment: .top) { Divider().opacity(0.5) }
     }
 
     private func actionButtonLabel(title: String) -> some View {
@@ -1153,12 +1190,14 @@ struct BlockedTimeSlotsView: View {
         return "Loading"
     }
 
-    private func load() async {
+    // Asks the store (controller) to load this date. The store owns the request
+    // lifecycle, so view re-computation does not cancel it.
+    private func requestDateOperations(force: Bool = false) {
         errorMessage = nil
         actionMessage = nil
         selectedAvailableSlotValues.removeAll()
         selectedBlockedSlotValues.removeAll()
-        await settingsStore.refreshDateOperations(date: dateKey)
+        settingsStore.ensureDateOperations(date: dateKey, force: force)
     }
 
     private func blockSelectedSlots() async {
@@ -1377,7 +1416,10 @@ private struct SlotPreviewView: View {
                 )
                 .frame(maxWidth: .infinity, minHeight: 120)
             } else if let slots, !slots.slots.isEmpty {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 74), spacing: 8)], spacing: 8) {
+                LazyVGrid(
+                    columns: ReservationSlotGridStyle.columns,
+                    spacing: ReservationSlotGridStyle.rowSpacing
+                ) {
                     ForEach(slots.slots) { slot in
                         if let onSlotTap {
                             Button {
@@ -1540,8 +1582,10 @@ private struct SettingsSaveBar: View {
             .disabled(isSaving)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.top, 10)
+        .padding(.bottom, ReservationLayout.floatingTabBarClearance)
         .background(.regularMaterial)
+        .overlay(alignment: .top) { Divider().opacity(0.5) }
     }
 }
 
@@ -1558,19 +1602,21 @@ private struct SettingsKeyValueGrid: View {
     let items: [(String, String)]
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
+        VStack(spacing: 6) {
             ForEach(items, id: \.0) { item in
-                HStack {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text(item.0)
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 8)
+                        .foregroundStyle(TryzubColors.mutedText)
+                        .frame(width: 96, alignment: .leading)
                     Text(item.1)
                         .font(.caption.weight(.semibold))
+                        .foregroundStyle(TryzubColors.primaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.horizontal, 10)
-                .frame(minHeight: 34)
-                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                .padding(.vertical, 8)
+                .background(TryzubColors.secondaryCardBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
             }
         }
     }

@@ -77,14 +77,16 @@ enum ReservationAPILogger {
         request: URLRequest,
         reason: ReservationAPIRequestReason,
         statusCode: Int,
-        startedAt: Date
+        startedAt: Date,
+        responseBodySnippet: String? = nil
     ) {
         append(
             outcome: .succeeded,
             request: request,
             reason: reason,
             statusCode: statusCode,
-            duration: duration(since: startedAt)
+            duration: duration(since: startedAt),
+            responseBodySnippet: responseBodySnippet
         )
         guard isEnabled else { return }
 
@@ -997,11 +999,17 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
             do {
                 let (data, response) = try await session.data(for: request)
                 try validate(response: response, data: data, request: request)
+                let successDiagnostics = ReservationAPIDiagnostics.make(
+                    request: request,
+                    response: response as? HTTPURLResponse,
+                    data: data
+                )
                 ReservationAPILogger.end(
                     request: request,
                     reason: reason,
                     statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0,
-                    startedAt: startedAt
+                    startedAt: startedAt,
+                    responseBodySnippet: successDiagnostics.responseBodySnippet
                 )
                 return data
             } catch is CancellationError {

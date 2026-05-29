@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Charts
 
 // MARK: - Guest Insights View
 
@@ -291,19 +292,23 @@ private struct GuestInsightPreferencesSection: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {
-                    preferenceGroup(
-                        title: "Common times",
-                        values: report.preferredTimes.prefix(4).map {
-                            "\($0.bucket) · \($0.count)"
-                        }
-                    )
+                    if !report.preferredTimes.isEmpty {
+                        GuestInsightBarChart(
+                            title: "Common times",
+                            bars: report.preferredTimes.prefix(5).map {
+                                GuestInsightBar(label: $0.bucket, count: $0.count)
+                            }
+                        )
+                    }
 
-                    preferenceGroup(
-                        title: "Common weekdays",
-                        values: report.preferredWeekdays.prefix(4).map {
-                            "\($0.weekday) · \($0.count)"
-                        }
-                    )
+                    if !report.preferredWeekdays.isEmpty {
+                        GuestInsightBarChart(
+                            title: "Common weekdays",
+                            bars: report.preferredWeekdays.prefix(7).map {
+                                GuestInsightBar(label: String($0.weekday.prefix(3)), count: $0.count)
+                            }
+                        )
+                    }
 
                     preferenceGroup(
                         title: "Party sizes",
@@ -550,6 +555,53 @@ private struct GuestInsightNoteBlock: View {
 }
 
 // MARK: - Shared Guest Insight Components
+
+struct GuestInsightBar: Identifiable {
+    let label: String
+    let count: Int
+    var id: String { label }
+}
+
+private struct GuestInsightBarChart: View {
+    let title: String
+    let bars: [GuestInsightBar]
+
+    private var maxCount: Int { max(bars.map(\.count).max() ?? 1, 1) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            Chart(bars) { bar in
+                BarMark(
+                    x: .value("Count", bar.count),
+                    y: .value("Label", bar.label),
+                    height: .ratio(0.62)
+                )
+                .foregroundStyle(TryzubColors.primaryControl.opacity(bar.count == maxCount ? 0.85 : 0.32))
+                .cornerRadius(5)
+                .annotation(position: .trailing, alignment: .leading, spacing: 6) {
+                    Text("\(bar.count)")
+                        .font(.caption2.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .chartYScale(domain: Array(bars.map(\.label).reversed()))
+            .chartXScale(domain: 0...(Double(maxCount) * 1.18))
+            .chartXAxis(.hidden)
+            .chartYAxis {
+                AxisMarks(preset: .aligned, position: .leading) { _ in
+                    AxisValueLabel()
+                        .font(.caption.weight(.medium))
+                }
+            }
+            .frame(height: CGFloat(bars.count) * 30 + 4)
+        }
+    }
+}
 
 private struct GuestInsightMetricCard: View {
     let title: String

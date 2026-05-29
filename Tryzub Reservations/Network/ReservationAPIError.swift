@@ -94,21 +94,29 @@ struct ReservationAPIDiagnostics: Equatable {
     private static func sanitizedBodySnippet(from data: Data?) -> String? {
         guard let data, !data.isEmpty else { return nil }
 
-        let raw = String(data: data.prefix(320), encoding: .utf8)?
+        let raw = String(data: data.prefix(900), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard let raw, !raw.isEmpty else { return "<non-text body>" }
 
-        let redacted = raw.replacingOccurrences(
+        // Developer-only diagnostics. Emails and phone-like digit runs are redacted
+        // so guest PII does not land in the request log.
+        var redacted = raw.replacingOccurrences(
             of: #"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#,
             with: "[email]",
             options: [.regularExpression, .caseInsensitive]
         )
 
-        if redacted.count <= 240 {
+        redacted = redacted.replacingOccurrences(
+            of: #"\+?\d[\d\s().-]{6,}\d"#,
+            with: "[phone]",
+            options: [.regularExpression]
+        )
+
+        if redacted.count <= 600 {
             return redacted
         }
 
-        return String(redacted.prefix(240)) + "…"
+        return String(redacted.prefix(600)) + "…"
     }
 }
 

@@ -241,6 +241,20 @@ extension ReservationRecord {
         return trimmedEmail.contains("@") && !trimmedEmail.isManualPlaceholderEmail
     }
 
+    /// tel: URL for tap-to-call, or nil when no dialable number exists.
+    var callURL: URL? {
+        let digits = phone.filter { $0.isNumber || $0 == "+" }
+        guard digits.filter(\.isNumber).count >= 7 else { return nil }
+        return URL(string: "tel:\(digits)")
+    }
+
+    /// mailto: URL for tap-to-email, or nil for missing/placeholder emails.
+    var mailtoURL: URL? {
+        guard hasUsableConfirmationEmail else { return nil }
+        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        return URL(string: "mailto:\(trimmed)")
+    }
+
     var needsOperationalWarning: Bool {
         statusValue == .needsReview || !hasTableAssignment || partySize >= 7 || hasGuestNotes || hasStaffNotes
     }
@@ -293,7 +307,8 @@ extension ReservationRecord {
             return "\(hours) hr ago"
         }
 
-        return nil
+        let days = Int(elapsed / 86400)
+        return "\(days) day\(days == 1 ? "" : "s") ago"
     }
 
     var shortContactLine: String {
