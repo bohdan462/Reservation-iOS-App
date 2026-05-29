@@ -79,7 +79,8 @@ struct ReservationFloatingTabBar: View {
         }
         .padding(.horizontal, isCompact ? 6 : 14)
         .padding(.vertical, isCompact ? 6 : 8)
-        .frame(maxWidth: .infinity)
+//        .frame(maxWidth: .infinity)
+        .frame(maxWidth: isCompact ? .infinity : 640)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
@@ -132,6 +133,7 @@ private struct ReservationFloatingTabButton: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
+//        .frame(maxWidth: isCompact ? .infinity : 38)
         .accessibilityLabel(tab.title)
         .accessibilityValue(isSelected ? "Selected" : "")
     }

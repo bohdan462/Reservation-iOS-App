@@ -6,6 +6,113 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Detail Presentation
+
+struct ReservationDetailPresentation {
+    struct Header {
+        let guestName: String
+        let status: ReservationStatus
+        let dateText: String
+        let timeText: String
+        let partyText: String
+        let tableText: String
+        let sourceText: String
+    }
+
+    struct Row: Identifiable {
+        let title: String
+        let value: String
+        var allowsWrap = false
+
+        var id: String {
+            "\(title)-\(value)"
+        }
+    }
+
+    let header: Header
+    let guestRows: [Row]
+    let reservationRows: [Row]
+    let notesRows: [Row]
+    let emailStatus: String
+    let actionPolicy: ReservationHostActionPolicy
+
+    static func make(
+        reservation: ReservationRecord,
+        capabilities: AppCapabilities
+    ) -> ReservationDetailPresentation {
+        let emailStatus = Self.emailStateText(for: reservation)
+        var reservationRows: [Row] = [
+            Row(title: "Status", value: reservation.statusValue.displayName),
+            Row(title: "Date", value: reservation.displayDate),
+            Row(title: "Time", value: reservation.displayTime),
+            Row(title: "Party", value: "\(reservation.partySize)"),
+            Row(title: "Table", value: reservation.tableDisplay),
+            Row(title: "Source", value: reservation.sourceDisplayName),
+            Row(title: "Email", value: emailStatus),
+            Row(title: "Submitted", value: serverTimestamp(reservation.createdAt))
+        ]
+
+        if let timingText = reservation.operationalTimingState().insightText {
+            reservationRows.insert(Row(title: "Timing", value: timingText, allowsWrap: true), at: 1)
+        }
+
+        if let confirmedAt = reservation.confirmedAt?.nilIfBlank {
+            reservationRows.append(Row(title: "Confirmed", value: serverTimestamp(confirmedAt)))
+        }
+
+        var notesRows: [Row] = []
+        if let guestNotes = reservation.guestNotes?.nilIfBlank {
+            notesRows.append(Row(title: "Guest", value: guestNotes, allowsWrap: true))
+        }
+        if let staffNotes = reservation.staffNotes?.nilIfBlank {
+            notesRows.append(Row(title: "Staff", value: staffNotes, allowsWrap: true))
+        }
+
+        return ReservationDetailPresentation(
+            header: Header(
+                guestName: reservation.guestName,
+                status: reservation.statusValue,
+                dateText: reservation.displayDate,
+                timeText: reservation.displayTime,
+                partyText: "\(reservation.partySize) \(reservation.partySize == 1 ? "guest" : "guests")",
+                tableText: reservation.tableDisplay,
+                sourceText: reservation.sourceDisplayName
+            ),
+            guestRows: [
+                Row(title: "Phone", value: reservation.formattedPhone),
+                Row(title: "Email", value: reservation.email.nilIfBlank ?? "No email")
+            ],
+            reservationRows: reservationRows,
+            notesRows: notesRows,
+            emailStatus: emailStatus,
+            actionPolicy: ReservationHostActionPolicy(
+                reservation: reservation,
+                capabilities: capabilities,
+                surface: .detail
+            )
+        )
+    }
+
+    private static func emailStateText(for reservation: ReservationRecord) -> String {
+        if reservation.hasConfirmationEmailRecord {
+            return "Email sent"
+        }
+
+        if reservation.hasUsableConfirmationEmail {
+            return "Email not sent"
+        }
+
+        return "No email"
+    }
+
+    private static func serverTimestamp(_ value: String) -> String {
+        if let date = ReservationFormatters.serverDateTime.date(from: value) {
+            return date.formatted(date: .abbreviated, time: .shortened)
+        }
+        return value
+    }
+}
+
 // MARK: - Reservation Detail
 
 struct ReservationDetailView: View {
@@ -360,29 +467,34 @@ private struct ReservationHeroCard: View {
     let onRestoreHidden: (() -> Void)?
 
     var body: some View {
+        let presentation = ReservationDetailPresentation.make(
+            reservation: reservation,
+            capabilities: capabilities
+        )
+
         VStack(alignment: .leading, spacing: 14) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 16) {
-                    timeBlock
+                    timeBlock(presentation.header)
 
                     Rectangle()
                         .fill(Color.primary.opacity(0.10))
                         .frame(width: 1)
 
-                    mainBlock
+                    mainBlock(presentation)
                         .layoutPriority(2)
 
                     Spacer(minLength: 8)
 
-                    actionBlock
+                    actionBlock(presentation.actionPolicy)
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .top, spacing: 12) {
-                        timeBlock
-                        mainBlock
+                        timeBlock(presentation.header)
+                        mainBlock(presentation)
                     }
-                    actionBlock
+                    actionBlock(presentation.actionPolicy)
                 }
             }
         }
@@ -394,97 +506,87 @@ private struct ReservationHeroCard: View {
         }
     }
 
-    private var timeBlock: some View {
+    private func timeBlock(_ header: ReservationDetailPresentation.Header) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(reservation.displayTime)
+            Text(header.timeText)
                 .font(.system(size: 34, weight: .medium, design: .rounded))
                 .monospacedDigit()
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
 
-            Text(reservation.displayDate)
+            Text(header.dateText)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
 
-            ReservationStatusBadge(status: reservation.statusValue)
+            ReservationStatusBadge(status: header.status)
         }
         .frame(width: 112, alignment: .leading)
     }
 
-    private var mainBlock: some View {
+    private func mainBlock(_ presentation: ReservationDetailPresentation) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(reservation.guestName)
+            Text(presentation.header.guestName)
                 .font(.title2.weight(.semibold))
                 .lineLimit(1)
                 .truncationMode(.tail)
 
-            quickFacts
+            quickFacts(presentation.header)
 
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 10) {
-                    contactBlock
-                    notesBlock
-                    serviceBlock
+                    contactBlock(presentation.guestRows)
+                    notesBlock(presentation.notesRows)
+                    serviceBlock(presentation.reservationRows)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    contactBlock
-                    notesBlock
-                    serviceBlock
+                    contactBlock(presentation.guestRows)
+                    notesBlock(presentation.notesRows)
+                    serviceBlock(presentation.reservationRows)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var quickFacts: some View {
+    private func quickFacts(_ header: ReservationDetailPresentation.Header) -> some View {
         FlowLayout(spacing: 7) {
-            DetailPill(label: "\(reservation.partySize) \(reservation.partySize == 1 ? "guest" : "guests")", systemImage: "person.2", tint: .secondary)
-            DetailPill(label: reservation.tableDisplay, systemImage: "table.furniture", tint: .secondary)
-            DetailPill(label: reservation.sourceDisplayName, systemImage: "tray.and.arrow.down", tint: .secondary)
+            DetailPill(label: header.partyText, systemImage: "person.2", tint: .secondary)
+            DetailPill(label: header.tableText, systemImage: "table.furniture", tint: .secondary)
+            DetailPill(label: header.sourceText, systemImage: "tray.and.arrow.down", tint: .secondary)
         }
     }
 
-    private var contactBlock: some View {
+    private func contactBlock(_ rows: [ReservationDetailPresentation.Row]) -> some View {
         DetailDataPanel(title: "Contact", systemImage: "phone") {
-            DetailDataRow(title: "Phone", value: reservation.formattedPhone)
-            DetailDataRow(title: "Email", value: reservation.email.nilIfBlank ?? "No email")
+            ForEach(rows) { row in
+                DetailDataRow(title: row.title, value: row.value, allowsWrap: row.allowsWrap)
+            }
         }
     }
 
-    private var notesBlock: some View {
+    private func notesBlock(_ rows: [ReservationDetailPresentation.Row]) -> some View {
         DetailDataPanel(title: "Notes", systemImage: "note.text") {
-            if reservation.guestNotes?.nilIfBlank == nil,
-               reservation.staffNotes?.nilIfBlank == nil {
+            if rows.isEmpty {
                 DetailPlainLine("No notes")
             } else {
-                if let guestNotes = reservation.guestNotes?.nilIfBlank {
-                    DetailDataRow(title: "Guest", value: guestNotes, allowsWrap: true)
-                }
-                if let staffNotes = reservation.staffNotes?.nilIfBlank {
-                    DetailDataRow(title: "Staff", value: staffNotes, allowsWrap: true)
+                ForEach(rows) { row in
+                    DetailDataRow(title: row.title, value: row.value, allowsWrap: row.allowsWrap)
                 }
             }
         }
     }
 
-    private var serviceBlock: some View {
-        DetailDataPanel(title: "Service", systemImage: "fork.knife") {
-            DetailDataRow(title: "Status", value: reservation.statusValue.displayName)
-            DetailDataRow(title: "Source", value: reservation.sourceDisplayName)
-            if let timingText = reservation.operationalTimingState().insightText {
-                DetailDataRow(title: "Timing", value: timingText, allowsWrap: true)
-            }
-            DetailDataRow(title: "Email", value: emailStateText)
-            DetailDataRow(title: "Created", value: serverTimestamp(reservation.createdAt))
-            if let confirmedAt = reservation.confirmedAt?.nilIfBlank {
-                DetailDataRow(title: "Confirmed", value: serverTimestamp(confirmedAt))
+    private func serviceBlock(_ rows: [ReservationDetailPresentation.Row]) -> some View {
+        DetailDataPanel(title: "Reservation", systemImage: "fork.knife") {
+            ForEach(rows) { row in
+                DetailDataRow(title: row.title, value: row.value, allowsWrap: row.allowsWrap)
             }
         }
     }
 
-    private var actionBlock: some View {
+    private func actionBlock(_ policy: ReservationHostActionPolicy) -> some View {
         VStack(alignment: .trailing, spacing: 8) {
             ReservationActionButtons(
                 reservation: reservation,
@@ -511,9 +613,9 @@ private struct ReservationHeroCard: View {
             }
             .disabled(!capabilities.canEditReservationDetails)
 
-            if showsMoreMenu {
+            if showsMoreMenu(policy) {
                 Menu {
-                    ForEach(secondaryActions) { action in
+                    ForEach(policy.detailSecondaryActions) { action in
                         Button(role: action.role) {
                             onAction(action)
                         } label: {
@@ -521,7 +623,7 @@ private struct ReservationHeroCard: View {
                         }
                     }
 
-                    if !secondaryActions.isEmpty,
+                    if !policy.detailSecondaryActions.isEmpty,
                        onHideWrongEntry != nil || onRestoreHidden != nil {
                         Divider()
                     }
@@ -559,52 +661,8 @@ private struct ReservationHeroCard: View {
         .fixedSize(horizontal: true, vertical: false)
     }
 
-    private var emailStateText: String {
-        if reservation.hasConfirmationEmailRecord {
-            return "Email sent"
-        }
-
-        if reservation.hasUsableConfirmationEmail {
-            return "Email not sent"
-        }
-
-        return "No email"
-    }
-
-    private func serverTimestamp(_ value: String) -> String {
-        if let date = ReservationFormatters.serverDateTime.date(from: value) {
-            return date.formatted(date: .abbreviated, time: .shortened)
-        }
-        return value
-    }
-
-    private var primaryAction: ReservationHostAction? {
-        ReservationHostAction.availableActions(
-            for: reservation,
-            capabilities: capabilities,
-            includeSecondary: false
-        ).first
-    }
-
-    private var secondaryActions: [ReservationHostAction] {
-        ReservationHostAction.availableActions(
-            for: reservation,
-            capabilities: capabilities,
-            includeSecondary: true
-        )
-        .filter { action in
-            if action == primaryAction {
-                return false
-            }
-            if primaryAction == .confirmOnly, action == .confirmAndSendEmail {
-                return false
-            }
-            return true
-        }
-    }
-
-    private var showsMoreMenu: Bool {
-        !secondaryActions.isEmpty || onHideWrongEntry != nil || onRestoreHidden != nil
+    private func showsMoreMenu(_ policy: ReservationHostActionPolicy) -> Bool {
+        return !policy.detailSecondaryActions.isEmpty || onHideWrongEntry != nil || onRestoreHidden != nil
     }
 }
 
@@ -644,7 +702,7 @@ private struct DetailDataRow: View {
             Text(title)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 64, alignment: .leading)
+                .frame(width: 78, alignment: .leading)
 
             Text(value)
                 .font(.caption.weight(.semibold))

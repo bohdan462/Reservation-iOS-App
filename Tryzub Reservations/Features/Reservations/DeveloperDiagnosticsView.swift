@@ -203,6 +203,9 @@ struct DeveloperDiagnosticsView: View {
             endpointRow("POST /managed-reservations", pathFragment: "/managed-reservations")
             endpointRow("POST /managed-reservations/{id}/confirm", pathFragment: "/confirm")
             endpointRow("GET /managed-reservations/import-failures", pathFragment: "/managed-reservations/import-failures")
+            endpointRow("GET /restaurant-blocked-slots?date=YYYY-MM-DD", pathFragment: "/restaurant-blocked-slots")
+            endpointRow("POST /restaurant-blocked-slots", pathFragment: "/restaurant-blocked-slots")
+            endpointRow("DELETE /restaurant-blocked-slots", pathFragment: "/restaurant-blocked-slots")
 
             HStack {
                 Image(systemName: "nosign")

@@ -647,6 +647,16 @@ final class ReservationsController: ObservableObject {
         )
     }
 
+    // Intent: Reads staff-blocked public slots for one service date.
+    // Network: GET /restaurant-blocked-slots?date=YYYY-MM-DD.
+    @discardableResult
+    func loadRestaurantBlockedSlots(date: String) async throws -> RestaurantBlockedSlotsResponseDTO {
+        try await environment.apiClient.fetchRestaurantBlockedSlots(
+            date: date,
+            reason: .restaurantBlockedSlots
+        )
+    }
+
     // Intent: Reads backend aggregate business metrics; does not scan local SwiftData.
     // Network: GET /reservation-analytics/summary.
     @discardableResult

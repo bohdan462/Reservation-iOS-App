@@ -5,12 +5,215 @@
 
 import SwiftUI
 
+// MARK: - Tryzub Design System
+
+enum TryzubColors {
+    static let screenBackground = Color(.systemGroupedBackground)
+    static let cardBackground = Color(.secondarySystemGroupedBackground)
+    static let secondaryCardBackground = Color(.systemBackground)
+    static let border = Color.primary.opacity(0.08)
+    static let mutedText = Color.secondary
+    static let primaryText = Color.primary.opacity(0.86)
+    static let attentionBackground = Color(.systemRed).opacity(0.10)
+    static let attentionBorder = Color(.systemRed).opacity(0.30)
+    static let dueSoonBackground = Color(.systemGray5)
+    static let successBackground = Color(.systemGreen).opacity(0.10)
+    static let primaryControl = Color(red: 0.02, green: 0.08, blue: 0.18)
+    static let destructiveText = Color(red: 0.55, green: 0.16, blue: 0.13)
+}
+
+enum TryzubTypography {
+    static let screenTitle = Font.title2.weight(.semibold)
+    static let sectionTitle = Font.headline.weight(.semibold)
+    static let rowTitle = Font.subheadline.weight(.semibold)
+    static let rowSubtitle = Font.caption.weight(.medium)
+    static let caption = Font.caption
+    static let badge = Font.caption.weight(.semibold)
+    static let button = Font.subheadline.weight(.semibold)
+}
+
+enum TryzubSpacing {
+    static let screenPadding: CGFloat = 16
+    static let cardPadding: CGFloat = 16
+    static let rowSpacing: CGFloat = 10
+    static let sectionSpacing: CGFloat = 14
+    static let chipSpacing: CGFloat = 8
+    static let cornerRadius: CGFloat = 8
+    static let controlCornerRadius: CGFloat = 8
+}
+
 enum ReservationUIStyle {
-    static let cardCorner: CGFloat = 14
-    static let controlCorner: CGFloat = 8
-    static let selectedControlColor = Color(red: 0.02, green: 0.08, blue: 0.18)
+    static let cardCorner = TryzubSpacing.cornerRadius
+    static let controlCorner = TryzubSpacing.controlCornerRadius
+    static let selectedControlColor = TryzubColors.primaryControl
     static let serviceTitleColor = Color(red: 0.03, green: 0.10, blue: 0.22)
-    static let cancelColor = Color(red: 0.55, green: 0.16, blue: 0.13)
+    static let cancelColor = TryzubColors.destructiveText
+}
+
+// MARK: - Shared Components
+
+struct TryzubSectionCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    var spacing = TryzubSpacing.rowSpacing
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            Label(title, systemImage: systemImage)
+                .font(TryzubTypography.sectionTitle)
+                .foregroundStyle(TryzubColors.primaryText)
+
+            content
+        }
+        .padding(TryzubSpacing.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(TryzubColors.cardBackground, in: RoundedRectangle(cornerRadius: TryzubSpacing.cornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: TryzubSpacing.cornerRadius, style: .continuous)
+                .stroke(TryzubColors.border, lineWidth: 1)
+        }
+    }
+}
+
+struct TryzubInfoChip: View {
+    let title: String
+    var value: String?
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(TryzubColors.mutedText)
+                .frame(width: 15, height: 15)
+
+            Text(title)
+                .font(TryzubTypography.badge)
+                .foregroundStyle(TryzubColors.mutedText)
+                .lineLimit(1)
+
+            if let value {
+                Text(value)
+                    .font(TryzubTypography.badge)
+                    .foregroundStyle(TryzubColors.primaryText)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: 36)
+        .background(TryzubColors.secondaryCardBackground, in: RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous)
+                .stroke(TryzubColors.border, lineWidth: 1)
+        }
+    }
+}
+
+struct TryzubStatusBadge: View {
+    let title: String
+    var tint: Color = TryzubColors.mutedText
+
+    var body: some View {
+        Text(title)
+            .font(TryzubTypography.badge)
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 8)
+            .frame(minHeight: 26)
+            .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous)
+                    .stroke(tint.opacity(0.12), lineWidth: 1)
+            }
+    }
+}
+
+struct TryzubPrimaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(TryzubTypography.button)
+            .foregroundStyle(Color(.systemBackground))
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(TryzubColors.primaryControl, in: RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous))
+            .opacity(configuration.isPressed ? 0.72 : 1)
+    }
+}
+
+struct TryzubSecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(TryzubTypography.button)
+            .foregroundStyle(TryzubColors.primaryText)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(TryzubColors.secondaryCardBackground, in: RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous)
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+            }
+            .opacity(configuration.isPressed ? 0.72 : 1)
+    }
+}
+
+struct TryzubDestructiveButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(TryzubTypography.button)
+            .foregroundStyle(TryzubColors.destructiveText)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(TryzubColors.secondaryCardBackground, in: RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous)
+                    .stroke(TryzubColors.destructiveText.opacity(0.18), lineWidth: 1)
+            }
+            .opacity(configuration.isPressed ? 0.72 : 1)
+    }
+}
+
+struct TryzubLoadingRow: View {
+    let title: String
+
+    var body: some View {
+        HStack {
+            Spacer()
+            ProgressView(title)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, minHeight: 72)
+    }
+}
+
+struct TryzubEmptyState: View {
+    let title: String
+    let systemImage: String
+    let message: String
+
+    var body: some View {
+        ContentUnavailableView(title, systemImage: systemImage, description: Text(message))
+            .frame(maxWidth: .infinity, minHeight: 120)
+    }
+}
+
+struct TryzubErrorState: View {
+    let message: String
+    var onRetry: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(TryzubTypography.rowTitle)
+                .foregroundStyle(.red)
+
+            if let onRetry {
+                Button("Retry", action: onRetry)
+                    .font(TryzubTypography.badge)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 struct ReservationDashedLine: View {
@@ -42,19 +245,8 @@ struct ReservationServiceCard<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: spacing) {
-            Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-
+        TryzubSectionCard(title: title, systemImage: systemImage, spacing: spacing) {
             content
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
 }
@@ -101,33 +293,7 @@ struct ReservationInfoChip: View {
     let systemImage: String
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: systemImage)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 15, height: 15)
-
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-
-            if let value {
-                Text(value)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary.opacity(0.82))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-            }
-        }
-        .padding(.horizontal, 10)
-        .frame(maxWidth: .infinity, minHeight: 36)
-        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
+        TryzubInfoChip(title: title, value: value, systemImage: systemImage)
     }
 }
 

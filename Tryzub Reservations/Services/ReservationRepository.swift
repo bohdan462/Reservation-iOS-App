@@ -173,19 +173,13 @@ enum ReservationSyncDiagnostics {
     ) {
         guard isEnabled else { return }
 
-        if reservations.count > 25 {
-            let statusCounts = Dictionary(grouping: reservations, by: { $0.status.rawValue })
-                .mapValues(\.count)
-                .sorted { $0.key < $1.key }
-                .map { "\($0.key):\($0.value)" }
-                .joined(separator: ",")
-            let hiddenCount = reservations.filter { $0.isHidden == true }.count
-            emit("[API DATA] reason=\(reason.rawValue) label=\(label) total=\(total.map(String.init) ?? "-") decoded=\(reservations.count) firstIDs=\(reservations.prefix(10).map(\.id)) statusCounts=[\(statusCounts)] hiddenCount=\(hiddenCount)")
-        } else {
-            emit(
-                "[API DATA] reason=\(reason.rawValue) label=\(label) total=\(total.map(String.init) ?? "-") decoded=\(reservations.count) ids=\(reservations.map(\.id)) dates=\(reservations.map(\.reservationDate)) statuses=\(reservations.map { $0.status.rawValue }) sourceTypes=\(reservations.map { $0.sourceType?.rawValue ?? "nil" }) hidden=\(reservations.map { $0.isHidden.map(String.init) ?? "nil" })"
-            )
-        }
+        let statusCounts = Dictionary(grouping: reservations, by: { $0.status.rawValue })
+            .mapValues(\.count)
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key):\($0.value)" }
+            .joined(separator: ",")
+        let hiddenCount = reservations.filter { $0.isHidden == true }.count
+        emit("[API DATA] reason=\(reason.rawValue) label=\(label) total=\(total.map(String.init) ?? "-") decoded=\(reservations.count) firstIDs=\(reservations.prefix(10).map(\.id)) statusCounts=[\(statusCounts)] hiddenCount=\(hiddenCount)")
     }
 
     static func repositoryUpsert(
@@ -197,7 +191,7 @@ enum ReservationSyncDiagnostics {
 
         let dates = Set(input.map(\.reservationDate)).sorted()
         let scopedLocalCount = localRecords.filter { dates.contains($0.reservationDate) }.count
-        emit("[CACHE] scope=\(scope) server=\(input.count) before=- upserted=\(input.count) removed=0 after=\(scopedLocalCount) removedIDs=[] ids=\(input.map(\.id))")
+        emit("[CACHE] scope=\(scope) server=\(input.count) before=- upserted=\(input.count) removed=0 after=\(scopedLocalCount) firstIDs=\(input.prefix(10).map(\.id))")
     }
 
     static func cacheWrite(
@@ -209,7 +203,7 @@ enum ReservationSyncDiagnostics {
     ) {
         guard isEnabled else { return }
 
-        emit("[CACHE] scope=\(scope) server=\(input.count) before=\(beforeCount) upserted=\(input.count) removed=\(removedIDs.count) after=\(afterCount) removedIDs=\(removedIDs)")
+        emit("[CACHE] scope=\(scope) server=\(input.count) before=\(beforeCount) upserted=\(input.count) removed=\(removedIDs.count) after=\(afterCount) firstRemovedIDs=\(removedIDs.prefix(10))")
     }
 
     static func homeVisible(
@@ -223,7 +217,7 @@ enum ReservationSyncDiagnostics {
     ) {
         guard isEnabled else { return }
 
-        emit("[SYNC] home visible selectedDate=\(selectedDate) localForDate=\(allLocalForDateCount) hiddenExcluded=\(hiddenExcludedCount) statusExcluded=\(statusExcludedCount) finalVisible=\(finalVisibleCount) ids=\(ids)")
+        emit("[SYNC] home visible selectedDate=\(selectedDate) localForDate=\(allLocalForDateCount) hiddenExcluded=\(hiddenExcludedCount) statusExcluded=\(statusExcludedCount) finalVisible=\(finalVisibleCount) firstIDs=\(ids.prefix(10))")
         emit("[SYNC] home excluded statuses=[completed:\(excludedStatusCounts["completed"] ?? 0), cancelled:\(excludedStatusCounts["cancelled"] ?? 0), no_show:\(excludedStatusCounts["no_show"] ?? 0), hidden:\(hiddenExcludedCount)]")
     }
 

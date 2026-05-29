@@ -763,38 +763,45 @@ private struct ReservationReviewQueueView: View {
 private struct ReservationMoreView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
-    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
 
+    @StateObject private var settingsStore: RestaurantSettingsStore
     @State private var showManualCreate = false
 
     let environment: AppEnvironment
 
+    init(environment: AppEnvironment) {
+        self.environment = environment
+        _settingsStore = StateObject(
+            wrappedValue: RestaurantSettingsStore(apiClient: environment.apiClient)
+        )
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                Section("Operations") {
+                Section("Restaurant Operations") {
                     NavigationLink {
-                        RegularGuestsView()
-                    } label: {
-                        Label("Regulars / Guest Memory", systemImage: "person.2.crop.square.stack")
-                    }
-
-                    NavigationLink {
-                        HiddenReservationsView(environment: environment)
-                    } label: {
-                        Label("Hidden Reservations", systemImage: "archivebox")
-                    }
-
-                    NavigationLink {
-                        RestaurantSettingsView()
+                        RestaurantSettingsView(settingsStore: settingsStore)
                     } label: {
                         Label("Restaurant Settings", systemImage: "gearshape")
                     }
 
                     NavigationLink {
-                        BusinessAnalyticsView()
+                        TodayAvailabilityView(settingsStore: settingsStore)
                     } label: {
-                        Label("Business Analytics", systemImage: "chart.bar")
+                        Label("Today Availability", systemImage: "calendar.badge.clock")
+                    }
+
+                    NavigationLink {
+                        WeeklyHoursView(settingsStore: settingsStore)
+                    } label: {
+                        Label("Weekly Hours", systemImage: "clock")
+                    }
+
+                    NavigationLink {
+                        BlockedTimeSlotsView(settingsStore: settingsStore)
+                    } label: {
+                        Label("Blocked Time Slots", systemImage: "nosign")
                     }
 
                     if controller.capabilities.canCreateManualReservations {
@@ -804,7 +811,23 @@ private struct ReservationMoreView: View {
                             Label("Create Manual Reservation", systemImage: "plus.circle")
                         }
                     }
+                }
 
+                Section("Business") {
+                    NavigationLink {
+                        BusinessAnalyticsView(settingsStore: settingsStore)
+                    } label: {
+                        Label("Business Analytics", systemImage: "chart.bar")
+                    }
+
+                    NavigationLink {
+                        RegularGuestsView()
+                    } label: {
+                        Label("Regulars / Guest Memory", systemImage: "person.2.crop.square.stack")
+                    }
+                }
+
+                Section("Developer / Support") {
                     if controller.capabilities.canViewFailedImports,
                        controller.capabilities.canViewDeveloperDiagnostics {
                         NavigationLink {
@@ -820,10 +843,14 @@ private struct ReservationMoreView: View {
                             Label("Failed Imports", systemImage: "exclamationmark.triangle")
                         }
                     }
-                }
 
-                if controller.capabilities.canViewDeveloperDiagnostics {
-                    Section("Admin") {
+                    NavigationLink {
+                        HiddenReservationsView(environment: environment)
+                    } label: {
+                        Label("Hidden Reservations", systemImage: "archivebox")
+                    }
+
+                    if controller.capabilities.canViewDeveloperDiagnostics {
                         NavigationLink {
                             DeveloperDiagnosticsView(environment: environment)
                                 .environmentObject(controller)
@@ -846,6 +873,9 @@ private struct ReservationMoreView: View {
                     // Manual call-in create is accepted immediately; no email is sent.
                     try await controller.createAcceptedManualReservation(request, context: modelContext)
                 }
+            }
+            .task {
+                await settingsStore.loadInitialSettings()
             }
         }
     }
@@ -1047,22 +1077,29 @@ private struct HiddenReservationInfoLine: View {
 }
 
 private enum HiddenReservationDateFormatting {
+    private static let parser: DateFormatter = {
+        let parser = DateFormatter()
+        parser.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return parser
+    }()
+
+    private static let displayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
     static func server(_ dateString: String?) -> String {
         guard let dateString = dateString?.nilIfBlank else {
             return "-"
         }
 
-        let parser = DateFormatter()
-        parser.dateFormat = "yyyy-MM-dd HH:mm:ss"
-
         guard let date = parser.date(from: dateString) else {
             return dateString
         }
 
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return displayFormatter.string(from: date)
     }
 }
 
@@ -1093,6 +1130,7 @@ private struct ReservationNavigationRow: View {
             reservation: reservation,
             context: context,
             contextNote: contextNote,
+            capabilities: controller.capabilities,
             onTableTap: controller.capabilities.canEditReservationDetails
                 ? { tableAssignmentReservation = reservation }
                 : nil
@@ -1190,7 +1228,11 @@ private struct ReservationNavigationRow: View {
 
     // Intent: Rows expose compact staff actions; no API clients/services are created here.
     private var contextMenuActions: [ReservationHostAction] {
-        ReservationHostAction.contextMenuActions(for: reservation, capabilities: controller.capabilities)
+        ReservationHostActionPolicy(
+            reservation: reservation,
+            capabilities: controller.capabilities
+        )
+        .contextMenuActions
     }
 
     // MARK: - Staff Action Routing

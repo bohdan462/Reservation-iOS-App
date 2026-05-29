@@ -32,6 +32,9 @@ enum ReservationAPIRequestReason: String {
     case restaurantDayAvailability = "restaurant_day_availability"
     case restaurantDayAvailabilityPatch = "restaurant_day_availability_patch"
     case reservationSlots = "reservation_slots"
+    case restaurantBlockedSlots = "restaurant_blocked_slots"
+    case restaurantBlockedSlotsCreate = "restaurant_blocked_slots_create"
+    case restaurantBlockedSlotsDelete = "restaurant_blocked_slots_delete"
     case reservationAnalyticsSummary = "reservation_analytics_summary"
     case reconcileByID = "reconcile_by_id"
     case manualSkipBusy = "manual_skip_busy"
@@ -263,6 +266,10 @@ protocol ReservationsAPIClientProtocol: AnyObject {
     func fetchRestaurantDayAvailability(date: String, reason: ReservationAPIRequestReason) async throws -> RestaurantDayAvailabilityDTO
     func updateRestaurantDayAvailability(date: String, request: RestaurantDayAvailabilityUpdateRequest, reason: ReservationAPIRequestReason) async throws -> RestaurantDayAvailabilityDTO
     func fetchReservationSlots(date: String, reason: ReservationAPIRequestReason) async throws -> ReservationSlotsResponseDTO
+    func fetchRestaurantBlockedSlots(date: String, reason: ReservationAPIRequestReason) async throws -> RestaurantBlockedSlotsResponseDTO
+    func createRestaurantBlockedSlots(date: String, slots: [String], reason: String?, requestReason: ReservationAPIRequestReason) async throws -> RestaurantBlockedSlotsResponseDTO
+    func deleteRestaurantBlockedSlots(date: String, slots: [String], reason: ReservationAPIRequestReason) async throws -> RestaurantBlockedSlotsResponseDTO
+    func deleteAllRestaurantBlockedSlots(date: String, reason: ReservationAPIRequestReason) async throws -> RestaurantBlockedSlotsResponseDTO
     func fetchReservationAnalyticsSummary(from: String?, to: String?, reason: ReservationAPIRequestReason) async throws -> ReservationAnalyticsSummaryDTO
     func fetchImportFailures(page: Int, perPage: Int, reason: ReservationAPIRequestReason) async throws -> ImportFailuresResponse
 }
@@ -297,6 +304,15 @@ extension ReservationsAPIClientProtocol {
 
     func fetchReservation(id: Int) async throws -> ReservationDTO {
         try await fetchReservation(id: id, retryCount: 0, reason: .unspecified)
+    }
+
+    func createRestaurantBlockedSlots(date: String, slots: [String], reason: String?) async throws -> RestaurantBlockedSlotsResponseDTO {
+        try await createRestaurantBlockedSlots(
+            date: date,
+            slots: slots,
+            reason: reason,
+            requestReason: .restaurantBlockedSlotsCreate
+        )
     }
 }
 
@@ -341,16 +357,6 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         configuration.httpMaximumConnectionsPerHost = 1
         return URLSession(configuration: configuration)
     }()
-    
-//    private static let defaultSession: URLSession = {
-//        let configuration = URLSessionConfiguration.default
-//        configuration.waitsForConnectivity = false
-//        configuration.timeoutIntervalForRequest = 8
-//        configuration.timeoutIntervalForResource = 12
-//        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-//        configuration.httpMaximumConnectionsPerHost = 2
-//        return URLSession(configuration: configuration)
-//    }()
 
     // MARK: - Initialization
 
@@ -365,7 +371,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         self.session = session
     }
 
-    // MARK: - Fetch Reservation Lists
+    // MARK: - Reservations
 
     // Intent: Reads managed reservations for today, schedule windows, review queues, or search.
     // Network: GET /managed-reservations with query filters.
@@ -586,7 +592,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return try decodeRestaurantSetup(from: data)
     }
 
-    // MARK: - Restaurant Hours / Availability
+    // MARK: - Restaurant Hours
 
     // Intent: Reads backend weekly/special hours for staff settings.
     // Network: GET /restaurant-hours.
@@ -626,6 +632,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return try decodeRestaurantHours(from: data)
     }
 
+    // MARK: - Availability
+
     // Intent: Reads effective availability for one service date.
     // Network: GET /restaurant-day-availability?date=YYYY-MM-DD.
     func fetchRestaurantDayAvailability(
@@ -659,6 +667,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return try decodeRestaurantDayAvailability(from: data)
     }
 
+    // MARK: - Slots
+
     // Intent: Previews backend-computed slots for one date.
     // Network: GET /reservation-slots?date=YYYY-MM-DD.
     func fetchReservationSlots(
@@ -678,6 +688,81 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
             throw ReservationAPIError.decodingFailure(error)
         }
     }
+
+    // MARK: - Blocked Slots
+
+    // Intent: Reads public-form slots that staff have blocked for one date.
+    // Network: GET /restaurant-blocked-slots?date=YYYY-MM-DD.
+    func fetchRestaurantBlockedSlots(
+        date: String,
+        reason: ReservationAPIRequestReason = .restaurantBlockedSlots
+    ) async throws -> RestaurantBlockedSlotsResponseDTO {
+        let url = try makeURL(
+            path: "restaurant-blocked-slots",
+            queryItems: [URLQueryItem(name: "date", value: date)]
+        )
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+
+        return try decodeRestaurantBlockedSlots(from: data, fallbackDate: date)
+    }
+
+    // Intent: Removes specific generated public slots from one service date.
+    // Network: POST /restaurant-blocked-slots.
+    func createRestaurantBlockedSlots(
+        date: String,
+        slots: [String],
+        reason blockReason: String?,
+        requestReason: ReservationAPIRequestReason = .restaurantBlockedSlotsCreate
+    ) async throws -> RestaurantBlockedSlotsResponseDTO {
+        let request = try makeJSONRequest(
+            url: baseURL.appendingPathComponent("restaurant-blocked-slots"),
+            method: "POST",
+            body: RestaurantBlockedSlotsCreateRequest(
+                date: date,
+                slots: slots,
+                reason: blockReason
+            )
+        )
+        let data = try await perform(request, reason: requestReason)
+
+        return try decodeRestaurantBlockedSlots(from: data, fallbackDate: date)
+    }
+
+    // Intent: Restores specific public slots for one service date.
+    // Network: DELETE /restaurant-blocked-slots with JSON body.
+    func deleteRestaurantBlockedSlots(
+        date: String,
+        slots: [String],
+        reason: ReservationAPIRequestReason = .restaurantBlockedSlotsDelete
+    ) async throws -> RestaurantBlockedSlotsResponseDTO {
+        let request = try makeJSONRequest(
+            url: baseURL.appendingPathComponent("restaurant-blocked-slots"),
+            method: "DELETE",
+            body: RestaurantBlockedSlotsDeleteRequest(date: date, slots: slots)
+        )
+        let data = try await perform(request, reason: reason)
+
+        return try decodeRestaurantBlockedSlots(from: data, fallbackDate: date)
+    }
+
+    // Intent: Clears every blocked public slot for one service date.
+    // Network: DELETE /restaurant-blocked-slots?date=YYYY-MM-DD.
+    func deleteAllRestaurantBlockedSlots(
+        date: String,
+        reason: ReservationAPIRequestReason = .restaurantBlockedSlotsDelete
+    ) async throws -> RestaurantBlockedSlotsResponseDTO {
+        let url = try makeURL(
+            path: "restaurant-blocked-slots",
+            queryItems: [URLQueryItem(name: "date", value: date)]
+        )
+        let request = makeRequest(url: url, method: "DELETE")
+        let data = try await perform(request, reason: reason)
+
+        return try decodeRestaurantBlockedSlots(from: data, fallbackDate: date)
+    }
+
+    // MARK: - Analytics
 
     // Intent: Reads backend aggregate metrics without downloading historical reservations.
     // Network: GET /reservation-analytics/summary.
@@ -731,7 +816,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
     }
 
-    // MARK: - Request Building
+    // MARK: - Request Helpers
 
     private func managedReservationsURL() -> URL {
         baseURL.appendingPathComponent("managed-reservations")
@@ -801,6 +886,23 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
             }
 
             return try decoder.decode(RestaurantDayAvailabilityDTO.self, from: data)
+        } catch {
+            throw ReservationAPIError.decodingFailure(error)
+        }
+    }
+
+    private func decodeRestaurantBlockedSlots(from data: Data, fallbackDate: String) throws -> RestaurantBlockedSlotsResponseDTO {
+        do {
+            if let envelope = try? decoder.decode(RestaurantBlockedSlotsResponse.self, from: data),
+               let blockedSlots = envelope.data {
+                return RestaurantBlockedSlotsResponseDTO(
+                    success: envelope.success ?? true,
+                    date: envelope.date ?? fallbackDate,
+                    data: blockedSlots
+                )
+            }
+
+            return try decoder.decode(RestaurantBlockedSlotsResponseDTO.self, from: data)
         } catch {
             throw ReservationAPIError.decodingFailure(error)
         }

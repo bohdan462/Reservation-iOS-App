@@ -30,176 +30,119 @@ enum ReservationRowContext: Equatable {
 
 }
 
-// MARK: - Shared Reservation Row
+// MARK: - Row Presentation
 
-struct ReservationRowView<Accessory: View>: View {
-    let reservation: ReservationRecord
-    var showsDate = true
-    var context: ReservationRowContext = .schedule
-    var contextNote: String?
-    var onTableTap: (() -> Void)?
+enum ReservationRowStyle {
+    case normal
+    case dueSoon
+    case attention
 
-    @ViewBuilder let accessory: () -> Accessory
+    var background: Color {
+        switch self {
+        case .normal:
+            return TryzubColors.cardBackground
+        case .dueSoon:
+            return TryzubColors.dueSoonBackground
+        case .attention:
+            return TryzubColors.attentionBackground
+        }
+    }
 
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    var strokeColor: Color {
+        switch self {
+        case .normal:
+            return Color.primary.opacity(0.08)
+        case .dueSoon:
+            return Color.primary.opacity(0.22)
+        case .attention:
+            return TryzubColors.attentionBorder
+        }
+    }
+}
 
-    // Accessory lets Today, Schedule, and Review reuse the same compact cell with different actions.
-    init(
+struct ReservationRowPresentation: Identifiable {
+    let id: Int
+    let timeText: String
+    let dateText: String?
+    let guestName: String
+    let partyText: String
+    let compactPartyText: String
+    let tableText: String?
+    let phoneText: String?
+    let notesIndicator: String?
+    let statusText: String
+    let status: ReservationStatus
+    let sourceText: String?
+    let insight: ReservationRowInsight?
+    let isMuted: Bool
+    let rowStyle: ReservationRowStyle
+    let primaryAction: ReservationHostAction?
+    let secondaryActions: [ReservationHostAction]
+}
+
+enum ReservationRowPresenter {
+    static func make(
         reservation: ReservationRecord,
-        showsDate: Bool = true,
-        context: ReservationRowContext = .schedule,
-        contextNote: String? = nil,
-        onTableTap: (() -> Void)? = nil,
-        @ViewBuilder accessory: @escaping () -> Accessory
-    ) {
-        self.reservation = reservation
-        self.showsDate = showsDate
-        self.context = context
-        self.contextNote = contextNote
-        self.onTableTap = onTableTap
-        self.accessory = accessory
-    }
-
-    var body: some View {
-        Group {
-            if horizontalSizeClass == .regular {
-                wideRow
-            } else {
-                compactRow
-            }
+        context: ReservationRowContext,
+        contextNote: String?,
+        showsDate: Bool,
+        now: Date = Date(),
+        capabilities: AppCapabilities? = nil
+    ) -> ReservationRowPresentation {
+        let insight = primaryInsight(
+            reservation: reservation,
+            contextNote: contextNote,
+            now: now
+        )
+        let policy = capabilities.map {
+            ReservationHostActionPolicy(reservation: reservation, capabilities: $0, surface: .row)
         }
-        .opacity(isMuted ? 0.58 : 1)
+        let primaryAction = policy?.primaryRowAction
+        let secondaryActions = policy?.contextMenuActions.filter { $0 != primaryAction } ?? []
+
+        return ReservationRowPresentation(
+            id: reservation.remoteID,
+            timeText: reservation.displayTime,
+            dateText: dateText(for: reservation, context: context, showsDate: showsDate),
+            guestName: reservation.guestName,
+            partyText: "\(reservation.partySize) \(reservation.partySize == 1 ? "guest" : "guests")",
+            compactPartyText: "\(reservation.partySize)",
+            tableText: reservation.tableDisplay,
+            phoneText: reservation.phone.isEmpty ? nil : reservation.formattedPhone,
+            notesIndicator: notesIndicator(for: reservation),
+            statusText: reservation.statusValue.shortDisplayName,
+            status: reservation.statusValue,
+            sourceText: reservation.sourceDisplayName,
+            insight: insight,
+            isMuted: isMuted(reservation),
+            rowStyle: rowStyle(for: insight),
+            primaryAction: primaryAction,
+            secondaryActions: secondaryActions
+        )
     }
 
-    // MARK: - Wide / Compact Layouts
-
-    private var wideRow: some View {
-        HStack(alignment: .center, spacing: ReservationRowLayout.wideSectionSpacing) {
-            ReservationRowTimeSection(
-                eyebrow: compactEyebrow,
-                time: reservation.displayTime,
-                guestCountText: guestCountText,
-                width: ReservationRowLayout.wideTimeWidth
-            )
-
-            Rectangle()
-                .fill(Color.primary.opacity(0.10))
-                .frame(width: 1, height: 52)
-
-            ReservationRowGuestSection(
-                guestName: reservation.guestName,
-                status: nil,
-                metaItems: wideMetaItems,
-                insight: primaryInsight,
-                onTableTap: onTableTap,
-                usesCompactName: false
-            )
-            .layoutPriority(2)
-
-            Spacer(minLength: ReservationRowLayout.minimumSpacer)
-
-            ReservationRowAccessorySection(
-                status: reservation.statusValue,
-                width: ReservationRowLayout.wideActionWidth,
-                accessory: accessory
-            )
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .frame(minHeight: 70)
-        .background(rowBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
-        .overlay(rowStroke)
-    }
-
-    private var compactRow: some View {
-        HStack(alignment: .center, spacing: ReservationRowLayout.compactSectionSpacing) {
-            ReservationRowTimeSection(
-                eyebrow: compactEyebrow,
-                time: reservation.displayTime,
-                guestCountText: guestCountText,
-                width: ReservationRowLayout.compactTimeWidth
-            )
-
-            Rectangle()
-                .fill(Color.primary.opacity(0.10))
-                .frame(width: 1, height: 50)
-
-            ReservationRowGuestSection(
-                guestName: reservation.guestName,
-                status: reservation.statusValue,
-                metaItems: compactMetaItems,
-                insight: primaryInsight,
-                onTableTap: onTableTap,
-                usesCompactName: true
-            )
-            .layoutPriority(2)
-
-            ReservationRowAccessorySection(
-                status: nil,
-                width: nil,
-                accessory: accessory
-            )
-        }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 9)
-        .frame(minHeight: 68)
-        .background(rowBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
-        .overlay(rowStroke)
-    }
-
-    // MARK: - Action Area
-
-    // MARK: - Display Helpers
-
-    private var eyebrow: String? {
-        context.eyebrow(for: reservation, showsDate: showsDate)
-    }
-
-    private var compactEyebrow: String? {
+    private static func dateText(
+        for reservation: ReservationRecord,
+        context: ReservationRowContext,
+        showsDate: Bool
+    ) -> String? {
         switch context {
         case .schedule, .review:
-            return showsDate ? Self.shortDateLabel(from: reservation.reservationDate) : eyebrow
+            if showsDate {
+                return shortDateLabel(from: reservation.reservationDate)
+            }
+            return context.eyebrow(for: reservation, showsDate: showsDate)
         case .todayUpcoming, .todaySeated:
-            return eyebrow
+            return context.eyebrow(for: reservation, showsDate: showsDate)
         }
     }
 
-    private var guestCountText: String {
-        "\(reservation.partySize) \(reservation.partySize == 1 ? "guest" : "guests")"
-    }
-
-    private var wideMetaItems: [ReservationRowDetailLabelData] {
-        var items: [ReservationRowDetailLabelData] = [
-            ReservationRowDetailLabelData(text: guestCountText, systemImage: "person.2"),
-            ReservationRowDetailLabelData(text: tableText, systemImage: "table.furniture", isTable: true)
-        ]
-
-        if let notesIndicatorText {
-            items.append(ReservationRowDetailLabelData(text: notesIndicatorText, systemImage: "note.text"))
-        }
-
-        if !reservation.phone.isEmpty {
-            items.append(ReservationRowDetailLabelData(text: reservation.formattedPhone, systemImage: "phone"))
-        }
-
-        return items
-    }
-
-    private var compactMetaItems: [ReservationRowDetailLabelData] {
-        var items: [ReservationRowDetailLabelData] = [
-            ReservationRowDetailLabelData(text: "\(reservation.partySize)", systemImage: "person.2"),
-            ReservationRowDetailLabelData(text: tableText, systemImage: "table.furniture", isTable: true)
-        ]
-
-        if let notesIndicatorText {
-            items.append(ReservationRowDetailLabelData(text: notesIndicatorText, systemImage: "note.text"))
-        }
-
-        return items
-    }
-
-    private var primaryInsight: ReservationRowInsight? {
-        let timingState = reservation.operationalTimingState()
+    private static func primaryInsight(
+        reservation: ReservationRecord,
+        contextNote: String?,
+        now: Date
+    ) -> ReservationRowInsight? {
+        let timingState = reservation.operationalTimingState(now: now)
         if let timingText = timingState.insightText {
             return ReservationRowInsight(
                 text: timingText,
@@ -243,15 +186,7 @@ struct ReservationRowView<Accessory: View>: View {
         return "\(months[month - 1]) \(day)"
     }
 
-    private var tableText: String {
-        guard let tableName = reservation.tableName?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !tableName.isEmpty else {
-            return "No table"
-        }
-        return "Table \(tableName)"
-    }
-
-    private var notesIndicatorText: String? {
+    private static func notesIndicator(for reservation: ReservationRecord) -> String? {
         if reservation.hasStaffNotes {
             return "STAFF"
         }
@@ -263,7 +198,7 @@ struct ReservationRowView<Accessory: View>: View {
         return nil
     }
 
-    private var isMuted: Bool {
+    private static func isMuted(_ reservation: ReservationRecord) -> Bool {
         switch reservation.statusValue {
         case .completed, .cancelled, .noShow:
             return true
@@ -272,33 +207,181 @@ struct ReservationRowView<Accessory: View>: View {
         }
     }
 
-    private var rowBackground: Color {
-        if primaryInsight?.prominence == .attention {
-            return Color(.systemRed).opacity(0.10)
+    private static func rowStyle(for insight: ReservationRowInsight?) -> ReservationRowStyle {
+        switch insight?.prominence {
+        case .attention:
+            return .attention
+        case .dueSoon:
+            return .dueSoon
+        case .normal, nil:
+            return .normal
         }
+    }
+}
 
-        if primaryInsight?.prominence == .dueSoon {
-            return Color(.systemGray5)
-        }
+// MARK: - Shared Reservation Row
 
-        return Color(.secondarySystemGroupedBackground)
+struct ReservationRowView<Accessory: View>: View {
+    let reservation: ReservationRecord
+    var showsDate = true
+    var context: ReservationRowContext = .schedule
+    var contextNote: String?
+    var capabilities: AppCapabilities?
+    var onTableTap: (() -> Void)?
+
+    @ViewBuilder let accessory: () -> Accessory
+
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    // Accessory lets Today, Schedule, and Review reuse the same compact cell with different actions.
+    init(
+        reservation: ReservationRecord,
+        showsDate: Bool = true,
+        context: ReservationRowContext = .schedule,
+        contextNote: String? = nil,
+        capabilities: AppCapabilities? = nil,
+        onTableTap: (() -> Void)? = nil,
+        @ViewBuilder accessory: @escaping () -> Accessory
+    ) {
+        self.reservation = reservation
+        self.showsDate = showsDate
+        self.context = context
+        self.contextNote = contextNote
+        self.capabilities = capabilities
+        self.onTableTap = onTableTap
+        self.accessory = accessory
     }
 
-    private var rowStroke: some View {
+    var body: some View {
+        let presentation = ReservationRowPresenter.make(
+            reservation: reservation,
+            context: context,
+            contextNote: contextNote,
+            showsDate: showsDate,
+            capabilities: capabilities
+        )
+
+        Group {
+            if horizontalSizeClass == .regular {
+                wideRow(presentation)
+            } else {
+                compactRow(presentation)
+            }
+        }
+        .opacity(presentation.isMuted ? 0.58 : 1)
+    }
+
+    // MARK: - Wide / Compact Layouts
+
+    private func wideRow(_ presentation: ReservationRowPresentation) -> some View {
+        HStack(alignment: .center, spacing: ReservationRowLayout.wideSectionSpacing) {
+            ReservationRowTimeSection(
+                eyebrow: presentation.dateText,
+                time: presentation.timeText,
+                guestCountText: presentation.partyText,
+                width: ReservationRowLayout.wideTimeWidth
+            )
+
+            Rectangle()
+                .fill(Color.primary.opacity(0.10))
+                .frame(width: 1, height: 52)
+
+            ReservationRowGuestSection(
+                guestName: presentation.guestName,
+                status: nil,
+                metaItems: wideMetaItems(for: presentation),
+                insight: presentation.insight,
+                onTableTap: onTableTap,
+                usesCompactName: false
+            )
+            .layoutPriority(2)
+
+            Spacer(minLength: ReservationRowLayout.minimumSpacer)
+
+            ReservationRowAccessorySection(
+                status: presentation.status,
+                width: ReservationRowLayout.wideActionWidth,
+                accessory: accessory
+            )
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(minHeight: 70)
+        .background(presentation.rowStyle.background, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+        .overlay(rowStroke(for: presentation.rowStyle))
+    }
+
+    private func compactRow(_ presentation: ReservationRowPresentation) -> some View {
+        HStack(alignment: .center, spacing: ReservationRowLayout.compactSectionSpacing) {
+            ReservationRowTimeSection(
+                eyebrow: presentation.dateText,
+                time: presentation.timeText,
+                guestCountText: presentation.partyText,
+                width: ReservationRowLayout.compactTimeWidth
+            )
+
+            Rectangle()
+                .fill(Color.primary.opacity(0.10))
+                .frame(width: 1, height: 50)
+
+            ReservationRowGuestSection(
+                guestName: presentation.guestName,
+                status: presentation.status,
+                metaItems: compactMetaItems(for: presentation),
+                insight: presentation.insight,
+                onTableTap: onTableTap,
+                usesCompactName: true
+            )
+            .layoutPriority(2)
+
+            ReservationRowAccessorySection(
+                status: nil,
+                width: nil,
+                accessory: accessory
+            )
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .frame(minHeight: 68)
+        .background(presentation.rowStyle.background, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+        .overlay(rowStroke(for: presentation.rowStyle))
+    }
+
+    // MARK: - Display Helpers
+
+    private func wideMetaItems(for presentation: ReservationRowPresentation) -> [ReservationRowDetailLabelData] {
+        var items: [ReservationRowDetailLabelData] = [
+            ReservationRowDetailLabelData(text: presentation.partyText, systemImage: "person.2"),
+            ReservationRowDetailLabelData(text: presentation.tableText ?? "No table", systemImage: "table.furniture", isTable: true)
+        ]
+
+        if let notesIndicator = presentation.notesIndicator {
+            items.append(ReservationRowDetailLabelData(text: notesIndicator, systemImage: "note.text"))
+        }
+
+        if let phoneText = presentation.phoneText {
+            items.append(ReservationRowDetailLabelData(text: phoneText, systemImage: "phone"))
+        }
+
+        return items
+    }
+
+    private func compactMetaItems(for presentation: ReservationRowPresentation) -> [ReservationRowDetailLabelData] {
+        var items: [ReservationRowDetailLabelData] = [
+            ReservationRowDetailLabelData(text: presentation.compactPartyText, systemImage: "person.2"),
+            ReservationRowDetailLabelData(text: presentation.tableText ?? "No table", systemImage: "table.furniture", isTable: true)
+        ]
+
+        if let notesIndicator = presentation.notesIndicator {
+            items.append(ReservationRowDetailLabelData(text: notesIndicator, systemImage: "note.text"))
+        }
+
+        return items
+    }
+
+    private func rowStroke(for style: ReservationRowStyle) -> some View {
         RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
-            .stroke(rowStrokeColor, lineWidth: 1)
-    }
-
-    private var rowStrokeColor: Color {
-        if primaryInsight?.prominence == .attention {
-            return Color(.systemRed).opacity(0.30)
-        }
-
-        if primaryInsight?.prominence == .dueSoon {
-            return Color.primary.opacity(0.22)
-        }
-
-        return Color.primary.opacity(0.08)
+            .stroke(style.strokeColor, lineWidth: 1)
     }
 
 }
@@ -315,13 +398,16 @@ private enum ReservationRowLayout {
 }
 
 private struct ReservationRowDetailLabelData: Identifiable {
-    let id = UUID()
     let text: String
     let systemImage: String
     var isTable = false
+
+    var id: String {
+        "\(systemImage)-\(text)-\(isTable)"
+    }
 }
 
-private struct ReservationRowInsight {
+struct ReservationRowInsight {
     enum Prominence: Equatable {
         case normal
         case dueSoon
@@ -486,6 +572,7 @@ extension ReservationRowView where Accessory == EmptyView {
         showsDate: Bool = true,
         context: ReservationRowContext = .schedule,
         contextNote: String? = nil,
+        capabilities: AppCapabilities? = nil,
         onTableTap: (() -> Void)? = nil
     ) {
         self.init(
@@ -493,6 +580,7 @@ extension ReservationRowView where Accessory == EmptyView {
             showsDate: showsDate,
             context: context,
             contextNote: contextNote,
+            capabilities: capabilities,
             onTableTap: onTableTap
         ) {
             EmptyView()
@@ -506,18 +594,8 @@ struct ReservationStatusBadge: View {
     let status: ReservationStatus
 
     var body: some View {
-        Text(status.shortDisplayName)
+        TryzubStatusBadge(title: status.shortDisplayName, tint: .secondary)
             .font(.caption2.weight(.medium))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-            }
     }
 }
 

@@ -5,6 +5,403 @@
 
 import SwiftUI
 
+@MainActor
+final class RestaurantSettingsStore: ObservableObject {
+    // MARK: - Published State
+
+    @Published private(set) var setup: RestaurantSetup = .default
+    @Published private(set) var weeklyHours: RestaurantHoursDTO?
+    @Published private(set) var selectedDateAvailability: RestaurantDayAvailabilityDTO?
+    @Published private(set) var analyticsSummary: ReservationAnalyticsSummaryDTO?
+
+    @Published var selectedAvailabilityDate = Date()
+    @Published private(set) var selectedDateSlots: ReservationSlotsResponseDTO?
+    @Published private(set) var selectedDateBlockedSlots: [RestaurantBlockedSlotDTO] = []
+
+    @Published private(set) var setupLoading = false
+    @Published private(set) var setupSaving = false
+    @Published private(set) var setupError: String?
+
+    @Published private(set) var weeklyHoursLoading = false
+    @Published private(set) var weeklyHoursSaving = false
+    @Published private(set) var weeklyHoursError: String?
+
+    @Published private(set) var dayAvailabilityLoading = false
+    @Published private(set) var dayAvailabilitySaving = false
+    @Published private(set) var dayAvailabilityError: String?
+
+    @Published private(set) var blockedSlotsLoading = false
+    @Published private(set) var blockedSlotsSaving = false
+    @Published private(set) var blockedSlotsError: String?
+
+    @Published private(set) var slotPreviewLoading = false
+    @Published private(set) var slotPreviewError: String?
+
+    @Published private(set) var analyticsLoading = false
+    @Published private(set) var analyticsError: String?
+
+    // MARK: - Dependencies
+
+    private let apiClient: any ReservationsAPIClientProtocol
+
+    // MARK: - Lifecycle
+
+    init(apiClient: any ReservationsAPIClientProtocol) {
+        self.apiClient = apiClient
+    }
+
+    func loadInitialSettings() async {
+        _ = try? await loadRestaurantSetup()
+        _ = try? await loadRestaurantHours()
+        await refreshDateOperations(date: selectedAvailabilityDate.reservationDateString())
+    }
+
+    // MARK: - Setup
+
+    @discardableResult
+    func loadRestaurantSetup() async throws -> RestaurantSetup {
+        guard !setupLoading else { return setup }
+
+        setupLoading = true
+        setupError = nil
+        defer { setupLoading = false }
+
+        do {
+            let dto = try await apiClient.fetchRestaurantSetup(reason: .restaurantSetup)
+            let loadedSetup = RestaurantSetup(dto: dto)
+            setup = loadedSetup
+            return loadedSetup
+        } catch {
+            setupError = error.localizedDescription
+            throw error
+        }
+    }
+
+    @discardableResult
+    func saveRestaurantSetup() async throws -> RestaurantSetup {
+        try await saveRestaurantSetup(
+            request: RestaurantSetupUpdateRequest(
+                businessName: setup.businessName,
+                timezone: setup.timezone,
+                defaultPartySize: setup.defaultPartySize,
+                bookingWindowDays: setup.bookingWindowDays,
+                slotIntervalMinutes: setup.slotIntervalMinutes,
+                maxOnlinePartySize: setup.maxOnlinePartySize,
+                largePartyReviewThreshold: setup.largePartyReviewThreshold,
+                sameDayBookingEnabled: setup.sameDayBookingEnabled,
+                minimumLeadTimeMinutes: setup.minimumLeadTimeMinutes,
+                callInPlaceholderEmail: setup.callInPlaceholderEmail,
+                fromEmail: setup.fromEmail,
+                replyToEmail: setup.replyToEmail
+            )
+        )
+    }
+
+    @discardableResult
+    func saveRestaurantSetup(request: RestaurantSetupUpdateRequest) async throws -> RestaurantSetup {
+        guard !setupSaving else { throw SettingsValidationError(message: "Another settings action is already in progress.") }
+
+        setupSaving = true
+        setupError = nil
+        defer { setupSaving = false }
+
+        do {
+            let dto = try await apiClient.updateRestaurantSetup(request, reason: .restaurantSetupPatch)
+            let savedSetup = RestaurantSetup(dto: dto)
+            setup = savedSetup
+            return savedSetup
+        } catch {
+            setupError = error.localizedDescription
+            throw error
+        }
+    }
+
+    // MARK: - Weekly Hours
+
+    @discardableResult
+    func loadRestaurantHours() async throws -> RestaurantHoursDTO {
+        guard !weeklyHoursLoading else {
+            if let weeklyHours { return weeklyHours }
+            throw SettingsValidationError(message: "Restaurant hours are already loading.")
+        }
+
+        weeklyHoursLoading = true
+        weeklyHoursError = nil
+        defer { weeklyHoursLoading = false }
+
+        do {
+            let loadedHours = try await apiClient.fetchRestaurantHours(
+                from: nil,
+                to: nil,
+                reason: .restaurantHours
+            )
+            weeklyHours = loadedHours
+            return loadedHours
+        } catch {
+            weeklyHoursError = error.localizedDescription
+            throw error
+        }
+    }
+
+    @discardableResult
+    func saveRestaurantHours() async throws -> RestaurantHoursDTO {
+        let request = WeeklyHoursUpdateRequest(
+            weeklyHours: (weeklyHours?.weeklyHours ?? []).map {
+                WeeklyHourUpdateDTO(
+                    weekday: $0.weekday,
+                    isOpen: $0.isOpen,
+                    openTime: $0.openTime,
+                    closeTime: $0.closeTime
+                )
+            }
+        )
+        return try await saveRestaurantHours(request: request)
+    }
+
+    @discardableResult
+    func saveRestaurantHours(request: WeeklyHoursUpdateRequest) async throws -> RestaurantHoursDTO {
+        guard !weeklyHoursSaving else { throw SettingsValidationError(message: "Weekly hours are already saving.") }
+
+        weeklyHoursSaving = true
+        weeklyHoursError = nil
+        defer { weeklyHoursSaving = false }
+
+        do {
+            _ = try await apiClient.updateRestaurantHours(request, reason: .restaurantHoursPatch)
+            let refreshedHours = try await apiClient.fetchRestaurantHours(
+                from: nil,
+                to: nil,
+                reason: .restaurantHours
+            )
+            weeklyHours = refreshedHours
+            await refreshDateOperations(date: selectedAvailabilityDate.reservationDateString())
+            return refreshedHours
+        } catch {
+            weeklyHoursError = error.localizedDescription
+            throw error
+        }
+    }
+
+    // MARK: - Day Availability
+
+    @discardableResult
+    func loadDayAvailability(date: String) async throws -> RestaurantDayAvailabilityDTO {
+        selectedAvailabilityDate = Self.date(from: date) ?? selectedAvailabilityDate
+        guard !dayAvailabilityLoading else {
+            if let selectedDateAvailability { return selectedDateAvailability }
+            throw SettingsValidationError(message: "Availability is already loading.")
+        }
+
+        dayAvailabilityLoading = true
+        dayAvailabilityError = nil
+        defer { dayAvailabilityLoading = false }
+
+        do {
+            let availability = try await apiClient.fetchRestaurantDayAvailability(
+                date: date,
+                reason: .restaurantDayAvailability
+            )
+            selectedDateAvailability = availability
+            return availability
+        } catch {
+            dayAvailabilityError = error.localizedDescription
+            throw error
+        }
+    }
+
+    @discardableResult
+    func saveDayAvailability(date: String) async throws -> RestaurantDayAvailabilityDTO {
+        guard let availability = selectedDateAvailability else {
+            throw SettingsValidationError(message: "Availability has not loaded yet.")
+        }
+
+        return try await saveDayAvailability(
+            date: date,
+            request: RestaurantDayAvailabilityUpdateRequest(
+                isOpen: availability.isOpen,
+                openTime: availability.openTime,
+                closeTime: availability.closeTime,
+                reason: availability.reason
+            )
+        )
+    }
+
+    @discardableResult
+    func saveDayAvailability(
+        date: String,
+        request: RestaurantDayAvailabilityUpdateRequest
+    ) async throws -> RestaurantDayAvailabilityDTO {
+        guard !dayAvailabilitySaving else { throw SettingsValidationError(message: "Availability is already saving.") }
+
+        dayAvailabilitySaving = true
+        dayAvailabilityError = nil
+        defer { dayAvailabilitySaving = false }
+
+        do {
+            let saved = try await apiClient.updateRestaurantDayAvailability(
+                date: date,
+                request: request,
+                reason: .restaurantDayAvailabilityPatch
+            )
+            selectedDateAvailability = saved
+            _ = try? await loadReservationSlots(date: date)
+            _ = try? await loadBlockedSlots(date: date)
+            return saved
+        } catch {
+            dayAvailabilityError = error.localizedDescription
+            throw error
+        }
+    }
+
+    // MARK: - Slots
+
+    @discardableResult
+    func loadReservationSlots(date: String) async throws -> ReservationSlotsResponseDTO {
+        slotPreviewLoading = true
+        slotPreviewError = nil
+        defer { slotPreviewLoading = false }
+
+        do {
+            let slots = try await apiClient.fetchReservationSlots(date: date, reason: .reservationSlots)
+            selectedDateSlots = slots
+            return slots
+        } catch {
+            slotPreviewError = error.localizedDescription
+            throw error
+        }
+    }
+
+    // MARK: - Blocked Slots
+
+    @discardableResult
+    func loadBlockedSlots(date: String) async throws -> RestaurantBlockedSlotsResponseDTO {
+        blockedSlotsLoading = true
+        blockedSlotsError = nil
+        defer { blockedSlotsLoading = false }
+
+        do {
+            let response = try await apiClient.fetchRestaurantBlockedSlots(
+                date: date,
+                reason: .restaurantBlockedSlots
+            )
+            selectedDateBlockedSlots = response.data
+            return response
+        } catch {
+            blockedSlotsError = error.localizedDescription
+            throw error
+        }
+    }
+
+    func blockSlots(date: String, slots: [String], reason: String?) async throws {
+        guard !slots.isEmpty else {
+            throw SettingsValidationError(message: "Choose at least one public slot to block.")
+        }
+        guard !blockedSlotsSaving else { throw SettingsValidationError(message: "Blocked slots are already saving.") }
+
+        blockedSlotsSaving = true
+        blockedSlotsError = nil
+        defer { blockedSlotsSaving = false }
+
+        do {
+            _ = try await apiClient.createRestaurantBlockedSlots(
+                date: date,
+                slots: slots,
+                reason: reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
+                requestReason: .restaurantBlockedSlotsCreate
+            )
+            _ = try await loadBlockedSlots(date: date)
+            _ = try await loadReservationSlots(date: date)
+        } catch {
+            blockedSlotsError = error.localizedDescription
+            throw error
+        }
+    }
+
+    func unblockSlots(date: String, slots: [String]) async throws {
+        guard !slots.isEmpty else {
+            throw SettingsValidationError(message: "Choose at least one blocked slot to unblock.")
+        }
+        guard !blockedSlotsSaving else { throw SettingsValidationError(message: "Blocked slots are already saving.") }
+
+        blockedSlotsSaving = true
+        blockedSlotsError = nil
+        defer { blockedSlotsSaving = false }
+
+        do {
+            _ = try await apiClient.deleteRestaurantBlockedSlots(
+                date: date,
+                slots: slots,
+                reason: .restaurantBlockedSlotsDelete
+            )
+            _ = try await loadBlockedSlots(date: date)
+            _ = try await loadReservationSlots(date: date)
+        } catch {
+            blockedSlotsError = error.localizedDescription
+            throw error
+        }
+    }
+
+    func unblockAllSlots(date: String) async throws {
+        guard !blockedSlotsSaving else { throw SettingsValidationError(message: "Blocked slots are already saving.") }
+
+        blockedSlotsSaving = true
+        blockedSlotsError = nil
+        defer { blockedSlotsSaving = false }
+
+        do {
+            _ = try await apiClient.deleteAllRestaurantBlockedSlots(
+                date: date,
+                reason: .restaurantBlockedSlotsDelete
+            )
+            _ = try await loadBlockedSlots(date: date)
+            _ = try await loadReservationSlots(date: date)
+        } catch {
+            blockedSlotsError = error.localizedDescription
+            throw error
+        }
+    }
+
+    func refreshDateOperations(date: String) async {
+        selectedAvailabilityDate = Self.date(from: date) ?? selectedAvailabilityDate
+        _ = try? await loadDayAvailability(date: date)
+        _ = try? await loadReservationSlots(date: date)
+        _ = try? await loadBlockedSlots(date: date)
+    }
+
+    // MARK: - Analytics
+
+    @discardableResult
+    func loadReservationAnalyticsSummary(from: String?, to: String?) async throws -> ReservationAnalyticsSummaryDTO {
+        guard !analyticsLoading else {
+            if let analyticsSummary { return analyticsSummary }
+            throw SettingsValidationError(message: "Analytics are already loading.")
+        }
+
+        analyticsLoading = true
+        analyticsError = nil
+        defer { analyticsLoading = false }
+
+        do {
+            let summary = try await apiClient.fetchReservationAnalyticsSummary(
+                from: from,
+                to: to,
+                reason: .reservationAnalyticsSummary
+            )
+            analyticsSummary = summary
+            return summary
+        } catch {
+            analyticsError = error.localizedDescription
+            throw error
+        }
+    }
+
+    // MARK: - Private Helpers
+
+    private static func date(from value: String) -> Date? {
+        ReservationFormatters.reservationDateKey.date(from: value)
+    }
+}
+
 // MARK: - Restaurant Setup UI Helpers
 
 extension RestaurantSetup {
@@ -68,12 +465,14 @@ extension RestaurantSetup {
 
 struct RestaurantSettingsView: View {
     @EnvironmentObject private var controller: ReservationsController
+    @ObservedObject var settingsStore: RestaurantSettingsStore
 
     @State private var draft = RestaurantSetupDraft(setup: .default)
     @State private var savedDraft = RestaurantSetupDraft(setup: .default)
     @State private var setup = RestaurantSetup.default
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @State private var successMessage: String?
     @State private var didLoadInitialDraft = false
 
     private var hasChanges: Bool {
@@ -85,20 +484,11 @@ struct RestaurantSettingsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 if let errorMessage {
                     SettingsNoticeCard(message: errorMessage, tint: .red)
+                } else if let successMessage {
+                    SettingsNoticeCard(message: successMessage, tint: .green, systemImage: "checkmark.circle")
                 }
 
                 RestaurantSettingsHeader(setup: setup)
-
-                SettingsCard(title: "Management", systemImage: "slider.horizontal.3") {
-                    VStack(spacing: 8) {
-                        AdminNavigationRow(title: "Today Availability", subtitle: "Override today and preview slots", systemImage: "calendar.badge.clock") {
-                            TodayAvailabilityView()
-                        }
-                        AdminNavigationRow(title: "Weekly Hours", subtitle: "Edit the regular open days", systemImage: "clock") {
-                            WeeklyHoursView()
-                        }
-                    }
-                }
 
                 SettingsCard(title: "Restaurant Identity", systemImage: "building.2") {
                     SettingsTextField(title: "Business name", text: $draft.businessName)
@@ -170,20 +560,20 @@ struct RestaurantSettingsView: View {
                         await load(forceDraftUpdate: true)
                     }
                 } label: {
-                    if controller.isLoadingRestaurantSetup {
+                    if settingsStore.setupLoading {
                         ProgressView()
                     } else {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
-                .disabled(controller.isLoadingRestaurantSetup || isSaving)
+                .disabled(settingsStore.setupLoading || isSaving)
             }
         }
         .safeAreaInset(edge: .bottom) {
             if hasChanges {
                 SettingsSaveBar(
                     title: "Save",
-                    isSaving: isSaving || controller.isSavingRestaurantSetup,
+                    isSaving: isSaving || settingsStore.setupSaving,
                     onCancel: resetDraft,
                     onSave: { Task { await save() } }
                 )
@@ -196,8 +586,9 @@ struct RestaurantSettingsView: View {
 
     private func load(forceDraftUpdate: Bool) async {
         errorMessage = nil
+        successMessage = nil
         do {
-            let loadedSetup = try await controller.loadRestaurantSetup()
+            let loadedSetup = try await settingsStore.loadRestaurantSetup()
             setup = loadedSetup
             if forceDraftUpdate || !didLoadInitialDraft {
                 draft = RestaurantSetupDraft(setup: loadedSetup)
@@ -206,9 +597,9 @@ struct RestaurantSettingsView: View {
             }
         } catch {
             errorMessage = error.localizedDescription
-            setup = controller.restaurantSetup
+            setup = settingsStore.setup
             if !didLoadInitialDraft {
-                draft = RestaurantSetupDraft(setup: controller.restaurantSetup)
+                draft = RestaurantSetupDraft(setup: settingsStore.setup)
                 savedDraft = draft
                 didLoadInitialDraft = true
             }
@@ -218,12 +609,14 @@ struct RestaurantSettingsView: View {
     private func resetDraft() {
         draft = savedDraft
         errorMessage = nil
+        successMessage = nil
         ReservationHaptics.selection()
     }
 
     private func save() async {
         isSaving = true
         errorMessage = nil
+        successMessage = nil
 
         defer {
             isSaving = false
@@ -231,10 +624,12 @@ struct RestaurantSettingsView: View {
 
         do {
             let request = try draft.updateRequest()
-            let saved = try await controller.updateRestaurantSetup(request: request)
+            let saved = try await settingsStore.saveRestaurantSetup(request: request)
+            _ = try? await controller.loadRestaurantSetup()
             setup = saved
             draft = RestaurantSetupDraft(setup: saved)
             savedDraft = draft
+            successMessage = "Restaurant settings saved."
             ReservationHaptics.success()
         } catch {
             errorMessage = error.localizedDescription
@@ -246,10 +641,9 @@ struct RestaurantSettingsView: View {
 // MARK: - Today Availability
 
 struct TodayAvailabilityView: View {
-    @EnvironmentObject private var controller: ReservationsController
+    @ObservedObject var settingsStore: RestaurantSettingsStore
 
     @State private var availability: RestaurantDayAvailabilityDTO?
-    @State private var slots: ReservationSlotsResponseDTO?
     @State private var isOpen = true
     @State private var openTime = "16:30"
     @State private var closeTime = "21:30"
@@ -279,9 +673,14 @@ struct TodayAvailabilityView: View {
 
                         Spacer(minLength: 8)
 
-                        SettingsStatusBadge(title: sourceTitle, tint: .secondary)
+                        SettingsStatusBadge(title: DayAvailabilityPresenter.sourceTitle(availability?.source), tint: .secondary)
                         SettingsStatusBadge(title: isOpen ? "Open" : "Closed", tint: isOpen ? .green : .red)
                     }
+
+                    SettingsKeyValueGrid(items: [
+                        ("Hours", isOpen ? "\(openTime)-\(closeTime)" : "Closed"),
+                        ("Last bookable", isOpen ? (WeeklyHoursPresenter.lastBookableText(closeTime: closeTime) ?? "-") : "Closed")
+                    ])
                 }
 
                 SettingsCard(title: "Controls", systemImage: "slider.horizontal.3") {
@@ -322,7 +721,15 @@ struct TodayAvailabilityView: View {
                 }
 
                 SettingsCard(title: "Slot Preview", systemImage: "clock") {
-                    slotPreview
+                    SlotPreviewView(
+                        slots: settingsStore.selectedDateSlots,
+                        isLoading: settingsStore.slotPreviewLoading || isLoading,
+                        errorMessage: settingsStore.slotPreviewError,
+                        blockedCount: settingsStore.selectedDateBlockedSlots.count,
+                        onRetry: { Task { await load() } }
+                    )
+
+                    SettingsHelperText("Public website uses these backend slots when available.")
                 }
             }
             .padding(.horizontal, 16)
@@ -337,7 +744,7 @@ struct TodayAvailabilityView: View {
                 Button {
                     Task { await load() }
                 } label: {
-                    if isLoading {
+                    if isLoading || settingsStore.slotPreviewLoading || settingsStore.blockedSlotsLoading {
                         ProgressView()
                     } else {
                         Image(systemName: "arrow.clockwise")
@@ -349,7 +756,7 @@ struct TodayAvailabilityView: View {
         .safeAreaInset(edge: .bottom) {
             SettingsSaveBar(
                 title: "Save Today Override",
-                isSaving: isSaving || controller.isSavingRestaurantDayAvailability,
+                isSaving: isSaving || settingsStore.dayAvailabilitySaving,
                 onCancel: { Task { await load() } },
                 onSave: { Task { await save() } }
             )
@@ -359,48 +766,8 @@ struct TodayAvailabilityView: View {
         }
     }
 
-    @ViewBuilder
-    private var slotPreview: some View {
-        if isLoading && slots == nil {
-            ProgressView("Loading slots...")
-                .frame(maxWidth: .infinity, minHeight: 72, alignment: .center)
-        } else if let slots, slots.isOpen, !slots.slots.isEmpty {
-            FlowLayout(spacing: 8) {
-                ForEach(slots.slots) { slot in
-                    Text(slot.label)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .frame(minHeight: 32)
-                        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-                        }
-                }
-            }
-        } else {
-            ContentUnavailableView(
-                "No Slots",
-                systemImage: "calendar.badge.exclamationmark",
-                description: Text(slots?.message ?? "Reservations are not available for this date.")
-            )
-            .frame(maxWidth: .infinity, minHeight: 120)
-        }
-    }
-
     private var todayDisplayText: String {
         Date().formatted(.dateTime.weekday(.wide).month(.abbreviated).day().year())
-    }
-
-    private var sourceTitle: String {
-        switch availability?.source.lowercased() {
-        case "special":
-            return "Special Override"
-        case "weekly":
-            return "Weekly"
-        default:
-            return availability?.source.capitalized ?? "Backend"
-        }
     }
 
     private func load() async {
@@ -413,10 +780,13 @@ struct TodayAvailabilityView: View {
         }
 
         do {
-            let loadedAvailability = try await controller.loadRestaurantDayAvailability(date: dateKey)
+            await settingsStore.refreshDateOperations(date: dateKey)
+            guard let loadedAvailability = settingsStore.selectedDateAvailability,
+                  loadedAvailability.date == dateKey else {
+                throw SettingsValidationError(message: "Today availability did not load.")
+            }
             availability = loadedAvailability
             apply(loadedAvailability)
-            slots = try await controller.loadReservationSlots(date: dateKey)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -437,10 +807,9 @@ struct TodayAvailabilityView: View {
                 closeTime: isOpen ? normalizedTime(closeTime, field: "Close time") : nil,
                 reason: reason.trimmed.nilIfBlank
             )
-            let saved = try await controller.updateRestaurantDayAvailability(date: dateKey, request: request)
+            let saved = try await settingsStore.saveDayAvailability(date: dateKey, request: request)
             availability = saved
             apply(saved)
-            slots = try await controller.loadReservationSlots(date: dateKey)
             ReservationHaptics.success()
         } catch {
             errorMessage = error.localizedDescription
@@ -459,7 +828,7 @@ struct TodayAvailabilityView: View {
 // MARK: - Weekly Hours
 
 struct WeeklyHoursView: View {
-    @EnvironmentObject private var controller: ReservationsController
+    @ObservedObject var settingsStore: RestaurantSettingsStore
 
     @State private var drafts: [WeeklyHourDraft] = WeeklyHourDraft.defaultWeek()
     @State private var isLoading = false
@@ -489,7 +858,7 @@ struct WeeklyHoursView: View {
                 Button {
                     Task { await load() }
                 } label: {
-                    if isLoading {
+                    if isLoading || settingsStore.weeklyHoursLoading {
                         ProgressView()
                     } else {
                         Image(systemName: "arrow.clockwise")
@@ -501,7 +870,7 @@ struct WeeklyHoursView: View {
         .safeAreaInset(edge: .bottom) {
             SettingsSaveBar(
                 title: "Save Weekly Hours",
-                isSaving: isSaving || controller.isSavingRestaurantHours,
+                isSaving: isSaving || settingsStore.weeklyHoursSaving,
                 onCancel: { Task { await load() } },
                 onSave: { Task { await save() } }
             )
@@ -521,13 +890,13 @@ struct WeeklyHoursView: View {
         }
 
         do {
-            let hours = try await controller.loadRestaurantHours()
+            let hours = try await settingsStore.loadRestaurantHours()
             let byWeekday = Dictionary(uniqueKeysWithValues: hours.weeklyHours.map { ($0.weekday, $0) })
             drafts = WeeklyHourDraft.orderedWeekdays.map { weekday in
                 if let hour = byWeekday[weekday] {
                     return WeeklyHourDraft(dto: hour)
                 }
-                return WeeklyHourDraft(weekday: weekday, isOpen: false, openTime: "", closeTime: "")
+                return WeeklyHourDraft.businessDefault(weekday: weekday)
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -546,11 +915,11 @@ struct WeeklyHoursView: View {
             let request = WeeklyHoursUpdateRequest(
                 weeklyHours: try drafts.map { try $0.updateDTO() }
             )
-            let saved = try await controller.updateRestaurantHours(request: request)
+            let saved = try await settingsStore.saveRestaurantHours(request: request)
             let byWeekday = Dictionary(uniqueKeysWithValues: saved.weeklyHours.map { ($0.weekday, $0) })
             drafts = WeeklyHourDraft.orderedWeekdays.map { weekday in
                 byWeekday[weekday].map(WeeklyHourDraft.init(dto:))
-                    ?? WeeklyHourDraft(weekday: weekday, isOpen: false, openTime: "", closeTime: "")
+                    ?? WeeklyHourDraft.businessDefault(weekday: weekday)
             }
             ReservationHaptics.success()
         } catch {
@@ -560,10 +929,305 @@ struct WeeklyHoursView: View {
     }
 }
 
+// MARK: - Blocked Time Slots
+
+struct BlockedTimeSlotsView: View {
+    @ObservedObject var settingsStore: RestaurantSettingsStore
+
+    @State private var selectedDate = Date()
+    @State private var selectedAvailableSlotValues: Set<String> = []
+    @State private var selectedBlockedSlotValues: Set<String> = []
+    @State private var reason = ""
+    @State private var actionMessage: String?
+    @State private var errorMessage: String?
+
+    private var dateKey: String {
+        selectedDate.reservationDateString()
+    }
+
+    private var availability: RestaurantDayAvailabilityDTO? {
+        guard settingsStore.selectedDateAvailability?.date == dateKey else { return nil }
+        return settingsStore.selectedDateAvailability
+    }
+
+    private var slots: ReservationSlotsResponseDTO? {
+        guard settingsStore.selectedDateSlots?.date == dateKey else { return nil }
+        return settingsStore.selectedDateSlots
+    }
+
+    private var blockedSlots: [RestaurantBlockedSlotDTO] {
+        settingsStore.selectedDateBlockedSlots
+            .filter { $0.reservationDate.isEmpty || $0.reservationDate == dateKey }
+            .sorted { BlockedSlotsPresenter.shortSlotValue($0.slotTime) < BlockedSlotsPresenter.shortSlotValue($1.slotTime) }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if let errorMessage {
+                    SettingsNoticeCard(message: errorMessage, tint: .red)
+                } else if let blockedSlotsError = settingsStore.blockedSlotsError {
+                    SettingsNoticeCard(message: blockedSlotsError, tint: .red)
+                } else if let slotPreviewError = settingsStore.slotPreviewError {
+                    SettingsNoticeCard(message: slotPreviewError, tint: .red)
+                } else if let actionMessage {
+                    SettingsNoticeCard(message: actionMessage, tint: .green, systemImage: "checkmark.circle")
+                }
+
+                selectedDateCard
+
+                SettingsCard(title: "Available Public Slots", systemImage: "clock") {
+                    if slots?.isOpen == false || availability?.isOpen == false {
+                        ContentUnavailableView(
+                            "This Date Is Closed",
+                            systemImage: "calendar.badge.exclamationmark",
+                            description: Text("There are no public slots to block.")
+                        )
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                    } else {
+                        SlotPreviewView(
+                            slots: slots,
+                            isLoading: settingsStore.slotPreviewLoading,
+                            errorMessage: settingsStore.slotPreviewError,
+                            blockedCount: blockedSlots.count,
+                            selectedSlotValues: selectedAvailableSlotValues,
+                            onRetry: { Task { await load() } },
+                            onSlotTap: { slot in
+                                toggleAvailableSlot(BlockedSlotsPresenter.shortSlotValue(slot.value))
+                                actionMessage = nil
+                                ReservationHaptics.selection()
+                            }
+                        )
+                    }
+                }
+
+                SettingsCard(title: "Blocked Slots", systemImage: "nosign") {
+                    if settingsStore.blockedSlotsLoading && blockedSlots.isEmpty {
+                        ProgressView("Loading blocked slots...")
+                            .frame(maxWidth: .infinity, minHeight: 72)
+                    } else if blockedSlots.isEmpty {
+                        ContentUnavailableView(
+                            "No Blocked Slots",
+                            systemImage: "checkmark.circle",
+                            description: Text("Public slots for this date are not individually blocked.")
+                        )
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                    } else {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
+                            ForEach(blockedSlots) { slot in
+                                let value = BlockedSlotsPresenter.shortSlotValue(slot.slotTime)
+                                Button {
+                                    toggleBlockedSlot(value)
+                                    actionMessage = nil
+                                    ReservationHaptics.selection()
+                                } label: {
+                                    ReservationChoiceChip(
+                                        title: BlockedSlotsPresenter.displaySlotTime(slot.slotTime),
+                                        subtitle: slot.reason?.nilIfBlank == nil ? "Blocked" : "Held",
+                                        isSelected: selectedBlockedSlotValues.contains(value),
+                                        minWidth: 86,
+                                        minHeight: 40
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+
+                SettingsCard(title: "Reason", systemImage: "text.bubble") {
+                    SettingsTextField(title: "Reason", text: $reason, prompt: "Held for manual booking")
+                    SettingsHelperText("Optional. Staff can remove specific public reservation times without changing the whole day's hours.")
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 148)
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Blocked Time Slots")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task { await load() }
+                } label: {
+                    if settingsStore.blockedSlotsLoading || settingsStore.slotPreviewLoading || settingsStore.dayAvailabilityLoading {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            blockedSlotsActionBar
+        }
+        .task(id: dateKey) {
+            await load()
+        }
+    }
+
+    private var selectedDateCard: some View {
+        SettingsCard(title: "Selected Date", systemImage: "calendar") {
+            DatePicker("Date", selection: $selectedDate, displayedComponents: .date)
+                .datePickerStyle(.compact)
+
+            SettingsKeyValueGrid(items: [
+                ("Day", selectedDate.formatted(.dateTime.weekday(.wide))),
+                ("Source", DayAvailabilityPresenter.sourceTitle(availability?.source ?? slots?.source)),
+                ("Status", effectiveStatusText),
+                ("Effective hours", DayAvailabilityPresenter.effectiveHoursText(availability: availability))
+            ])
+        }
+    }
+
+    private var blockedSlotsActionBar: some View {
+        VStack(spacing: 8) {
+            Button {
+                Task { await blockSelectedSlots() }
+            } label: {
+                actionButtonLabel(
+                    title: selectedAvailableSlotValues.isEmpty
+                        ? "Block Selected Slots"
+                        : "Block \(selectedAvailableSlotValues.count) Selected"
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(selectedAvailableSlotValues.isEmpty || settingsStore.blockedSlotsSaving)
+            .opacity(selectedAvailableSlotValues.isEmpty ? 0.45 : 1)
+
+            HStack(spacing: 8) {
+                Button {
+                    Task { await unblockSelectedSlots() }
+                } label: {
+                    actionButtonLabel(
+                        title: selectedBlockedSlotValues.isEmpty
+                            ? "Unblock Selected"
+                            : "Unblock \(selectedBlockedSlotValues.count)"
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(selectedBlockedSlotValues.isEmpty || settingsStore.blockedSlotsSaving)
+                .opacity(selectedBlockedSlotValues.isEmpty ? 0.45 : 1)
+
+                Button {
+                    Task { await unblockAllSlots() }
+                } label: {
+                    actionButtonLabel(title: "Unblock All")
+                }
+                .buttonStyle(.plain)
+                .disabled(blockedSlots.isEmpty || settingsStore.blockedSlotsSaving)
+                .opacity(blockedSlots.isEmpty ? 0.45 : 1)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
+    }
+
+    private func actionButtonLabel(title: String) -> some View {
+        HStack {
+            Spacer()
+            if settingsStore.blockedSlotsSaving {
+                ProgressView()
+                    .tint(Color(.systemBackground))
+            } else {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+            }
+            Spacer()
+        }
+        .foregroundStyle(Color(.systemBackground))
+        .frame(minHeight: 42)
+        .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+    }
+
+    private var effectiveStatusText: String {
+        if let availability {
+            return availability.isOpen ? "Open" : "Closed"
+        }
+        if let slots {
+            return slots.isOpen ? "Open" : "Closed"
+        }
+        return "Loading"
+    }
+
+    private func load() async {
+        errorMessage = nil
+        actionMessage = nil
+        selectedAvailableSlotValues.removeAll()
+        selectedBlockedSlotValues.removeAll()
+        await settingsStore.refreshDateOperations(date: dateKey)
+    }
+
+    private func blockSelectedSlots() async {
+        await performBlockedSlotMutation(successMessage: "Selected slots are blocked from the public form.") {
+            try await settingsStore.blockSlots(
+                date: dateKey,
+                slots: selectedAvailableSlotValues.sorted(),
+                reason: reason
+            )
+            selectedAvailableSlotValues.removeAll()
+        }
+    }
+
+    private func unblockSelectedSlots() async {
+        await performBlockedSlotMutation(successMessage: "Selected blocked slots are public again.") {
+            try await settingsStore.unblockSlots(
+                date: dateKey,
+                slots: selectedBlockedSlotValues.sorted()
+            )
+            selectedBlockedSlotValues.removeAll()
+        }
+    }
+
+    private func unblockAllSlots() async {
+        await performBlockedSlotMutation(successMessage: "All blocked slots for this date were cleared.") {
+            try await settingsStore.unblockAllSlots(date: dateKey)
+            selectedAvailableSlotValues.removeAll()
+            selectedBlockedSlotValues.removeAll()
+        }
+    }
+
+    private func performBlockedSlotMutation(
+        successMessage: String,
+        operation: () async throws -> Void
+    ) async {
+        errorMessage = nil
+        actionMessage = nil
+
+        do {
+            try await operation()
+            actionMessage = successMessage
+            ReservationHaptics.success()
+        } catch {
+            errorMessage = error.localizedDescription
+            ReservationHaptics.warning()
+        }
+    }
+
+    private func toggleAvailableSlot(_ value: String) {
+        if selectedAvailableSlotValues.contains(value) {
+            selectedAvailableSlotValues.remove(value)
+        } else {
+            selectedAvailableSlotValues.insert(value)
+        }
+    }
+
+    private func toggleBlockedSlot(_ value: String) {
+        if selectedBlockedSlotValues.contains(value) {
+            selectedBlockedSlotValues.remove(value)
+        } else {
+            selectedBlockedSlotValues.insert(value)
+        }
+    }
+}
+
 // MARK: - Analytics Preview
 
 struct BusinessAnalyticsView: View {
-    @EnvironmentObject private var controller: ReservationsController
+    @ObservedObject var settingsStore: RestaurantSettingsStore
 
     @State private var summary: ReservationAnalyticsSummaryDTO?
     @State private var range: AnalyticsRangeOption = .all
@@ -611,7 +1275,7 @@ struct BusinessAnalyticsView: View {
                 Button {
                     Task { await load() }
                 } label: {
-                    if isLoading {
+                    if isLoading || settingsStore.analyticsLoading {
                         ProgressView()
                     } else {
                         Image(systemName: "arrow.clockwise")
@@ -664,7 +1328,7 @@ struct BusinessAnalyticsView: View {
 
         do {
             let dateRange = range.dateRange()
-            summary = try await controller.loadReservationAnalyticsSummary(
+            summary = try await settingsStore.loadReservationAnalyticsSummary(
                 from: dateRange.from,
                 to: dateRange.to
             )
@@ -675,6 +1339,79 @@ struct BusinessAnalyticsView: View {
 }
 
 // MARK: - Settings Pieces
+
+private struct SlotPreviewView: View {
+    let slots: ReservationSlotsResponseDTO?
+    let isLoading: Bool
+    let errorMessage: String?
+    let blockedCount: Int?
+    var selectedSlotValues: Set<String> = []
+    var onRetry: (() -> Void)?
+    var onSlotTap: ((ReservationSlotDTO) -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let blockedCount {
+                SettingsStatusBadge(title: "Blocked slots: \(blockedCount)", tint: blockedCount > 0 ? .orange : .secondary)
+            }
+
+            if isLoading && slots == nil {
+                ProgressView("Loading slots...")
+                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .center)
+            } else if let errorMessage {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.red)
+                    if let onRetry {
+                        Button("Retry", action: onRetry)
+                            .font(.caption.weight(.semibold))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let slots, !slots.isOpen {
+                ContentUnavailableView(
+                    "Closed",
+                    systemImage: "calendar.badge.exclamationmark",
+                    description: Text(slots.message ?? "Reservations are not available for this date.")
+                )
+                .frame(maxWidth: .infinity, minHeight: 120)
+            } else if let slots, !slots.slots.isEmpty {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 74), spacing: 8)], spacing: 8) {
+                    ForEach(slots.slots) { slot in
+                        if let onSlotTap {
+                            Button {
+                                onSlotTap(slot)
+                            } label: {
+                                ReservationChoiceChip(
+                                    title: slot.label,
+                                    isSelected: selectedSlotValues.contains(BlockedSlotsPresenter.shortSlotValue(slot.value)),
+                                    minWidth: 68,
+                                    minHeight: 34
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            ReservationChoiceChip(
+                                title: slot.label,
+                                isSelected: false,
+                                minWidth: 68,
+                                minHeight: 34
+                            )
+                        }
+                    }
+                }
+            } else {
+                ContentUnavailableView(
+                    "No Slots",
+                    systemImage: "calendar.badge.exclamationmark",
+                    description: Text(slots?.message ?? "Reservations are not available for this date.")
+                )
+                .frame(maxWidth: .infinity, minHeight: 120)
+            }
+        }
+    }
+}
 
 private struct RestaurantSettingsHeader: View {
     let setup: RestaurantSetup
@@ -708,19 +1445,8 @@ private struct SettingsCard<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(title, systemImage: systemImage)
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.primary.opacity(0.82))
-
+        TryzubSectionCard(title: title, systemImage: systemImage, spacing: 12) {
             content
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
 }
@@ -777,14 +1503,15 @@ private struct SettingsHelperText: View {
 private struct SettingsNoticeCard: View {
     let message: String
     let tint: Color
+    var systemImage = "exclamationmark.triangle"
 
     var body: some View {
-        Label(message, systemImage: "exclamationmark.triangle")
+        Label(message, systemImage: systemImage)
             .font(.subheadline.weight(.medium))
             .foregroundStyle(tint)
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+            .background(TryzubColors.cardBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
     }
 }
 
@@ -797,10 +1524,7 @@ private struct SettingsSaveBar: View {
     var body: some View {
         HStack(spacing: 10) {
             Button("Cancel", action: onCancel)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary.opacity(0.72))
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                .buttonStyle(TryzubSecondaryButtonStyle())
 
             Button(action: onSave) {
                 if isSaving {
@@ -812,10 +1536,7 @@ private struct SettingsSaveBar: View {
                         .frame(maxWidth: .infinity)
                 }
             }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Color(.systemBackground))
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+            .buttonStyle(TryzubPrimaryButtonStyle())
             .disabled(isSaving)
         }
         .padding(.horizontal, 16)
@@ -824,52 +1545,12 @@ private struct SettingsSaveBar: View {
     }
 }
 
-private struct AdminNavigationRow<Destination: View>: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    @ViewBuilder let destination: Destination
-
-    var body: some View {
-        NavigationLink {
-            destination
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
-                    .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-            }
-            .padding(10)
-            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 private struct SettingsStatusBadge: View {
     let title: String
     let tint: Color
 
     var body: some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 8)
-            .frame(minHeight: 26)
-            .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+        TryzubStatusBadge(title: title, tint: tint)
     }
 }
 
@@ -900,8 +1581,13 @@ private struct WeeklyDayCard: View {
 
     var body: some View {
         SettingsCard(title: draft.dayName, systemImage: "calendar") {
-            Toggle(draft.isOpen ? "Open" : "Closed", isOn: $draft.isOpen)
-                .font(.subheadline.weight(.medium))
+            HStack {
+                Text(draft.isOpen ? "Open" : "Closed")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Toggle(draft.isOpen ? "Open" : "Closed", isOn: $draft.isOpen)
+                    .labelsHidden()
+            }
 
             if draft.isOpen {
                 ViewThatFits(in: .horizontal) {
@@ -915,6 +1601,18 @@ private struct WeeklyDayCard: View {
                         SettingsTextField(title: "Close", text: $draft.closeTime, prompt: "21:30")
                     }
                 }
+
+                SettingsHelperText("Last bookable time is 30 minutes before close.")
+                if let lastBookable = draft.lastBookableTime {
+                    SettingsStatusBadge(title: "Last bookable: \(lastBookable)", tint: .secondary)
+                }
+            } else {
+                Text("Closed")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+                    .padding(.horizontal, 11)
+                    .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
             }
         }
     }
@@ -932,7 +1630,7 @@ private struct KPIGrid: View {
             AnalyticsKPI(title: "Guests", value: "\(metrics?.guestsCount ?? 0)", systemImage: "person.2")
             AnalyticsKPI(title: "Avg party", value: metrics?.avgPartySize.map { String(format: "%.2f", $0) } ?? "-", systemImage: "number")
             AnalyticsKPI(
-                title: "Pipeline",
+                title: "Pipeline health",
                 value: "\(pipeline?.managedRowsWithSourceSubmissionId ?? 0) / \(pipeline?.flamingoInboundTotal ?? 0)",
                 systemImage: "arrow.triangle.2.circlepath"
             )
@@ -997,7 +1695,7 @@ private struct AnalyticsHourSection: View {
         SettingsCard(title: "Peak Hours", systemImage: "clock") {
             AnalyticsRowsEmptyAware(isEmpty: rows.isEmpty) {
                 ForEach(rows.sorted { $0.guestsCount == $1.guestsCount ? $0.hour < $1.hour : $0.guestsCount > $1.guestsCount }) { row in
-                    AnalyticsBreakdownRow(title: hourLabel(row.hour), reservations: row.reservationsCount, guests: row.guestsCount)
+                    AnalyticsBreakdownRow(title: AnalyticsPresenter.hourLabel(row.hour), reservations: row.reservationsCount, guests: row.guestsCount)
                 }
             }
         }
@@ -1025,7 +1723,7 @@ private struct AnalyticsLeadTimeSection: View {
         SettingsCard(title: "Lead Time", systemImage: "clock.arrow.circlepath") {
             AnalyticsRowsEmptyAware(isEmpty: rows.isEmpty) {
                 ForEach(rows) { row in
-                    AnalyticsBreakdownRow(title: row.bucket.leadTimeLabel, reservations: row.reservationsCount, guests: row.guestsCount)
+                    AnalyticsBreakdownRow(title: AnalyticsPresenter.leadTimeLabel(row.bucket), reservations: row.reservationsCount, guests: row.guestsCount)
                 }
             }
         }
@@ -1037,10 +1735,14 @@ private struct AnalyticsFieldCompletenessSection: View {
 
     var body: some View {
         SettingsCard(title: "Field Completeness", systemImage: "checklist") {
+            if tableAssignmentCompletenessIsLow {
+                SettingsNoticeCard(message: "Few reservations have table assignment.", tint: .orange)
+            }
+
             AnalyticsRowsEmptyAware(isEmpty: values.isEmpty) {
                 ForEach(values.keys.sorted(), id: \.self) { key in
                     HStack {
-                        Text(key.analyticsFieldLabel)
+                        Text(AnalyticsPresenter.fieldLabel(key))
                         Spacer()
                         Text(values[key]?.compactDisplayText ?? "-")
                             .foregroundStyle(.secondary)
@@ -1050,6 +1752,12 @@ private struct AnalyticsFieldCompletenessSection: View {
                 }
             }
         }
+    }
+
+    private var tableAssignmentCompletenessIsLow: Bool {
+        let tableValue = values["table_name"] ?? values["table_assigned"]
+        guard let percent = tableValue?.percentageValue else { return false }
+        return percent < 0.25
     }
 }
 
@@ -1227,9 +1935,28 @@ private struct WeeklyHourDraft: Identifiable, Equatable {
     }
 
     static func defaultWeek() -> [WeeklyHourDraft] {
-        orderedWeekdays.map {
-            WeeklyHourDraft(weekday: $0, isOpen: false, openTime: "", closeTime: "")
+        orderedWeekdays.map(businessDefault)
+    }
+
+    static func businessDefault(weekday: Int) -> WeeklyHourDraft {
+        switch weekday {
+        case 1:
+            return WeeklyHourDraft(weekday: weekday, isOpen: false, openTime: "", closeTime: "")
+        case 2, 3, 4:
+            return WeeklyHourDraft(weekday: weekday, isOpen: true, openTime: "17:00", closeTime: "21:00")
+        case 5:
+            return WeeklyHourDraft(weekday: weekday, isOpen: true, openTime: "17:00", closeTime: "22:00")
+        case 6:
+            return WeeklyHourDraft(weekday: weekday, isOpen: true, openTime: "11:00", closeTime: "22:00")
+        case 0:
+            return WeeklyHourDraft(weekday: weekday, isOpen: true, openTime: "11:00", closeTime: "21:00")
+        default:
+            return WeeklyHourDraft(weekday: weekday, isOpen: false, openTime: "", closeTime: "")
         }
+    }
+
+    var lastBookableTime: String? {
+        WeeklyHoursPresenter.lastBookableText(closeTime: closeTime)
     }
 
     func updateDTO() throws -> WeeklyHourUpdateDTO {
@@ -1285,6 +2012,134 @@ private struct SettingsValidationError: LocalizedError {
 
 // MARK: - Helpers
 
+enum WeeklyHoursPresenter {
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    static func lastBookableText(closeTime: String) -> String? {
+        let normalized = BlockedSlotsPresenter.shortSlotValue(closeTime)
+
+        guard let close = timeFormatter.date(from: normalized),
+              let lastBookable = Calendar.current.date(byAdding: .minute, value: -30, to: close) else {
+            return nil
+        }
+
+        return timeFormatter.string(from: lastBookable)
+    }
+}
+
+enum DayAvailabilityPresenter {
+    static func sourceTitle(_ source: String?) -> String {
+        switch source?.lowercased() {
+        case "special":
+            return "Special Override"
+        case "weekly":
+            return "Weekly"
+        case .some(let source):
+            return source.capitalized
+        case nil:
+            return "Backend"
+        }
+    }
+
+    static func effectiveHoursText(availability: RestaurantDayAvailabilityDTO?) -> String {
+        guard let availability else { return "-" }
+        guard availability.isOpen else { return "Closed" }
+        return "\(shortTimeString(availability.openTime) ?? "-")-\(shortTimeString(availability.closeTime) ?? "-")"
+    }
+}
+
+enum BlockedSlotsPresenter {
+    private static let timeWithSeconds: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    private static let timeWithoutSeconds: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    static func shortSlotValue(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 5 else { return trimmed }
+        return String(trimmed.prefix(5))
+    }
+
+    static func displaySlotTime(_ value: String) -> String {
+        let shortValue = shortSlotValue(value)
+
+        if let date = timeWithSeconds.date(from: value)
+            ?? timeWithoutSeconds.date(from: value)
+            ?? timeWithoutSeconds.date(from: shortValue) {
+            return ReservationFormatters.shortTime.string(from: date)
+        }
+
+        return shortValue
+    }
+}
+
+enum AnalyticsPresenter {
+    static func hourLabel(_ value: String) -> String {
+        let hourString = value.prefix(2)
+        guard let hour = Int(hourString) else {
+            return value
+        }
+
+        let adjustedHour = hour % 12 == 0 ? 12 : hour % 12
+        let suffix = hour < 12 ? "AM" : "PM"
+        return "\(adjustedHour) \(suffix)"
+    }
+
+    static func leadTimeLabel(_ value: String) -> String {
+        switch value {
+        case "same_day":
+            return "Same day"
+        case "one_day":
+            return "1 day ahead"
+        case "two_three_days":
+            return "2-3 days ahead"
+        case "four_seven_days":
+            return "4-7 days ahead"
+        case "eight_fourteen_days":
+            return "8-14 days ahead"
+        case "fifteen_thirty_days":
+            return "15-30 days ahead"
+        case "thirty_one_plus_days":
+            return "31+ days ahead"
+        default:
+            return value.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    static func fieldLabel(_ value: String) -> String {
+        switch value {
+        case "guest_name", "name":
+            return "Name"
+        case "email":
+            return "Email"
+        case "phone":
+            return "Phone"
+        case "guest_notes":
+            return "Guest notes"
+        case "staff_notes":
+            return "Staff notes"
+        case "table_name", "table_assigned":
+            return "Table assigned"
+        default:
+            return value.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+}
+
 private func normalizedTime(_ value: String, field: String) throws -> String {
     let trimmed = value.trimmed
     let formats = [
@@ -1304,17 +2159,6 @@ private func shortTimeString(_ value: String?) -> String? {
     return String(value.prefix(5))
 }
 
-private func hourLabel(_ value: String) -> String {
-    let hourString = value.prefix(2)
-    guard let hour = Int(hourString) else {
-        return value
-    }
-
-    let adjustedHour = hour % 12 == 0 ? 12 : hour % 12
-    let suffix = hour < 12 ? "AM" : "PM"
-    return "\(adjustedHour) \(suffix)"
-}
-
 private extension String {
     var trimmed: String {
         trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1328,49 +2172,46 @@ private extension String {
         ReservationStatus(rawValue: self)?.displayName
             ?? replacingOccurrences(of: "_", with: " ").capitalized
     }
-
-    var leadTimeLabel: String {
-        switch self {
-        case "same_day":
-            return "Same day"
-        case "one_day":
-            return "1 day ahead"
-        case "two_three_days":
-            return "2-3 days ahead"
-        case "four_seven_days":
-            return "4-7 days ahead"
-        case "eight_fourteen_days":
-            return "8-14 days ahead"
-        case "fifteen_thirty_days":
-            return "15-30 days ahead"
-        case "thirty_one_plus_days":
-            return "31+ days ahead"
-        default:
-            return replacingOccurrences(of: "_", with: " ").capitalized
-        }
-    }
-
-    var analyticsFieldLabel: String {
-        switch self {
-        case "guest_name", "name":
-            return "Name"
-        case "email":
-            return "Email"
-        case "phone":
-            return "Phone"
-        case "guest_notes":
-            return "Guest notes"
-        case "staff_notes":
-            return "Staff notes"
-        case "table_name", "table_assigned":
-            return "Table assigned"
-        default:
-            return replacingOccurrences(of: "_", with: " ").capitalized
-        }
-    }
 }
 
 private extension JSONValue {
+    var percentageValue: Double? {
+        switch self {
+        case .number(let value):
+            return value > 1 ? value / 100 : value
+        case .object(let object):
+            if let percent = object["percent"]?.percentageValue {
+                return percent
+            }
+            if let complete = object["complete"]?.numericValue,
+               let total = object["total"]?.numericValue,
+               total > 0 {
+                return complete / total
+            }
+            return nil
+        case .string(let value):
+            let normalized = value.replacingOccurrences(of: "%", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let number = Double(normalized) else { return nil }
+            return value.contains("%") || number > 1 ? number / 100 : number
+        case .bool, .array, .null:
+            return nil
+        }
+    }
+
+    var numericValue: Double? {
+        switch self {
+        case .number(let value):
+            return value
+        case .string(let value):
+            return Double(value.trimmingCharacters(in: .whitespacesAndNewlines))
+        case .bool(let value):
+            return value ? 1 : 0
+        case .object, .array, .null:
+            return nil
+        }
+    }
+
     var compactDisplayText: String {
         switch self {
         case .string(let value):

@@ -202,17 +202,6 @@ enum ReservationHostAction: String, Identifiable {
         return actions
     }
 
-    static func contextMenuActions(
-        for reservation: ReservationRecord,
-        capabilities: AppCapabilities
-    ) -> [ReservationHostAction] {
-        availableActions(
-            for: reservation,
-            capabilities: capabilities,
-            includeSecondary: true
-        )
-    }
-
     // MARK: - Confirmation Copy
 
     func dialogTitle(for reservation: ReservationRecord) -> String {
@@ -259,6 +248,77 @@ enum ReservationHostAction: String, Identifiable {
     }
 }
 
+// MARK: - Action Policy
+
+enum ReservationActionSurface {
+    case row
+    case detail
+}
+
+struct ReservationHostActionPolicy {
+    let reservation: ReservationRecord
+    let capabilities: AppCapabilities
+    var surface: ReservationActionSurface = .row
+
+    var primaryRowAction: ReservationHostAction? {
+        rowActions.first
+    }
+
+    var rowActions: [ReservationHostAction] {
+        ReservationHostAction.availableActions(
+            for: reservation,
+            capabilities: capabilities,
+            includeSecondary: false
+        )
+    }
+
+    var contextMenuActions: [ReservationHostAction] {
+        allActions
+    }
+
+    var detailPrimaryAction: ReservationHostAction? {
+        rowActions.first
+    }
+
+    var detailSecondaryActions: [ReservationHostAction] {
+        allActions.filter { action in
+            if action == detailPrimaryAction {
+                return false
+            }
+            if detailPrimaryAction == .confirmOnly, action == .confirmAndSendEmail {
+                return false
+            }
+            return true
+        }
+    }
+
+    var visibleActions: [ReservationHostAction] {
+        switch surface {
+        case .row:
+            return rowActions
+        case .detail:
+            return allActions
+        }
+    }
+
+    func requiresDialog(_ action: ReservationHostAction) -> Bool {
+        switch action {
+        case .confirmOnly, .confirmAndSendEmail, .cancel, .noShow:
+            return true
+        case .seat, .complete, .assignTable:
+            return false
+        }
+    }
+
+    private var allActions: [ReservationHostAction] {
+        ReservationHostAction.availableActions(
+            for: reservation,
+            capabilities: capabilities,
+            includeSecondary: true
+        )
+    }
+}
+
 // MARK: - Action Buttons View
 
 struct ReservationActionButtons: View {
@@ -273,11 +333,12 @@ struct ReservationActionButtons: View {
     @State private var pendingInlineAction: ReservationHostAction?
 
     private var actions: [ReservationHostAction] {
-        ReservationHostAction.availableActions(
-            for: reservation,
+        ReservationHostActionPolicy(
+            reservation: reservation,
             capabilities: capabilities,
-            includeSecondary: includeSecondary
+            surface: includeSecondary ? .detail : .row
         )
+        .visibleActions
     }
 
     var body: some View {

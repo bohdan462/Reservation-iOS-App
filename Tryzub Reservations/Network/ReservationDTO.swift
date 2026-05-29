@@ -460,7 +460,7 @@ struct RestaurantSetupDTO: Codable, Equatable {
         timezone = try container.decodeIfPresent(String.self, forKey: .timezone) ?? "America/Chicago"
         defaultPartySize = try container.decodeFlexibleIntIfPresent(forKey: .defaultPartySize) ?? 2
         bookingWindowDays = try container.decodeFlexibleIntIfPresent(forKey: .bookingWindowDays) ?? 60
-        slotIntervalMinutes = try container.decodeFlexibleIntIfPresent(forKey: .slotIntervalMinutes) ?? 30
+        slotIntervalMinutes = try container.decodeFlexibleIntIfPresent(forKey: .slotIntervalMinutes) ?? 15
         maxOnlinePartySize = try container.decodeFlexibleIntIfPresent(forKey: .maxOnlinePartySize) ?? 8
         largePartyReviewThreshold = try container.decodeFlexibleIntIfPresent(forKey: .largePartyReviewThreshold) ?? 7
         sameDayBookingEnabled = try container.decodeFlexibleBoolIfPresent(forKey: .sameDayBookingEnabled) ?? true
@@ -496,7 +496,7 @@ struct RestaurantSetup: Codable, Equatable {
         timezone: "America/Chicago",
         defaultPartySize: 2,
         bookingWindowDays: 60,
-        slotIntervalMinutes: 30,
+        slotIntervalMinutes: 15,
         maxOnlinePartySize: 8,
         largePartyReviewThreshold: 7,
         sameDayBookingEnabled: true,
@@ -687,7 +687,7 @@ struct RestaurantDayAvailabilityDTO: Codable, Equatable {
         openTime = try container.decodeIfPresent(String.self, forKey: .openTime)
         closeTime = try container.decodeIfPresent(String.self, forKey: .closeTime)
         reason = try container.decodeIfPresent(String.self, forKey: .reason)
-        slotIntervalMinutes = try container.decodeFlexibleIntIfPresent(forKey: .slotIntervalMinutes) ?? 30
+        slotIntervalMinutes = try container.decodeFlexibleIntIfPresent(forKey: .slotIntervalMinutes) ?? 15
         maxOnlinePartySize = try container.decodeFlexibleIntIfPresent(forKey: .maxOnlinePartySize) ?? 8
         minimumLeadTimeMinutes = try container.decodeFlexibleIntIfPresent(forKey: .minimumLeadTimeMinutes) ?? 60
     }
@@ -733,6 +733,86 @@ struct ReservationSlotDTO: Codable, Equatable, Identifiable {
     let label: String
 
     var id: String { value }
+}
+
+struct RestaurantBlockedSlotDTO: Codable, Equatable, Identifiable {
+    let id: Int
+    let reservationDate: String
+    let slotTime: String
+    let reason: String?
+    let createdByUserId: Int?
+    let createdAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case reservationDate
+        case slotTime
+        case reason
+        case createdByUserId
+        case createdAt
+    }
+
+    init(
+        id: Int,
+        reservationDate: String,
+        slotTime: String,
+        reason: String?,
+        createdByUserId: Int?,
+        createdAt: String?
+    ) {
+        self.id = id
+        self.reservationDate = reservationDate
+        self.slotTime = slotTime
+        self.reason = reason
+        self.createdByUserId = createdByUserId
+        self.createdAt = createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeFlexibleIntIfPresent(forKey: .id) ?? 0
+        reservationDate = try container.decodeIfPresent(String.self, forKey: .reservationDate) ?? ""
+        slotTime = try container.decodeIfPresent(String.self, forKey: .slotTime) ?? ""
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        createdByUserId = try container.decodeFlexibleIntIfPresent(forKey: .createdByUserId)
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
+    }
+}
+
+struct RestaurantBlockedSlotsResponseDTO: Codable, Equatable {
+    let success: Bool
+    let date: String
+    let data: [RestaurantBlockedSlotDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case success
+        case date
+        case data
+    }
+
+    init(success: Bool, date: String, data: [RestaurantBlockedSlotDTO]) {
+        self.success = success
+        self.date = date
+        self.data = data
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        success = try container.decodeFlexibleBoolIfPresent(forKey: .success) ?? true
+        date = try container.decodeIfPresent(String.self, forKey: .date) ?? ""
+        data = try container.decodeIfPresent([RestaurantBlockedSlotDTO].self, forKey: .data) ?? []
+    }
+}
+
+struct RestaurantBlockedSlotsCreateRequest: Encodable {
+    var date: String
+    var slots: [String]
+    var reason: String?
+}
+
+struct RestaurantBlockedSlotsDeleteRequest: Encodable {
+    var date: String
+    var slots: [String]?
 }
 
 struct ReservationAnalyticsSummaryDTO: Decodable, Equatable {

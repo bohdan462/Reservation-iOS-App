@@ -39,6 +39,9 @@ struct ManualReservationFormView: View {
             )
         }
         .interactiveDismissDisabled(true)
+        .task {
+            _ = try? await controller.loadRestaurantSetup()
+        }
     }
 
     // Intent: Staff creates a fast call-in/manual reservation.
@@ -206,6 +209,10 @@ private struct ReservationFormContent: View {
     @State private var isNotesPresented = false
     @State private var isCustomTimePresented = false
     @State private var didApplyInitialSettings = false
+    @State private var suggestedSlots: ReservationSlotsResponseDTO?
+    @State private var blockedSlotValues: Set<String> = []
+    @State private var isLoadingPublicSlots = false
+    @State private var publicSlotsError: String?
 
     var body: some View {
         ScrollView {
@@ -231,6 +238,9 @@ private struct ReservationFormContent: View {
         }
         .onAppear {
             applyInitialSettingsIfNeeded()
+        }
+        .task(id: draft.reservationDate.reservationDateString()) {
+            await loadPublicSlotSuggestions()
         }
         .safeAreaInset(edge: .bottom) {
             primaryActionButton
@@ -371,8 +381,11 @@ private struct ReservationFormContent: View {
     private var timeCard: some View {
         ReservationServiceCard(title: "Time", systemImage: "clock") {
             VStack(alignment: .leading, spacing: 8) {
-                if timeChoices.isEmpty {
-                    Text("No open reservation slots for this date.")
+                if isLoadingPublicSlots && suggestedSlots == nil {
+                    ProgressView("Loading public slots...")
+                        .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+                } else if timeChoices.isEmpty {
+                    Text("No public slots for this date. Staff can still use Custom Time.")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
@@ -393,6 +406,20 @@ private struct ReservationFormContent: View {
                             .buttonStyle(.plain)
                         }
                     }
+                }
+
+                if let publicSlotsError {
+                    Text(publicSlotsError)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let blockedWarningText {
+                    Label(blockedWarningText, systemImage: "exclamationmark.triangle")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 HStack(spacing: 8) {
@@ -600,7 +627,11 @@ private struct ReservationFormContent: View {
     }
 
     private var timeChoices: [Date] {
-        controller.restaurantSetup.suggestedTimes(for: draft.reservationDate)
+        if let suggestedSlots, suggestedSlots.isOpen, !suggestedSlots.slots.isEmpty {
+            return suggestedSlots.slots.compactMap { ManualReservationFormPresenter.dateForSlotValue($0.value) }
+        }
+
+        return controller.restaurantSetup.suggestedTimes(for: draft.reservationDate)
     }
 
     private func timeLabel(_ date: Date) -> String {
@@ -647,6 +678,71 @@ private struct ReservationFormContent: View {
         case .edit:
             break
         }
+    }
+
+    private var blockedWarningText: String? {
+        ManualReservationFormPresenter.blockedWarningText(
+            selectedTime: draft.reservationTime,
+            blockedSlotValues: blockedSlotValues
+        )
+    }
+
+    private func loadPublicSlotSuggestions() async {
+        let dateKey = draft.reservationDate.reservationDateString()
+        isLoadingPublicSlots = true
+        publicSlotsError = nil
+        defer { isLoadingPublicSlots = false }
+
+        do {
+            async let slotsResponse = controller.loadReservationSlots(date: dateKey)
+            async let blockedResponse = controller.loadRestaurantBlockedSlots(date: dateKey)
+            let (slots, blocked) = try await (slotsResponse, blockedResponse)
+            guard draft.reservationDate.reservationDateString() == dateKey else { return }
+            suggestedSlots = slots
+            blockedSlotValues = Set(blocked.data.map { ManualReservationFormPresenter.shortSlotValue($0.slotTime) })
+        } catch {
+            guard draft.reservationDate.reservationDateString() == dateKey else { return }
+            publicSlotsError = "Public slot suggestions are unavailable. Custom time is still allowed."
+            blockedSlotValues = []
+        }
+    }
+}
+
+// MARK: - Manual Form Presentation
+
+private enum ManualReservationFormPresenter {
+    private static let timeWithSeconds: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    private static let timeWithoutSeconds: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    static func dateForSlotValue(_ value: String) -> Date? {
+        timeWithSeconds.date(from: value) ?? timeWithoutSeconds.date(from: value)
+    }
+
+    static func blockedWarningText(
+        selectedTime: Date,
+        blockedSlotValues: Set<String>
+    ) -> String? {
+        let selectedValue = shortSlotValue(ReservationFormatters.apiTime.string(from: selectedTime))
+        return blockedSlotValues.contains(selectedValue)
+            ? "This time is blocked from the public form."
+            : nil
+    }
+
+    static func shortSlotValue(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 5 else { return trimmed }
+        return String(trimmed.prefix(5))
     }
 }
 

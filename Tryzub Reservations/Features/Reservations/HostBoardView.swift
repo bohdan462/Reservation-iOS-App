@@ -29,10 +29,19 @@ struct HostBoardView: View {
 
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
+    @State private var todayAvailability: RestaurantDayAvailabilityDTO?
+    @State private var todaySlots: ReservationSlotsResponseDTO?
+    @State private var todayBlockedSlots: [RestaurantBlockedSlotDTO] = []
+    @State private var availabilitySummaryError: String?
+    @State private var isLoadingAvailabilitySummary = false
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
             || pendingAction != nil
+    }
+
+    private var isRunningForPreviews: Bool {
+        ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
     }
 
     var body: some View {
@@ -57,6 +66,19 @@ struct HostBoardView: View {
                     onManualRefresh: onManualRefresh,
                     onShowFormProblems: onShowFormProblems
                 )
+
+                if selectedDate.reservationDateString() == Date.reservationDateString() {
+                    HomeAvailabilityIndicator(
+                        availability: todayAvailability,
+                        slots: todaySlots,
+                        blockedCount: todayBlockedSlots.count,
+                        isLoading: isLoadingAvailabilitySummary,
+                        errorMessage: availabilitySummaryError,
+                        onRefresh: {
+                            Task { await loadTodayAvailabilitySummary() }
+                        }
+                    )
+                }
 
                 HostBoardSummaryCard(
                     reservationCount: snapshot.upcoming.count + snapshot.seated.count,
@@ -125,10 +147,20 @@ struct HostBoardView: View {
         }
         .task(id: isVisible && isAppActive) {
             // Starts/stops the auto-refresh loop when Today is visible and app is active.
+            guard !isRunningForPreviews else { return }
             await runAutoRefreshLoop()
         }
         .task(id: isVisible) {
+            guard !isRunningForPreviews else { return }
             await runClockLoop()
+        }
+        .task(id: "\(isVisible)-\(selectedDate.reservationDateString())") {
+            guard !isRunningForPreviews else { return }
+            guard isVisible,
+                  selectedDate.reservationDateString() == Date.reservationDateString() else {
+                return
+            }
+            await loadTodayAvailabilitySummary()
         }
     }
 
@@ -276,6 +308,35 @@ struct HostBoardView: View {
             clockTick = Date()
         }
     }
+
+    private func loadTodayAvailabilitySummary() async {
+        guard !isLoadingAvailabilitySummary else { return }
+        let today = Date.reservationDateString()
+        isLoadingAvailabilitySummary = true
+        availabilitySummaryError = nil
+        defer { isLoadingAvailabilitySummary = false }
+
+        do {
+            async let availability = environment.apiClient.fetchRestaurantDayAvailability(
+                date: today,
+                reason: .restaurantDayAvailability
+            )
+            async let slots = environment.apiClient.fetchReservationSlots(
+                date: today,
+                reason: .reservationSlots
+            )
+            async let blocked = environment.apiClient.fetchRestaurantBlockedSlots(
+                date: today,
+                reason: .restaurantBlockedSlots
+            )
+            let (loadedAvailability, loadedSlots, loadedBlocked) = try await (availability, slots, blocked)
+            todayAvailability = loadedAvailability
+            todaySlots = loadedSlots
+            todayBlockedSlots = loadedBlocked.data
+        } catch {
+            availabilitySummaryError = "Availability summary unavailable."
+        }
+    }
 }
 
 // MARK: - Host Snapshot
@@ -408,6 +469,122 @@ private struct HostBoardSummaryCard: View {
        
         .padding(10)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+    }
+}
+
+// MARK: - Availability Indicator
+
+private struct HomeAvailabilityIndicator: View {
+    let availability: RestaurantDayAvailabilityDTO?
+    let slots: ReservationSlotsResponseDTO?
+    let blockedCount: Int
+    let isLoading: Bool
+    let errorMessage: String?
+    let onRefresh: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: isClosed ? "calendar.badge.exclamationmark" : "calendar.badge.clock")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(isClosed ? .red : .secondary)
+                .frame(width: 28, height: 28)
+                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(isClosed ? "Reservations closed today" : "Today availability")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(isClosed ? .red : .primary)
+
+                Text(summaryText)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: onRefresh) {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .disabled(isLoading)
+        }
+        .padding(10)
+        .background(backgroundColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(isClosed ? Color.red.opacity(0.18) : Color.primary.opacity(0.08), lineWidth: 1)
+        }
+    }
+
+    private var isClosed: Bool {
+        if let availability {
+            return !availability.isOpen
+        }
+        if let slots {
+            return !slots.isOpen
+        }
+        return false
+    }
+
+    private var backgroundColor: Color {
+        isClosed ? Color(.systemRed).opacity(0.08) : Color(.secondarySystemGroupedBackground)
+    }
+
+    private var summaryText: String {
+        if let errorMessage {
+            return errorMessage
+        }
+
+        if isLoading && availability == nil && slots == nil {
+            return "Loading backend availability..."
+        }
+
+        if isClosed {
+            return sourceText
+        }
+
+        var parts: [String] = []
+        if let availability,
+           let openTime = shortTime(availability.openTime),
+           let closeTime = shortTime(availability.closeTime) {
+            parts.append("\(openTime)-\(closeTime)")
+        }
+        parts.append("\(slots?.slots.count ?? 0) public slots")
+        if sourceText == "Special override" {
+            parts.append(sourceText)
+        }
+        if blockedCount > 0 {
+            parts.append("Blocked slots: \(blockedCount)")
+        }
+        return parts.joined(separator: " | ")
+    }
+
+    private var sourceText: String {
+        switch availability?.source.lowercased() ?? slots?.source.lowercased() {
+        case "special":
+            return "Special override"
+        case "weekly":
+            return "Weekly"
+        case .some(let source):
+            return source.capitalized
+        case nil:
+            return "Backend availability"
+        }
+    }
+
+    private func shortTime(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        return String(value.prefix(5))
     }
 }
 
@@ -722,6 +899,7 @@ private struct HostBoardReservationRow: View {
             reservation: reservation,
             showsDate: false,
             context: rowContext,
+            capabilities: controller.capabilities,
             onTableTap: controller.capabilities.canEditReservationDetails
                 ? { tableAssignmentReservation = reservation }
                 : nil
@@ -751,13 +929,7 @@ private struct HostBoardReservationRow: View {
                 Label("Details", systemImage: "info.circle")
             }
 
-            ForEach(
-                ReservationHostAction.availableActions(
-                    for: reservation,
-                    capabilities: controller.capabilities,
-                    includeSecondary: true
-                )
-            ) { action in
+            ForEach(actionPolicy.contextMenuActions) { action in
                 Button(role: action.role) {
                     handle(action)
                 } label: {
@@ -774,6 +946,10 @@ private struct HostBoardReservationRow: View {
                 )
             }
         }
+    }
+
+    private var actionPolicy: ReservationHostActionPolicy {
+        ReservationHostActionPolicy(reservation: reservation, capabilities: controller.capabilities)
     }
 
     private var rowContext: ReservationRowContext {
