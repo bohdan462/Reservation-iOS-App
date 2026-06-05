@@ -188,7 +188,8 @@ struct ReservationDetailView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let isWide = proxy.size.width >= 760
+            let safeWidth = proxy.size.width.tryzubFiniteNonNegativeLayoutValue
+            let isWide = safeWidth >= 760
             ScrollView {
                 detailContent(isWide: isWide)
                     .padding(.horizontal, isWide ? 20 : 16)

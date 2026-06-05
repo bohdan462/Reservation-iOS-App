@@ -20,9 +20,7 @@ struct ReservationsListView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var controller: ReservationsController
     @StateObject private var hiddenReservations = HiddenReservationsStore()
-    @Query(filter: #Predicate<ReservationRecord> { reservation in
-        !reservation.isHidden && (reservation.status == "new" || reservation.status == "needs_review")
-    })
+    @Query
     private var pendingReviewRows: [ReservationRecord]
 
     // Source of truth for custom floating navigation; there is no default TabView state.
@@ -33,6 +31,17 @@ struct ReservationsListView: View {
     init(environment: AppEnvironment) {
         self.environment = environment
         _controller = StateObject(wrappedValue: ReservationsController(environment: environment))
+        let bounds = activeReservationWindowQueryBounds()
+        let fromDate = bounds.from
+        let toDate = bounds.to
+        _pendingReviewRows = Query(
+            filter: #Predicate<ReservationRecord> { reservation in
+                !reservation.isHidden
+                    && reservation.reservationDate >= fromDate
+                    && reservation.reservationDate <= toDate
+                    && (reservation.status == "new" || reservation.status == "needs_review")
+            }
+        )
     }
 
     var body: some View {
@@ -173,6 +182,7 @@ private struct HomeDashboardView: View {
     }
 
     private var selectedDateReservations: [ReservationRecord] {
+        guard isActive else { return [] }
         let selectedDateKey = selectedDate.reservationDateString()
         return ReservationRecord.sortedChronologically(
             reservations.filter {
@@ -210,6 +220,7 @@ private struct HomeDashboardView: View {
                 }
             )
             .refreshable {
+                guard isActive else { return }
                 // Staff manual refresh: controller decides whether this becomes a network GET.
                 await controller.requestManualTodayRefresh(context: modelContext)
             }
@@ -234,10 +245,6 @@ private struct HomeDashboardView: View {
             .navigationDestination(for: Int.self) { remoteID in
                 reservationDestination(remoteID: remoteID)
             }
-            .task(id: homeVisibleDiagnosticID) {
-                guard controller.capabilities.canViewDeveloperDiagnostics else { return }
-                logHomeVisibleDiagnostics()
-            }
         }
     }
 
@@ -254,47 +261,6 @@ private struct HomeDashboardView: View {
         }
     }
 
-    private var homeVisibleDiagnosticID: String {
-        "\(isActive)-\(selectedDate.reservationDateString())"
-    }
-
-    private func logHomeVisibleDiagnostics() {
-        let selectedDateKey = selectedDate.reservationDateString()
-        let localRows = reservations.filter { $0.reservationDate == selectedDateKey }
-        let hiddenExcludedCount = localRows.filter(\.isHidden).count
-        let nonHiddenRows = localRows.filter { !$0.isHidden }
-        let finalVisibleRows = nonHiddenRows.filter { reservation in
-            switch reservation.statusValue {
-            case .new, .needsReview, .confirmed, .seated:
-                return true
-            case .completed, .cancelled, .noShow:
-                return false
-            }
-        }
-        let statusExcludedCount = nonHiddenRows.count - finalVisibleRows.count
-        let excludedStatusCounts = nonHiddenRows.reduce(into: [String: Int]()) { counts, reservation in
-            switch reservation.statusValue {
-            case .completed:
-                counts["completed", default: 0] += 1
-            case .cancelled:
-                counts["cancelled", default: 0] += 1
-            case .noShow:
-                counts["no_show", default: 0] += 1
-            case .new, .needsReview, .confirmed, .seated:
-                break
-            }
-        }
-
-        ReservationSyncDiagnostics.homeVisible(
-            selectedDate: selectedDateKey,
-            allLocalForDateCount: localRows.count,
-            hiddenExcludedCount: hiddenExcludedCount,
-            statusExcludedCount: statusExcludedCount,
-            finalVisibleCount: finalVisibleRows.count,
-            ids: finalVisibleRows.map(\.remoteID).sorted(),
-            excludedStatusCounts: excludedStatusCounts
-        )
-    }
 }
 
 // MARK: - Schedule View
@@ -315,6 +281,7 @@ private struct ReservationScheduleView: View {
     @State private var isLoadingAllPage = false
     @State private var allModeRecords: [ReservationRecord] = []
     @State private var allModeRemoteIDs: [Int] = []
+    @State private var allModeLoadGeneration = 0
     @State private var allModeLoadedPage = 0
     @State private var allModeTotal: Int?
     @State private var allModeTotalPages = 0
@@ -346,6 +313,7 @@ private struct ReservationScheduleView: View {
 
     // Schedule reads cached rows; sync freshness is handled by ReservationsController.
     private var displayedReservations: [ReservationRecord] {
+        guard isActive else { return [] }
         let today = Date.reservationDateString()
         let trimmedSearchText = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -446,7 +414,7 @@ private struct ReservationScheduleView: View {
                             if allModeHasMore {
                                 Button {
                                     Task {
-                                        await loadAllPage(reset: false)
+                                        await loadAllPage(reset: false, caller: "load_more_button")
                                     }
                                 } label: {
                                     if isLoadingAllPage {
@@ -479,8 +447,13 @@ private struct ReservationScheduleView: View {
             .contentMargins(.horizontal, 0, for: .scrollContent)
             .contentMargins(.bottom, 92, for: .scrollContent)
             .refreshable {
-                // Staff manual schedule refresh: GET schedule window through controller/service.
-                await controller.requestScheduleRefresh(context: modelContext)
+                guard isActive else { return }
+                if scope == .all {
+                    await loadAllPage(reset: true, caller: "refreshable_all")
+                } else {
+                    // Upcoming manual refresh stays on the shared active-window path.
+                    await controller.requestScheduleRefresh(context: modelContext)
+                }
             }
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -495,8 +468,13 @@ private struct ReservationScheduleView: View {
 
                     Button {
                         Task {
-                            // Same schedule-window refresh path as pull-to-refresh.
-                            await controller.requestScheduleRefresh(context: modelContext)
+                            guard isActive else { return }
+                            if scope == .all {
+                                await loadAllPage(reset: true, caller: "toolbar_all")
+                            } else {
+                                // Upcoming manual refresh stays on the shared active-window path.
+                                await controller.requestScheduleRefresh(context: modelContext)
+                            }
                         }
                     } label: {
                         if controller.isSyncing {
@@ -523,6 +501,7 @@ private struct ReservationScheduleView: View {
                 await controller.scheduleBecameActive(context: modelContext)
             }
             .task(id: searchText) {
+                guard isActive else { return }
                 let value = searchText
                 try? await Task.sleep(for: .milliseconds(250))
                 if !Task.isCancelled {
@@ -530,16 +509,23 @@ private struct ReservationScheduleView: View {
                 }
             }
             .onChange(of: scope) { _, newScope in
+                allModeLoadGeneration += 1
+                if newScope != .all {
+                    isLoadingAllPage = false
+                    return
+                }
+
                 if newScope == .all, isActive, allModeLoadedPage == 0 {
                     Task {
-                        await loadAllPage(reset: true)
+                        await loadAllPage(reset: true, caller: "scope_change_all")
                     }
                 }
             }
             .onChange(of: debouncedSearchText) { _, _ in
                 guard isActive, scope == .all else { return }
+                allModeLoadGeneration += 1
                 Task {
-                    await loadAllPage(reset: true)
+                    await loadAllPage(reset: true, caller: "search_change_all")
                 }
             }
             .navigationDestination(for: Int.self) { remoteID in
@@ -608,11 +594,11 @@ private struct ReservationScheduleView: View {
         scope == .all && allModeLoadedPage > 0 && allModeLoadedPage < allModeTotalPages
     }
 
-    private func loadAllPage(reset: Bool) async {
+    private func loadAllPage(reset: Bool, caller: String) async {
         guard isActive, scope == .all else {
             ReservationAPILogger.skip(
                 reason: .scheduleAllBlocked,
-                message: "schedule_all_page blocked because Schedule scope is not All or tab is inactive"
+                message: "schedule_all_page blocked caller=\(caller) scope=\(scope.rawValue) isActive=\(isActive)"
             )
             return
         }
@@ -620,6 +606,7 @@ private struct ReservationScheduleView: View {
         guard !isLoadingAllPage else { return }
         isLoadingAllPage = true
         allModeErrorMessage = nil
+        let generation = allModeLoadGeneration
         defer { isLoadingAllPage = false }
 
         let page = reset ? 1 : allModeLoadedPage + 1
@@ -630,8 +617,16 @@ private struct ReservationScheduleView: View {
                 context: modelContext,
                 page: page,
                 search: search,
-                isAllScope: scope == .all
+                isAllScope: scope == .all,
+                callerContext: caller
             )
+            guard generation == allModeLoadGeneration, isActive, scope == .all else {
+                ReservationAPILogger.skip(
+                    reason: .scheduleAllBlocked,
+                    message: "schedule_all_page result ignored caller=\(caller) generation=\(generation) currentGeneration=\(allModeLoadGeneration) scope=\(scope.rawValue) isActive=\(isActive)"
+                )
+                return
+            }
             if reset {
                 allModeRemoteIDs = []
                 allModeRecords = []
@@ -667,7 +662,8 @@ private struct ReservationScheduleView: View {
 
     @ViewBuilder
     private func reservationDestination(remoteID: Int) -> some View {
-        if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
+        let lookupRows = scope == .all ? allModeRecords : reservations
+        if let reservation = lookupRows.first(where: { $0.remoteID == remoteID }) {
             ReservationDetailView(reservation: reservation, environment: environment)
         } else {
             ContentUnavailableView(
@@ -699,6 +695,7 @@ private struct ReservationReviewQueueView: View {
 
     // Pending is the staff default: new and needs_review, oldest submitted first.
     private var queueReservations: [ReservationRecord] {
+        guard isActive else { return [] }
         let trimmedSearchText = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let rows = reservations.filter { reservation in
             guard !hiddenReservations.isHidden(reservation) else { return false }
@@ -765,6 +762,7 @@ private struct ReservationReviewQueueView: View {
             .contentMargins(.horizontal, 0, for: .scrollContent)
             .contentMargins(.bottom, 92, for: .scrollContent)
             .refreshable {
+                guard isActive else { return }
                 // Staff manual queue refresh: controller fetches new + needs_review.
                 await controller.requestReviewRefresh(context: modelContext)
             }
@@ -772,6 +770,7 @@ private struct ReservationReviewQueueView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Task {
+                            guard isActive else { return }
                             // Same pending queue refresh path as pull-to-refresh.
                             await controller.requestReviewRefresh(context: modelContext)
                         }
@@ -794,6 +793,7 @@ private struct ReservationReviewQueueView: View {
                 await controller.reviewBecameActive(context: modelContext)
             }
             .task(id: searchText) {
+                guard isActive else { return }
                 let value = searchText
                 try? await Task.sleep(for: .milliseconds(250))
                 if !Task.isCancelled {

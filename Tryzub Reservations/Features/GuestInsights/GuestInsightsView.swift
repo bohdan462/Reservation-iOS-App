@@ -590,7 +590,7 @@ private struct GuestInsightBarChart: View {
                 }
             }
             .chartYScale(domain: Array(bars.map(\.label).reversed()))
-            .chartXScale(domain: 0...(Double(maxCount) * 1.18))
+            .chartXScale(domain: 0...max(Double(maxCount) * 1.18, 1))
             .chartXAxis(.hidden)
             .chartYAxis {
                 AxisMarks(preset: .aligned, position: .leading) { _ in
@@ -598,7 +598,7 @@ private struct GuestInsightBarChart: View {
                         .font(.caption.weight(.medium))
                 }
             }
-            .frame(height: CGFloat(bars.count) * 30 + 4)
+            .frame(height: (CGFloat(bars.count) * 30 + 4).tryzubFiniteNonNegativeLayoutValue)
         }
     }
 }

@@ -220,12 +220,13 @@ final class ReservationsController: ObservableObject {
         context: ModelContext,
         page: Int,
         search: String?,
-        isAllScope: Bool
+        isAllScope: Bool,
+        callerContext: String
     ) async throws -> ReservationsResponse {
         guard isAllScope else {
             ReservationAPILogger.skip(
                 reason: .scheduleAllBlocked,
-                message: "schedule_all_page blocked because Schedule scope is not All"
+                message: "schedule_all_page blocked caller=\(callerContext) because Schedule scope is not All"
             )
             throw ReservationControllerError.actionAlreadyInProgress
         }
@@ -414,6 +415,8 @@ final class ReservationsController: ObservableObject {
             if mode == .automatic, let cursor = serverCursor(for: scope) {
                 recordRefreshDecision(scope: scope, mode: mode, outcome: "delta")
                 result = try await service.syncActiveWindowChanges(
+                    from: window.from,
+                    to: window.to,
                     since: cursor,
                     reason: .activeWindowDelta
                 )

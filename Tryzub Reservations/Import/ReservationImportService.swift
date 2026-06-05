@@ -15,7 +15,7 @@ protocol ReservationSyncServiceProtocol {
     func syncTodayFull(reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult
     func syncTodayChanges(since: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult
     func syncActiveWindowFull(from: String, to: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult
-    func syncActiveWindowChanges(since: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult
+    func syncActiveWindowChanges(from: String, to: String, since: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult
     func syncScheduleWindowFull(from: String, to: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult
     func syncToday(reason: ReservationAPIRequestReason) async throws
     func syncScheduleWindow(from: String, to: String, reason: ReservationAPIRequestReason) async throws
@@ -142,14 +142,14 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         return ReservationSyncResult(rowCount: syncResponse.reservations.count, serverTime: syncResponse.serverTime)
     }
 
-    // Intent: Quietly applies every server-side reservation change since the backend cursor.
-    // Network: GET /managed-reservations?updated_since=...
-    func syncActiveWindowChanges(since: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult {
+    // Intent: Quietly applies server-side reservation changes within the active window since the backend cursor.
+    // Network: GET /managed-reservations?from=...&to=...&updated_since=...
+    func syncActiveWindowChanges(from: String, to: String, since: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult {
         let syncResponse = try await fetchAllReservationPages(
             perPage: 100,
             date: nil,
-            from: nil,
-            to: nil,
+            from: from,
+            to: to,
             status: nil,
             search: nil,
             includeHidden: false,

@@ -175,6 +175,8 @@ final class ReservationRepository: ReservationRepositoryProtocol {
 }
 
 enum ReservationSyncDiagnostics {
+    static var logsHomeVisibleRows = false
+
     private static let logger = Logger(
         subsystem: "Bohdan-Solovey.Tryzub-Reservations",
         category: "SyncDiagnostics"
@@ -230,7 +232,7 @@ enum ReservationSyncDiagnostics {
         ids: [Int],
         excludedStatusCounts: [String: Int]
     ) {
-        guard isEnabled else { return }
+        guard isEnabled, logsHomeVisibleRows else { return }
 
         emit("[SYNC] home visible selectedDate=\(selectedDate) localForDate=\(allLocalForDateCount) hiddenExcluded=\(hiddenExcludedCount) statusExcluded=\(statusExcludedCount) finalVisible=\(finalVisibleCount) firstIDs=\(ids.prefix(10))")
         emit("[SYNC] home excluded statuses=[completed:\(excludedStatusCounts["completed"] ?? 0), cancelled:\(excludedStatusCounts["cancelled"] ?? 0), no_show:\(excludedStatusCounts["no_show"] ?? 0), hidden:\(hiddenExcludedCount)]")

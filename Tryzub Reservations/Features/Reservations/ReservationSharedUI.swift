@@ -6,6 +6,30 @@
 import SwiftUI
 import Charts
 
+// MARK: - Layout Safety
+
+extension CGFloat {
+    var tryzubFiniteLayoutValue: CGFloat {
+        isFinite ? self : 0
+    }
+
+    var tryzubFiniteNonNegativeLayoutValue: CGFloat {
+        Swift.max(tryzubFiniteLayoutValue, 0)
+    }
+
+    static func tryzubSafeRatio(numerator: CGFloat, denominator: CGFloat) -> CGFloat {
+        guard numerator.isFinite,
+              denominator.isFinite,
+              denominator > 0 else {
+            return 0
+        }
+
+        let value = numerator / denominator
+        guard value.isFinite else { return 0 }
+        return Swift.min(Swift.max(value, 0), 1)
+    }
+}
+
 // MARK: - Tryzub Design System
 
 enum TryzubColors {
@@ -308,12 +332,14 @@ struct ReservationDashedLine: View {
     var body: some View {
         GeometryReader { proxy in
             Path { path in
+                let width = proxy.size.width.tryzubFiniteNonNegativeLayoutValue
+                let height = proxy.size.height.tryzubFiniteNonNegativeLayoutValue
                 if isVertical {
-                    path.move(to: CGPoint(x: proxy.size.width / 2, y: 0))
-                    path.addLine(to: CGPoint(x: proxy.size.width / 2, y: proxy.size.height))
+                    path.move(to: CGPoint(x: width / 2, y: 0))
+                    path.addLine(to: CGPoint(x: width / 2, y: height))
                 } else {
-                    path.move(to: CGPoint(x: 0, y: proxy.size.height / 2))
-                    path.addLine(to: CGPoint(x: proxy.size.width, y: proxy.size.height / 2))
+                    path.move(to: CGPoint(x: 0, y: height / 2))
+                    path.addLine(to: CGPoint(x: width, y: height / 2))
                 }
             }
             .stroke(
@@ -585,7 +611,7 @@ struct ServiceLoadChart: View {
                     }
                 }
             }
-            .frame(height: height)
+            .frame(height: height.tryzubFiniteNonNegativeLayoutValue)
         }
     }
 
@@ -625,7 +651,11 @@ struct ServiceTimelineGraph: View {
     }
 
     private func bar(for slot: ServiceTimelineSlot) -> some View {
-        let fraction = CGFloat(slot.guestCount) / CGFloat(maxGuests)
+        let safeBarHeight = barHeight.tryzubFiniteNonNegativeLayoutValue
+        let fraction = CGFloat.tryzubSafeRatio(
+            numerator: CGFloat(slot.guestCount),
+            denominator: CGFloat(maxGuests)
+        )
         let isPeak = slot.hour == peakHour && slot.guestCount > 0
         let isHighlight = highlightHour != nil && slot.hour == highlightHour
 
@@ -637,11 +667,11 @@ struct ServiceTimelineGraph: View {
                 .minimumScaleFactor(0.7)
 
             ZStack(alignment: .bottom) {
-                Color.clear.frame(height: barHeight)
+                Color.clear.frame(height: safeBarHeight)
 
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(barFill(isPeak: isPeak, isHighlight: isHighlight, hasGuests: slot.guestCount > 0))
-                    .frame(height: max(barHeight * fraction, slot.guestCount > 0 ? 7 : 3))
+                    .frame(height: max(safeBarHeight * fraction, slot.guestCount > 0 ? 7 : 3))
             }
 
             Text(slot.hourLabel)

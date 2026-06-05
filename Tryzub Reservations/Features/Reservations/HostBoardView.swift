@@ -91,6 +91,8 @@ struct HostBoardView: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let safeWidth = proxy.size.width.tryzubFiniteNonNegativeLayoutValue
+            let safeHeight = proxy.size.height.tryzubFiniteNonNegativeLayoutValue
             // Snapshot keeps time/status grouping out of the view layout code.
             let snapshot = HostBoardSnapshot(
                 reservations: reservations,
@@ -100,7 +102,7 @@ struct HostBoardView: View {
             )
 
             Group {
-                if proxy.size.width >= 1100 {
+                if safeWidth >= 1100 {
                     VStack(alignment: .leading, spacing: 8) {
                         homeHeaderAndStats(snapshot: snapshot)
 
@@ -117,11 +119,11 @@ struct HostBoardView: View {
                     }
                 }
             }
-            .padding(.horizontal, proxy.size.width >= 1100 ? 16 : 12)
-            .padding(.top, proxy.size.width >= 1100 ? 8 : 6)
+            .padding(.horizontal, safeWidth >= 1100 ? 16 : 12)
+            .padding(.top, safeWidth >= 1100 ? 8 : 6)
             .padding(.bottom, 92)
             .frame(maxWidth: 1100)
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+            .frame(width: safeWidth, height: safeHeight, alignment: .top)
             .background(TryzubColors.screenBackground)
         }
         .confirmationDialog(
