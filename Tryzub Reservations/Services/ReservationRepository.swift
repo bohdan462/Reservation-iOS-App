@@ -90,25 +90,30 @@ final class ReservationRepository: ReservationRepositoryProtocol {
     // Intent: Successful date-scoped GET is server truth for that date in normal visible lists.
     // Missing local rows are deleted so hidden/moved/status-changed records cannot linger.
     func replaceDateScope(date: String, with reservations: [ReservationDTO], includeHidden: Bool) throws {
-        let beforeRecords = try context.fetch(FetchDescriptor<ReservationRecord>())
-        let beforeCount = beforeRecords.filter { $0.reservationDate == date }.count
+        let scopedDate = date
+        let dateDescriptor = FetchDescriptor<ReservationRecord>(
+            predicate: #Predicate<ReservationRecord> { record in
+                record.reservationDate == scopedDate
+            }
+        )
+        let beforeRecords = try context.fetch(dateDescriptor)
+        let beforeCount = beforeRecords.count
         let returnedIDs = Set(reservations.map(\.id))
         var removedIDs: [Int] = []
 
         for record in beforeRecords
-            where record.reservationDate == date
-                && !returnedIDs.contains(record.remoteID)
+            where !returnedIDs.contains(record.remoteID)
                 && (includeHidden || !record.isHidden) {
             removedIDs.append(record.remoteID)
             context.delete(record)
         }
 
-        let remainingRecords = beforeRecords.filter { !removedIDs.contains($0.remoteID) }
-        upsert(reservations, into: remainingRecords)
+        let existingRecords = try records(remoteIDs: reservations.map(\.id))
+        upsert(reservations, into: existingRecords)
         try context.save()
 
-        let afterRecords = try context.fetch(FetchDescriptor<ReservationRecord>())
-        let afterCount = afterRecords.filter { $0.reservationDate == date }.count
+        let afterRecords = try context.fetch(dateDescriptor)
+        let afterCount = afterRecords.count
         ReservationSyncDiagnostics.cacheWrite(
             scope: "date=\(date)",
             input: reservations,
@@ -120,26 +125,31 @@ final class ReservationRepository: ReservationRepositoryProtocol {
 
     // Intent: Successful schedule-window GET is server truth for only that date window.
     func replaceDateWindow(from: String, to: String, with reservations: [ReservationDTO], includeHidden: Bool) throws {
-        let beforeRecords = try context.fetch(FetchDescriptor<ReservationRecord>())
-        let beforeCount = beforeRecords.filter { $0.reservationDate >= from && $0.reservationDate <= to }.count
+        let windowFrom = from
+        let windowTo = to
+        let windowDescriptor = FetchDescriptor<ReservationRecord>(
+            predicate: #Predicate<ReservationRecord> { record in
+                record.reservationDate >= windowFrom && record.reservationDate <= windowTo
+            }
+        )
+        let beforeRecords = try context.fetch(windowDescriptor)
+        let beforeCount = beforeRecords.count
         let returnedIDs = Set(reservations.map(\.id))
         var removedIDs: [Int] = []
 
         for record in beforeRecords
-            where record.reservationDate >= from
-                && record.reservationDate <= to
-                && !returnedIDs.contains(record.remoteID)
+            where !returnedIDs.contains(record.remoteID)
                 && (includeHidden || !record.isHidden) {
             removedIDs.append(record.remoteID)
             context.delete(record)
         }
 
-        let remainingRecords = beforeRecords.filter { !removedIDs.contains($0.remoteID) }
-        upsert(reservations, into: remainingRecords)
+        let existingRecords = try records(remoteIDs: reservations.map(\.id))
+        upsert(reservations, into: existingRecords)
         try context.save()
 
-        let afterRecords = try context.fetch(FetchDescriptor<ReservationRecord>())
-        let afterCount = afterRecords.filter { $0.reservationDate >= from && $0.reservationDate <= to }.count
+        let afterRecords = try context.fetch(windowDescriptor)
+        let afterCount = afterRecords.count
         ReservationSyncDiagnostics.cacheWrite(
             scope: "window=\(from)...\(to)",
             input: reservations,
@@ -152,14 +162,22 @@ final class ReservationRepository: ReservationRepositoryProtocol {
     // Intent: Successful review GETs refresh rows still in new/needs_review.
     // Missing rows are not deleted; broader date/window sync or mutation responses own status changes.
     func replaceReviewQueue(with reservations: [ReservationDTO]) throws {
-        let beforeRecords = try context.fetch(FetchDescriptor<ReservationRecord>())
-        let beforeCount = beforeRecords.filter { !$0.isHidden && ($0.statusValue == .new || $0.statusValue == .needsReview) }.count
+        let statusNew = ReservationStatus.new.rawValue
+        let statusNeedsReview = ReservationStatus.needsReview.rawValue
+        let reviewDescriptor = FetchDescriptor<ReservationRecord>(
+            predicate: #Predicate<ReservationRecord> { record in
+                !record.isHidden && (record.status == statusNew || record.status == statusNeedsReview)
+            }
+        )
+        let beforeRecords = try context.fetch(reviewDescriptor)
+        let beforeCount = beforeRecords.count
 
-        upsert(reservations, into: beforeRecords)
+        let existingRecords = try records(remoteIDs: reservations.map(\.id))
+        upsert(reservations, into: existingRecords)
         try context.save()
 
-        let afterRecords = try context.fetch(FetchDescriptor<ReservationRecord>())
-        let afterCount = afterRecords.filter { !$0.isHidden && ($0.statusValue == .new || $0.statusValue == .needsReview) }.count
+        let afterRecords = try context.fetch(reviewDescriptor)
+        let afterCount = afterRecords.count
         ReservationSyncDiagnostics.cacheWrite(
             scope: "review=new,needs_review(upsert-only)",
             input: reservations,

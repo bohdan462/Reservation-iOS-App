@@ -1253,26 +1253,73 @@ final class ReservationsController: ObservableObject {
     // MARK: - Hidden Reservations
 
     // Intent: Loads backend-hidden rows into the cache for the Hidden Reservations screen.
-    // Network: GET /managed-reservations?include_hidden=1.
+    // Network: GET /managed-reservations?include_hidden=1 across pages.
     @discardableResult
-    func loadHiddenReservations(context: ModelContext) async throws -> [ReservationDTO] {
+    func loadHiddenReservations(context: ModelContext, force: Bool = false) async throws -> [ReservationDTO] {
         guard capabilities.canViewHiddenReservations else {
             throw ReservationControllerError.permissionDenied
         }
 
-        let reservations = try await environment.apiClient.fetchAllReservations(
-            perPage: 100,
-            date: nil,
-            from: nil,
-            to: nil,
-            status: nil,
-            search: nil,
-            includeHidden: true,
-            reason: .hiddenReservations
-        )
+        let scope = ReservationSyncScope.hiddenReservations
+
+        if !force && isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) {
+            return []
+        }
+
+        guard beginScope(scope, intent: force ? .manual : .screenActive) else {
+            ReservationAPILogger.skip(
+                reason: .scopeSkipInFlight,
+                message: "\(scope.description) skipped because this scope is already in flight"
+            )
+            return []
+        }
+
+        do {
+            let hiddenRows = try await fetchAndCacheHiddenReservations(context: context)
+            markScopeSuccess(scope)
+            return hiddenRows
+        } catch {
+            if error.isCancellationLike {
+                markScopeCancelled(scope)
+            } else {
+                markScopeFailure(scope)
+                if error.isOfflineLike {
+                    postOfflineNotice(source: .admin, requestReason: .hiddenReservations, error: error)
+                }
+            }
+            throw error
+        }
+    }
+
+    private func fetchAndCacheHiddenReservations(context: ModelContext) async throws -> [ReservationDTO] {
         let repository = ReservationRepository(context: context)
-        try repository.upsert(reservations)
-        return reservations.filter { $0.isHidden == true }
+        var currentPage = 1
+        var totalPages = 1
+        var hiddenRows: [ReservationDTO] = []
+
+        repeat {
+            let response = try await environment.apiClient.fetchReservations(
+                page: currentPage,
+                perPage: 100,
+                date: nil,
+                from: nil,
+                to: nil,
+                status: nil,
+                search: nil,
+                includeHidden: true,
+                reason: .hiddenReservations
+            )
+
+            if !response.data.isEmpty {
+                try repository.upsert(response.data)
+            }
+
+            hiddenRows.append(contentsOf: response.data.filter { $0.isHidden == true })
+            totalPages = max(response.totalPages, 1)
+            currentPage += 1
+        } while currentPage <= totalPages
+
+        return hiddenRows
     }
 
     // Intent: Generates a guest manage link for manual Gmail/Mail confirmation copy.
@@ -1912,6 +1959,10 @@ final class ReservationsController: ObservableObject {
         }
 
         markScopeStale(.reviewQueues)
+
+        if reservation.isHidden == true {
+            markScopeStale(.hiddenReservations)
+        }
     }
 
     private func markScopesTouched(afterDeletingReservationDate reservationDate: String) {
@@ -2147,6 +2198,7 @@ enum ReservationSyncScope: Hashable, CustomStringConvertible {
     case activeWindow(from: String, to: String)
     case scheduleWindow(from: String, to: String)
     case cancelledWindow(from: String, to: String)
+    case hiddenReservations
     case reviewQueues
     case importFailureCount
     case reservation(id: Int)
@@ -2161,6 +2213,8 @@ enum ReservationSyncScope: Hashable, CustomStringConvertible {
             return "schedule(\(from)...\(to))"
         case .cancelledWindow(let from, let to):
             return "cancelled(\(from)...\(to))"
+        case .hiddenReservations:
+            return "hidden_reservations"
         case .reviewQueues:
             return "review_queues"
         case .importFailureCount:

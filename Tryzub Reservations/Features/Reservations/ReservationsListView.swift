@@ -1250,7 +1250,7 @@ private struct HiddenReservationsView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     Task {
-                        await loadHiddenReservations()
+                        await loadHiddenReservations(force: true)
                     }
                 } label: {
                     if isLoading {
@@ -1286,14 +1286,14 @@ private struct HiddenReservationsView: View {
         }
         .task {
             // Lazy admin/dev load: hidden rows are fetched only when this screen opens.
-            await loadHiddenReservations()
+            await loadHiddenReservations(force: false)
         }
         .refreshable {
-            await loadHiddenReservations()
+            await loadHiddenReservations(force: true)
         }
     }
 
-    private func loadHiddenReservations() async {
+    private func loadHiddenReservations(force: Bool) async {
         guard !isLoading else { return }
         guard controller.capabilities.canViewHiddenReservations else {
             errorMessage = "This account cannot view hidden reservations."
@@ -1307,7 +1307,7 @@ private struct HiddenReservationsView: View {
         }
 
         do {
-            _ = try await controller.loadHiddenReservations(context: modelContext)
+            _ = try await controller.loadHiddenReservations(context: modelContext, force: force)
         } catch {
             errorMessage = error.isOfflineLike
                 ? "No internet connection. Showing saved reservations."
