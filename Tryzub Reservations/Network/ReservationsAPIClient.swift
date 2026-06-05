@@ -15,6 +15,8 @@ enum ReservationAPIRequestReason: String {
     case ping
     case startupToday = "startup_today"
     case manualToday = "manual_today"
+    case activeWindow = "active_window"
+    case activeWindowDelta = "active_window_delta"
     case autoToday = "auto_today"
     case autoTodayDelta = "auto_today_delta"
     case autoSkipCooldown = "auto_skip_cooldown"
@@ -45,6 +47,8 @@ enum ReservationAPIRequestReason: String {
     case manualSkipBusy = "manual_skip_busy"
     case manualSkipCooldown = "manual_skip_cooldown"
     case scopeSkipInFlight = "scope_skip_in_flight"
+    case scopeSkipFresh = "scope_skip_fresh"
+    case scheduleAllBlocked = "schedule_all_blocked"
     case autoSkipBusy = "auto_skip_busy"
     case autoSkipInactive = "auto_skip_inactive"
 }

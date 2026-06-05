@@ -697,7 +697,7 @@ struct TableAssignmentSheet: View {
             try await onSave(tableName.trimmingCharacters(in: .whitespacesAndNewlines))
             dismiss()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Could not assign table. Please try again."
         }
     }
 }

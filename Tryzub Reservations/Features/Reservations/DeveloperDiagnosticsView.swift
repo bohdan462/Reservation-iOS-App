@@ -30,6 +30,7 @@ struct DeveloperDiagnosticsView: View {
     var body: some View {
         List {
             apiHealthSection
+            operationStateSection
             syncScopeSection
             safeFetchTestsSection
             requestLogSection
@@ -88,6 +89,37 @@ struct DeveloperDiagnosticsView: View {
                 Text("Diagnostics are available because this session uses the developer capability.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var operationStateSection: some View {
+        let state = controller.operationState
+
+        return Section("Operation State") {
+            row("Startup sync", state.isStartupSyncing ? "Running" : "Idle")
+            row("Manual refresh", state.isManualRefreshInProgress ? "Running" : "Idle")
+            row("Quiet auto refresh", state.isQuietAutoRefreshInProgress ? "Running" : "Idle")
+            row("Creating reservation", state.isCreatingReservation ? "Running" : "Idle")
+            row("Mutating IDs", idsText(state.mutatingReservationIDs))
+            row("Reconciling IDs", idsText(state.reconcilingReservationIDs))
+            row("Import count", state.isCheckingImportFailureCount ? "Running" : "Idle")
+            row("Last offline notice", state.lastNetworkUnavailableAt?.formatted(date: .abbreviated, time: .standard) ?? "None")
+
+            if let decision = state.latestRefreshDecision {
+                row("Last refresh scope", decision.scope.description)
+                row("Last refresh intent", "\(decision.intent)")
+                row("Last refresh outcome", decision.outcome)
+                row("Last refresh cursor", decision.cursor ?? "None")
+                row("Decision time", decision.createdAt.formatted(date: .omitted, time: .standard))
+            }
+
+            if state.serverCursors.isEmpty {
+                row("Server cursors", "None")
+            } else {
+                ForEach(state.serverCursors.keys.sorted(by: { $0.description < $1.description }), id: \.description) { scope in
+                    row("Cursor \(scope.description)", state.serverCursors[scope] ?? "-")
+                }
             }
         }
     }
@@ -253,6 +285,11 @@ struct DeveloperDiagnosticsView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
         }
+    }
+
+    private func idsText(_ ids: Set<Int>) -> String {
+        let value = ids.sorted().map(String.init).joined(separator: ", ")
+        return value.isEmpty ? "None" : value
     }
 
     private func scopeTimestampRow(_ title: String, _ date: Date?) -> some View {

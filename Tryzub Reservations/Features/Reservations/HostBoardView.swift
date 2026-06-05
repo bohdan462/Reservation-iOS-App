@@ -29,13 +29,6 @@ struct HostBoardView: View {
 
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
-    @State private var todayAvailability: RestaurantDayAvailabilityDTO?
-    @State private var todaySlots: ReservationSlotsResponseDTO?
-    @State private var todayBlockedSlots: [RestaurantBlockedSlotDTO] = []
-    @State private var availabilitySummaryError: String?
-    @State private var isLoadingAvailabilitySummary = false
-    @State private var availabilitySummaryByDate: [String: HostBoardAvailabilitySummary] = [:]
-    private let availabilitySummaryFreshnessInterval: TimeInterval = 120
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
@@ -66,6 +59,34 @@ struct HostBoardView: View {
 
     private var isRunningForPreviews: Bool {
         ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }
+
+    private var selectedDateKey: String {
+        selectedDate.reservationDateString()
+    }
+
+    private var availabilitySummary: ReservationAvailabilitySummary? {
+        controller.availabilitySummary(for: selectedDateKey)
+    }
+
+    private var todayAvailability: RestaurantDayAvailabilityDTO? {
+        availabilitySummary?.availability
+    }
+
+    private var todaySlots: ReservationSlotsResponseDTO? {
+        availabilitySummary?.slots
+    }
+
+    private var todayBlockedSlots: [RestaurantBlockedSlotDTO] {
+        availabilitySummary?.blockedSlots ?? []
+    }
+
+    private var availabilitySummaryError: String? {
+        controller.availabilitySummaryError(for: selectedDateKey)
+    }
+
+    private var isLoadingAvailabilitySummary: Bool {
+        controller.isAvailabilitySummaryLoading(date: selectedDateKey)
     }
 
     var body: some View {
@@ -156,13 +177,17 @@ struct HostBoardView: View {
         }
         .task(id: "\(isVisible)-\(selectedDate.reservationDateString())") {
             // Lazy Home indicator load: availability/slots/blocked are screen-specific
-            // and cached briefly by date so tab switching does not refetch them.
+            // and cached by the controller so tab switching does not refetch them.
             guard !isRunningForPreviews else { return }
+            guard isVisible else {
+                controller.cancelAvailabilitySummary(date: selectedDateKey)
+                return
+            }
             guard isVisible,
                   selectedDate.reservationDateString() == Date.reservationDateString() else {
                 return
             }
-            await loadTodayAvailabilitySummary()
+            controller.ensureAvailabilitySummary(date: selectedDateKey)
         }
     }
 
@@ -266,7 +291,7 @@ struct HostBoardView: View {
             availabilitySummary: availabilitySummaryLine,
             isAvailabilityLoading: isLoadingAvailabilitySummary,
             onRefreshAvailability: selectedDate.reservationDateString() == Date.reservationDateString()
-                ? { Task { await loadTodayAvailabilitySummary(force: true) } }
+                ? { controller.ensureAvailabilitySummary(date: selectedDateKey, force: true) }
                 : nil
         )
     }
@@ -379,61 +404,6 @@ struct HostBoardView: View {
         }
     }
 
-    private func loadTodayAvailabilitySummary(force: Bool = false) async {
-        guard !isLoadingAvailabilitySummary else { return }
-        let today = Date.reservationDateString()
-        if !force,
-           let cached = availabilitySummaryByDate[today],
-           Date().timeIntervalSince(cached.loadedAt) < availabilitySummaryFreshnessInterval {
-            apply(cached)
-            return
-        }
-
-        isLoadingAvailabilitySummary = true
-        availabilitySummaryError = nil
-        defer { isLoadingAvailabilitySummary = false }
-
-        do {
-            async let availability = environment.apiClient.fetchRestaurantDayAvailability(
-                date: today,
-                reason: .restaurantDayAvailability
-            )
-            async let slots = environment.apiClient.fetchReservationSlots(
-                date: today,
-                reason: .reservationSlots
-            )
-            async let blocked = environment.apiClient.fetchRestaurantBlockedSlots(
-                date: today,
-                reason: .restaurantBlockedSlots
-            )
-            let (loadedAvailability, loadedSlots, loadedBlocked) = try await (availability, slots, blocked)
-            todayAvailability = loadedAvailability
-            todaySlots = loadedSlots
-            todayBlockedSlots = loadedBlocked.data
-            availabilitySummaryByDate[today] = HostBoardAvailabilitySummary(
-                availability: loadedAvailability,
-                slots: loadedSlots,
-                blockedSlots: loadedBlocked.data
-            )
-        } catch {
-            availabilitySummaryError = error.isOfflineLike
-                ? "Offline. Availability preview may be stale."
-                : error.localizedDescription
-        }
-    }
-
-    private func apply(_ summary: HostBoardAvailabilitySummary) {
-        todayAvailability = summary.availability
-        todaySlots = summary.slots
-        todayBlockedSlots = summary.blockedSlots
-    }
-}
-
-private struct HostBoardAvailabilitySummary {
-    let availability: RestaurantDayAvailabilityDTO
-    let slots: ReservationSlotsResponseDTO
-    let blockedSlots: [RestaurantBlockedSlotDTO]
-    let loadedAt = Date()
 }
 
 // MARK: - Host Snapshot

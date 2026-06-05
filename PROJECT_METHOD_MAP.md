@@ -8,14 +8,26 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 - `ReservationHostAction.confirmOnly` → `updateStatus(.confirmed)` → PATCH — **no email**
 - `ReservationHostAction.confirmAndSendEmail` → `confirmReservation` → POST `/confirm` — **backend email**
 - `createAcceptedManualReservation` → POST — confirmed, **no email**
-- `generateGuestManageLink` → POST `/guest-manage-link` — **manual Mail MVP**, no email sent
+- `generateGuestManageLink` → POST `/guest-manage-link` — **manual Gmail/Mail MVP**, no email sent
+- `ManualEmailDraftService.confirmationDraft` → local text only — no endpoint, no email sent, no status change
 
 ---
 
 ## ReservationsController
 
 **File:** `Import/ReservationsController.swift`  
-**Role:** Workflow coordinator. Owns sync scopes, cursors, notices, mutation guards.
+**Role:** Workflow coordinator. Owns sync scopes, cursors, `operationState`, notices, mutation guards.
+
+### Operation state snapshot
+
+| Field | Meaning |
+| --- | --- |
+| `activeSyncIntents` | Startup, manual, automatic, screen-active, reconcile, or diagnostics work by sync scope |
+| `mutatingReservationIDs` | Per-reservation PATCH/confirm/hide/restore/hard-delete in flight |
+| `reconcilingReservationIDs` | Uncertain mutation is being checked with GET by ID |
+| `isCreatingReservation` | Manual create POST in flight |
+| `isCheckingImportFailureCount` | Admin/dev failed-import count check in flight |
+| `lastNetworkUnavailableAt` | Last offline-like refresh failure notice |
 
 ### Lifecycle & refresh
 
@@ -244,6 +256,15 @@ All throw `actionAlreadyInProgress` if overlapping load/save flags set.
 | Audience | manager+ |
 | MVP | Manual Gmail/Mail workflow |
 
+#### `ManualEmailDraftService.confirmationDraft(reservation:manageLink:)`
+| Field | Value |
+| --- | --- |
+| Who calls | `ReservationDetailView` after a manage link exists |
+| Endpoint | None |
+| Email | **Does not send** — copies reviewed draft text to pasteboard |
+| SwiftData | None |
+| Status change | None |
+
 #### `reconcileReservation(id:context:)`
 | Field | Value |
 | --- | --- |
@@ -266,7 +287,7 @@ All throw `actionAlreadyInProgress` if overlapping load/save flags set.
 | Field | Value |
 | --- | --- |
 | Endpoint | `GET /import-failures?page=1&per_page=1` |
-| Audience | manager+ capability; triggered after main refreshes |
+| Audience | manager+ capability; explicit admin/dev or diagnostics check only |
 | SwiftData | No |
 
 #### `fetchImportFailures(page:perPage:)`
@@ -309,6 +330,7 @@ All throw `actionAlreadyInProgress` if overlapping load/save flags set.
 | `updateServerCursor` / `serverCursor` | Store `server_time` per scope |
 | `markScopesTouched` | Invalidate schedule/review after mutation |
 | `postNotice` / `postRefreshFailureNotice` / `postOfflineNotice` | Notice pipeline |
+| `publishOperationState` | Mirrors active scopes and busy flags into one diagnostics/future-UI snapshot |
 
 ---
 
@@ -515,6 +537,7 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 | --- | --- |
 | `perform(_:)` | `updateStatus` / `confirmReservation` / table PATCH |
 | `generateGuestManageLink` | POST guest-manage-link; pasteboard |
+| Copy confirmation draft | Local `ManualEmailDraftService` text; pasteboard only |
 | Edit sheet | `ReservationEditFormView` → PATCH |
 | Hide | `hideWrongEntry` |
 
@@ -565,6 +588,6 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 | --- | --- |
 | Offline on refresh | Warning notice; cache stays visible; 60s offline notice cooldown |
 | Refresh failure | Error notice; scope failure timestamp; cooldown before retry |
-| Mutation failure | Error notice; action ID cleared in `defer` |
-| Uncertain mutation | Reconcile GET by ID; success/failure notice |
+| Mutation failure | Staff-safe error notice; action ID cleared in `defer` |
+| Uncertain mutation | "Checking reservation" notice; affected ID enters reconcile state; GET by ID; success/failure notice |
 | Empty delta | No upsert; no delete; cursor still updated if server returns `server_time` |

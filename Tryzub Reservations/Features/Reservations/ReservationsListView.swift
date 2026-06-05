@@ -6,13 +6,24 @@
 import SwiftUI
 import SwiftData
 
+private func activeReservationWindowQueryBounds(daysAhead: Int = 120) -> (from: String, to: String) {
+    let now = Date()
+    let calendar = Calendar.current
+    let from = calendar.date(byAdding: .day, value: -1, to: now) ?? now
+    let to = calendar.date(byAdding: .day, value: daysAhead, to: now) ?? now
+    return (from.reservationDateString(), to.reservationDateString())
+}
+
 // MARK: - Root Reservation Shell
 
 struct ReservationsListView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var controller: ReservationsController
     @StateObject private var hiddenReservations = HiddenReservationsStore()
-    @Query private var rootReservations: [ReservationRecord]
+    @Query(filter: #Predicate<ReservationRecord> { reservation in
+        !reservation.isHidden && (reservation.status == "new" || reservation.status == "needs_review")
+    })
+    private var pendingReviewRows: [ReservationRecord]
 
     // Source of truth for custom floating navigation; there is no default TabView state.
     @State private var selectedTab: ReservationsAppTab = .home
@@ -36,7 +47,11 @@ struct ReservationsListView: View {
                 ReservationScheduleView(environment: environment, isActive: selectedTab == .schedule)
             }
             tabContainer(.review) {
-                ReservationReviewQueueView(environment: environment, isActive: selectedTab == .review)
+                ReservationReviewQueueView(
+                    reservations: pendingReviewRows,
+                    environment: environment,
+                    isActive: selectedTab == .review
+                )
             }
             tabContainer(.more) {
                 ReservationMoreView(environment: environment)
@@ -105,10 +120,7 @@ struct ReservationsListView: View {
     }
 
     private var pendingReviewCount: Int {
-        rootReservations.filter {
-            !hiddenReservations.isHidden($0)
-                && ($0.statusValue == .new || $0.statusValue == .needsReview)
-        }.count
+        pendingReviewRows.count
     }
 
     private var noticeTopPadding: CGFloat {
@@ -128,10 +140,7 @@ private struct HomeDashboardView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
-    @Query(sort: [
-        SortDescriptor(\ReservationRecord.reservationDate),
-        SortDescriptor(\ReservationRecord.reservationTime)
-    ])
+    @Query
     private var reservations: [ReservationRecord]
 
     // MARK: - Local UI State
@@ -143,6 +152,25 @@ private struct HomeDashboardView: View {
 
     let environment: AppEnvironment
     let isActive: Bool
+
+    init(environment: AppEnvironment, isActive: Bool) {
+        self.environment = environment
+        self.isActive = isActive
+        let bounds = activeReservationWindowQueryBounds()
+        let fromDate = bounds.from
+        let toDate = bounds.to
+        _reservations = Query(
+            filter: #Predicate<ReservationRecord> { reservation in
+                !reservation.isHidden
+                    && reservation.reservationDate >= fromDate
+                    && reservation.reservationDate <= toDate
+            },
+            sort: [
+                SortDescriptor(\ReservationRecord.reservationDate),
+                SortDescriptor(\ReservationRecord.reservationTime)
+            ]
+        )
+    }
 
     private var selectedDateReservations: [ReservationRecord] {
         let selectedDateKey = selectedDate.reservationDateString()
@@ -207,6 +235,7 @@ private struct HomeDashboardView: View {
                 reservationDestination(remoteID: remoteID)
             }
             .task(id: homeVisibleDiagnosticID) {
+                guard controller.capabilities.canViewDeveloperDiagnostics else { return }
                 logHomeVisibleDiagnostics()
             }
         }
@@ -226,14 +255,7 @@ private struct HomeDashboardView: View {
     }
 
     private var homeVisibleDiagnosticID: String {
-        let selectedDateKey = selectedDate.reservationDateString()
-        let localRows = reservations
-            .filter { $0.reservationDate == selectedDateKey }
-            .sorted { $0.remoteID < $1.remoteID }
-        let rowsSignature = localRows
-            .map { "\($0.remoteID):\($0.status):\($0.isHidden)" }
-            .joined(separator: ",")
-        return "\(selectedDateKey)|\(rowsSignature)"
+        "\(isActive)-\(selectedDate.reservationDateString())"
     }
 
     private func logHomeVisibleDiagnostics() {
@@ -281,10 +303,7 @@ private struct ReservationScheduleView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
-    @Query(sort: [
-        SortDescriptor(\ReservationRecord.reservationDate),
-        SortDescriptor(\ReservationRecord.reservationTime)
-    ])
+    @Query
     private var reservations: [ReservationRecord]
 
     // MARK: - Local UI State
@@ -294,6 +313,8 @@ private struct ReservationScheduleView: View {
     @State private var debouncedSearchText = ""
     @State private var statusFilter: ReservationStatus?
     @State private var isLoadingAllPage = false
+    @State private var allModeRecords: [ReservationRecord] = []
+    @State private var allModeRemoteIDs: [Int] = []
     @State private var allModeLoadedPage = 0
     @State private var allModeTotal: Int?
     @State private var allModeTotalPages = 0
@@ -304,12 +325,32 @@ private struct ReservationScheduleView: View {
     let environment: AppEnvironment
     let isActive: Bool
 
+    init(environment: AppEnvironment, isActive: Bool) {
+        self.environment = environment
+        self.isActive = isActive
+        let bounds = activeReservationWindowQueryBounds()
+        let fromDate = bounds.from
+        let toDate = bounds.to
+        _reservations = Query(
+            filter: #Predicate<ReservationRecord> { reservation in
+                !reservation.isHidden
+                    && reservation.reservationDate >= fromDate
+                    && reservation.reservationDate <= toDate
+            },
+            sort: [
+                SortDescriptor(\ReservationRecord.reservationDate),
+                SortDescriptor(\ReservationRecord.reservationTime)
+            ]
+        )
+    }
+
     // Schedule reads cached rows; sync freshness is handled by ReservationsController.
     private var displayedReservations: [ReservationRecord] {
         let today = Date.reservationDateString()
         let trimmedSearchText = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        var rows = reservations.filter { !hiddenReservations.isHidden($0) }
+        var rows = (scope == .all ? allModeRecords : reservations)
+            .filter { !hiddenReservations.isHidden($0) }
 
         if scope == .upcoming {
             rows = rows.filter {
@@ -476,6 +517,8 @@ private struct ReservationScheduleView: View {
             }
             .task(id: isActive) {
                 guard isActive else { return }
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled else { return }
                 // Schedule tab activation: controller fetches only when cached window is stale.
                 await controller.scheduleBecameActive(context: modelContext)
             }
@@ -487,14 +530,14 @@ private struct ReservationScheduleView: View {
                 }
             }
             .onChange(of: scope) { _, newScope in
-                if newScope == .all, allModeLoadedPage == 0 {
+                if newScope == .all, isActive, allModeLoadedPage == 0 {
                     Task {
                         await loadAllPage(reset: true)
                     }
                 }
             }
             .onChange(of: debouncedSearchText) { _, _ in
-                guard scope == .all else { return }
+                guard isActive, scope == .all else { return }
                 Task {
                     await loadAllPage(reset: true)
                 }
@@ -566,6 +609,14 @@ private struct ReservationScheduleView: View {
     }
 
     private func loadAllPage(reset: Bool) async {
+        guard isActive, scope == .all else {
+            ReservationAPILogger.skip(
+                reason: .scheduleAllBlocked,
+                message: "schedule_all_page blocked because Schedule scope is not All or tab is inactive"
+            )
+            return
+        }
+
         guard !isLoadingAllPage else { return }
         isLoadingAllPage = true
         allModeErrorMessage = nil
@@ -578,11 +629,37 @@ private struct ReservationScheduleView: View {
             let response = try await controller.loadScheduleAllPage(
                 context: modelContext,
                 page: page,
-                search: search
+                search: search,
+                isAllScope: scope == .all
             )
+            if reset {
+                allModeRemoteIDs = []
+                allModeRecords = []
+            }
+            let existingIDs = Set(allModeRemoteIDs)
+            allModeRemoteIDs.append(contentsOf: response.data.map(\.id).filter { !existingIDs.contains($0) })
+            refreshAllModeRecords()
             allModeLoadedPage = page
             allModeTotal = response.total
             allModeTotalPages = response.totalPages
+        } catch {
+            allModeErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshAllModeRecords() {
+        guard !allModeRemoteIDs.isEmpty else {
+            allModeRecords = []
+            return
+        }
+
+        do {
+            let ids = Set(allModeRemoteIDs)
+            let descriptor = FetchDescriptor<ReservationRecord>()
+            let fetched = try modelContext.fetch(descriptor)
+            allModeRecords = ReservationRecord.sortedNewestFirst(
+                fetched.filter { ids.contains($0.remoteID) }
+            )
         } catch {
             allModeErrorMessage = error.localizedDescription
         }
@@ -608,11 +685,6 @@ private struct ReservationReviewQueueView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
-    @Query(sort: [
-        SortDescriptor(\ReservationRecord.reservationDate),
-        SortDescriptor(\ReservationRecord.reservationTime)
-    ])
-    private var reservations: [ReservationRecord]
 
     // MARK: - Local UI State
 
@@ -621,6 +693,7 @@ private struct ReservationReviewQueueView: View {
     @State private var debouncedSearchText = ""
     @State private var navigationPath: [Int] = []
 
+    let reservations: [ReservationRecord]
     let environment: AppEnvironment
     let isActive: Bool
 
@@ -715,6 +788,8 @@ private struct ReservationReviewQueueView: View {
             }
             .task(id: isActive) {
                 guard isActive else { return }
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled else { return }
                 // Review tab activation: controller refreshes only when queue cache is stale.
                 await controller.reviewBecameActive(context: modelContext)
             }
@@ -1236,7 +1311,9 @@ private struct HiddenReservationsView: View {
         do {
             _ = try await controller.loadHiddenReservations(context: modelContext)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.isOfflineLike
+                ? "No internet connection. Showing saved reservations."
+                : "Could not load hidden reservations. Please try again."
         }
     }
 
@@ -1249,7 +1326,7 @@ private struct HiddenReservationsView: View {
             )
             ReservationHaptics.success()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Could not restore this reservation. Please try again."
             ReservationHaptics.warning()
         }
     }
@@ -1274,7 +1351,7 @@ private struct HiddenReservationsView: View {
             )
             ReservationHaptics.warning()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Could not permanently delete this test reservation. Please try again."
             ReservationHaptics.warning()
         }
     }

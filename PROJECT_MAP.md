@@ -15,6 +15,7 @@ One-restaurant internal iOS app. **WordPress REST API is source of truth.** **Sw
 | Tab shell, navigation | `Features/Reservations/ReservationsListView.swift` |
 | Today board | `Features/Reservations/HostBoardView.swift` |
 | Reservation detail | `Features/Reservations/ReservationDetailView.swift` |
+| Manual Gmail/Mail draft text | `Features/Reservations/ReservationDetailView.swift` (`ManualEmailDraftService`) |
 | Create / edit form | `Features/Reservations/ManualReservationFormView.swift` |
 | Staff action buttons | `Features/Reservations/ReservationActionButtons.swift` |
 | Design tokens, charts, slot grids | `Features/Reservations/ReservationSharedUI.swift` |
@@ -162,7 +163,7 @@ Custom `ReservationFloatingTabBar` — **not** `TabView`.
 
 ### ReservationsController (`Import/ReservationsController.swift`)
 
-Owns: sync scopes, `server_time` cursors, `isSyncing` / `isAutoRefreshing`, `actionInProgressIDs`, notices, import failure count, `restaurantSetup`, admin tests.
+Owns: sync scopes, `server_time` cursors, `operationState`, `isSyncing` / `isAutoRefreshing`, `actionInProgressIDs`, reconcile IDs, notices, import failure count, `restaurantSetup`, admin tests.
 
 Views should call controller — **exception:** `HostBoardView` calls `apiClient` for today availability summary.
 
@@ -210,6 +211,7 @@ All HTTP; Basic auth; request logging; GET retry floor.
 - Edit sheet → `ReservationEditFormView`
 - Table assignment sheet
 - More menu: hide, restore, guest manage link (manager+)
+- Manage-link flow can copy a local manual confirmation draft; it does not send email or call `/confirm`.
 - Confirm dialog: Confirm Only / Confirm + Email
 
 ### Create / Edit — `ManualReservationFormView.swift`
@@ -263,8 +265,9 @@ All HTTP; Basic auth; request logging; GET retry floor.
 | `PATCH /managed-reservations/{id}` | Edit, status, hide, restore | ✓ |
 | `POST /managed-reservations/{id}/confirm` | Confirm + Email only | ✓ |
 | `POST /managed-reservations/{id}/guest-manage-link` | Detail More menu | ✓ |
+| Local manual confirmation draft | Detail More menu after manage link | Local only |
 | `DELETE /managed-reservations/{id}?force=1` | Hidden screen hard delete | Dev cleanup only |
-| `GET /managed-reservations/import-failures` | Badge count, Failed Imports screen | Dev/support |
+| `GET /managed-reservations/import-failures` | Failed Imports screen, explicit diagnostics/count checks | Dev/support |
 | `POST /managed-reservations/import` | — | **NOT USED** |
 
 ### Restaurant — protected
@@ -305,7 +308,8 @@ All HTTP; Basic auth; request logging; GET retry floor.
 | Confirm Only | `updateStatus(.confirmed)` | PATCH | No |
 | Confirm + Email | `confirmReservation` | POST `/confirm` | Backend |
 | Manual create | `createAcceptedManualReservation` | POST | No |
-| Generate manage link | `generateGuestManageLink` | POST `/guest-manage-link` | No — copy for Mail |
+| Generate manage link | `generateGuestManageLink` | POST `/guest-manage-link` | No — copy link |
+| Copy confirmation draft | `ManualEmailDraftService.confirmationDraft` | Local only | No — staff reviews/pastes into Gmail/Mail |
 | Hide wrong entry | `hideWrongEntry` | PATCH `is_hidden` | No |
 | Restore | `restoreHiddenReservation` | PATCH | No |
 | Hard delete | `hardDeleteReservation` | DELETE `force=1` | No |
@@ -364,6 +368,7 @@ All HTTP; Basic auth; request logging; GET retry floor.
 | Confirm Only vs Confirm + Email | Implemented |
 | Manual create (confirmed, no email) | Implemented |
 | Guest manage link copy | Implemented |
+| Manual Gmail/Mail draft boundary | Implemented (copy text only; compose/send deferred) |
 | Soft hide + hidden archive | Implemented |
 | Restaurant settings / blocked slots | Implemented |
 | Business analytics | Implemented |

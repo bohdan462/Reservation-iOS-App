@@ -64,6 +64,7 @@ flowchart TB
 - One shared `ReservationsAPIClient` per session; repositories/services are created per `ModelContext` operation.
 - Views call **controller workflow methods** for reservations; settings screens mostly use `RestaurantSettingsStore` → controller.
 - **Exception:** `HostBoardView` calls `environment.apiClient` directly for today availability/slots/blocked summary (lazy, 120s cache) — not through controller.
+- `ReservationsController.operationState` mirrors refresh, mutation, reconcile, create, import-count, and offline state for granular UI/diagnostics without changing existing workflow methods.
 - Guest Insights never touches network or SwiftData writes.
 
 ---
@@ -175,7 +176,7 @@ sequenceDiagram
 | Schedule All pages | Search / load more | `GET` paginated | `upsert` | **No** | None |
 | Cancelled | More screen open | `GET ?status=cancelled` | `upsert` | **No** | None |
 | Hidden archive | Hidden screen open | `GET ?include_hidden=1` | `upsert` | **No** | None |
-| Import failure count | After refreshes | `GET /import-failures?per_page=1` | None | — | None |
+| Import failure count | Admin/dev screen or explicit diagnostics | `GET /import-failures?per_page=1` | None | — | None |
 
 **What matters**
 - `server_time` cursor is **in-memory on controller only** — not persisted across app kill.
@@ -234,9 +235,23 @@ sequenceDiagram
 | Hide wrong entry | PATCH `is_hidden=true` | No | Upsert after success |
 | Restore hidden | PATCH `is_hidden=false` | No | Upsert after success |
 | Hard delete | DELETE `?force=1` | No | Local delete after success |
-| Guest manage link | POST `/{id}/guest-manage-link` | **No** — copy for manual Mail | None |
+| Guest manage link | POST `/{id}/guest-manage-link` | **No** — copy link or local Gmail/Mail draft | None |
 
 **Reconcile:** `updateReservation` and `confirmReservation` call `reconcileReservation` when `error.mayHaveReachedReservationServer` (timeout, connection lost, bad response).
+
+### Operation / progress state
+
+`ReservationsController` still exposes legacy flags (`isSyncing`, `isAutoRefreshing`, `actionInProgressIDs`, `isCreatingReservation`) and now also publishes a consolidated `ReservationOperationState` snapshot.
+
+| State | Owner | UI intent |
+| --- | --- | --- |
+| Startup / manual / screen-active refresh | `activeSyncIntents` by `ReservationSyncScope` | Header/toolbar progress; keep cached rows visible |
+| Quiet auto-refresh | `isAutoRefreshing` + `.automatic` sync intent | No blocking modal |
+| Per-row mutation | `mutatingReservationIDs` | Disable/spinner only for affected row/action |
+| Uncertain mutation reconcile | `reconcilingReservationIDs` | Keep affected row busy while server truth is checked |
+| Manual create | `isCreatingReservation` | Saving state inside create form |
+| Admin/import count | `isCheckingImportFailureCount` | Developer/admin progress only |
+| Offline/network unavailable | `lastNetworkUnavailableAt` | Non-blocking saved-data notice |
 
 ---
 
@@ -350,7 +365,8 @@ sequenceDiagram
     C->>API: POST /guest-manage-link
     API-->>C: { url, expires_at? }
     C-->>M: URL copied to pasteboard
-    M->>Mail: Staff pastes link in confirmation email
+    M->>M: Optional local draft text helper
+    M->>Mail: Staff pastes reviewed copy into confirmation email
 
     Note over M,Mail: Optional backend email path
     M->>C: confirmReservation
@@ -359,10 +375,10 @@ sequenceDiagram
 ```
 
 **Current direction (from code comments)**
-- **Primary MVP for call-ins / no-auto-email:** Confirm Only (PATCH) + generate manage link + manual Mail.
+- **Primary MVP for call-ins / no-auto-email:** Confirm Only (PATCH) + generate manage link + copy local draft + manual Mail/Gmail.
 - **Confirm + Email:** POST `/confirm` — backend sends/attempts email; UI shows `emailStatus` notices.
 - Manual create: always confirmed, **no email**.
-- Guest manage link does **not** set `confirmationEmailSentAt`.
+- Guest manage link and local draft generation do **not** set `confirmationEmailSentAt`.
 
 ---
 

@@ -14,6 +14,8 @@ protocol ReservationSyncServiceProtocol {
     func syncAllReservations(reason: ReservationAPIRequestReason) async throws
     func syncTodayFull(reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult
     func syncTodayChanges(since: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult
+    func syncActiveWindowFull(from: String, to: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult
+    func syncActiveWindowChanges(since: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult
     func syncScheduleWindowFull(from: String, to: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult
     func syncToday(reason: ReservationAPIRequestReason) async throws
     func syncScheduleWindow(from: String, to: String, reason: ReservationAPIRequestReason) async throws
@@ -118,6 +120,53 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         _ = try await syncTodayFull(reason: reason)
     }
 
+    // MARK: - Active Operational Window Sync
+
+    // Intent: Refreshes the shared cache window used by Home, Schedule, and Review.
+    // Network: GET /managed-reservations?from=...&to=... across pages.
+    // SwiftData: Replaces only this active window with fetched server DTOs.
+    @discardableResult
+    func syncActiveWindowFull(from: String, to: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult {
+        let syncResponse = try await fetchAllReservationPages(
+            perPage: 100,
+            date: nil,
+            from: from,
+            to: to,
+            status: nil,
+            search: nil,
+            includeHidden: false,
+            updatedSince: nil,
+            reason: reason
+        )
+        try repository.replaceDateWindow(from: from, to: to, with: syncResponse.reservations, includeHidden: false)
+        return ReservationSyncResult(rowCount: syncResponse.reservations.count, serverTime: syncResponse.serverTime)
+    }
+
+    // Intent: Quietly applies every server-side reservation change since the backend cursor.
+    // Network: GET /managed-reservations?updated_since=...
+    func syncActiveWindowChanges(since: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult {
+        let syncResponse = try await fetchAllReservationPages(
+            perPage: 100,
+            date: nil,
+            from: nil,
+            to: nil,
+            status: nil,
+            search: nil,
+            includeHidden: false,
+            updatedSince: since,
+            reason: reason
+        )
+
+        // Delta responses are partial.
+        // Upsert returned rows only.
+        // Never replace/delete a local scope from an updated_since response.
+        if !syncResponse.reservations.isEmpty {
+            try repository.upsert(syncResponse.reservations)
+        }
+
+        return ReservationSyncResult(rowCount: syncResponse.reservations.count, serverTime: syncResponse.serverTime)
+    }
+
     // MARK: - Schedule Window Sync
 
     // Intent: Refreshes the upcoming schedule window used by Schedule.
@@ -133,6 +182,7 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             status: nil,
             search: nil,
             includeHidden: false,
+            updatedSince: nil,
             reason: reason
         )
         try repository.replaceDateWindow(from: from, to: to, with: syncResponse.reservations, includeHidden: false)
@@ -196,6 +246,7 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         status: ReservationStatus?,
         search: String?,
         includeHidden: Bool,
+        updatedSince: String?,
         reason: ReservationAPIRequestReason
     ) async throws -> (reservations: [ReservationDTO], serverTime: String?) {
         let cappedPerPage = min(max(perPage, 1), 100)
@@ -214,7 +265,7 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
                 status: status,
                 search: search,
                 includeHidden: includeHidden,
-                updatedSince: nil,
+                updatedSince: updatedSince,
                 retryCount: 0,
                 reason: reason
             )

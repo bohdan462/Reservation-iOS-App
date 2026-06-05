@@ -146,6 +146,15 @@ Marks green check when `APIRequestLogStore.hasSuccessfulCall(containing:)` match
 - Today, Schedule window, Review queues, Import failure count, per-reservation reconcile
 - last attempt / success / failure / in-flight / cooldown
 
+**Operation State section shows:**
+
+- startup sync
+- manual refresh
+- quiet auto-refresh
+- create/mutation/reconcile IDs
+- failed-import count loading
+- last offline notice
+
 Use these to debug stale data without guessing.
 
 ---
@@ -191,9 +200,11 @@ Shows:
 | --- | --- |
 | Open confirmed reservation (manager+) | Detail → More → Generate manage link |
 | Tap generate | POST `/guest-manage-link`; URL on pasteboard |
-| Notice | “Copy it into the manual confirmation email.” |
+| Copy link | More → Copy manage link; URL on pasteboard |
+| Copy draft | More → Copy confirmation draft; local text on pasteboard |
+| Notice | “Review it in Gmail before sending.” |
 | Verify | **No** `confirmationEmailSentAt` change; **no** Mail sheet auto-opens |
-| Paste in Mail | Manual MVP confirmation workflow |
+| Paste in Gmail/Mail | Manual MVP confirmation workflow |
 
 ### Confirm Only vs Confirm + Email
 
@@ -217,7 +228,7 @@ Shows:
 | Step | Expected |
 | --- | --- |
 | Enable airplane mode on Home | Cached reservations still visible |
-| Pull refresh | Warning notice “offline”; no crash |
+| Pull refresh | Warning notice “No internet connection / showing saved data”; no crash |
 | Restore network; refresh | Success notice; data updates |
 
 ### Mutation failure / reconcile
@@ -225,8 +236,9 @@ Shows:
 | Step | Expected |
 | --- | --- |
 | Simulate timeout during PATCH (verify in code / Network Link Conditioner) | Uncertain failure → reconcile GET by ID |
+| During reconcile | Operation State shows affected reservation ID in Reconciling IDs |
 | Reconcile succeeds | “Server state refreshed” style notice |
-| Reconcile fails | “Update may be unsynced” / “Confirmation uncertain” |
+| Reconcile fails | “Could not update reservation” / “Confirmation uncertain” |
 
 ---
 

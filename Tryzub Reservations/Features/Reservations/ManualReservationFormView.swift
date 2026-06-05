@@ -89,7 +89,9 @@ struct ManualReservationFormView: View {
             dismiss()
         } catch {
             ReservationHaptics.warning()
-            errorMessage = error.localizedDescription
+            errorMessage = error.isOfflineLike
+                ? "No internet connection. Showing saved reservations."
+                : "Could not create reservation. Please try again."
         }
     }
 
@@ -210,7 +212,9 @@ struct ReservationEditFormView: View {
             dismiss()
         } catch {
             ReservationHaptics.warning()
-            errorMessage = error.localizedDescription
+            errorMessage = error.isOfflineLike
+                ? "No internet connection. Showing saved reservations."
+                : "Could not save changes. Please try again."
         }
     }
 
