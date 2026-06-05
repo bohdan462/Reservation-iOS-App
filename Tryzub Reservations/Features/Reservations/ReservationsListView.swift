@@ -649,11 +649,9 @@ private struct ReservationScheduleView: View {
         }
 
         do {
-            let ids = Set(allModeRemoteIDs)
-            let descriptor = FetchDescriptor<ReservationRecord>()
-            let fetched = try modelContext.fetch(descriptor)
+            let repository = ReservationRepository(context: modelContext)
             allModeRecords = ReservationRecord.sortedNewestFirst(
-                fetched.filter { ids.contains($0.remoteID) }
+                try repository.records(remoteIDs: allModeRemoteIDs)
             )
         } catch {
             allModeErrorMessage = error.localizedDescription

@@ -51,15 +51,40 @@ final class ReservationRepository: ReservationRepositoryProtocol {
     // Intent: Writes server DTOs into SwiftData cache keyed by remote reservation ID.
     // Duplicate note: Records with the same server id update one local ReservationRecord.
     func upsert(_ reservations: [ReservationDTO]) throws {
-        let existingRecords = try context.fetch(FetchDescriptor<ReservationRecord>())
+        guard !reservations.isEmpty else { return }
+
+        let existingRecords = try records(remoteIDs: reservations.map(\.id))
         upsert(reservations, into: existingRecords)
         try context.save()
-        let afterRecords = try context.fetch(FetchDescriptor<ReservationRecord>())
+        let afterRecords = try records(remoteIDs: reservations.map(\.id))
         ReservationSyncDiagnostics.repositoryUpsert(
             scope: "upsert",
             input: reservations,
             localRecords: afterRecords
         )
+    }
+
+    // Intent: Reads only the cached rows needed for schedule-all/detail lookups.
+    func records(remoteIDs: [Int]) throws -> [ReservationRecord] {
+        let uniqueIDs = Set(remoteIDs)
+        guard !uniqueIDs.isEmpty else { return [] }
+
+        var results: [ReservationRecord] = []
+        results.reserveCapacity(uniqueIDs.count)
+
+        for id in uniqueIDs {
+            var descriptor = FetchDescriptor<ReservationRecord>(
+                predicate: #Predicate { record in
+                    record.remoteID == id
+                }
+            )
+            descriptor.fetchLimit = 1
+            if let record = try context.fetch(descriptor).first {
+                results.append(record)
+            }
+        }
+
+        return results
     }
 
     // Intent: Successful date-scoped GET is server truth for that date in normal visible lists.

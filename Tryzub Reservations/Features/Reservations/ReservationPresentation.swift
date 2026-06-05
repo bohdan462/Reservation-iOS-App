@@ -85,7 +85,7 @@ enum ReservationOperationalTimingState: Equatable {
         case .dueNow:
             return "Due now"
         case .overdue(let minutes):
-            return "Needs attention · \(Self.durationText(minutes: minutes)) past due"
+            return "\(Self.durationText(minutes: minutes)) past due"
         }
     }
 
