@@ -55,6 +55,7 @@ struct ManualReservationFormView: View {
             Text(draft.createReviewMessage())
         }
         .task {
+            // Lazy form support load: setup provides manual-create defaults only.
             _ = try? await controller.loadRestaurantSetup()
         }
     }

@@ -37,6 +37,11 @@ struct AppCapabilities {
     let canViewFailedImports: Bool
     let canEditReservationDetails: Bool
     let canViewDeveloperDiagnostics: Bool
+    let canGenerateGuestManageLinks: Bool
+    let canViewHiddenReservations: Bool
+    let canHardDeleteReservations: Bool
+    let canViewAnalytics: Bool
+    let canManageRestaurantSettings: Bool
 
     static func capabilities(for role: AppUserRole) -> AppCapabilities {
         switch role {
@@ -48,7 +53,12 @@ struct AppCapabilities {
                 canCreateManualReservations: false,
                 canViewFailedImports: false,
                 canEditReservationDetails: true,
-                canViewDeveloperDiagnostics: false
+                canViewDeveloperDiagnostics: false,
+                canGenerateGuestManageLinks: false,
+                canViewHiddenReservations: false,
+                canHardDeleteReservations: false,
+                canViewAnalytics: false,
+                canManageRestaurantSettings: false
             )
         case .manager:
             return AppCapabilities(
@@ -58,7 +68,12 @@ struct AppCapabilities {
                 canCreateManualReservations: true,
                 canViewFailedImports: true,
                 canEditReservationDetails: true,
-                canViewDeveloperDiagnostics: false
+                canViewDeveloperDiagnostics: false,
+                canGenerateGuestManageLinks: true,
+                canViewHiddenReservations: true,
+                canHardDeleteReservations: false,
+                canViewAnalytics: true,
+                canManageRestaurantSettings: true
             )
         case .developer:
             return AppCapabilities(
@@ -68,7 +83,12 @@ struct AppCapabilities {
                 canCreateManualReservations: true,
                 canViewFailedImports: true,
                 canEditReservationDetails: true,
-                canViewDeveloperDiagnostics: true
+                canViewDeveloperDiagnostics: true,
+                canGenerateGuestManageLinks: true,
+                canViewHiddenReservations: true,
+                canHardDeleteReservations: true,
+                canViewAnalytics: true,
+                canManageRestaurantSettings: true
             )
         }
     }

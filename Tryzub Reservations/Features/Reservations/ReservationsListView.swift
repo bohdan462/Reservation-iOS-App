@@ -68,6 +68,7 @@ struct ReservationsListView: View {
         }
         .task {
             // Initial app load: show SwiftData cache immediately, then refresh today if needed.
+            // Full date-scope replace is owned by ReservationsController.
             await controller.loadIfNeeded(context: modelContext)
             _ = try? await controller.loadRestaurantSetup(context: modelContext)
         }
@@ -799,27 +800,43 @@ private struct ReservationMoreView: View {
             List {
                 Section("Restaurant Operations") {
                     NavigationLink {
-                        RestaurantSettingsView(settingsStore: settingsStore)
+                        CancelledReservationsView(environment: environment)
                     } label: {
-                        Label("Restaurant Settings", systemImage: "gearshape")
+                        Label("Cancelled Reservations", systemImage: "xmark.circle")
                     }
 
-                    NavigationLink {
-                        TodayAvailabilityView(settingsStore: settingsStore)
-                    } label: {
-                        Label("Today Availability", systemImage: "calendar.badge.clock")
+                    if controller.capabilities.canViewHiddenReservations {
+                        NavigationLink {
+                            HiddenReservationsView(environment: environment)
+                        } label: {
+                            Label("Hidden Reservations", systemImage: "archivebox")
+                        }
                     }
 
-                    NavigationLink {
-                        WeeklyHoursView(settingsStore: settingsStore)
-                    } label: {
-                        Label("Weekly Hours", systemImage: "clock")
-                    }
+                    if controller.capabilities.canManageRestaurantSettings {
+                        NavigationLink {
+                            RestaurantSettingsView(settingsStore: settingsStore)
+                        } label: {
+                            Label("Restaurant Settings", systemImage: "gearshape")
+                        }
 
-                    NavigationLink {
-                        BlockedTimeSlotsView(settingsStore: settingsStore)
-                    } label: {
-                        Label("Blocked Time Slots", systemImage: "nosign")
+                        NavigationLink {
+                            TodayAvailabilityView(settingsStore: settingsStore)
+                        } label: {
+                            Label("Today Availability", systemImage: "calendar.badge.clock")
+                        }
+
+                        NavigationLink {
+                            WeeklyHoursView(settingsStore: settingsStore)
+                        } label: {
+                            Label("Weekly Hours", systemImage: "clock")
+                        }
+
+                        NavigationLink {
+                            BlockedTimeSlotsView(settingsStore: settingsStore)
+                        } label: {
+                            Label("Blocked Time Slots", systemImage: "nosign")
+                        }
                     }
 
                     if controller.capabilities.canCreateManualReservations {
@@ -832,10 +849,12 @@ private struct ReservationMoreView: View {
                 }
 
                 Section("Business") {
-                    NavigationLink {
-                        BusinessAnalyticsView(settingsStore: settingsStore)
-                    } label: {
-                        Label("Business Analytics", systemImage: "chart.bar")
+                    if controller.capabilities.canViewAnalytics {
+                        NavigationLink {
+                            BusinessAnalyticsView(settingsStore: settingsStore)
+                        } label: {
+                            Label("Business Analytics", systemImage: "chart.bar")
+                        }
                     }
 
                     NavigationLink {
@@ -845,35 +864,32 @@ private struct ReservationMoreView: View {
                     }
                 }
 
-                Section("Developer / Support") {
-                    if controller.capabilities.canViewFailedImports,
-                       controller.capabilities.canViewDeveloperDiagnostics {
-                        NavigationLink {
-                            ImportFailuresView(
-                                environment: environment,
-                                onCreateReservation: { request in
-                                    try await controller.createAcceptedManualReservation(request, context: modelContext)
-                                },
-                                onCreated: { _ in }
-                            )
-                            .environmentObject(controller)
-                        } label: {
-                            Label("Failed Imports", systemImage: "exclamationmark.triangle")
-                        }
-                    }
-
-                    NavigationLink {
-                        HiddenReservationsView(environment: environment)
-                    } label: {
-                        Label("Hidden Reservations", systemImage: "archivebox")
-                    }
-
-                    if controller.capabilities.canViewDeveloperDiagnostics {
-                        NavigationLink {
-                            DeveloperDiagnosticsView(environment: environment)
+                if controller.capabilities.canViewFailedImports
+                    || controller.capabilities.canViewDeveloperDiagnostics {
+                    Section("Developer / Support") {
+                        if controller.capabilities.canViewFailedImports,
+                           controller.capabilities.canViewDeveloperDiagnostics {
+                            NavigationLink {
+                                ImportFailuresView(
+                                    environment: environment,
+                                    onCreateReservation: { request in
+                                        try await controller.createAcceptedManualReservation(request, context: modelContext)
+                                    },
+                                    onCreated: { _ in }
+                                )
                                 .environmentObject(controller)
-                        } label: {
-                            Label("API & App Diagnostics", systemImage: "stethoscope")
+                            } label: {
+                                Label("Failed Imports", systemImage: "exclamationmark.triangle")
+                            }
+                        }
+
+                        if controller.capabilities.canViewDeveloperDiagnostics {
+                            NavigationLink {
+                                DeveloperDiagnosticsView(environment: environment)
+                                    .environmentObject(controller)
+                            } label: {
+                                Label("API & App Diagnostics", systemImage: "stethoscope")
+                            }
                         }
                     }
                 }
@@ -892,10 +908,158 @@ private struct ReservationMoreView: View {
                     try await controller.createAcceptedManualReservation(request, context: modelContext)
                 }
             }
+        }
+    }
+}
+
+// MARK: - Cancelled Reservations View
+
+private struct CancelledReservationsView: View {
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
+    @Query(sort: [
+        SortDescriptor(\ReservationRecord.reservationDate, order: .reverse),
+        SortDescriptor(\ReservationRecord.reservationTime, order: .reverse)
+    ])
+    private var reservations: [ReservationRecord]
+
+    let environment: AppEnvironment
+
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @State private var navigationPath: [Int] = []
+
+    private var window: (from: String, to: String) {
+        CancelledReservationsPresenter.defaultWindow()
+    }
+
+    private var cancelledRows: [ReservationRecord] {
+        ReservationRecord.sortedNewestFirst(
+            reservations.filter {
+                $0.statusValue == .cancelled
+                    && !hiddenReservations.isHidden($0)
+                    && $0.reservationDate >= window.from
+                    && $0.reservationDate <= window.to
+            }
+        )
+    }
+
+    var body: some View {
+        NavigationStack(path: $navigationPath) {
+            List {
+                Section {
+                    Text("Real cancelled reservations from \(window.from) through \(window.to). Hidden/test rows live in admin cleanup instead.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let errorMessage {
+                    Section {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                if isLoading && cancelledRows.isEmpty {
+                    Section {
+                        HStack {
+                            Spacer()
+                            ProgressView("Loading cancelled reservations...")
+                            Spacer()
+                        }
+                        .padding(.vertical, 24)
+                    }
+                } else if cancelledRows.isEmpty {
+                    Section {
+                        ContentUnavailableView(
+                            "No Cancelled Reservations",
+                            systemImage: "xmark.circle",
+                            description: Text("Cancelled guest self-service and staff cancellations will appear here.")
+                        )
+                    }
+                } else {
+                    Section("Cancelled reservations") {
+                        ForEach(cancelledRows) { reservation in
+                            ReservationNavigationRow(
+                                reservation: reservation,
+                                environment: environment,
+                                context: .schedule,
+                                contextNote: "Cancelled",
+                                onOpenDetails: { navigationPath.append($0.remoteID) }
+                            )
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Cancelled Reservations")
+            .navigationBarTitleDisplayMode(.inline)
+            .listStyle(.plain)
+            .contentMargins(.bottom, 92, for: .scrollContent)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await load(force: true) }
+                    } label: {
+                        if isLoading {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .disabled(isLoading)
+                }
+            }
             .task {
-                await settingsStore.loadInitialSettings()
+                // Lazy screen load: status=cancelled window fetch, upsert-only.
+                await load(force: false)
+            }
+            .refreshable {
+                // Staff manual refresh: forces the cancelled status window fetch.
+                await load(force: true)
+            }
+            .navigationDestination(for: Int.self) { remoteID in
+                if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
+                    ReservationDetailView(reservation: reservation, environment: environment)
+                } else {
+                    ContentUnavailableView(
+                        "Reservation Not Found",
+                        systemImage: "calendar.badge.exclamationmark",
+                        description: Text("Refresh cancelled reservations and try again.")
+                    )
+                }
             }
         }
+    }
+
+    private func load(force: Bool) async {
+        guard !isLoading else { return }
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            _ = try await controller.loadCancelledReservations(context: modelContext, force: force)
+        } catch {
+            if !error.isCancellationLike {
+                errorMessage = error.isOfflineLike
+                    ? "You're offline. Showing saved data."
+                    : error.localizedDescription
+            }
+        }
+    }
+}
+
+private enum CancelledReservationsPresenter {
+    static func defaultWindow() -> (from: String, to: String) {
+        let now = Date()
+        let calendar = Calendar.current
+        let from = calendar.date(byAdding: .day, value: -30, to: now) ?? now
+        let to = calendar.date(byAdding: .day, value: 60, to: now) ?? now
+        return (from.reservationDateString(), to.reservationDateString())
     }
 }
 
@@ -914,6 +1078,8 @@ private struct HiddenReservationsView: View {
 
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var hardDeleteCandidate: ReservationRecord?
+    @State private var hardDeletingIDs: Set<Int> = []
 
     private var hiddenRows: [ReservationRecord] {
         ReservationRecord.sortedNewestFirst(
@@ -972,6 +1138,29 @@ private struct HiddenReservationsView: View {
                                 RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
                                     .stroke(Color.primary.opacity(0.10), lineWidth: 1)
                             }
+
+                            if controller.capabilities.canHardDeleteReservations {
+                                Button(role: .destructive) {
+                                    hardDeleteCandidate = reservation
+                                } label: {
+                                    if hardDeletingIDs.contains(reservation.remoteID) {
+                                        ProgressView()
+                                            .frame(maxWidth: .infinity, minHeight: 38)
+                                    } else {
+                                        Label("Permanently delete test reservation", systemImage: "trash")
+                                            .font(.subheadline.weight(.semibold))
+                                            .frame(maxWidth: .infinity, minHeight: 38)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.red)
+                                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                                        .stroke(Color.red.opacity(0.28), lineWidth: 1)
+                                }
+                                .disabled(hardDeletingIDs.contains(reservation.remoteID))
+                            }
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
                         .listRowSeparator(.hidden)
@@ -1000,7 +1189,30 @@ private struct HiddenReservationsView: View {
                 .disabled(isLoading)
             }
         }
+        .confirmationDialog(
+            "Permanently delete this test reservation?",
+            isPresented: Binding(
+                get: { hardDeleteCandidate != nil },
+                set: { if !$0 { hardDeleteCandidate = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Permanently delete test reservation", role: .destructive) {
+                if let candidate = hardDeleteCandidate {
+                    Task {
+                        await hardDelete(candidate)
+                    }
+                }
+            }
+
+            Button("Cancel", role: .cancel) {
+                hardDeleteCandidate = nil
+            }
+        } message: {
+            Text("Use permanent delete only for admin/developer cleanup of test or noise reservations. Staff should normally hide wrong entries.")
+        }
         .task {
+            // Lazy admin/dev load: hidden rows are fetched only when this screen opens.
             await loadHiddenReservations()
         }
         .refreshable {
@@ -1010,6 +1222,10 @@ private struct HiddenReservationsView: View {
 
     private func loadHiddenReservations() async {
         guard !isLoading else { return }
+        guard controller.capabilities.canViewHiddenReservations else {
+            errorMessage = "This account cannot view hidden reservations."
+            return
+        }
         isLoading = true
         errorMessage = nil
 
@@ -1032,6 +1248,31 @@ private struct HiddenReservationsView: View {
                 context: modelContext
             )
             ReservationHaptics.success()
+        } catch {
+            errorMessage = error.localizedDescription
+            ReservationHaptics.warning()
+        }
+    }
+
+    private func hardDelete(_ reservation: ReservationRecord) async {
+        let remoteID = reservation.remoteID
+        guard !hardDeletingIDs.contains(remoteID) else { return }
+
+        hardDeleteCandidate = nil
+        hardDeletingIDs.insert(remoteID)
+        errorMessage = nil
+
+        defer {
+            hardDeletingIDs.remove(remoteID)
+        }
+
+        do {
+            try await controller.hardDeleteReservation(
+                reservation: reservation,
+                context: modelContext,
+                cleanupReason: "iOS admin test cleanup"
+            )
+            ReservationHaptics.warning()
         } catch {
             errorMessage = error.localizedDescription
             ReservationHaptics.warning()

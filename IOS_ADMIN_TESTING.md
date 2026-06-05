@@ -1,110 +1,114 @@
-# iOS Admin / Testing Screen
+# iOS Admin / Testing Guide
+
+Matches current `DeveloperDiagnosticsView`, `ReservationsController.runAdminFetchTest`, and admin-only cleanup flows.
+
+**Source of truth:** Swift code in `Tryzub Reservations/`.
+
+---
 
 ## 1. Purpose
 
-The Admin / API Diagnostics screen is for controlled restaurant pilot testing and developer troubleshooting.
+Controlled pilot testing and developer troubleshooting:
 
-It helps verify API reachability, request flow, SwiftData cache state, and notice behavior without disturbing real reservations.
+- API reachability and auth
+- Request flow and endpoint contract coverage
+- SwiftData cache state vs server
+- Notice behavior
+- Safe read-only probes without disturbing live reservations
 
-## 2. Access
+**Not a backend test mode.** No fake data generator. No automated mutation suite.
 
-Open:
+---
 
-`More -> API & App Diagnostics`
+## 2. Access & role requirements
 
-The screen is shown only when the app role has `canViewDeveloperDiagnostics`.
+| Tool | Path | Required capability | Effective role today |
+| --- | --- | --- | --- |
+| API & App Diagnostics | More → API & App Diagnostics | `canViewDeveloperDiagnostics` | **Developer only** |
+| Failed Imports | More → Failed Imports | `canViewFailedImports` **AND** `canViewDeveloperDiagnostics` | **Developer only** (UI quirk) |
+| Hidden Reservations | More → Hidden Reservations | `canViewHiddenReservations` | Manager + Developer |
+| Hard delete | Hidden screen row action | `canHardDeleteReservations` | **Developer only** |
+| Restaurant settings | More → Operations | `canManageRestaurantSettings` | Manager + Developer |
+| Business analytics | More → Business Analytics | `canViewAnalytics` | Manager + Developer |
+| Guest manage link | Detail → More menu | `canGenerateGuestManageLinks` | Manager + Developer |
 
-## 3. Safe Tests
+**Production note:** `Tryzub_ReservationsApp` hardcodes `role: .developer`. Before boss TestFlight, switch to `.manager` or `.staff` to test real gating.
 
-The screen includes safe GET tests (via `AdminFetchTest`):
+---
 
-**Restaurant / public endpoints**
-- Test `ping` — `GET /ping` (no auth)
-- Test `restaurant_setup` — `GET /restaurant-setup`
-- Test `restaurant_hours` — `GET /restaurant-hours`
-- Test `restaurant_day_availability` — `GET /restaurant-day-availability`
-- Test `reservation_slots` — `GET /reservation-slots` (public, no auth)
-- Test `reservation_analytics_summary` — `GET /reservation-analytics/summary`
+## 3. Safe tests (GET only)
 
-**Reservation sync endpoints**
-- Test `startup_today`
-- Test `manual_today`
-- Test `failure_count`
-- Test `schedule_window`
-- Test `review_queues`
-- Test `import_failures_full`
-- Test fetch by managed reservation ID
+Implemented as `AdminFetchTest` buttons in `DeveloperDiagnosticsView`. Each posts pass/fail notice; no SwiftData writes.
 
-These tests read from the backend and summarize decoded results. They do not create, confirm, cancel, seat, or email reservations.
+### Restaurant / public
 
-## 4. Dangerous Tests Not Implemented
+| Button | Endpoint | Auth |
+| --- | --- | --- |
+| Test `ping` | `GET /ping` | None |
+| Test `restaurant_setup` | `GET /restaurant-setup` | Protected |
+| Test `restaurant_hours` | `GET /restaurant-hours` | Protected |
+| Test `restaurant_day_availability` | `GET /restaurant-day-availability?date=today` | Protected |
+| Test `reservation_slots` | `GET /reservation-slots?date=today` | **Public** |
+| Test `reservation_analytics_summary` | `GET /reservation-analytics/summary` | Protected |
 
-The screen intentionally does not include automatic mutation tests.
+### Reservations
 
-Not implemented here:
+| Button | Endpoint |
+| --- | --- |
+| Test `startup_today` | `GET /managed-reservations?date=today` (retry 0) |
+| Test `manual_today` | Same (retry 1) |
+| Test `failure_count` | `GET /import-failures?page=1&per_page=1` |
+| Test `schedule_window` | `GET ?from=today&to=today+30` |
+| Test `review_queues` | `GET ?status=needs_review` + `?status=new` |
+| Test `import_failures_full` | `GET /import-failures?page=1&per_page=50` |
+| Test fetch by ID | `GET /managed-reservations/{id}` — enter ID in field |
 
-- confirm reservation;
-- cancel reservation;
-- seat reservation;
-- no-show reservation;
-- create fake reservation;
-- send confirmation email;
-- block/unblock time slots;
-- PATCH restaurant setup or hours;
-- call backend import endpoint.
+**These do not:** create, confirm, cancel, seat, hide, block slots, or send email.
 
-Any real mutation must happen through the normal reservation workflow with explicit staff action.
+---
 
-## 5. Request Log Viewer
+## 4. Dangerous tests — intentionally NOT automated
 
-The screen shows the recent in-memory API request log.
+Diagnostics **Danger Zone** copy states mutations must use normal staff workflow only.
 
-Each log event includes:
+| Action | Why not automated |
+| --- | --- |
+| Confirm / Confirm + Email | Changes live reservation + may email guest |
+| Cancel / no-show / seat | Status mutations |
+| Manual create | Creates server row |
+| Hide / restore | Changes visibility |
+| Block / unblock slots | Changes availability |
+| PATCH restaurant setup/hours | Changes restaurant config |
+| Hard delete | Irreversible |
+| `POST /managed-reservations/import` | **Forbidden** in iOS workflow |
+| Email send test | No isolated test endpoint |
 
-- time;
-- request reason;
-- method;
-- sanitized path/query;
-- status or error;
-- duration;
-- outcome.
+---
 
-The log does not include:
+## 5. Request log viewer
 
-- credentials;
-- Authorization header;
-- raw reservation payloads;
-- guest notes;
-- full search text.
+**Source:** `APIRequestLogStore` — in-memory ring buffer, **100 events**, cleared on app restart.
 
-Search query values are redacted.
+Each event includes:
 
-## 6. API Health Checks
+- timestamp
+- `ReservationAPIRequestReason`
+- HTTP method
+- sanitized path/query (`search` redacted)
+- status code or error
+- duration
+- outcome (success / failure / skip / cancelled)
+- optional response snippet (PII redacted)
 
-The API Health section shows:
+**Never logged:** credentials, Authorization header, full guest payloads.
 
-- base URL;
-- credential-present status;
-- current role;
-- last sync time;
-- last failed request;
-- last failed request reason.
+**DEBUG only:** `ReservationAPILogger` also prints to Xcode console.
 
-The app does not expose the WordPress Application Password.
+---
 
-The diagnostics screen also shows sync scope snapshots:
+## 6. Endpoint contract checklist
 
-- Today scope;
-- Schedule window scope;
-- Review queues scope;
-- failure-count scope;
-- single-reservation reconciliation scopes after they run.
-
-Each scope can show last attempt, success, failure, in-flight state, and cooldown.
-
-## 7. Endpoint Contract Checklist
-
-The **Endpoint Contract Checklist** section marks endpoints that succeeded during the current session (green checkmark when `APIRequestLogStore` has a successful call):
+Marks green check when `APIRequestLogStore.hasSuccessfulCall(containing:)` matches during session:
 
 - `GET /ping`
 - `GET /restaurant-setup`
@@ -123,66 +127,213 @@ The **Endpoint Contract Checklist** section marks endpoints that succeeded durin
 - `POST /restaurant-blocked-slots`
 - `DELETE /restaurant-blocked-slots`
 
-Also shown: **NOT USED: POST /managed-reservations/import** — should stay **Clean** during normal app use.
+**Import monitor:** `NOT USED: POST /managed-reservations/import` — must stay **Clean** during normal use.
 
-## 8. Cache Stats
+---
 
-The SwiftData Cache section shows:
+## 7. API health & sync scopes
 
-- total cached reservations;
-- Today cached reservations;
-- new count;
-- needs-review count;
-- confirmed count;
-- without-table count;
-- latest local sync timestamp.
+**API Health section shows:**
 
-SwiftData remains local cache only. The WordPress backend remains source of truth.
+- base URL
+- credentials present (not password)
+- current role
+- last sync time
+- last failed request + reason
 
-## 9. Notification Center Preview
+**Sync scope snapshots** (per `ReservationSyncScope`):
 
-The admin screen shows current app notices.
+- Today, Schedule window, Review queues, Import failure count, per-reservation reconcile
+- last attempt / success / failure / in-flight / cooldown
 
-Examples:
+Use these to debug stale data without guessing.
 
-- refresh failed;
-- auto-refresh failed;
-- mutation did not sync;
-- confirmation email failed;
-- form problem check failed;
-- admin test result.
+---
 
-Notices can be dismissed or cleared.
+## 8. SwiftData cache stats
 
-## 10. Manual Test Checklist
+Shows:
 
-- [ ] Open the screen as developer.
-- [ ] Confirm credentials show as present without exposing password.
-- [ ] Run `Test ping`.
-- [ ] Run `Test restaurant_setup`.
-- [ ] Run `Test restaurant_hours`.
-- [ ] Run `Test restaurant_day_availability`.
-- [ ] Run `Test reservation_slots`.
-- [ ] Run `Test reservation_analytics_summary`.
-- [ ] Run `Test startup_today`.
-- [ ] Run `Test manual_today`.
-- [ ] Run `Test failure_count`.
-- [ ] Run `Test schedule_window`.
-- [ ] Run `Test review_queues`.
-- [ ] Run `Test import_failures_full`.
-- [ ] Enter a known reservation ID and run fetch by ID.
-- [ ] Confirm request logs show reason, endpoint, status/error, and duration.
-- [ ] Confirm no payloads or credentials appear in logs.
-- [ ] Confirm notices appear in the notification preview.
-- [ ] Confirm endpoint checklist marks successful calls during the session.
-- [ ] Confirm `POST /managed-reservations/import` stays clean/not used.
+- total cached reservations
+- today count
+- new / needs_review / confirmed counts
+- without-table count
+- latest local `lastSyncedAt`
 
-## 11. Known Limitations
+**Reminder:** Cache is not truth. After server-side changes outside the app, pull-to-refresh or wait for auto-refresh.
 
-- Request logs are in-memory only and clear when the app process restarts.
-- Safe tests are GET-focused.
-- Schedule tests use the current 30-day schedule window.
-- There is no backend test mode yet.
-- There is no fake-reservation generator.
-- There is no automatic email test.
-- There is no full production diagnostics/export workflow.
+---
+
+## 9. Feature-specific testing
+
+### Hidden reservations
+
+| Step | Expected |
+| --- | --- |
+| Hide a test manual row (Detail or Edit) | PATCH `is_hidden=true`; row disappears from Home/List/Review |
+| Open More → Hidden Reservations | GET `include_hidden=1`; row appears with reason |
+| Restore | PATCH `is_hidden=false`; row returns to normal lists |
+| Hard delete (developer only) | DELETE `force=1`; row gone locally and on server |
+
+**Staff should hide mistakes. Developers hard-delete only test noise.**
+
+### Import failures
+
+| Step | Expected |
+| --- | --- |
+| Open Failed Imports (developer UI today) | GET full import-failures list |
+| Open failure detail → repair form | Creates via `createAcceptedManualReservation` |
+| Home Form Problems badge | Visible only when developer caps both true |
+
+### Guest manage link
+
+| Step | Expected |
+| --- | --- |
+| Open confirmed reservation (manager+) | Detail → More → Generate manage link |
+| Tap generate | POST `/guest-manage-link`; URL on pasteboard |
+| Notice | “Copy it into the manual confirmation email.” |
+| Verify | **No** `confirmationEmailSentAt` change; **no** Mail sheet auto-opens |
+| Paste in Mail | Manual MVP confirmation workflow |
+
+### Confirm Only vs Confirm + Email
+
+| Step | Expected |
+| --- | --- |
+| Confirm Only on `new` row | PATCH only; no email notice |
+| Confirm + Email (usable email) | POST `/confirm`; notice reflects `emailStatus` |
+| Confirm + Email disabled | Row without usable email — button disabled in dialog |
+
+### `updated_since` / `server_time`
+
+| Step | Expected |
+| --- | --- |
+| Open Home; wait 60s with app foreground | Auto refresh uses delta if prior today sync stored cursor |
+| Kill app; reopen Home; wait 60s | Cursor lost — auto may full-replace today (verify in log: no `updated_since`) |
+| Manual pull-refresh | Always full today replace — never delta |
+| Check request log | `updated_since` query param only on auto today refresh |
+
+### No-internet testing
+
+| Step | Expected |
+| --- | --- |
+| Enable airplane mode on Home | Cached reservations still visible |
+| Pull refresh | Warning notice “offline”; no crash |
+| Restore network; refresh | Success notice; data updates |
+
+### Mutation failure / reconcile
+
+| Step | Expected |
+| --- | --- |
+| Simulate timeout during PATCH (verify in code / Network Link Conditioner) | Uncertain failure → reconcile GET by ID |
+| Reconcile succeeds | “Server state refreshed” style notice |
+| Reconcile fails | “Update may be unsynced” / “Confirmation uncertain” |
+
+---
+
+## 10. TestFlight boss-testing checklist
+
+### Boss should test (manager role — switch before build)
+
+- [ ] Credentials screen saves and app loads reservations
+- [ ] Home shows today seated + upcoming; date picker works
+- [ ] Pull-to-refresh updates list
+- [ ] Open reservation detail — contact tap-to-call/email works
+- [ ] **Confirm Only** on a test `new` reservation (no guest email needed)
+- [ ] **Seat** and **assign table** on confirmed row
+- [ ] **Complete** seated row
+- [ ] Create manual call-in reservation — appears as confirmed, no email sent
+- [ ] Edit reservation time/party — save diff confirmation works
+- [ ] Hide obvious test duplicate — gone from lists
+- [ ] List tab shows upcoming reservations; search in All scope
+- [ ] Review tab shows pending queue
+- [ ] Generate guest manage link — paste into Mail manually
+- [ ] Notices appear and dismiss; app usable during slow network
+
+### Boss should NOT test
+
+- [ ] API & App Diagnostics screen
+- [ ] Hard delete
+- [ ] Failed Imports repair flow
+- [ ] Restaurant settings / blocked slots changes (unless trained)
+- [ ] Confirm + Email on real guest without coordination
+- [ ] Any DELETE or bulk operations
+
+### Developer should test (before giving boss build)
+
+- [ ] All safe GET tests pass
+- [ ] Endpoint checklist turns green during session
+- [ ] `POST /import` stays **Clean**
+- [ ] Request log has no credentials or raw PII
+- [ ] Scope snapshots show reasonable cooldowns after failures
+- [ ] Hidden → restore → hard delete on test row only
+- [ ] `updated_since` appears in auto-refresh log after initial sync
+- [ ] Manager role build: Failed Imports **hidden** (current UI); confirm boss won't need it
+- [ ] Staff role build: confirm/cancel/create hidden; seat still works
+
+---
+
+## 11. Do not use during normal service
+
+Staff on a live floor should **never** use these casually:
+
+| Item | Risk |
+| --- | --- |
+| API & App Diagnostics | Confusing; not operational UI |
+| Hard delete | Permanent data loss |
+| Failed Imports repair | Creates real reservations from bad form data |
+| Confirm + Email | Sends real guest email without staff intent |
+| Restaurant settings / blocked slots | Changes service capacity mid-shift |
+| Business analytics | Read-only but distracts; not service UI |
+| Developer test buttons | Fire real GET traffic; clutter logs |
+| Hidden screen hard delete | Irreversible cleanup |
+| Manual create during rush | Without manager oversight |
+
+**Normal service path:** Home → Detail → Confirm Only / Seat / Table / Complete. Use **hide** for mistakes, not delete.
+
+---
+
+## 12. Notification center preview
+
+Diagnostics shows live `controller.notices`. Examples:
+
+- refresh failed / auto-refresh failed
+- offline warning
+- mutation did not sync
+- confirmation email failed / sent / skipped
+- hide / restore / create success
+- admin test pass/fail
+- manage link ready / failed
+
+Dismiss individually or clear all from diagnostics.
+
+---
+
+## 13. Known limitations
+
+- Request logs in-memory only — lost on force quit
+- Safe tests are GET-focused
+- Schedule test uses fixed 30-day window from today
+- No backend test mode flag
+- No fake-reservation generator
+- No automatic Mail send test
+- Cursors not persisted across app restart
+- Manager cannot open Failed Imports in current UI (developer gate)
+
+---
+
+## 14. Manual developer checklist (full)
+
+- [ ] Open diagnostics as developer
+- [ ] Credentials show present; password not exposed
+- [ ] Run all safe GET tests; all pass on production API
+- [ ] Fetch by known reservation ID
+- [ ] Verify log: reason, method, path, status, duration
+- [ ] Verify no payloads/credentials in log
+- [ ] Endpoint checklist greens after session
+- [ ] Import endpoint stays Clean
+- [ ] Scope snapshots update after refresh failures
+- [ ] Cache counts match expectation after today sync
+- [ ] Hide → restore → hard delete on test ID only
+- [ ] Guest manage link POST appears in log; pasteboard works
+- [ ] Confirm + Email POST `/confirm` appears only when explicitly tested
+- [ ] Airplane mode → offline notice → recovery refresh

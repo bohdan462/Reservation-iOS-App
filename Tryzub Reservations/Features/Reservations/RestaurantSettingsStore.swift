@@ -43,17 +43,19 @@ final class RestaurantSettingsStore: ObservableObject {
     // MARK: - Dependencies
 
     private let apiClient: any ReservationsAPIClientProtocol
+    private let dateOperationsFreshnessInterval: TimeInterval = 120
+    private var availabilityByDate: [String: RestaurantDayAvailabilityDTO] = [:]
+    private var availabilityLoadedAtByDate: [String: Date] = [:]
+    private var slotsByDate: [String: ReservationSlotsResponseDTO] = [:]
+    private var slotsLoadedAtByDate: [String: Date] = [:]
+    private var blockedSlotsByDate: [String: RestaurantBlockedSlotsResponseDTO] = [:]
+    private var blockedSlotsLoadedAtByDate: [String: Date] = [:]
+    private var dateOperationsLoadedAtByDate: [String: Date] = [:]
 
     // MARK: - Lifecycle
 
     init(apiClient: any ReservationsAPIClientProtocol) {
         self.apiClient = apiClient
-    }
-
-    func loadInitialSettings() async {
-        _ = try? await loadRestaurantSetup()
-        _ = try? await loadRestaurantHours()
-        await refreshDateOperations(date: selectedAvailabilityDate.reservationDateString())
     }
 
     // MARK: - Setup
@@ -174,7 +176,7 @@ final class RestaurantSettingsStore: ObservableObject {
                 reason: .restaurantHours
             )
             weeklyHours = refreshedHours
-            await refreshDateOperations(date: selectedAvailabilityDate.reservationDateString())
+            await refreshDateOperations(date: selectedAvailabilityDate.reservationDateString(), force: true)
             return refreshedHours
         } catch {
             weeklyHoursError = error.localizedDescription
@@ -185,8 +187,15 @@ final class RestaurantSettingsStore: ObservableObject {
     // MARK: - Day Availability
 
     @discardableResult
-    func loadDayAvailability(date: String) async throws -> RestaurantDayAvailabilityDTO {
+    func loadDayAvailability(date: String, force: Bool = false) async throws -> RestaurantDayAvailabilityDTO {
         selectedAvailabilityDate = Self.date(from: date) ?? selectedAvailabilityDate
+        if !force,
+           let cached = availabilityByDate[date],
+           isFresh(availabilityLoadedAtByDate[date]) {
+            selectedDateAvailability = cached
+            return cached
+        }
+
         guard !dayAvailabilityLoading else {
             if let selectedDateAvailability { return selectedDateAvailability }
             throw SettingsValidationError(message: "Availability is already loading.")
@@ -202,6 +211,8 @@ final class RestaurantSettingsStore: ObservableObject {
                 reason: .restaurantDayAvailability
             )
             selectedDateAvailability = availability
+            availabilityByDate[date] = availability
+            availabilityLoadedAtByDate[date] = Date()
             return availability
         } catch {
             if !error.isCancellationLike {
@@ -246,8 +257,10 @@ final class RestaurantSettingsStore: ObservableObject {
                 reason: .restaurantDayAvailabilityPatch
             )
             selectedDateAvailability = saved
-            _ = try? await loadReservationSlots(date: date)
-            _ = try? await loadBlockedSlots(date: date)
+            availabilityByDate[date] = saved
+            availabilityLoadedAtByDate[date] = Date()
+            _ = try? await loadReservationSlots(date: date, force: true)
+            _ = try? await loadBlockedSlots(date: date, force: true)
             return saved
         } catch {
             dayAvailabilityError = error.localizedDescription
@@ -258,7 +271,14 @@ final class RestaurantSettingsStore: ObservableObject {
     // MARK: - Slots
 
     @discardableResult
-    func loadReservationSlots(date: String) async throws -> ReservationSlotsResponseDTO {
+    func loadReservationSlots(date: String, force: Bool = false) async throws -> ReservationSlotsResponseDTO {
+        if !force,
+           let cached = slotsByDate[date],
+           isFresh(slotsLoadedAtByDate[date]) {
+            selectedDateSlots = cached
+            return cached
+        }
+
         slotPreviewLoading = true
         slotPreviewError = nil
         defer { slotPreviewLoading = false }
@@ -266,6 +286,8 @@ final class RestaurantSettingsStore: ObservableObject {
         do {
             let slots = try await apiClient.fetchReservationSlots(date: date, reason: .reservationSlots)
             selectedDateSlots = slots
+            slotsByDate[date] = slots
+            slotsLoadedAtByDate[date] = Date()
             return slots
         } catch {
             // A cancelled request (tab switch / re-entry) is not a real failure;
@@ -280,7 +302,14 @@ final class RestaurantSettingsStore: ObservableObject {
     // MARK: - Blocked Slots
 
     @discardableResult
-    func loadBlockedSlots(date: String) async throws -> RestaurantBlockedSlotsResponseDTO {
+    func loadBlockedSlots(date: String, force: Bool = false) async throws -> RestaurantBlockedSlotsResponseDTO {
+        if !force,
+           let cached = blockedSlotsByDate[date],
+           isFresh(blockedSlotsLoadedAtByDate[date]) {
+            selectedDateBlockedSlots = cached.data
+            return cached
+        }
+
         blockedSlotsLoading = true
         blockedSlotsError = nil
         defer { blockedSlotsLoading = false }
@@ -291,6 +320,8 @@ final class RestaurantSettingsStore: ObservableObject {
                 reason: .restaurantBlockedSlots
             )
             selectedDateBlockedSlots = response.data
+            blockedSlotsByDate[date] = response
+            blockedSlotsLoadedAtByDate[date] = Date()
             return response
         } catch {
             if !error.isCancellationLike {
@@ -317,8 +348,8 @@ final class RestaurantSettingsStore: ObservableObject {
                 reason: reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
                 requestReason: .restaurantBlockedSlotsCreate
             )
-            _ = try await loadBlockedSlots(date: date)
-            _ = try await loadReservationSlots(date: date)
+            _ = try await loadBlockedSlots(date: date, force: true)
+            _ = try await loadReservationSlots(date: date, force: true)
         } catch {
             blockedSlotsError = error.localizedDescription
             throw error
@@ -341,8 +372,8 @@ final class RestaurantSettingsStore: ObservableObject {
                 slots: slots,
                 reason: .restaurantBlockedSlotsDelete
             )
-            _ = try await loadBlockedSlots(date: date)
-            _ = try await loadReservationSlots(date: date)
+            _ = try await loadBlockedSlots(date: date, force: true)
+            _ = try await loadReservationSlots(date: date, force: true)
         } catch {
             blockedSlotsError = error.localizedDescription
             throw error
@@ -361,19 +392,20 @@ final class RestaurantSettingsStore: ObservableObject {
                 date: date,
                 reason: .restaurantBlockedSlotsDelete
             )
-            _ = try await loadBlockedSlots(date: date)
-            _ = try await loadReservationSlots(date: date)
+            _ = try await loadBlockedSlots(date: date, force: true)
+            _ = try await loadReservationSlots(date: date, force: true)
         } catch {
             blockedSlotsError = error.localizedDescription
             throw error
         }
     }
 
-    func refreshDateOperations(date: String) async {
+    func refreshDateOperations(date: String, force: Bool = false) async {
         selectedAvailabilityDate = Self.date(from: date) ?? selectedAvailabilityDate
-        _ = try? await loadDayAvailability(date: date)
-        _ = try? await loadReservationSlots(date: date)
-        _ = try? await loadBlockedSlots(date: date)
+        _ = try? await loadDayAvailability(date: date, force: force)
+        _ = try? await loadReservationSlots(date: date, force: force)
+        _ = try? await loadBlockedSlots(date: date, force: force)
+        dateOperationsLoadedAtByDate[date] = Date()
     }
 
     // Store-owned loading: the controller owns the request lifecycle so SwiftUI
@@ -383,13 +415,16 @@ final class RestaurantSettingsStore: ObservableObject {
     private var loadedDateOperationsKey: String?
 
     func ensureDateOperations(date: String, force: Bool = false) {
-        if !force, loadedDateOperationsKey == date, dateOperationsTask == nil {
+        if !force,
+           loadedDateOperationsKey == date,
+           dateOperationsTask == nil,
+           isFresh(dateOperationsLoadedAtByDate[date]) {
             return
         }
         dateOperationsTask?.cancel()
         dateOperationsTask = Task { [weak self] in
             guard let self else { return }
-            await self.refreshDateOperations(date: date)
+            await self.refreshDateOperations(date: date, force: force)
             if !Task.isCancelled {
                 self.loadedDateOperationsKey = date
             }
@@ -425,6 +460,11 @@ final class RestaurantSettingsStore: ObservableObject {
     }
 
     // MARK: - Private Helpers
+
+    private func isFresh(_ loadedAt: Date?) -> Bool {
+        guard let loadedAt else { return false }
+        return Date().timeIntervalSince(loadedAt) < dateOperationsFreshnessInterval
+    }
 
     private static func date(from value: String) -> Date? {
         ReservationFormatters.reservationDateKey.date(from: value)
@@ -771,7 +811,7 @@ struct TodayAvailabilityView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task { await load() }
+                    Task { await load(force: true) }
                 } label: {
                     if isLoading || settingsStore.slotPreviewLoading || settingsStore.blockedSlotsLoading {
                         ProgressView()
@@ -791,7 +831,9 @@ struct TodayAvailabilityView: View {
             )
         }
         .task {
-            await load()
+            // Lazy screen load: day availability, public slots, and blocked slots
+            // are date-scoped operations data owned by RestaurantSettingsStore.
+            await load(force: false)
         }
     }
 
@@ -799,7 +841,7 @@ struct TodayAvailabilityView: View {
         Date().formatted(.dateTime.weekday(.wide).month(.abbreviated).day().year())
     }
 
-    private func load() async {
+    private func load(force: Bool = false) async {
         guard !isLoading else { return }
         isLoading = true
         errorMessage = nil
@@ -809,7 +851,7 @@ struct TodayAvailabilityView: View {
         }
 
         do {
-            await settingsStore.refreshDateOperations(date: dateKey)
+            await settingsStore.refreshDateOperations(date: dateKey, force: force)
             guard let loadedAvailability = settingsStore.selectedDateAvailability,
                   loadedAvailability.date == dateKey else {
                 throw SettingsValidationError(message: "Today availability did not load.")
@@ -1289,6 +1331,11 @@ struct BusinessAnalyticsView: View {
                         .padding(.horizontal, 16)
                 }
 
+                if isLoading && summary != nil {
+                    SettingsNoticeCard(message: "Updating analytics...", tint: .secondary, systemImage: "arrow.clockwise")
+                        .padding(.horizontal, 16)
+                }
+
                 if isLoading && summary == nil {
                     ProgressView("Loading analytics...")
                         .frame(maxWidth: .infinity, minHeight: 160)
@@ -1324,6 +1371,8 @@ struct BusinessAnalyticsView: View {
             }
         }
         .task(id: range) {
+            // Lazy analytics load: backend summary is fetched only when this
+            // screen is opened or the range changes.
             await load()
         }
     }
@@ -1358,6 +1407,9 @@ struct BusinessAnalyticsView: View {
 
     private func load() async {
         guard !isLoading else { return }
+        if summary == nil, let cached = settingsStore.analyticsSummary {
+            summary = cached
+        }
         isLoading = true
         errorMessage = nil
 

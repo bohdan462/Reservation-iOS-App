@@ -257,4 +257,29 @@ extension Error {
             return false
         }
     }
+
+    var isOfflineLike: Bool {
+        let urlError: URLError?
+        if let direct = self as? URLError {
+            urlError = direct
+        } else if let reservationError = self as? ReservationAPIError,
+                  case .networkFailure(let wrapped) = reservationError {
+            urlError = wrapped
+        } else {
+            urlError = nil
+        }
+
+        switch urlError?.code {
+        case .some(.notConnectedToInternet),
+             .some(.networkConnectionLost),
+             .some(.cannotFindHost),
+             .some(.cannotConnectToHost),
+             .some(.dnsLookupFailed),
+             .some(.internationalRoamingOff),
+             .some(.dataNotAllowed):
+            return true
+        default:
+            return false
+        }
+    }
 }

@@ -16,15 +16,19 @@ enum ReservationAPIRequestReason: String {
     case startupToday = "startup_today"
     case manualToday = "manual_today"
     case autoToday = "auto_today"
+    case autoTodayDelta = "auto_today_delta"
     case autoSkipCooldown = "auto_skip_cooldown"
     case failureCount = "failure_count"
     case importFailuresFull = "import_failures_full"
+    case cancelledReservations = "cancelled_reservations"
     case scheduleWindow = "schedule_window"
     case scheduleAllPage = "schedule_all_page"
     case reviewQueues = "review_queues"
     case mutationPatch = "mutation_patch"
     case mutationConfirm = "mutation_confirm"
     case mutationCreate = "mutation_create"
+    case guestManageLink = "guest_manage_link"
+    case hardDelete = "hard_delete"
     case hiddenReservations = "hidden_reservations"
     case restaurantSetup = "restaurant_setup"
     case restaurantSetupPatch = "restaurant_setup_patch"
@@ -251,6 +255,7 @@ protocol ReservationsAPIClientProtocol: AnyObject {
         status: ReservationStatus?,
         search: String?,
         includeHidden: Bool,
+        updatedSince: String?,
         retryCount: Int,
         reason: ReservationAPIRequestReason
     ) async throws -> ReservationsResponse
@@ -270,6 +275,8 @@ protocol ReservationsAPIClientProtocol: AnyObject {
     func updateReservation(id: Int, request: ReservationUpdateRequest, reason: ReservationAPIRequestReason) async throws -> ReservationDTO
     func createReservation(_ createRequest: ReservationCreateRequest, reason: ReservationAPIRequestReason) async throws -> ReservationDTO
     func confirmReservation(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationConfirmResponse
+    func createGuestManageLink(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationGuestManageLinkDTO
+    func hardDeleteReservation(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationDeleteResponse
     func fetchRestaurantSetup(reason: ReservationAPIRequestReason) async throws -> RestaurantSetupDTO
     func updateRestaurantSetup(_ request: RestaurantSetupUpdateRequest, reason: ReservationAPIRequestReason) async throws -> RestaurantSetupDTO
     func fetchRestaurantHours(from: String?, to: String?, reason: ReservationAPIRequestReason) async throws -> RestaurantHoursDTO
@@ -297,6 +304,7 @@ extension ReservationsAPIClientProtocol {
         status: ReservationStatus?,
         search: String?,
         includeHidden: Bool = false,
+        updatedSince: String? = nil,
         reason: ReservationAPIRequestReason = .unspecified
     ) async throws -> ReservationsResponse {
         try await fetchReservations(
@@ -308,6 +316,7 @@ extension ReservationsAPIClientProtocol {
             status: status,
             search: search,
             includeHidden: includeHidden,
+            updatedSince: updatedSince,
             retryCount: 0,
             reason: reason
         )
@@ -408,6 +417,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         status: ReservationStatus? = nil,
         search: String? = nil,
         includeHidden: Bool = false,
+        updatedSince: String? = nil,
         retryCount: Int = 0,
         reason: ReservationAPIRequestReason = .unspecified
     ) async throws -> ReservationsResponse {
@@ -432,6 +442,10 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
         if includeHidden {
             queryItems.append(URLQueryItem(name: "include_hidden", value: "1"))
+        }
+        if let updatedSince = updatedSince?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !updatedSince.isEmpty {
+            queryItems.append(URLQueryItem(name: "updated_since", value: updatedSince))
         }
 
         let url = try makeURL(path: "managed-reservations", queryItems: queryItems)
@@ -479,6 +493,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
                 status: status,
                 search: search,
                 includeHidden: includeHidden,
+                updatedSince: nil,
                 reason: reason
             )
 
@@ -560,6 +575,38 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let data = try await perform(request, reason: reason)
 
         return try decode(ReservationConfirmResponse.self, from: data, request: request)
+    }
+
+    // Intent: Generates a guest self-service URL for manual Gmail/Mail workflows.
+    // Network: POST /managed-reservations/{id}/guest-manage-link.
+    func createGuestManageLink(
+        id: Int,
+        reason: ReservationAPIRequestReason = .guestManageLink
+    ) async throws -> ReservationGuestManageLinkDTO {
+        let url = try apiURL(path: "managed-reservations/\(id)/guest-manage-link")
+        let request = makeRequest(url: url, method: "POST")
+        let data = try await perform(request, reason: reason)
+
+        return try decode(ReservationGuestManageLinkResponse.self, from: data, request: request).data
+    }
+
+    // Intent: Developer/admin cleanup for test rows only. Staff flows must soft-hide.
+    // Network: DELETE /managed-reservations/{id}?force=1.
+    func hardDeleteReservation(
+        id: Int,
+        reason: ReservationAPIRequestReason = .hardDelete
+    ) async throws -> ReservationDeleteResponse {
+        let url = try makeURL(
+            path: "managed-reservations/\(id)",
+            queryItems: [URLQueryItem(name: "force", value: "1")]
+        )
+        let request = makeRequest(url: url, method: "DELETE")
+        let data = try await perform(request, reason: reason)
+        if data.isEmpty {
+            return ReservationDeleteResponse(success: true, message: nil)
+        }
+
+        return try decode(ReservationDeleteResponse.self, from: data, request: request)
     }
 
     // MARK: - Restaurant Setup

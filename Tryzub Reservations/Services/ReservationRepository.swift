@@ -17,6 +17,7 @@ protocol ReservationRepositoryProtocol {
     func replaceDateScope(date: String, with reservations: [ReservationDTO], includeHidden: Bool) throws
     func replaceDateWindow(from: String, to: String, with reservations: [ReservationDTO], includeHidden: Bool) throws
     func replaceReviewQueue(with reservations: [ReservationDTO]) throws
+    func deleteReservation(remoteID: Int) throws
 }
 
 @MainActor
@@ -141,6 +142,20 @@ final class ReservationRepository: ReservationRepositoryProtocol {
             afterCount: afterCount,
             removedIDs: []
         )
+    }
+
+    // Intent: Removes a row from the local cache after an admin/developer hard-delete succeeds on the server.
+    func deleteReservation(remoteID: Int) throws {
+        let descriptor = FetchDescriptor<ReservationRecord>(
+            predicate: #Predicate { record in
+                record.remoteID == remoteID
+            }
+        )
+        let records = try context.fetch(descriptor)
+        for record in records {
+            context.delete(record)
+        }
+        try context.save()
     }
 
     private func upsert(_ reservations: [ReservationDTO], into existingRecords: [ReservationRecord]) {

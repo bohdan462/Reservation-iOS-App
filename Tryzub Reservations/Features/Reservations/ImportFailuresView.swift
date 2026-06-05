@@ -78,6 +78,7 @@ struct ImportFailuresView: View {
                 }
             }
             .task {
+                // Lazy admin/dev load: failed imports are not checked by normal refresh.
                 await loadFailures()
             }
             .refreshable {

@@ -51,6 +51,8 @@ final class ReservationsController: ObservableObject {
     private var lastAutoRefreshFailureAt: Date?
     private var manualAttemptByScope: [ReservationSyncScope: Date] = [:]
     private var syncStateByScope: [ReservationSyncScope: SyncScopeState] = [:]
+    private var serverCursorByScope: [ReservationSyncScope: String] = [:]
+    private var lastOfflineNoticeAt: Date?
 
     // MARK: - Refresh Timing
 
@@ -60,6 +62,7 @@ final class ReservationsController: ObservableObject {
     private let scheduleFreshnessInterval: TimeInterval = 300
     private let reviewFreshnessInterval: TimeInterval = 120
     private let importFailureCountFreshnessInterval: TimeInterval = 300
+    private let offlineNoticeCooldown: TimeInterval = 60
 
     // MARK: - Dependencies
 
@@ -223,6 +226,53 @@ final class ReservationsController: ObservableObject {
         await performReviewQueuesRefresh(context: context, force: source == .manual)
     }
 
+    // MARK: - Cancelled Reservations
+
+    // Intent: Staff opens cancelled operational history; this is not hidden/test cleanup.
+    // Network: GET /managed-reservations?status=cancelled&from=...&to=...
+    // SwiftData: Upserts returned rows only; this status-scoped response is not broad delete truth.
+    @discardableResult
+    func loadCancelledReservations(context: ModelContext, force: Bool = false) async throws -> [ReservationDTO] {
+        let window = cancelledReservationsWindow()
+        let scope = ReservationSyncScope.cancelledWindow(from: window.from, to: window.to)
+
+        if !force && isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) {
+            return []
+        }
+
+        guard beginScope(scope) else {
+            ReservationAPILogger.skip(reason: .scopeSkipInFlight, message: "\(scope.description) skipped because this scope is already in flight")
+            return []
+        }
+
+        do {
+            let rows = try await environment.apiClient.fetchAllReservations(
+                perPage: 100,
+                date: nil,
+                from: window.from,
+                to: window.to,
+                status: .cancelled,
+                search: nil,
+                includeHidden: false,
+                reason: .cancelledReservations
+            )
+            let repository = ReservationRepository(context: context)
+            try repository.upsert(rows)
+            markScopeSuccess(scope)
+            return rows
+        } catch {
+            if error.isCancellationLike {
+                markScopeCancelled(scope)
+            } else {
+                markScopeFailure(scope)
+                if error.isOfflineLike {
+                    postOfflineNotice(source: .schedule, requestReason: .cancelledReservations, error: error)
+                }
+            }
+            throw error
+        }
+    }
+
     // MARK: - Today Auto Refresh
 
     // Intent: Quietly keeps the host board current while staff are not mid-action.
@@ -302,7 +352,16 @@ final class ReservationsController: ObservableObject {
             // Service/repository are per operation so they use the current ModelContext.
             let repository = ReservationRepository(context: context)
             let service = ReservationSyncService(client: environment.apiClient, repository: repository)
-            try await service.syncToday(reason: mode.requestReason)
+            let result: ReservationSyncResult
+            if mode == .automatic, let cursor = serverCursor(for: scope) {
+                result = try await service.syncTodayChanges(
+                    since: cursor,
+                    reason: .autoTodayDelta
+                )
+            } else {
+                result = try await service.syncTodayFull(reason: mode.requestReason)
+            }
+            updateServerCursor(for: scope, with: result.serverTime)
             lastSyncedAt = Date()
             markScopeSuccess(scope)
         } catch {
@@ -320,7 +379,9 @@ final class ReservationsController: ObservableObject {
                 lastAutoRefreshFailureAt = Date()
             }
             markScopeFailure(scope, cooldown: mode == .automatic || mode == .startup ? autoRefreshFailureCooldown : nil)
-            postRefreshFailureNotice(mode: mode, error: error)
+            if mode != .automatic {
+                postRefreshFailureNotice(mode: mode, error: error)
+            }
             if mode == .automatic {
                 isAutoRefreshing = false
             } else {
@@ -344,7 +405,6 @@ final class ReservationsController: ObservableObject {
             )
         }
 
-        await refreshImportFailureCountIfNeeded(force: false, reason: .failureCount)
         return true
     }
 
@@ -384,14 +444,14 @@ final class ReservationsController: ObservableObject {
             // Created per operation so schedule sync writes into this view's ModelContext.
             let repository = ReservationRepository(context: context)
             let service = ReservationSyncService(client: environment.apiClient, repository: repository)
-            try await service.syncScheduleWindow(
+            let result = try await service.syncScheduleWindowFull(
                 from: window.from,
                 to: window.to,
                 reason: .scheduleWindow
             )
+            updateServerCursor(for: scope, with: result.serverTime)
             lastSyncedAt = Date()
             markScopeSuccess(scope)
-            await refreshImportFailureCountIfNeeded(force: false, reason: .failureCount)
             return true
         } catch {
             if error.isCancellationLike {
@@ -437,7 +497,6 @@ final class ReservationsController: ObservableObject {
             try await service.syncReviewQueues(reason: .reviewQueues)
             lastSyncedAt = Date()
             markScopeSuccess(scope)
-            await refreshImportFailureCountIfNeeded(force: false, reason: .failureCount)
             return true
         } catch {
             if error.isCancellationLike {
@@ -939,6 +998,10 @@ final class ReservationsController: ObservableObject {
     // Network: GET /managed-reservations?include_hidden=1.
     @discardableResult
     func loadHiddenReservations(context: ModelContext) async throws -> [ReservationDTO] {
+        guard capabilities.canViewHiddenReservations else {
+            throw ReservationControllerError.permissionDenied
+        }
+
         let reservations = try await environment.apiClient.fetchAllReservations(
             perPage: 100,
             date: nil,
@@ -952,6 +1015,92 @@ final class ReservationsController: ObservableObject {
         let repository = ReservationRepository(context: context)
         try repository.upsert(reservations)
         return reservations.filter { $0.isHidden == true }
+    }
+
+    // Intent: Generates a guest manage link for manual Gmail/Mail confirmation copy.
+    // Network: POST /managed-reservations/{id}/guest-manage-link.
+    // Email: Does not send email and does not mark email as sent.
+    func generateGuestManageLink(reservation: ReservationRecord) async throws -> ReservationGuestManageLinkDTO {
+        guard capabilities.canGenerateGuestManageLinks else {
+            throw ReservationControllerError.permissionDenied
+        }
+
+        let id = reservation.remoteID
+        guard !actionInProgressIDs.contains(id) else {
+            throw ReservationControllerError.actionAlreadyInProgress
+        }
+
+        actionInProgressIDs.insert(id)
+        defer { actionInProgressIDs.remove(id) }
+
+        do {
+            let link = try await environment.apiClient.createGuestManageLink(
+                id: id,
+                reason: .guestManageLink
+            )
+            postNotice(
+                severity: .success,
+                source: .email,
+                title: "Manage link ready",
+                message: "Copy it into the manual confirmation email."
+            )
+            return link
+        } catch {
+            postNotice(
+                severity: .error,
+                source: .email,
+                title: "Manage link failed",
+                message: "Could not generate a guest manage link.",
+                requestReason: .guestManageLink,
+                errorCode: errorLogCode(error)
+            )
+            throw error
+        }
+    }
+
+    // Intent: Developer/admin cleanup of hidden test/noise reservations only.
+    // Network: DELETE /managed-reservations/{id}?force=1.
+    func hardDeleteReservation(
+        reservation: ReservationRecord,
+        context: ModelContext,
+        cleanupReason: String = "iOS admin test cleanup"
+    ) async throws {
+        guard capabilities.canHardDeleteReservations else {
+            throw ReservationControllerError.permissionDenied
+        }
+
+        let id = reservation.remoteID
+        let reservationDate = reservation.reservationDate
+        guard !actionInProgressIDs.contains(id) else {
+            throw ReservationControllerError.actionAlreadyInProgress
+        }
+
+        actionInProgressIDs.insert(id)
+        defer { actionInProgressIDs.remove(id) }
+
+        let repository = ReservationRepository(context: context)
+        let service = ReservationMutationService(client: environment.apiClient, repository: repository)
+
+        do {
+            try await service.hardDeleteReservation(id: id)
+            markScopesTouched(afterDeletingReservationDate: reservationDate)
+            postNotice(
+                severity: .success,
+                source: .admin,
+                title: "Test reservation deleted",
+                message: cleanupReason
+            )
+        } catch {
+            postNotice(
+                severity: .error,
+                source: .admin,
+                title: "Permanent delete failed",
+                message: "This test reservation was not deleted.",
+                requestReason: .hardDelete,
+                errorCode: errorLogCode(error)
+            )
+            throw error
+        }
     }
 
     // Intent: Soft-hides a mistaken manual row on the server; no DELETE route is used.
@@ -1217,6 +1366,7 @@ final class ReservationsController: ObservableObject {
                     status: nil,
                     search: nil,
                     includeHidden: false,
+                    updatedSince: nil,
                     retryCount: 0,
                     reason: .startupToday
                 )
@@ -1231,6 +1381,7 @@ final class ReservationsController: ObservableObject {
                     status: nil,
                     search: nil,
                     includeHidden: false,
+                    updatedSince: nil,
                     retryCount: 1,
                     reason: .manualToday
                 )
@@ -1253,6 +1404,7 @@ final class ReservationsController: ObservableObject {
                     status: nil,
                     search: nil,
                     includeHidden: false,
+                    updatedSince: nil,
                     retryCount: 1,
                     reason: .scheduleWindow
                 )
@@ -1267,6 +1419,7 @@ final class ReservationsController: ObservableObject {
                     status: .needsReview,
                     search: nil,
                     includeHidden: false,
+                    updatedSince: nil,
                     retryCount: 0,
                     reason: .reviewQueues
                 )
@@ -1279,6 +1432,7 @@ final class ReservationsController: ObservableObject {
                     status: .new,
                     search: nil,
                     includeHidden: false,
+                    updatedSince: nil,
                     retryCount: 0,
                     reason: .reviewQueues
                 )
@@ -1336,14 +1490,40 @@ final class ReservationsController: ObservableObject {
     }
 
     private func scheduleWindow() -> (from: String, to: String) {
+        // Date-keyed scope stays stable for a service day; it does not include
+        // wall-clock time, so simple tab switching will hit freshness guards.
         let from = Date()
         let to = Calendar.current.date(byAdding: .day, value: 30, to: from) ?? from
+        return (from.reservationDateString(), to.reservationDateString())
+    }
+
+    private func cancelledReservationsWindow() -> (from: String, to: String) {
+        let now = Date()
+        let calendar = Calendar.current
+        let from = calendar.date(byAdding: .day, value: -30, to: now) ?? now
+        let to = calendar.date(byAdding: .day, value: 60, to: now) ?? now
         return (from.reservationDateString(), to.reservationDateString())
     }
 
     private func scheduleScope() -> ReservationSyncScope {
         let window = scheduleWindow()
         return .scheduleWindow(from: window.from, to: window.to)
+    }
+
+    private func serverCursor(for scope: ReservationSyncScope) -> String? {
+        guard let cursor = serverCursorByScope[scope]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !cursor.isEmpty else {
+            return nil
+        }
+        return cursor
+    }
+
+    private func updateServerCursor(for scope: ReservationSyncScope, with serverTime: String?) {
+        guard let serverTime = serverTime?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !serverTime.isEmpty else {
+            return
+        }
+        serverCursorByScope[scope] = serverTime
     }
 
     private func allowManualAttempt(for scope: ReservationSyncScope) -> Bool {
@@ -1447,6 +1627,19 @@ final class ReservationsController: ObservableObject {
         markScopeStale(.reviewQueues)
     }
 
+    private func markScopesTouched(afterDeletingReservationDate reservationDate: String) {
+        if reservationDate == Date.reservationDateString() {
+            markScopeStale(.today(date: reservationDate))
+        }
+
+        let window = scheduleWindow()
+        if reservationDate >= window.from && reservationDate <= window.to {
+            markScopeStale(.scheduleWindow(from: window.from, to: window.to))
+        }
+
+        markScopeStale(.reviewQueues)
+    }
+
     private func publishSyncScopeSnapshots() {
         syncScopeSnapshots = syncStateByScope
             .map { SyncScopeSnapshot(scope: $0.key, state: $0.value) }
@@ -1456,12 +1649,43 @@ final class ReservationsController: ObservableObject {
     // MARK: - Private Notice / Error Helpers
 
     private func postRefreshFailureNotice(mode: ReservationRefreshMode, error: Error) {
+        if error.isOfflineLike {
+            postOfflineNotice(source: mode.noticeSource, requestReason: mode.requestReason, error: error)
+            return
+        }
+
         postNotice(
             severity: mode.noticeSeverity,
             source: mode.noticeSource,
             title: mode.failureTitle,
-            message: error.localizedDescription,
+            message: mode.failureMessage,
             requestReason: mode.requestReason,
+            errorCode: errorLogCode(error),
+            developerDiagnostics: error.reservationAPIDeveloperDetail
+        )
+    }
+
+    private func postOfflineNotice(
+        source: AppNoticeSource,
+        requestReason: ReservationAPIRequestReason?,
+        error: Error
+    ) {
+        let now = Date()
+        if let lastOfflineNoticeAt,
+           now.timeIntervalSince(lastOfflineNoticeAt) < offlineNoticeCooldown {
+            return
+        }
+
+        lastOfflineNoticeAt = now
+        notices.removeAll {
+            $0.title == "You're offline. Showing saved data."
+        }
+        postNotice(
+            severity: .warning,
+            source: source,
+            title: "You're offline. Showing saved data.",
+            message: "Cached reservations remain visible. Pull to refresh when the connection returns.",
+            requestReason: requestReason,
             errorCode: errorLogCode(error),
             developerDiagnostics: error.reservationAPIDeveloperDetail
         )
@@ -1530,7 +1754,7 @@ private enum ReservationControllerError: LocalizedError {
         case .actionAlreadyInProgress:
             return "Another update is already in progress for this reservation."
         case .permissionDenied:
-            return "This account cannot view form problems."
+            return "This account cannot use this admin tool."
         case .missingReservationID:
             return "Enter a reservation ID first."
         }
@@ -1549,6 +1773,7 @@ enum ReservationSyncIntent {
 enum ReservationSyncScope: Hashable, CustomStringConvertible {
     case today(date: String)
     case scheduleWindow(from: String, to: String)
+    case cancelledWindow(from: String, to: String)
     case reviewQueues
     case importFailureCount
     case reservation(id: Int)
@@ -1559,6 +1784,8 @@ enum ReservationSyncScope: Hashable, CustomStringConvertible {
             return "today(\(date))"
         case .scheduleWindow(let from, let to):
             return "schedule(\(from)...\(to))"
+        case .cancelledWindow(let from, let to):
+            return "cancelled(\(from)...\(to))"
         case .reviewQueues:
             return "review_queues"
         case .importFailureCount:
@@ -1622,9 +1849,9 @@ private enum ReservationRefreshMode {
     var failureMessage: String {
         switch self {
         case .startup:
-            return "The server did not respond. Cached remain visible."
+            return "Offline. Showing saved data."
         case .manual:
-            return "Could not reach the server. Cached reservations remain visible."
+            return "Could not refresh. Showing saved data."
         case .automatic:
             return "The app will try again later."
         case .schedule:

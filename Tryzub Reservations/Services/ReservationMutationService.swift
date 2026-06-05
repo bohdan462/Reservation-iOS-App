@@ -12,6 +12,8 @@ protocol ReservationMutationServiceProtocol {
     func updateReservation(id: Int, request: ReservationUpdateRequest) async throws -> ReservationDTO
     func createReservation(_ request: ReservationCreateRequest) async throws -> ReservationDTO
     func confirmReservation(id: Int) async throws -> ReservationConfirmResponse
+    func createGuestManageLink(id: Int) async throws -> ReservationGuestManageLinkDTO
+    func hardDeleteReservation(id: Int) async throws
     func reconcileReservation(id: Int) async throws -> ReservationDTO
 }
 
@@ -65,6 +67,25 @@ final class ReservationMutationService: ReservationMutationServiceProtocol {
         let response = try await client.confirmReservation(id: id, reason: .mutationConfirm)
         try repository.upsert(response.data)
         return response
+    }
+
+    // MARK: - Guest Self-Service Link
+
+    // Intent: Generates a link staff can paste into a manual Gmail/Mail confirmation.
+    // Network: POST /managed-reservations/{id}/guest-manage-link.
+    // Email: Does not call backend email sending or mark email as sent.
+    func createGuestManageLink(id: Int) async throws -> ReservationGuestManageLinkDTO {
+        try await client.createGuestManageLink(id: id, reason: .guestManageLink)
+    }
+
+    // MARK: - Developer Hard Delete
+
+    // Intent: Admin/developer cleanup of test reservations only.
+    // Network: DELETE /managed-reservations/{id}?force=1.
+    // SwiftData: Deletes the local cached row only after server success.
+    func hardDeleteReservation(id: Int) async throws {
+        _ = try await client.hardDeleteReservation(id: id, reason: .hardDelete)
+        try repository.deleteReservation(remoteID: id)
     }
 
     // MARK: - Reconcile Uncertain Mutation

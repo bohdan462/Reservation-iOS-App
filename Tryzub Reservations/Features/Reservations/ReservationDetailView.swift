@@ -5,6 +5,7 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 
 // MARK: - Detail Presentation
 
@@ -144,6 +145,9 @@ struct ReservationDetailView: View {
     @State private var pendingAction: ReservationHostAction?
     @State private var tableAssignmentReservation: ReservationRecord?
     @State private var isShowingHideWrongEntryConfirmation = false
+    @State private var guestManageLink: ReservationGuestManageLinkDTO?
+    @State private var guestManageLinkMessage: String?
+    @State private var isGeneratingGuestManageLink = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -310,6 +314,15 @@ struct ReservationDetailView: View {
                 tint: attention.tint
             )
         }
+
+        if let guestManageLinkMessage {
+            DetailWarningCard(
+                title: "Manage link ready",
+                message: guestManageLinkMessage,
+                symbolName: "link",
+                tint: TryzubColors.info
+            )
+        }
     }
 
     private var actionBar: some View {
@@ -317,8 +330,16 @@ struct ReservationDetailView: View {
             reservation: reservation,
             capabilities: controller.capabilities,
             isBusy: isSavingQuickAction || controller.isActionInProgress(for: reservation),
+            isGeneratingGuestManageLink: isGeneratingGuestManageLink,
+            hasGuestManageLink: guestManageLink != nil,
             onAction: handleAction,
             onEdit: { showEditScreen = true },
+            onGenerateGuestManageLink: controller.capabilities.canGenerateGuestManageLinks
+                ? { Task { await generateGuestManageLink() } }
+                : nil,
+            onCopyGuestManageLink: guestManageLink != nil
+                ? { copyGuestManageLink() }
+                : nil,
             onHideWrongEntry: reservation.canSoftHideAsWrongEntry && !reservation.isHidden
                 ? { isShowingHideWrongEntryConfirmation = true }
                 : nil,
@@ -512,6 +533,39 @@ struct ReservationDetailView: View {
             ReservationHaptics.warning()
         }
     }
+
+    // Intent: Prepares a self-service URL for manual confirmation email copy.
+    // Network: POST /managed-reservations/{id}/guest-manage-link.
+    // Email: Does not send email and does not mark confirmation email as sent.
+    private func generateGuestManageLink() async {
+        guard !isGeneratingGuestManageLink else { return }
+
+        isGeneratingGuestManageLink = true
+        errorMessage = nil
+        guestManageLinkMessage = nil
+
+        defer {
+            isGeneratingGuestManageLink = false
+        }
+
+        do {
+            let link = try await controller.generateGuestManageLink(reservation: reservation)
+            guestManageLink = link
+            UIPasteboard.general.string = link.url
+            guestManageLinkMessage = "Manage link copied. Use it in the manual confirmation email."
+            ReservationHaptics.success()
+        } catch {
+            errorMessage = "Could not generate a manage link. Please retry."
+            ReservationHaptics.warning()
+        }
+    }
+
+    private func copyGuestManageLink() {
+        guard let url = guestManageLink?.url else { return }
+        UIPasteboard.general.string = url
+        guestManageLinkMessage = "Manage link copied. Use it in the manual confirmation email."
+        ReservationHaptics.success()
+    }
 }
 
 // MARK: - Service Load Card
@@ -675,8 +729,12 @@ private struct DetailActionBar: View {
     let reservation: ReservationRecord
     let capabilities: AppCapabilities
     let isBusy: Bool
+    let isGeneratingGuestManageLink: Bool
+    let hasGuestManageLink: Bool
     let onAction: (ReservationHostAction) -> Void
     let onEdit: () -> Void
+    let onGenerateGuestManageLink: (() -> Void)?
+    let onCopyGuestManageLink: (() -> Void)?
     let onHideWrongEntry: (() -> Void)?
     let onRestoreHidden: (() -> Void)?
 
@@ -739,6 +797,31 @@ private struct DetailActionBar: View {
             }
 
             if !policy.detailSecondaryActions.isEmpty,
+               hasAdminActions {
+                Divider()
+            }
+
+            if let onGenerateGuestManageLink {
+                Button {
+                    onGenerateGuestManageLink()
+                } label: {
+                    Label(
+                        isGeneratingGuestManageLink ? "Generating manage link" : "Generate manage link",
+                        systemImage: "link.badge.plus"
+                    )
+                }
+                .disabled(isGeneratingGuestManageLink)
+            }
+
+            if hasGuestManageLink, let onCopyGuestManageLink {
+                Button {
+                    onCopyGuestManageLink()
+                } label: {
+                    Label("Copy manage link", systemImage: "doc.on.doc")
+                }
+            }
+
+            if (onGenerateGuestManageLink != nil || onCopyGuestManageLink != nil),
                onHideWrongEntry != nil || onRestoreHidden != nil {
                 Divider()
             }
@@ -770,11 +853,18 @@ private struct DetailActionBar: View {
             RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.10), lineWidth: 1)
         }
-        .disabled(isBusy)
+        .disabled(isBusy || isGeneratingGuestManageLink)
     }
 
     private var showsMoreMenu: Bool {
-        !policy.detailSecondaryActions.isEmpty || onHideWrongEntry != nil || onRestoreHidden != nil
+        !policy.detailSecondaryActions.isEmpty || hasAdminActions
+    }
+
+    private var hasAdminActions: Bool {
+        onGenerateGuestManageLink != nil
+            || onCopyGuestManageLink != nil
+            || onHideWrongEntry != nil
+            || onRestoreHidden != nil
     }
 }
 

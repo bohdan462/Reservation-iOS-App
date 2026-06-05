@@ -9,6 +9,7 @@ import Foundation
 
 struct ReservationsResponse: Codable {
     let success: Bool
+    let serverTime: String?
     let page: Int
     let perPage: Int
     let total: Int
@@ -37,6 +38,21 @@ struct ReservationConfirmResponse: Codable {
     let emailError: String?
     let message: String?
     let data: ReservationDTO
+}
+
+struct ReservationGuestManageLinkResponse: Codable {
+    let success: Bool
+    let data: ReservationGuestManageLinkDTO
+}
+
+struct ReservationGuestManageLinkDTO: Codable, Equatable {
+    let url: String
+    let expiresAt: String?
+}
+
+struct ReservationDeleteResponse: Codable {
+    let success: Bool?
+    let message: String?
 }
 
 struct RestaurantSetupResponse: Codable {

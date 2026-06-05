@@ -34,6 +34,8 @@ struct HostBoardView: View {
     @State private var todayBlockedSlots: [RestaurantBlockedSlotDTO] = []
     @State private var availabilitySummaryError: String?
     @State private var isLoadingAvailabilitySummary = false
+    @State private var availabilitySummaryByDate: [String: HostBoardAvailabilitySummary] = [:]
+    private let availabilitySummaryFreshnessInterval: TimeInterval = 120
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
@@ -153,6 +155,8 @@ struct HostBoardView: View {
             await runClockLoop()
         }
         .task(id: "\(isVisible)-\(selectedDate.reservationDateString())") {
+            // Lazy Home indicator load: availability/slots/blocked are screen-specific
+            // and cached briefly by date so tab switching does not refetch them.
             guard !isRunningForPreviews else { return }
             guard isVisible,
                   selectedDate.reservationDateString() == Date.reservationDateString() else {
@@ -262,7 +266,7 @@ struct HostBoardView: View {
             availabilitySummary: availabilitySummaryLine,
             isAvailabilityLoading: isLoadingAvailabilitySummary,
             onRefreshAvailability: selectedDate.reservationDateString() == Date.reservationDateString()
-                ? { Task { await loadTodayAvailabilitySummary() } }
+                ? { Task { await loadTodayAvailabilitySummary(force: true) } }
                 : nil
         )
     }
@@ -375,9 +379,16 @@ struct HostBoardView: View {
         }
     }
 
-    private func loadTodayAvailabilitySummary() async {
+    private func loadTodayAvailabilitySummary(force: Bool = false) async {
         guard !isLoadingAvailabilitySummary else { return }
         let today = Date.reservationDateString()
+        if !force,
+           let cached = availabilitySummaryByDate[today],
+           Date().timeIntervalSince(cached.loadedAt) < availabilitySummaryFreshnessInterval {
+            apply(cached)
+            return
+        }
+
         isLoadingAvailabilitySummary = true
         availabilitySummaryError = nil
         defer { isLoadingAvailabilitySummary = false }
@@ -399,10 +410,30 @@ struct HostBoardView: View {
             todayAvailability = loadedAvailability
             todaySlots = loadedSlots
             todayBlockedSlots = loadedBlocked.data
+            availabilitySummaryByDate[today] = HostBoardAvailabilitySummary(
+                availability: loadedAvailability,
+                slots: loadedSlots,
+                blockedSlots: loadedBlocked.data
+            )
         } catch {
-            availabilitySummaryError = error.localizedDescription
+            availabilitySummaryError = error.isOfflineLike
+                ? "Offline. Availability preview may be stale."
+                : error.localizedDescription
         }
     }
+
+    private func apply(_ summary: HostBoardAvailabilitySummary) {
+        todayAvailability = summary.availability
+        todaySlots = summary.slots
+        todayBlockedSlots = summary.blockedSlots
+    }
+}
+
+private struct HostBoardAvailabilitySummary {
+    let availability: RestaurantDayAvailabilityDTO
+    let slots: ReservationSlotsResponseDTO
+    let blockedSlots: [RestaurantBlockedSlotDTO]
+    let loadedAt = Date()
 }
 
 // MARK: - Host Snapshot
