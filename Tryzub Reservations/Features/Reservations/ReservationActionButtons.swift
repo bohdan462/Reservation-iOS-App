@@ -229,7 +229,7 @@ enum ReservationHostAction: String, Identifiable {
             let helper = reservation.email.nilIfBlank == nil
                 ? "\n\nNo guest email on this reservation."
                 : ""
-            return "Choose Confirm only to update the reservation without email, or Confirm + Email to ask the backend to send the confirmation email.\(helper)"
+            return "Choose Confirm only to update the reservation without email, or Confirm + Email to ask the server to send the confirmation email.\(helper)"
         case .confirmAndSendEmail:
             return "\(summary)\n\nThis will mark the reservation confirmed and ask the server to send a confirmation email to \(reservation.email)."
         case .seat:
@@ -239,7 +239,7 @@ enum ReservationHostAction: String, Identifiable {
         case .complete:
             return "\(summary)\n\nUse this after the party has finished service."
         case .cancel:
-            return "\(summary)\n\nThis cancels the managed reservation. No email will be sent yet."
+            return "\(summary)\n\nThis cancels the reservation. No email will be sent yet."
         case .noShow:
             return "\(summary)\n\nUse this only when the guest did not arrive."
         }

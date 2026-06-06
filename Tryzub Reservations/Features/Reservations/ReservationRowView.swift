@@ -69,7 +69,6 @@ struct ReservationRowPresentation: Identifiable {
     let compactPartyText: String
     let tableText: String?
     let phoneText: String?
-    let needsReviewIndicator: String?
     let guestNotesIndicator: String?
     let staffNotesIndicator: String?
     let statusText: String
@@ -112,7 +111,6 @@ enum ReservationRowPresenter {
             compactPartyText: "\(reservation.partySize)",
             tableText: reservation.tableDisplay,
             phoneText: reservation.phone.isEmpty ? nil : reservation.formattedPhone,
-            needsReviewIndicator: reservation.statusValue == .needsReview ? "Needs Review" : nil,
             guestNotesIndicator: reservation.hasGuestNotes ? "Guest Notes" : nil,
             staffNotesIndicator: reservation.hasStaffNotes ? "Staff Notes" : nil,
             statusText: reservation.statusValue.shortDisplayName,
@@ -163,10 +161,11 @@ enum ReservationRowPresenter {
         contextNote: String?
     ) -> ReservationRowInsight? {
         if reservation.statusValue == .needsReview {
+            guard let contextNote = contextNote?.nilIfBlank else { return nil }
             return ReservationRowInsight(
-                text: contextNote?.nilIfBlank ?? "Needs review",
-                systemImage: "exclamationmark.triangle",
-                tint: .orange,
+                text: contextNote,
+                systemImage: "info.circle",
+                tint: .secondary,
                 prominence: .normal
             )
         }
@@ -197,6 +196,17 @@ enum ReservationRowPresenter {
         contextNote: String?,
         now: Date
     ) -> ReservationRowInsight? {
+        if reservation.statusValue == .needsReview {
+            return contextNote?.nilIfBlank.map {
+                ReservationRowInsight(
+                    text: $0,
+                    systemImage: "info.circle",
+                    tint: .secondary,
+                    prominence: .normal
+                )
+            }
+        }
+
         let timingState = reservation.operationalTimingState(now: now)
         if let timingText = timingState.insightText {
             return ReservationRowInsight(
@@ -369,7 +379,7 @@ struct ReservationRowView<Accessory: View>: View {
 
             ReservationRowGuestSection(
                 guestName: presentation.guestName,
-                status: presentation.status,
+                status: nil,
                 metaItems: compactMetaItems(for: presentation),
                 insight: presentation.insight,
                 onTableTap: onTableTap,
@@ -398,10 +408,6 @@ struct ReservationRowView<Accessory: View>: View {
             ReservationRowDetailLabelData(text: presentation.tableText ?? "No table", systemImage: "table.furniture", isTable: true)
         ]
 
-        if let needsReviewIndicator = presentation.needsReviewIndicator {
-            items.append(ReservationRowDetailLabelData(text: needsReviewIndicator, systemImage: "exclamationmark.triangle"))
-        }
-
         if let guestNotesIndicator = presentation.guestNotesIndicator {
             items.append(ReservationRowDetailLabelData(text: guestNotesIndicator, systemImage: "note.text"))
         }
@@ -418,24 +424,24 @@ struct ReservationRowView<Accessory: View>: View {
     }
 
     private func compactMetaItems(for presentation: ReservationRowPresentation) -> [ReservationRowDetailLabelData] {
-        var items: [ReservationRowDetailLabelData] = [
-            ReservationRowDetailLabelData(text: presentation.compactPartyText, systemImage: "person.2"),
-            ReservationRowDetailLabelData(text: presentation.tableText ?? "No table", systemImage: "table.furniture", isTable: true)
+        var parts = [
+            "\(presentation.compactPartyText) \(presentation.compactPartyText == "1" ? "guest" : "guests")",
+            presentation.tableText ?? "No table",
+            presentation.statusText
         ]
-
-        if let needsReviewIndicator = presentation.needsReviewIndicator {
-            items.append(ReservationRowDetailLabelData(text: needsReviewIndicator, systemImage: "exclamationmark.triangle"))
-        }
-
         if let guestNotesIndicator = presentation.guestNotesIndicator {
-            items.append(ReservationRowDetailLabelData(text: guestNotesIndicator, systemImage: "note.text"))
+            parts.append(guestNotesIndicator)
         }
-
         if let staffNotesIndicator = presentation.staffNotesIndicator {
-            items.append(ReservationRowDetailLabelData(text: staffNotesIndicator, systemImage: "note.text.badge.plus"))
+            parts.append(staffNotesIndicator)
         }
 
-        return items
+        return [
+            ReservationRowDetailLabelData(
+                text: parts.joined(separator: " • "),
+                systemImage: presentation.status == .needsReview ? "exclamationmark.triangle" : "info.circle"
+            )
+        ]
     }
 
     private func rowStroke(for style: ReservationRowStyle) -> some View {

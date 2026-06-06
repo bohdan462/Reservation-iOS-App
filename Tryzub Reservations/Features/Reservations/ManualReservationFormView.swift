@@ -320,6 +320,7 @@ private struct ReservationFormContent: View {
     var onHideReservation: (() -> Void)?
 
     @EnvironmentObject private var controller: ReservationsController
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var isCustomTimePresented = false
     @State private var didApplyInitialSettings = false
     @State private var suggestedSlots: ReservationSlotsResponseDTO?
@@ -330,11 +331,9 @@ private struct ReservationFormContent: View {
     @State private var slotLoadTask: Task<Void, Never>?
 
     var body: some View {
-        ViewThatFits(in: .vertical) {
+        ScrollView {
             formShell
-            ScrollView {
-                formShell
-            }
+                .padding(.bottom, 108)
         }
         .background(TryzubColors.screenBackground)
         .navigationTitle(mode.title)
@@ -383,8 +382,8 @@ private struct ReservationFormContent: View {
                 ReservationFormWarningCard(message: "Offline — showing saved reservations. Edits require internet.")
             }
 
-            if let validationMessage {
-                ReservationFormWarningCard(message: validationMessage)
+            if let formBlockingMessage {
+                ReservationFormWarningCard(message: formBlockingMessage)
             }
 
             if let failure {
@@ -440,27 +439,40 @@ private struct ReservationFormContent: View {
     }
 
     private var serviceChoicesGrid: some View {
-        HStack(alignment: .top, spacing: 8) {
-            timeCard
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            partyCard
-                .frame(width: 200)
+        Group {
+            if horizontalSizeClass == .compact {
+                VStack(alignment: .leading, spacing: 8) {
+                    timeCard
+                    partyCard
+                }
+            } else {
+                HStack(alignment: .top, spacing: 8) {
+                    timeCard
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    partyCard
+                        .frame(width: 240)
+                }
+            }
         }
     }
 
     private var timeCard: some View {
         ReservationServiceCard(title: "Time", systemImage: "clock", spacing: 8) {
-            if isLoadingPublicSlots && suggestedSlots == nil {
-                ProgressView("Loading slots...")
+            if isLoadingPublicSlots && activeSuggestedSlots == nil {
+                ProgressView("Checking available times...")
                     .font(.caption2)
                     .frame(minHeight: 28, alignment: .leading)
+            } else if shouldBlockClosedDate {
+                Text("This date is closed. Choose another date.")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(TryzubColors.danger)
             } else if timeChoices.isEmpty {
                 Text("No public slots. Use Custom Time.")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(TryzubColors.mutedText)
             } else {
                 LazyVGrid(
-                    columns: ReservationSlotGridStyle.columns,
+                    columns: timeColumns,
                     spacing: ReservationSlotGridStyle.rowSpacing
                 ) {
                     ForEach(timeChoices, id: \.self) { time in
@@ -498,48 +510,50 @@ private struct ReservationFormContent: View {
                     .foregroundStyle(TryzubColors.danger)
             }
 
-            HStack(spacing: 8) {
-                Button {
-                    isCustomTimePresented = true
-                    ReservationHaptics.selection()
-                } label: {
-                    Label("Custom", systemImage: "plus")
-                        .font(.caption2.weight(.semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(TryzubColors.primaryText)
-                .popover(isPresented: $isCustomTimePresented) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Custom Time")
-                            .font(.headline.weight(.semibold))
-                        DatePicker("Time", selection: $draft.reservationTime, displayedComponents: .hourAndMinute)
-                            .datePickerStyle(.wheel)
-                            .labelsHidden()
-                        Button("Done") {
-                            isCustomTimePresented = false
-                            ReservationHaptics.selection()
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color(.systemBackground))
-                        .frame(maxWidth: .infinity, minHeight: 36)
-                        .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+            if !shouldBlockClosedDate {
+                HStack(spacing: 8) {
+                    Button {
+                        isCustomTimePresented = true
+                        ReservationHaptics.selection()
+                    } label: {
+                        Label("Custom", systemImage: "plus")
+                            .font(.caption2.weight(.semibold))
                     }
-                    .padding()
-                    .frame(minWidth: 260, minHeight: 240)
-                    .presentationCompactAdaptation(.popover)
-                }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(TryzubColors.primaryText)
+                    .popover(isPresented: $isCustomTimePresented) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Custom Time")
+                                .font(.headline.weight(.semibold))
+                            DatePicker("Time", selection: $draft.reservationTime, displayedComponents: .hourAndMinute)
+                                .datePickerStyle(.wheel)
+                                .labelsHidden()
+                            Button("Done") {
+                                isCustomTimePresented = false
+                                ReservationHaptics.selection()
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color(.systemBackground))
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                            .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                        }
+                        .padding()
+                        .frame(minWidth: 260, minHeight: 240)
+                        .presentationCompactAdaptation(.popover)
+                    }
 
-                Spacer()
+                    Spacer()
 
-                if !timeChoices.contains(where: { isSameTime($0, draft.reservationTime) }) {
-                    ReservationChoiceChip(
-                        title: timeLabel(draft.reservationTime),
-                        subtitle: "Custom",
-                        isSelected: true,
-                        minWidth: 62,
-                        minHeight: 30,
-                        fillsWidth: false
-                    )
+                    if !timeChoices.contains(where: { isSameTime($0, draft.reservationTime) }) {
+                        ReservationChoiceChip(
+                            title: timeLabel(draft.reservationTime),
+                            subtitle: "Custom",
+                            isSelected: true,
+                            minWidth: 62,
+                            minHeight: 30,
+                            fillsWidth: false
+                        )
+                    }
                 }
             }
         }
@@ -548,7 +562,7 @@ private struct ReservationFormContent: View {
     private var partyCard: some View {
         ReservationServiceCard(title: "Party", systemImage: "person.2", spacing: 8) {
             LazyVGrid(
-                columns: ReservationSlotGridStyle.fourColumns,
+                columns: partyColumns,
                 spacing: ReservationSlotGridStyle.rowSpacing
             ) {
                 ForEach(1...8, id: \.self) { size in
@@ -559,25 +573,44 @@ private struct ReservationFormContent: View {
                         ReservationChoiceChip(
                             title: "\(size)",
                             isSelected: draft.partySize == size,
-                            minWidth: 36,
-                            minHeight: 30
+                            minWidth: 44,
+                            minHeight: 36
                         )
                     }
                     .buttonStyle(.plain)
                 }
             }
 
-            Stepper(value: $draft.partySize, in: 1...60) {
+            HStack(spacing: 10) {
                 Text("Party of \(draft.partySize)")
-                    .font(.caption2.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Stepper("Party of \(draft.partySize)", value: $draft.partySize, in: 1...60)
+                    .labelsHidden()
             }
         }
+    }
+
+    private var partyColumns: [GridItem] {
+        let count = horizontalSizeClass == .compact ? 4 : 4
+        return Array(repeating: GridItem(.flexible(), spacing: ReservationSlotGridStyle.columnSpacing), count: count)
+    }
+
+    private var timeColumns: [GridItem] {
+        if horizontalSizeClass == .compact {
+            return Array(repeating: GridItem(.flexible(), spacing: ReservationSlotGridStyle.columnSpacing), count: 2)
+        }
+        return ReservationSlotGridStyle.columns
+    }
+
+    private var statusColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: horizontalSizeClass == .compact ? 96 : 112), spacing: ReservationSlotGridStyle.columnSpacing)]
     }
 
     private var editDetailsCard: some View {
         ReservationServiceCard(title: "Service Details", systemImage: "slider.horizontal.3", spacing: 8) {
             LazyVGrid(
-                columns: ReservationSlotGridStyle.columns,
+                columns: statusColumns,
                 spacing: ReservationSlotGridStyle.rowSpacing
             ) {
                 ForEach(ReservationStatus.allCases) { status in
@@ -588,8 +621,8 @@ private struct ReservationFormContent: View {
                         ReservationChoiceChip(
                             title: status.shortDisplayName,
                             isSelected: draft.status == status,
-                            minWidth: 72,
-                            minHeight: 30
+                            minWidth: 86,
+                            minHeight: 36
                         )
                     }
                     .buttonStyle(.plain)
@@ -630,7 +663,7 @@ private struct ReservationFormContent: View {
     }
 
     private var primaryActionButton: some View {
-        Button(action: onSubmit) {
+        Button(action: submitIfValid) {
             HStack {
                 Spacer()
                 if isSaving {
@@ -655,10 +688,24 @@ private struct ReservationFormContent: View {
             .background(.regularMaterial)
         }
         .buttonStyle(.plain)
-        .disabled(isSaving || controller.isNetworkDegraded || validationMessage != nil)
+        .disabled(isSaving || controller.isNetworkDegraded || formBlockingMessage != nil)
     }
 
-    private var validationMessage: String? {
+    private func submitIfValid() {
+        guard formBlockingMessage == nil,
+              !controller.isNetworkDegraded,
+              !isSaving else {
+            ReservationHaptics.warning()
+            return
+        }
+        onSubmit()
+    }
+
+    private var formBlockingMessage: String? {
+        if let availabilityValidationMessage {
+            return availabilityValidationMessage
+        }
+
         do {
             _ = try ReservationFormValidator.validate(
                 draft: draft,
@@ -670,6 +717,29 @@ private struct ReservationFormContent: View {
         } catch {
             return error.localizedDescription
         }
+    }
+
+    private var availabilityValidationMessage: String? {
+        let dateKey = draft.reservationDate.reservationDateString()
+        if isLoadingPublicSlots && loadedSlotsDateKey != dateKey && activeSuggestedSlots == nil {
+            return "Checking available times for this date."
+        }
+
+        if shouldBlockClosedDate {
+            return "This date is closed. Choose another date."
+        }
+
+        return nil
+    }
+
+    private var shouldBlockClosedDate: Bool {
+        guard let suggestedSlots = activeSuggestedSlots,
+              suggestedSlots.isOpen == false else {
+            return false
+        }
+
+        guard let originalDraft else { return true }
+        return !Calendar.current.isDate(originalDraft.reservationDate, inSameDayAs: draft.reservationDate)
     }
 
     private var timeValidationMessage: String? {
@@ -697,13 +767,19 @@ private struct ReservationFormContent: View {
 
     private var timeChoices: [Date] {
         let rawChoices: [Date]
-        if let suggestedSlots, suggestedSlots.isOpen, !suggestedSlots.slots.isEmpty {
+        if let suggestedSlots = activeSuggestedSlots,
+           suggestedSlots.isOpen,
+           !suggestedSlots.slots.isEmpty {
             rawChoices = suggestedSlots.slots.compactMap { ManualReservationFormPresenter.dateForSlotValue($0.value) }
         } else {
             rawChoices = controller.restaurantSetup.suggestedTimes(for: draft.reservationDate)
         }
 
         return rawChoices.filter(isTimeChoiceAllowed)
+    }
+
+    private var activeSuggestedSlots: ReservationSlotsResponseDTO? {
+        loadedSlotsDateKey == draft.reservationDate.reservationDateString() ? suggestedSlots : nil
     }
 
     private func timeLabel(_ date: Date) -> String {
@@ -778,6 +854,14 @@ private struct ReservationFormContent: View {
     // the spinner stuck. Skips reloading once a date has loaded successfully.
     private func ensureSlotLoad() {
         let dateKey = draft.reservationDate.reservationDateString()
+        if let cachedSlots = controller.cachedReservationSlots(date: dateKey) {
+            suggestedSlots = cachedSlots
+            loadedSlotsDateKey = dateKey
+            if let cachedBlocked = controller.cachedRestaurantBlockedSlots(date: dateKey) {
+                blockedSlotValues = Set(cachedBlocked.data.map { ManualReservationFormPresenter.shortSlotValue($0.slotTime) })
+            }
+        }
+
         if loadedSlotsDateKey == dateKey { return }
         slotLoadTask?.cancel()
         slotLoadTask = Task {

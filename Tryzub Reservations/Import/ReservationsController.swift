@@ -1043,6 +1043,22 @@ final class ReservationsController: ObservableObject {
         availabilitySummaryLoadingDates.contains(date)
     }
 
+    func cachedReservationSlots(date: String) -> ReservationSlotsResponseDTO? {
+        reservationSlotsCacheByDate[date]?.value ?? availabilitySummaryByDate[date]?.slots
+    }
+
+    func cachedRestaurantBlockedSlots(date: String) -> RestaurantBlockedSlotsResponseDTO? {
+        if let cached = blockedSlotsCacheByDate[date]?.value {
+            return cached
+        }
+        guard let summary = availabilitySummaryByDate[date] else { return nil }
+        return RestaurantBlockedSlotsResponseDTO(
+            success: true,
+            date: date,
+            data: summary.blockedSlots
+        )
+    }
+
     func ensureAvailabilitySummary(date: String, force: Bool = false) {
         if !force,
            let summary = availabilitySummaryByDate[date],

@@ -862,6 +862,7 @@ private struct ReservationMoreView: View {
 
     @StateObject private var settingsStore: RestaurantSettingsStore
     @State private var showManualCreate = false
+    @State private var path: [ReservationMoreDestination] = []
 
     let environment: AppEnvironment
 
@@ -873,45 +874,33 @@ private struct ReservationMoreView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 Section("Restaurant Operations") {
-                    NavigationLink {
-                        CancelledReservationsView(environment: environment)
-                    } label: {
+                    NavigationLink(value: ReservationMoreDestination.cancelled) {
                         Label("Cancelled Reservations", systemImage: "xmark.circle")
                     }
 
                     if controller.capabilities.canViewHiddenReservations {
-                        NavigationLink {
-                            HiddenReservationsView(environment: environment)
-                        } label: {
+                        NavigationLink(value: ReservationMoreDestination.hidden) {
                             Label("Hidden Reservations", systemImage: "archivebox")
                         }
                     }
 
                     if controller.capabilities.canManageRestaurantSettings {
-                        NavigationLink {
-                            RestaurantSettingsView(settingsStore: settingsStore)
-                        } label: {
+                        NavigationLink(value: ReservationMoreDestination.restaurantSettings) {
                             Label("Restaurant Settings", systemImage: "gearshape")
                         }
 
-                        NavigationLink {
-                            TodayAvailabilityView(settingsStore: settingsStore)
-                        } label: {
+                        NavigationLink(value: ReservationMoreDestination.todayAvailability) {
                             Label("Today Availability", systemImage: "calendar.badge.clock")
                         }
 
-                        NavigationLink {
-                            WeeklyHoursView(settingsStore: settingsStore)
-                        } label: {
+                        NavigationLink(value: ReservationMoreDestination.weeklyHours) {
                             Label("Weekly Hours", systemImage: "clock")
                         }
 
-                        NavigationLink {
-                            BlockedTimeSlotsView(settingsStore: settingsStore)
-                        } label: {
+                        NavigationLink(value: ReservationMoreDestination.blockedTimeSlots) {
                             Label("Blocked Time Slots", systemImage: "nosign")
                         }
                     }
@@ -927,16 +916,12 @@ private struct ReservationMoreView: View {
 
                 Section("Business") {
                     if controller.capabilities.canViewAnalytics {
-                        NavigationLink {
-                            BusinessAnalyticsView(settingsStore: settingsStore)
-                        } label: {
+                        NavigationLink(value: ReservationMoreDestination.businessAnalytics) {
                             Label("Business Analytics", systemImage: "chart.bar")
                         }
                     }
 
-                    NavigationLink {
-                        RegularGuestsView()
-                    } label: {
+                    NavigationLink(value: ReservationMoreDestination.regularGuests) {
                         Label("Regulars / Guest Memory", systemImage: "person.2.crop.square.stack")
                     }
                 }
@@ -946,25 +931,13 @@ private struct ReservationMoreView: View {
                     Section("Developer / Support") {
                         if controller.capabilities.canViewFailedImports,
                            controller.capabilities.canViewDeveloperDiagnostics {
-                            NavigationLink {
-                                ImportFailuresView(
-                                    environment: environment,
-                                    onCreateReservation: { request in
-                                        try await controller.createAcceptedManualReservation(request, context: modelContext)
-                                    },
-                                    onCreated: { _ in }
-                                )
-                                .environmentObject(controller)
-                            } label: {
+                            NavigationLink(value: ReservationMoreDestination.failedImports) {
                                 Label("Failed Imports", systemImage: "exclamationmark.triangle")
                             }
                         }
 
                         if controller.capabilities.canViewDeveloperDiagnostics {
-                            NavigationLink {
-                                DeveloperDiagnosticsView(environment: environment)
-                                    .environmentObject(controller)
-                            } label: {
+                            NavigationLink(value: ReservationMoreDestination.diagnostics) {
                                 Label("API & App Diagnostics", systemImage: "stethoscope")
                             }
                         }
@@ -979,12 +952,101 @@ private struct ReservationMoreView: View {
             }
             .navigationTitle("More")
             .contentMargins(.bottom, 92, for: .scrollContent)
+            .navigationDestination(for: ReservationMoreDestination.self) { destination in
+                moreDestination(destination)
+            }
             .fullScreenCover(isPresented: $showManualCreate) {
                 ManualReservationFormView { request in
                     // Manual call-in create is accepted immediately; no email is sent.
                     try await controller.createAcceptedManualReservation(request, context: modelContext)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func moreDestination(_ destination: ReservationMoreDestination) -> some View {
+        switch destination {
+        case .cancelled:
+            CancelledReservationsView(
+                environment: environment,
+                onOpenDetails: { reservation in
+                    path.append(.cancelledDetail(remoteID: reservation.remoteID))
+                }
+            )
+        case .cancelledDetail(let remoteID):
+            ReservationDetailDestinationView(remoteID: remoteID, environment: environment)
+        case .hidden:
+            HiddenReservationsView(environment: environment)
+        case .restaurantSettings:
+            RestaurantSettingsView(settingsStore: settingsStore)
+        case .todayAvailability:
+            TodayAvailabilityView(settingsStore: settingsStore)
+        case .weeklyHours:
+            WeeklyHoursView(settingsStore: settingsStore)
+        case .blockedTimeSlots:
+            BlockedTimeSlotsView(settingsStore: settingsStore)
+        case .businessAnalytics:
+            BusinessAnalyticsView(settingsStore: settingsStore)
+        case .regularGuests:
+            RegularGuestsView()
+        case .failedImports:
+            ImportFailuresView(
+                environment: environment,
+                onCreateReservation: { request in
+                    try await controller.createAcceptedManualReservation(request, context: modelContext)
+                },
+                onCreated: { _ in }
+            )
+            .environmentObject(controller)
+        case .diagnostics:
+            DeveloperDiagnosticsView(environment: environment)
+                .environmentObject(controller)
+        }
+    }
+}
+
+private enum ReservationMoreDestination: Hashable {
+    case cancelled
+    case cancelledDetail(remoteID: Int)
+    case hidden
+    case restaurantSettings
+    case todayAvailability
+    case weeklyHours
+    case blockedTimeSlots
+    case businessAnalytics
+    case regularGuests
+    case failedImports
+    case diagnostics
+}
+
+private struct ReservationDetailDestinationView: View {
+    @Query private var reservations: [ReservationRecord]
+
+    let remoteID: Int
+    let environment: AppEnvironment
+
+    init(remoteID: Int, environment: AppEnvironment) {
+        self.remoteID = remoteID
+        self.environment = environment
+        _reservations = Query(
+            filter: #Predicate<ReservationRecord> { $0.remoteID == remoteID },
+            sort: [
+                SortDescriptor(\ReservationRecord.reservationDate, order: .reverse),
+                SortDescriptor(\ReservationRecord.reservationTime, order: .reverse)
+            ]
+        )
+    }
+
+    var body: some View {
+        if let reservation = reservations.first {
+            ReservationDetailView(reservation: reservation, environment: environment)
+        } else {
+            ContentUnavailableView(
+                "Reservation Not Found",
+                systemImage: "calendar.badge.exclamationmark",
+                description: Text("Refresh reservations and try again.")
+            )
         }
     }
 }
@@ -1002,10 +1064,10 @@ private struct CancelledReservationsView: View {
     private var reservations: [ReservationRecord]
 
     let environment: AppEnvironment
+    let onOpenDetails: (ReservationRecord) -> Void
 
     @State private var isLoading = false
     @State private var errorMessage: String?
-    @State private var navigationPath: [Int] = []
 
     private var window: (from: String, to: String) {
         CancelledReservationsPresenter.defaultWindow()
@@ -1023,89 +1085,76 @@ private struct CancelledReservationsView: View {
     }
 
     var body: some View {
-        NavigationStack(path: $navigationPath) {
-            List {
+        List {
+            Section {
+                Text("Real cancelled reservations from \(window.from) through \(window.to). Hidden/test rows live in admin cleanup instead.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let errorMessage {
                 Section {
-                    Text("Real cancelled reservations from \(window.from) through \(window.to). Hidden/test rows live in admin cleanup instead.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    Label(errorMessage, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
                 }
+            }
 
-                if let errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
+            if isLoading && cancelledRows.isEmpty {
+                Section {
+                    HStack {
+                        Spacer()
+                        ProgressView("Loading cancelled reservations...")
+                        Spacer()
                     }
+                    .padding(.vertical, 24)
                 }
-
-                if isLoading && cancelledRows.isEmpty {
-                    Section {
-                        HStack {
-                            Spacer()
-                            ProgressView("Loading cancelled reservations...")
-                            Spacer()
-                        }
-                        .padding(.vertical, 24)
-                    }
-                } else if cancelledRows.isEmpty {
-                    Section {
-                        ContentUnavailableView(
-                            "No Cancelled Reservations",
-                            systemImage: "xmark.circle",
-                            description: Text("Cancelled guest self-service and staff cancellations will appear here.")
-                        )
-                    }
-                } else {
-                    Section("Cancelled reservations") {
-                        ForEach(cancelledRows) { reservation in
-                            ReservationNavigationRow(
-                                reservation: reservation,
-                                environment: environment,
-                                context: .schedule,
-                                contextNote: "Cancelled",
-                                onOpenDetails: { navigationPath.append($0.remoteID) }
-                            )
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Cancelled Reservations")
-            .navigationBarTitleDisplayMode(.inline)
-            .listStyle(.plain)
-            .contentMargins(.bottom, 92, for: .scrollContent)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        Task { await load(force: true) }
-                    } label: {
-                        if isLoading {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                    }
-                    .disabled(isLoading)
-                }
-            }
-            .task {
-                // Lazy screen load: status=cancelled window fetch, upsert-only.
-                await load(force: false)
-            }
-            .refreshable {
-                // Staff manual refresh: forces the cancelled status window fetch.
-                await load(force: true)
-            }
-            .navigationDestination(for: Int.self) { remoteID in
-                if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
-                    ReservationDetailView(reservation: reservation, environment: environment)
-                } else {
+            } else if cancelledRows.isEmpty {
+                Section {
                     ContentUnavailableView(
-                        "Reservation Not Found",
-                        systemImage: "calendar.badge.exclamationmark",
-                        description: Text("Refresh cancelled reservations and try again.")
+                        "No Cancelled Reservations",
+                        systemImage: "xmark.circle",
+                        description: Text("Cancelled guest self-service and staff cancellations will appear here.")
                     )
                 }
+            } else {
+                Section("Cancelled reservations") {
+                    ForEach(cancelledRows) { reservation in
+                        ReservationNavigationRow(
+                            reservation: reservation,
+                            environment: environment,
+                            context: .schedule,
+                            contextNote: "Cancelled",
+                            onOpenDetails: onOpenDetails
+                        )
+                    }
+                }
             }
+        }
+        .navigationTitle("Cancelled Reservations")
+        .navigationBarTitleDisplayMode(.inline)
+        .listStyle(.plain)
+        .contentMargins(.bottom, 92, for: .scrollContent)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task { await load(force: true) }
+                } label: {
+                    if isLoading {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .disabled(isLoading)
+            }
+        }
+        .task {
+            // Lazy screen load: status=cancelled window fetch, upsert-only.
+            await load(force: false)
+        }
+        .refreshable {
+            // Staff manual refresh: forces the cancelled status window fetch.
+            await load(force: true)
         }
     }
 
