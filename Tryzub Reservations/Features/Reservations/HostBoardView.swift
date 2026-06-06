@@ -234,7 +234,7 @@ struct HostBoardView: View {
         }
 
         if isLoadingAvailabilitySummary && todayAvailability == nil && todaySlots == nil {
-            return "Loading availability…"
+            return "Loading"
         }
 
         if let availability = todayAvailability, !availability.isOpen {
@@ -718,7 +718,7 @@ private struct HomeAvailabilityIndicator: View {
         }
 
         if isLoading && availability == nil && slots == nil {
-            return "Loading backend availability..."
+            return "Loading..."
         }
 
         if isClosed {
@@ -750,7 +750,7 @@ private struct HomeAvailabilityIndicator: View {
         case .some(let source):
             return source.capitalized
         case nil:
-            return "Backend availability"
+            return "Server availability"
         }
     }
 
@@ -777,7 +777,7 @@ private struct HomeServiceHeader: View {
     let onShowFormProblems: () -> Void
 
     private var quickDates: [Date] {
-        (0..<10).compactMap {
+        (0..<7).compactMap {
             Calendar.current.date(byAdding: .day, value: $0, to: Date())
         }
     }
@@ -803,10 +803,16 @@ private struct HomeServiceHeader: View {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 14) {
                     titleBlock
-
-                    Spacer(minLength: 12)
-
+//                        .frame(minWidth: 120)
+                  
+                    dateStrip
+                        .frame(maxWidth: .infinity)
+                        .layoutPriority(0)
+                    openCalendarButton
+                    
+                    
                     actionBar
+                        .fixedSize()
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -816,13 +822,13 @@ private struct HomeServiceHeader: View {
             }
 
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 12) {
-                    dateStrip
-
-                    Spacer(minLength: 12)
-
-                    openCalendarButton
-                }
+//                HStack(alignment: .center, spacing: 12) {
+//                    dateStrip
+//
+//                    Spacer(minLength: 12)
+//
+//                    openCalendarButton
+//                }
 
                 VStack(alignment: .leading, spacing: 10) {
                     dateStrip
@@ -832,7 +838,7 @@ private struct HomeServiceHeader: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+//        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -842,7 +848,7 @@ private struct HomeServiceHeader: View {
 
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("Service")
+            Text("Host")
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(ReservationUIStyle.serviceTitleColor)
                 .lineLimit(1)
@@ -871,20 +877,6 @@ private struct HomeServiceHeader: View {
 
     private var actionBar: some View {
         HStack(spacing: 10) {
-            if canCreateReservation {
-                Button {
-                    ReservationHaptics.selection()
-                    onAddReservation()
-                } label: {
-                    Label("Add Reservation", systemImage: "plus")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(minWidth: 156, minHeight: 40)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color(.systemBackground))
-                .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-            }
-
             Menu {
                 Button {
                     ReservationHaptics.selection()
@@ -908,20 +900,35 @@ private struct HomeServiceHeader: View {
                     .frame(width: 42, height: 40)
             }
             .buttonStyle(ReservationHeaderIconButtonStyle())
+            
+            if canCreateReservation {
+                Button {
+                    ReservationHaptics.selection()
+                    onAddReservation()
+                } label: {
+                    Label("Add", systemImage: "plus")
+                        .font(.subheadline.weight(.semibold))
+                     
+//                        .frame(minWidth: 72, minHeight: 38)
+                }
+                .buttonStyle(.plain)
+            }
+
+            
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
+//        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private var dateStrip: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
+            HStack(spacing: 4) {
                 ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
                     dateButton(for: date, fillsWidth: false)
                 }
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: 5) {
                     ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
                         dateButton(for: date, fillsWidth: false)
                     }
@@ -940,7 +947,10 @@ private struct HomeServiceHeader: View {
                 title: chipTitle(for: date),
                 subtitle: chipSubtitle(for: date),
                 isSelected: isSameDay(selectedDate, date),
-                fillsWidth: fillsWidth
+                minWidth: 56,
+                minHeight: 40,
+                fillsWidth: false
+                
             )
         }
         .buttonStyle(.plain)

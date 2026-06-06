@@ -147,7 +147,7 @@ enum TryzubSpacing {
     static let cardPadding: CGFloat = 16
     static let rowSpacing: CGFloat = 10
     static let sectionSpacing: CGFloat = 14
-    static let chipSpacing: CGFloat = 8
+    static let chipSpacing: CGFloat = 4
     static let cornerRadius: CGFloat = 8
     static let controlCornerRadius: CGFloat = 8
 }
@@ -445,7 +445,7 @@ struct ReservationSecondaryActionButton: View {
 
 struct ReservationOpenCalendarButton: View {
     @Binding var selectedDate: Date
-    var title = "Open Calendar"
+    var title = "Calendar"
     @State private var showsCalendarPicker = false
 
     var body: some View {
@@ -570,7 +570,7 @@ struct ServiceLoadChart: View {
             HStack(spacing: 8) {
                 Image(systemName: "chart.bar")
                     .foregroundStyle(.secondary)
-                Text("No reservations to chart yet")
+                Text("No reservations")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                 Spacer()
