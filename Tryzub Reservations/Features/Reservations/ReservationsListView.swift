@@ -314,7 +314,8 @@ private struct ReservationScheduleView: View {
     @State private var scope: ReservationScheduleScope = .upcoming
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
-    @State private var statusFilter: ReservationStatus?
+    @State private var scheduleDateFilter: Date?
+    @State private var scheduleCalendarAnchor = Date()
     @State private var isLoadingAllPage = false
     @State private var allModeRecords: [ReservationRecord] = []
     @State private var allModeRemoteIDs: [Int] = []
@@ -366,8 +367,12 @@ private struct ReservationScheduleView: View {
             }
         }
 
-        if scope == .all, let statusFilter {
-            rows = rows.filter { $0.statusValue == statusFilter }
+        if scope == .all, let scheduleDateFilter {
+            let filterKey = scheduleDateFilter.reservationDateString()
+            let cachedForDate = reservations.filter { $0.reservationDate == filterKey }
+            let existingIDs = Set(rows.map(\.remoteID))
+            rows.append(contentsOf: cachedForDate.filter { !existingIDs.contains($0.remoteID) })
+            rows = rows.filter { $0.reservationDate == filterKey }
         }
 
         if !trimmedSearchText.isEmpty {
@@ -448,7 +453,7 @@ private struct ReservationScheduleView: View {
 
                             Spacer(minLength: 8)
 
-                            if allModeHasMore {
+                            if allModeHasMore, scheduleDateFilter == nil {
                                 Button {
                                     Task {
                                         await loadAllPage(reset: false, caller: "load_more_button")
@@ -565,6 +570,17 @@ private struct ReservationScheduleView: View {
                     await loadAllPage(reset: true, caller: "search_change_all")
                 }
             }
+            .onChange(of: scheduleDateFilter) { _, newFilter in
+                guard isActive, scope == .all, let newFilter else { return }
+                Task {
+                    let search = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+                    try? await controller.refreshScheduleDate(
+                        context: modelContext,
+                        date: newFilter.reservationDateString(),
+                        search: search
+                    )
+                }
+            }
             .navigationDestination(for: Int.self) { remoteID in
                 reservationDestination(remoteID: remoteID)
             }
@@ -581,43 +597,18 @@ private struct ReservationScheduleView: View {
             .pickerStyle(.segmented)
 
             if scope == .all {
-                Menu {
-                    Button("Any Status") {
-                        statusFilter = nil
-                    }
-
-                    ForEach(ReservationStatus.allCases) { status in
-                        Button(status.displayName) {
-                            statusFilter = status
-                        }
-                    }
-                } label: {
-                    Label(statusFilterTitle, systemImage: "line.3.horizontal.decrease.circle")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.primary.opacity(0.80))
-                        .padding(.horizontal, 10)
-                        .frame(minHeight: 32)
-                        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-                        }
-                }
-                .buttonStyle(.plain)
+                ReservationOptionalDateFilter(
+                    filterDate: $scheduleDateFilter,
+                    calendarAnchor: $scheduleCalendarAnchor
+                )
             }
         }
     }
 
-    private var statusFilterTitle: String {
-        guard let statusFilter else {
-            return "Status: Any"
-        }
-        return "Status: \(statusFilter.shortDisplayName)"
-    }
-
     private var allModeSummaryText: String {
-        if let statusFilter {
-            return "Showing \(displayedReservations.count) matching \(statusFilter.shortDisplayName)"
+        if let scheduleDateFilter {
+            let dateLabel = scheduleDateFilter.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+            return "Showing \(displayedReservations.count) on \(dateLabel)"
         }
 
         guard let allModeTotal else {
@@ -628,7 +619,7 @@ private struct ReservationScheduleView: View {
     }
 
     private var allModeHasMore: Bool {
-        scope == .all && allModeLoadedPage > 0 && allModeLoadedPage < allModeTotalPages
+        scope == .all && scheduleDateFilter == nil && allModeLoadedPage > 0 && allModeLoadedPage < allModeTotalPages
     }
 
     private func loadAllPage(reset: Bool, caller: String) async {
@@ -732,6 +723,20 @@ private struct ReservationReviewQueueView: View {
     let environment: AppEnvironment
     let isActive: Bool
 
+    private var visibleReservations: [ReservationRecord] {
+        reservations.filter { !hiddenReservations.isHidden($0) }
+    }
+
+    private var pendingAttentionCount: Int {
+        visibleReservations.filter {
+            $0.statusValue == .new || $0.statusValue == .needsReview
+        }.count
+    }
+
+    private var needsReviewCount: Int {
+        visibleReservations.filter { $0.statusValue == .needsReview }.count
+    }
+
     // Pending is the staff default: new and needs_review, oldest submitted first.
     private var queueReservations: [ReservationRecord] {
         guard isActive else { return [] }
@@ -758,9 +763,8 @@ private struct ReservationReviewQueueView: View {
             List {
                 Section {
                     Picker("Queue", selection: $scope) {
-                        ForEach(ReservationQueueScope.allCases) { scope in
-                            Text(scope.rawValue).tag(scope)
-                        }
+                        Text(queuePickerLabel(for: .pending)).tag(ReservationQueueScope.pending)
+                        Text(queuePickerLabel(for: .needsReview)).tag(ReservationQueueScope.needsReview)
                     }
                     .pickerStyle(.segmented)
                 }
@@ -855,6 +859,17 @@ private struct ReservationReviewQueueView: View {
                 systemImage: "calendar.badge.exclamationmark",
                 description: Text("Refresh review and try again.")
             )
+        }
+    }
+
+    private func queuePickerLabel(for scope: ReservationQueueScope) -> String {
+        switch scope {
+        case .pending:
+            let count = pendingAttentionCount
+            return count > 0 ? "Pending (\(count))" : "Pending"
+        case .needsReview:
+            let count = needsReviewCount
+            return count > 0 ? "Needs Review (\(count))" : "Needs Review"
         }
     }
 

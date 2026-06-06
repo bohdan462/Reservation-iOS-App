@@ -783,12 +783,6 @@ private struct HomeServiceHeader: View {
     let onManualRefresh: () -> Void
     let onShowFormProblems: () -> Void
 
-    private var quickDates: [Date] {
-        (0..<7).compactMap {
-            Calendar.current.date(byAdding: .day, value: $0, to: Date())
-        }
-    }
-
     private var serviceDateText: String {
         selectedDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
     }
@@ -812,10 +806,8 @@ private struct HomeServiceHeader: View {
             // Wide (iPad): everything on one row
             HStack(alignment: .top, spacing: 10) {
                 titleBlock
-                dateStrip
+                ReservationServiceDateSelector(selectedDate: $selectedDate)
                     .frame(maxWidth: .infinity)
-                openCalendarButton
-            
                 actionBar
                     .fixedSize()
             }
@@ -829,11 +821,7 @@ private struct HomeServiceHeader: View {
                         .fixedSize()
                 }
 
-                HStack(alignment: .center, spacing: 10) {
-                    dateStrip
-                        .frame(maxWidth: .infinity)
-                    openCalendarButton
-                }
+                ReservationServiceDateSelector(selectedDate: $selectedDate)
             }
         }
         .padding(.horizontal, 16)
@@ -966,66 +954,6 @@ private struct HomeServiceHeader: View {
 //        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
-    private var dateStrip: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 4) {
-                ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
-                    dateButton(for: date, fillsWidth: false)
-                }
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
-                        dateButton(for: date, fillsWidth: false)
-                    }
-                }
-                .padding(.vertical, 1)
-            }
-        }
-    }
-
-    private func dateButton(for date: Date, fillsWidth: Bool) -> some View {
-        Button {
-            selectedDate = date
-            ReservationHaptics.selection()
-        } label: {
-            ReservationChoiceChip(
-                title: chipTitle(for: date),
-                subtitle: chipSubtitle(for: date),
-                isSelected: isSameDay(selectedDate, date),
-                minWidth: 56,
-                minHeight: 40,
-                fillsWidth: false
-                
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var openCalendarButton: some View {
-        ReservationOpenCalendarButton(selectedDate: $selectedDate)
-    }
-
-    private func chipTitle(for date: Date) -> String {
-        if Calendar.current.isDateInToday(date) {
-            return "Today"
-        }
-
-        return date.formatted(.dateTime.weekday(.abbreviated).day())
-    }
-
-    private func chipSubtitle(for date: Date) -> String? {
-        guard Calendar.current.isDateInToday(date) else {
-            return nil
-        }
-
-        return date.formatted(.dateTime.weekday(.abbreviated).day())
-    }
-
-    private func isSameDay(_ lhs: Date, _ rhs: Date) -> Bool {
-        Calendar.current.isDate(lhs, inSameDayAs: rhs)
-    }
 }
 
 // MARK: - Host Columns / Rows

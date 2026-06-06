@@ -300,6 +300,30 @@ final class ReservationsController: ObservableObject {
         return response
     }
 
+    // Intent: Schedule All mode refreshes one service date from the server.
+    // Network: GET /managed-reservations?date=YYYY-MM-DD.
+    func refreshScheduleDate(
+        context: ModelContext,
+        date: String,
+        search: String? = nil
+    ) async throws {
+        let response = try await environment.apiClient.fetchReservations(
+            page: 1,
+            perPage: 100,
+            date: date,
+            from: nil,
+            to: nil,
+            status: nil,
+            search: search,
+            includeHidden: false,
+            reason: .scheduleDate
+        )
+
+        let repository = ReservationRepository(context: context)
+        try repository.upsert(response.data)
+        lastSyncedAt = Date()
+    }
+
     // MARK: - Pending Review Sync
 
     // Intent: Pending/Review screen became visible; refresh only when cached queue is stale.

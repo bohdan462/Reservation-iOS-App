@@ -26,6 +26,7 @@ enum ReservationAPIRequestReason: String {
     case cancelledReservationsPage = "cancelled_reservations_page"
     case scheduleWindow = "schedule_window"
     case scheduleAllPage = "schedule_all_page"
+    case scheduleDate = "schedule_date"
     case reviewQueues = "review_queues"
     case mutationPatch = "mutation_patch"
     case mutationConfirm = "mutation_confirm"

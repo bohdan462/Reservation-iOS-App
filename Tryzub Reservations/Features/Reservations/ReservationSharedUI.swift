@@ -445,6 +445,179 @@ struct ReservationSecondaryActionButton: View {
     }
 }
 
+struct ReservationServiceDateSelector: View {
+    @Binding var selectedDate: Date
+    var quickDayCount = 7
+
+    private var quickDates: [Date] {
+        (0..<quickDayCount).compactMap {
+            Calendar.current.date(byAdding: .day, value: $0, to: Date())
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            dateStrip
+                .frame(maxWidth: .infinity)
+            ReservationOpenCalendarButton(selectedDate: $selectedDate)
+        }
+    }
+
+    private var dateStrip: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 4) {
+                ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
+                    dateButton(for: date)
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
+                        dateButton(for: date)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+    }
+
+    private func dateButton(for date: Date) -> some View {
+        Button {
+            selectedDate = date
+            ReservationHaptics.selection()
+        } label: {
+            ReservationChoiceChip(
+                title: chipTitle(for: date),
+                subtitle: chipSubtitle(for: date),
+                isSelected: Calendar.current.isDate(selectedDate, inSameDayAs: date),
+                minWidth: 56,
+                minHeight: 40,
+                fillsWidth: false
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func chipTitle(for date: Date) -> String {
+        if Calendar.current.isDateInToday(date) {
+            return "Today"
+        }
+
+        return date.formatted(.dateTime.weekday(.abbreviated).day())
+    }
+
+    private func chipSubtitle(for date: Date) -> String? {
+        guard Calendar.current.isDateInToday(date) else {
+            return nil
+        }
+
+        return date.formatted(.dateTime.weekday(.abbreviated).day())
+    }
+}
+
+struct ReservationOptionalDateFilter: View {
+    @Binding var filterDate: Date?
+    @Binding var calendarAnchor: Date
+    var quickDayCount = 7
+
+    private var quickDates: [Date] {
+        (0..<quickDayCount).compactMap {
+            Calendar.current.date(byAdding: .day, value: $0, to: Date())
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            dateStrip
+                .frame(maxWidth: .infinity)
+            ReservationOpenCalendarButton(selectedDate: calendarSelection)
+        }
+    }
+
+    private var calendarSelection: Binding<Date> {
+        Binding(
+            get: { filterDate ?? calendarAnchor },
+            set: { newValue in
+                calendarAnchor = newValue
+                filterDate = newValue
+            }
+        )
+    }
+
+    private var dateStrip: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 4) {
+                allDatesButton
+                ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
+                    dateButton(for: date)
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    allDatesButton
+                    ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
+                        dateButton(for: date)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+    }
+
+    private var allDatesButton: some View {
+        Button {
+            filterDate = nil
+            ReservationHaptics.selection()
+        } label: {
+            ReservationChoiceChip(
+                title: "All",
+                subtitle: nil,
+                isSelected: filterDate == nil,
+                minWidth: 56,
+                minHeight: 40,
+                fillsWidth: false
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func dateButton(for date: Date) -> some View {
+        Button {
+            filterDate = date
+            calendarAnchor = date
+            ReservationHaptics.selection()
+        } label: {
+            ReservationChoiceChip(
+                title: chipTitle(for: date),
+                subtitle: chipSubtitle(for: date),
+                isSelected: filterDate.map { Calendar.current.isDate($0, inSameDayAs: date) } ?? false,
+                minWidth: 56,
+                minHeight: 40,
+                fillsWidth: false
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func chipTitle(for date: Date) -> String {
+        if Calendar.current.isDateInToday(date) {
+            return "Today"
+        }
+
+        return date.formatted(.dateTime.weekday(.abbreviated).day())
+    }
+
+    private func chipSubtitle(for date: Date) -> String? {
+        guard Calendar.current.isDateInToday(date) else {
+            return nil
+        }
+
+        return date.formatted(.dateTime.weekday(.abbreviated).day())
+    }
+}
+
 struct ReservationOpenCalendarButton: View {
     @Binding var selectedDate: Date
     var title = ""

@@ -172,6 +172,32 @@ extension ReservationRecord {
         }
     }
 
+    var isPastDueForToday: Bool {
+        isPastDueForToday(now: Date())
+    }
+
+    func isPastDueForToday(now: Date = Date()) -> Bool {
+        guard reservationDate == Date.reservationDateString() else {
+            return false
+        }
+
+        switch operationalTimingState(now: now) {
+        case .overdue:
+            return true
+        case .none, .normal, .dueSoon, .dueNow:
+            return false
+        }
+    }
+
+    var canMarkPastDueComplete: Bool {
+        switch statusValue {
+        case .new, .needsReview, .confirmed:
+            return true
+        case .seated, .completed, .cancelled, .noShow:
+            return false
+        }
+    }
+
     func operationalTimingState(now: Date = Date()) -> ReservationOperationalTimingState {
         guard !isHidden,
               isActiveReservationStatus,

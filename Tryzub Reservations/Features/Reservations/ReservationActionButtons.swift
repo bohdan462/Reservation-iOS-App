@@ -155,27 +155,36 @@ enum ReservationHostAction: String, Identifiable {
     static func availableActions(
         for reservation: ReservationRecord,
         capabilities: AppCapabilities,
-        includeSecondary: Bool
+        includeSecondary: Bool,
+        now: Date = Date()
     ) -> [ReservationHostAction] {
         let status = reservation.statusValue
         var actions: [ReservationHostAction] = []
 
-        if capabilities.canConfirmReservations,
-           status == .new || status == .needsReview {
-            actions.append(.confirmOnly)
-            if includeSecondary, reservation.hasUsableConfirmationEmail {
-                actions.append(.confirmAndSendEmail)
+        let showPastDueComplete = reservation.isPastDueForToday(now: now)
+            && reservation.canMarkPastDueComplete
+            && capabilities.canSeatReservations
+
+        if showPastDueComplete {
+            actions.append(.complete)
+        } else {
+            if capabilities.canConfirmReservations,
+               status == .new || status == .needsReview {
+                actions.append(.confirmOnly)
+                if includeSecondary, reservation.hasUsableConfirmationEmail {
+                    actions.append(.confirmAndSendEmail)
+                }
             }
-        }
 
-        if capabilities.canSeatReservations,
-           status == .confirmed {
-            actions.append(.seat)
+            if capabilities.canSeatReservations,
+               status == .confirmed {
+                actions.append(.seat)
 
-            if includeSecondary,
-               !reservation.hasTableAssignment,
-               capabilities.canEditReservationDetails {
-                actions.append(.assignTable)
+                if includeSecondary,
+                   !reservation.hasTableAssignment,
+                   capabilities.canEditReservationDetails {
+                    actions.append(.assignTable)
+                }
             }
         }
 
@@ -519,7 +528,7 @@ struct ReservationActionButtons: View {
 
     // Intent: Requires a second tap for actions that can change service state quickly.
     private func handleTap(_ action: ReservationHostAction) {
-        guard action.needsInlineConfirmation else {
+        guard action.needsInlineConfirmation(for: reservation) else {
             pendingInlineAction = nil
             ReservationHaptics.lightImpact()
             onAction(action)
@@ -587,9 +596,14 @@ enum ReservationConfirmDialog {
 // MARK: - Inline Confirmation Rules
 
 private extension ReservationHostAction {
-    var needsInlineConfirmation: Bool {
+    func needsInlineConfirmation(for reservation: ReservationRecord, now: Date = Date()) -> Bool {
         switch self {
-        case .seat, .complete:
+        case .complete:
+            if reservation.isPastDueForToday(now: now), reservation.canMarkPastDueComplete {
+                return false
+            }
+            return true
+        case .seat:
             return true
         case .confirmOnly, .confirmAndSendEmail, .assignTable, .cancel, .noShow:
             return false
