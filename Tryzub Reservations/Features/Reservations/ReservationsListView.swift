@@ -25,6 +25,7 @@ struct ReservationsListView: View {
 
     // Source of truth for custom floating navigation; there is no default TabView state.
     @State private var selectedTab: ReservationsAppTab = .home
+    @State private var isLaunchLoadingPresented = true
 
     let environment: AppEnvironment
 
@@ -50,7 +51,11 @@ struct ReservationsListView: View {
             // rebuild a whole NavigationStack + SwiftData query (which caused lag).
             // The isActive flags gate each screen's refresh/clock loops.
             tabContainer(.home) {
-                HomeDashboardView(environment: environment, isActive: selectedTab == .home)
+                HomeDashboardView(
+                    environment: environment,
+                    isActive: selectedTab == .home,
+                    deferHomeNetworkLoads: isLaunchLoadingPresented
+                )
             }
             tabContainer(.schedule) {
                 ReservationScheduleView(environment: environment, isActive: selectedTab == .schedule)
@@ -76,6 +81,8 @@ struct ReservationsListView: View {
                 .padding(.horizontal, 8)
                 .padding(.top, 6)
                 .padding(.bottom, 5)
+                .disabled(isLaunchLoadingPresented)
+                .allowsHitTesting(!isLaunchLoadingPresented)
         }
         
         .fontDesign(.rounded)
@@ -90,12 +97,39 @@ struct ReservationsListView: View {
             .padding(.top, noticeTopPadding)
             .padding(.trailing, 14)
         }
-        .task {
-            // Initial app load: show SwiftData cache immediately, then refresh today if needed.
-            // Full date-scope replace is owned by ReservationsController.
-            await controller.loadIfNeeded(context: modelContext)
-            _ = try? await controller.loadRestaurantSetup(context: modelContext)
+        .overlay {
+            if isLaunchLoadingPresented {
+                AppLaunchLoadingView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .zIndex(50)
+            }
         }
+        .task {
+            await performInitialLaunchLoad()
+        }
+    }
+
+    private func performInitialLaunchLoad() async {
+        let minimumSplash = ContinuousClock.now
+
+        // Never block the shell on network — show cached SwiftData and refresh in the background.
+        Task {
+            await controller.performStartupNetworkPass(context: modelContext)
+        }
+
+        let elapsed = minimumSplash.duration(to: .now)
+        if elapsed < .seconds(1.1) {
+            try? await Task.sleep(for: .seconds(1.1) - elapsed)
+        }
+
+        withAnimation(.easeInOut(duration: 0.42)) {
+            isLaunchLoadingPresented = false
+        }
+
+        // Let the shell finish layout before staff actions can present iPad popovers/alerts.
+        try? await Task.sleep(for: .milliseconds(200))
     }
 
     @ViewBuilder
@@ -161,10 +195,12 @@ private struct HomeDashboardView: View {
 
     let environment: AppEnvironment
     let isActive: Bool
+    let deferHomeNetworkLoads: Bool
 
-    init(environment: AppEnvironment, isActive: Bool) {
+    init(environment: AppEnvironment, isActive: Bool, deferHomeNetworkLoads: Bool = false) {
         self.environment = environment
         self.isActive = isActive
+        self.deferHomeNetworkLoads = deferHomeNetworkLoads
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
         let toDate = bounds.to
@@ -202,6 +238,7 @@ private struct HomeDashboardView: View {
                 isSyncing: controller.isSyncing,
                 failedImportCount: controller.importFailureCount,
                 isVisible: isActive,
+                deferNetworkLoads: deferHomeNetworkLoads,
                 isAppActive: scenePhase == .active && selectedDate.reservationDateString() == Date.reservationDateString(),
                 externalInteractionActive: showManualCreate || showImportFailures,
                 onAddReservation: {
@@ -863,6 +900,7 @@ private struct ReservationMoreView: View {
 
     @StateObject private var settingsStore: RestaurantSettingsStore
     @State private var showManualCreate = false
+    @State private var showFailedImports = false
     @State private var path: [ReservationMoreDestination] = []
 
     let environment: AppEnvironment
@@ -960,9 +998,10 @@ private struct ReservationMoreView: View {
                 if controller.capabilities.canViewFailedImports
                     || controller.capabilities.canViewDeveloperDiagnostics {
                     Section("Developer / Support") {
-                        if controller.capabilities.canViewFailedImports,
-                           controller.capabilities.canViewDeveloperDiagnostics {
-                            NavigationLink(value: ReservationMoreDestination.failedImports) {
+                        if controller.capabilities.canViewFailedImports {
+                            Button {
+                                showFailedImports = true
+                            } label: {
                                 Label("Failed Imports", systemImage: "exclamationmark.triangle")
                             }
                         }
@@ -991,6 +1030,16 @@ private struct ReservationMoreView: View {
                     // Manual call-in create is accepted immediately; no email is sent.
                     try await controller.createAcceptedManualReservation(request, context: modelContext)
                 }
+            }
+            .sheet(isPresented: $showFailedImports) {
+                ImportFailuresView(
+                    environment: environment,
+                    onCreateReservation: { request in
+                        try await controller.createAcceptedManualReservation(request, context: modelContext)
+                    },
+                    onCreated: { _ in }
+                )
+                .environmentObject(controller)
             }
         }
     }
@@ -1021,15 +1070,6 @@ private struct ReservationMoreView: View {
             BusinessAnalyticsView(settingsStore: settingsStore)
         case .regularGuests:
             RegularGuestsView()
-        case .failedImports:
-            ImportFailuresView(
-                environment: environment,
-                onCreateReservation: { request in
-                    try await controller.createAcceptedManualReservation(request, context: modelContext)
-                },
-                onCreated: { _ in }
-            )
-            .environmentObject(controller)
         case .diagnostics:
             DeveloperDiagnosticsView(environment: environment)
                 .environmentObject(controller)
@@ -1054,7 +1094,6 @@ private enum ReservationMoreDestination: Hashable {
     case blockedTimeSlots
     case businessAnalytics
     case regularGuests
-    case failedImports
     case diagnostics
 }
 
@@ -1639,15 +1678,12 @@ private struct ReservationNavigationRow: View {
                         }
                     }
 
-                    if reservation.hasUsableConfirmationEmail {
-                        Button("Confirm + Email") {
-                            Task {
-                                await perform(.confirmAndSendEmail)
-                            }
+                    ReservationConfirmDialog.backendEmailButton(
+                        hasUsableEmail: reservation.hasUsableConfirmationEmail
+                    ) {
+                        Task {
+                            await perform(.confirmAndSendEmail)
                         }
-                    } else {
-                        Button("Confirm + Email") {}
-                            .disabled(true)
                     }
                 } else {
                     Button(pendingAction.fullTitle, role: pendingAction.role) {
@@ -1712,6 +1748,7 @@ private struct ReservationNavigationRow: View {
             await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
             ReservationHaptics.success()
         case .confirmAndSendEmail:
+            guard ReservationEmailWorkflow.isBackendConfirmEmailEnabled else { return }
             await controller.confirmReservation(reservation: reservation, context: modelContext)
             ReservationHaptics.success()
         case .seat:

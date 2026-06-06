@@ -70,7 +70,7 @@ enum GuestConfirmationMailPresenter {
 
 struct GuestConfirmationMailComposer: UIViewControllerRepresentable {
     let draft: GuestConfirmationMailPresenter.Draft
-    let onFinish: () -> Void
+    let onFinish: (MFMailComposeResult) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onFinish: onFinish)
@@ -88,9 +88,9 @@ struct GuestConfirmationMailComposer: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: MFMailComposeViewController, context: Context) {}
 
     final class Coordinator: NSObject, MFMailComposeViewControllerDelegate {
-        let onFinish: () -> Void
+        let onFinish: (MFMailComposeResult) -> Void
 
-        init(onFinish: @escaping () -> Void) {
+        init(onFinish: @escaping (MFMailComposeResult) -> Void) {
             self.onFinish = onFinish
         }
 
@@ -100,7 +100,7 @@ struct GuestConfirmationMailComposer: UIViewControllerRepresentable {
             error: Error?
         ) {
             controller.dismiss(animated: true)
-            onFinish()
+            onFinish(result)
         }
     }
 }

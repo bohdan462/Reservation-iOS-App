@@ -3,6 +3,7 @@
 //  Tryzub Reservations
 //
 
+import MessageUI
 import SwiftUI
 import SwiftData
 import UIKit
@@ -96,7 +97,11 @@ struct ReservationDetailPresentation {
 
     private static func emailStateText(for reservation: ReservationRecord) -> String {
         if reservation.hasConfirmationEmailRecord {
-            return "Email sent"
+            return "Email sent (server)"
+        }
+
+        if reservation.hasManualConfirmationEmailRecord {
+            return "Manual email sent"
         }
 
         if reservation.hasUsableConfirmationEmail {
@@ -125,10 +130,9 @@ struct ReservationDetailPresentation {
 // MARK: - Manual Confirmation Draft
 
 struct ManualEmailDraftService {
-    // Builds copy staff can paste into Gmail/Mail after explicitly confirming the reservation.
-    // This helper does not send email, call /confirm, or mark email as sent.
+    // Builds copy staff can paste into Gmail/Mail. Does not call POST /confirm.
     static func confirmationSubject(reservation: ReservationRecord) -> String {
-        "Tryzub reservation confirmation for \(reservation.displayDate) at \(reservation.displayTime)"
+        "Your reservation at \(ReservationEmailWorkflow.restaurantName) — \(emailDateLine(for: reservation)) at \(emailTimeLine(for: reservation))"
     }
 
     static func confirmationPlainBody(
@@ -136,25 +140,30 @@ struct ManualEmailDraftService {
         manageLink: ReservationGuestManageLinkDTO
     ) -> String {
         let firstName = guestFirstName(for: reservation)
-        let expiresText = manageLink.expiresAt?.nilIfBlank.map {
-            "\nThis self-service link expires at \($0)."
-        } ?? ""
+        let expiresText = formattedExpiresLine(manageLink.expiresAt).map { "\n\($0)" } ?? ""
         let tableLine = reservation.tableName?.nilIfBlank.map { "Table: \($0)\n" } ?? ""
+        let guestNotesLine = reservation.guestNotes?.nilIfBlank.map { "Notes: \($0)\n" } ?? ""
 
         return """
-        Hi \(firstName),
+        Dear \(firstName),
 
-        Your reservation at Tryzub Ukrainian Kitchen is confirmed.
+        Thank you for choosing \(ReservationEmailWorkflow.restaurantName). Your reservation is confirmed.
 
-        Date: \(reservation.displayDate)
-        Time: \(reservation.displayTime)
-        Party size: \(reservation.partySize)
-        \(tableLine)
-        View or manage your reservation:
+        \(emailDateLine(for: reservation))
+        \(emailTimeLine(for: reservation))
+        Party of \(reservation.partySize)
+        \(tableLine)\(guestNotesLine)
+        View or manage your reservation online:
         \(manageLink.url)\(expiresText)
 
-        Thank you,
-        Tryzub Ukrainian Kitchen
+        \(ReservationEmailWorkflow.restaurantAddressLine)
+        \(ReservationEmailWorkflow.restaurantPhone)
+        \(ReservationEmailWorkflow.websiteURL.absoluteString)
+
+        Reservation policies: \(ReservationEmailWorkflow.reservationPoliciesURL.absoluteString)
+
+        We look forward to welcoming you.
+        \(ReservationEmailWorkflow.restaurantName)
         """
     }
 
@@ -163,32 +172,79 @@ struct ManualEmailDraftService {
         manageLink: ReservationGuestManageLinkDTO
     ) -> String {
         let firstName = htmlEscape(guestFirstName(for: reservation))
-        let expiresHTML = manageLink.expiresAt?.nilIfBlank.map {
-            "<p style=\"font-size: 14px; color: #666666;\">This self-service link expires at \(htmlEscape($0)).</p>"
-        } ?? ""
+        let dateLine = htmlEscape(emailDateLine(for: reservation))
+        let timeLine = htmlEscape(emailTimeLine(for: reservation))
+        let expiresHTML = formattedExpiresHTML(manageLink.expiresAt)
         let tableHTML = reservation.tableName?.nilIfBlank.map {
-            "<strong>Table:</strong> \(htmlEscape($0))<br>"
+            "<tr><td style=\"padding:6px 0;color:#5c574f;font-size:14px;\">Table</td><td style=\"padding:6px 0;color:#1f1f1f;font-size:15px;font-weight:600;text-align:right;\">\(htmlEscape($0))</td></tr>"
+        } ?? ""
+        let guestNotesHTML = reservation.guestNotes?.nilIfBlank.map {
+            "<tr><td style=\"padding:6px 0;color:#5c574f;font-size:14px;vertical-align:top;\">Notes</td><td style=\"padding:6px 0;color:#1f1f1f;font-size:15px;text-align:right;\">\(htmlEscape($0))</td></tr>"
         } ?? ""
         let linkURL = htmlAttributeEscape(manageLink.url)
+        let policiesURL = htmlAttributeEscape(ReservationEmailWorkflow.reservationPoliciesURL.absoluteString)
+        let websiteURL = htmlAttributeEscape(ReservationEmailWorkflow.websiteURL.absoluteString)
 
         return """
         <!DOCTYPE html>
         <html>
-        <body style="font-family: -apple-system, Helvetica, Arial, sans-serif; font-size: 16px; color: #111111; line-height: 1.5;">
-        <p>Hi \(firstName),</p>
-        <p>Your reservation at <strong>Tryzub Ukrainian Kitchen</strong> is confirmed.</p>
-        <p>
-        <strong>Date:</strong> \(htmlEscape(reservation.displayDate))<br>
-        <strong>Time:</strong> \(htmlEscape(reservation.displayTime))<br>
-        <strong>Party size:</strong> \(reservation.partySize)<br>
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin:0;padding:0;background-color:#f3efe6;font-family:Georgia,'Times New Roman',serif;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f3efe6;padding:28px 14px;">
+        <tr>
+        <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:580px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e4ddd1;">
+        <tr>
+        <td style="background:#1f3d2b;padding:30px 34px;text-align:center;">
+        <p style="margin:0;color:#d8c9a8;font-size:12px;letter-spacing:0.16em;text-transform:uppercase;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">\(htmlEscape(ReservationEmailWorkflow.restaurantName))</p>
+        <h1 style="margin:14px 0 0;color:#ffffff;font-size:26px;line-height:1.25;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">Reservation Confirmed</h1>
+        </td>
+        </tr>
+        <tr>
+        <td style="padding:34px 34px 10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222222;font-size:16px;line-height:1.65;">
+        <p style="margin:0 0 18px;">Dear \(firstName),</p>
+        <p style="margin:0 0 26px;">Thank you for choosing <strong>\(htmlEscape(ReservationEmailWorkflow.restaurantName))</strong>. We look forward to welcoming you to Ukrainian Village.</p>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8f5ef;border:1px solid #ece4d7;border-radius:12px;margin:0 0 28px;">
+        <tr>
+        <td style="padding:22px 22px 8px;">
+        <p style="margin:0 0 14px;font-size:12px;color:#7a7368;letter-spacing:0.12em;text-transform:uppercase;">Your reservation</p>
+        <p style="margin:0;font-size:20px;line-height:1.35;font-weight:700;color:#1f1f1f;">\(dateLine)</p>
+        <p style="margin:8px 0 0;font-size:20px;line-height:1.35;font-weight:700;color:#1f1f1f;">\(timeLine)</p>
+        </td>
+        </tr>
+        <tr>
+        <td style="padding:0 22px 20px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+        <tr><td style="padding:6px 0;color:#5c574f;font-size:14px;">Party size</td><td style="padding:6px 0;color:#1f1f1f;font-size:15px;font-weight:600;text-align:right;">\(reservation.partySize)</td></tr>
         \(tableHTML)
+        \(guestNotesHTML)
+        </table>
+        </td>
+        </tr>
+        </table>
+        <p style="margin:0 0 18px;text-align:center;">
+        <a href="\(linkURL)" style="display:inline-block;padding:15px 28px;background-color:#1f6b3a;color:#ffffff;text-decoration:none;border-radius:999px;font-size:16px;font-weight:700;letter-spacing:0.01em;">View or Manage Reservation</a>
         </p>
-        <p style="margin: 28px 0;">
-        <a href="\(linkURL)" style="display: inline-block; padding: 14px 22px; background-color: #1F6B3A; color: #ffffff; text-decoration: none; border-radius: 10px; font-weight: 600;">View or manage reservation</a>
-        </p>
-        <p style="font-size: 14px; color: #666666;">Use the button above to view your reservation online, make changes, or cancel within the allowed time window.</p>
+        <p style="margin:0 0 28px;font-size:14px;line-height:1.6;color:#666666;text-align:center;">Use your private link to view reservation details, request changes, or cancel within the allowed time window.</p>
         \(expiresHTML)
-        <p>Thank you,<br>Tryzub Ukrainian Kitchen</p>
+        <p style="margin:0;font-size:14px;line-height:1.7;color:#5c574f;text-align:center;">
+        \(htmlEscape(ReservationEmailWorkflow.restaurantAddressLine))<br>
+        \(htmlEscape(ReservationEmailWorkflow.restaurantPhone)) · <a href="\(websiteURL)" style="color:#1f6b3a;text-decoration:none;">tryzubchicago.com</a>
+        </p>
+        </td>
+        </tr>
+        <tr>
+        <td style="padding:18px 34px 30px;border-top:1px solid #ece8e1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;line-height:1.6;color:#8a8378;text-align:center;">
+        <p style="margin:0;">By dining with us you agree to our <a href="\(policiesURL)" style="color:#1f6b3a;text-decoration:underline;">reservation policies</a>.</p>
+        </td>
+        </tr>
+        </table>
+        </td>
+        </tr>
+        </table>
         </body>
         </html>
         """
@@ -203,6 +259,49 @@ struct ManualEmailDraftService {
 
         \(confirmationPlainBody(reservation: reservation, manageLink: manageLink))
         """
+    }
+
+    static func emailDateLine(for reservation: ReservationRecord) -> String {
+        guard let date = ReservationFormatters.reservationDateKey.date(from: reservation.reservationDate) else {
+            return reservation.displayDate
+        }
+
+        return emailLongDateFormatter.string(from: date)
+    }
+
+    static func emailTimeLine(for reservation: ReservationRecord) -> String {
+        guard let date = ReservationFormatters.apiTime.date(from: reservation.reservationTime) else {
+            return reservation.displayTime
+        }
+
+        return emailLongTimeFormatter.string(from: date)
+    }
+
+    private static let emailLongDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.dateFormat = "EEEE, MMMM d, yyyy"
+        return formatter
+    }()
+
+    private static let emailLongTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.dateFormat = "h:mm a"
+        return formatter
+    }()
+
+    private static func formattedExpiresLine(_ value: String?) -> String? {
+        guard let value = value?.nilIfBlank else { return nil }
+        if let date = ReservationFormatters.serverDateTime.date(from: value) {
+            return "This private link expires \(emailLongDateFormatter.string(from: date)) at \(emailLongTimeFormatter.string(from: date))."
+        }
+        return "This private link expires \(value)."
+    }
+
+    private static func formattedExpiresHTML(_ value: String?) -> String {
+        guard let line = formattedExpiresLine(value) else { return "" }
+        return "<p style=\"margin:0 0 24px;font-size:13px;line-height:1.6;color:#8a8378;text-align:center;\">\(htmlEscape(line))</p>"
     }
 
     private static func guestFirstName(for reservation: ReservationRecord) -> String {
@@ -279,9 +378,8 @@ struct ReservationDetailView: View {
             }
         }
         .sheet(item: $guestConfirmationMailDraft) { draft in
-            GuestConfirmationMailComposer(draft: draft) {
-                guestConfirmationMailDraft = nil
-                guestManageLinkMessage = "Review the confirmation email before sending."
+            GuestConfirmationMailComposer(draft: draft) { result in
+                handleGuestConfirmationMailFinished(result)
             }
         }
         .navigationDestination(isPresented: $showEditScreen) {
@@ -310,15 +408,12 @@ struct ReservationDetailView: View {
                         }
                     }
 
-                    if reservation.hasUsableConfirmationEmail {
-                        Button("Confirm + Email") {
-                            Task {
-                                await perform(.confirmAndSendEmail)
-                            }
+                    ReservationConfirmDialog.backendEmailButton(
+                        hasUsableEmail: reservation.hasUsableConfirmationEmail
+                    ) {
+                        Task {
+                            await perform(.confirmAndSendEmail)
                         }
-                    } else {
-                        Button("Confirm + Email") {}
-                            .disabled(true)
                     }
                 } else {
                     Button(pendingAction.fullTitle, role: pendingAction.role) {
@@ -581,6 +676,7 @@ struct ReservationDetailView: View {
             await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
             ReservationHaptics.success()
         case .confirmAndSendEmail:
+            guard ReservationEmailWorkflow.isBackendConfirmEmailEnabled else { return }
             await controller.confirmReservation(reservation: reservation, context: modelContext)
             ReservationHaptics.success()
         case .seat:
@@ -739,6 +835,35 @@ struct ReservationDetailView: View {
         )
         guestManageLinkMessage = "Plain confirmation draft copied."
         ReservationHaptics.success()
+    }
+
+    private func handleGuestConfirmationMailFinished(_ result: MFMailComposeResult) {
+        guestConfirmationMailDraft = nil
+
+        switch result {
+        case .sent:
+            Task {
+                await finalizeManualConfirmationAfterSend()
+            }
+        case .cancelled, .saved, .failed:
+            guestManageLinkMessage = "Confirmation email was not sent. Reservation was not confirmed."
+        @unknown default:
+            guestManageLinkMessage = "Confirmation email was not sent. Reservation was not confirmed."
+        }
+    }
+
+    private func finalizeManualConfirmationAfterSend() async {
+        do {
+            _ = try await controller.recordManualConfirmationSent(
+                reservation: reservation,
+                context: modelContext
+            )
+            guestManageLinkMessage = "Confirmation email sent and reservation recorded."
+            ReservationHaptics.success()
+        } catch {
+            errorMessage = "Email was sent, but the reservation could not be recorded on the server. Check details and retry if needed."
+            ReservationHaptics.warning()
+        }
     }
 }
 

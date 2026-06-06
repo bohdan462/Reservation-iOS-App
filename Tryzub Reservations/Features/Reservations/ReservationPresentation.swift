@@ -224,6 +224,10 @@ extension ReservationRecord {
         confirmationEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
+    var hasManualConfirmationEmailRecord: Bool {
+        staffNotes?.contains(ReservationEmailWorkflow.manualConfirmationStaffNoteMarker) == true
+    }
+
     var isManualOrCallIn: Bool {
         sourceTypeValue.isManualSource || sourceSubmissionID <= 0 || email.isManualPlaceholderEmail
     }

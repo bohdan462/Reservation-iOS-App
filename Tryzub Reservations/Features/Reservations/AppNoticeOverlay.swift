@@ -14,45 +14,47 @@ struct AppNoticeOverlay: View {
 
     var body: some View {
         if let notice = notices.first {
-            Button {
-                showingDetails = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: notice.severity.symbolName)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(notice.severity.tint)
+            HStack(spacing: 8) {
+                Button {
+                    showingDetails = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: notice.severity.symbolName)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(notice.severity.tint)
 
-                    Text(notice.title)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+                        Text(notice.title)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
 
-                    if notices.count > 1 {
-                        Text("+\(notices.count - 1)")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
+                        if notices.count > 1 {
+                            Text("+\(notices.count - 1)")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
+                        }
                     }
-
-                    Button {
-                        onDismiss(notice)
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Dismiss notice")
                 }
-                .padding(.horizontal, 11)
-                .padding(.vertical, 8)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(Color(.separator).opacity(0.35), lineWidth: 0.5)
-                )
-                .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
+                .buttonStyle(.plain)
+
+                Button {
+                    onDismiss(notice)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss notice")
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(Color(.separator).opacity(0.35), lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
             .task(id: notice.id) {
                 switch notice.severity {
                 case .success, .info:

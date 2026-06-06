@@ -17,6 +17,7 @@ struct HostBoardView: View {
     let isSyncing: Bool
     let failedImportCount: Int
     let isVisible: Bool
+    var deferNetworkLoads: Bool = false
     let isAppActive: Bool
     let externalInteractionActive: Bool
     let onAddReservation: () -> Void
@@ -126,48 +127,46 @@ struct HostBoardView: View {
             .frame(width: safeWidth, height: safeHeight, alignment: .top)
             .background(TryzubColors.screenBackground)
         }
-        .confirmationDialog(
+        .alert(
             pendingActionTitle,
             isPresented: Binding(
-                get: { pendingAction != nil },
+                get: { pendingAction != nil && isVisible },
                 set: { if !$0 { pendingAction = nil } }
             ),
-            titleVisibility: .visible
-        ) {
-            if let pendingAction {
-                if pendingAction.action == .confirmOnly {
-                    Button("Confirm only") {
-                        Task {
-                            await perform(.confirmOnly, on: pendingAction.reservation)
+            actions: {
+                if let pendingAction {
+                    if pendingAction.action == .confirmOnly {
+                        Button("Confirm only") {
+                            Task {
+                                await perform(.confirmOnly, on: pendingAction.reservation)
+                            }
                         }
-                    }
 
-                    if pendingAction.reservation.hasUsableConfirmationEmail {
-                        Button("Confirm + Email") {
+                        ReservationConfirmDialog.backendEmailButton(
+                            hasUsableEmail: pendingAction.reservation.hasUsableConfirmationEmail
+                        ) {
                             Task {
                                 await perform(.confirmAndSendEmail, on: pendingAction.reservation)
                             }
                         }
                     } else {
-                        Button("Confirm + Email") {}
-                            .disabled(true)
-                    }
-                } else {
-                    Button(pendingAction.action.fullTitle, role: pendingAction.action.role) {
-                        Task {
-                            await perform(pendingAction.action, on: pendingAction.reservation)
+                        Button(pendingAction.action.fullTitle, role: pendingAction.action.role) {
+                            Task {
+                                await perform(pendingAction.action, on: pendingAction.reservation)
+                            }
                         }
                     }
                 }
+                Button("Cancel", role: .cancel) {
+                    pendingAction = nil
+                }
+            },
+            message: {
+                if let pendingAction {
+                    Text(pendingAction.action.dialogMessage(for: pendingAction.reservation))
+                }
             }
-            Button("Cancel", role: .cancel) {
-                pendingAction = nil
-            }
-        } message: {
-            if let pendingAction {
-                Text(pendingAction.action.dialogMessage(for: pendingAction.reservation))
-            }
-        }
+        )
         .task(id: isVisible && isAppActive) {
             // Starts/stops the auto-refresh loop when Today is visible and app is active.
             guard !isRunningForPreviews else { return }
@@ -177,10 +176,11 @@ struct HostBoardView: View {
             guard !isRunningForPreviews else { return }
             await runClockLoop()
         }
-        .task(id: "\(isVisible)-\(selectedDate.reservationDateString())") {
+        .task(id: "\(isVisible)-\(deferNetworkLoads)-\(controller.isStartupNetworkPassInFlight)-\(selectedDate.reservationDateString())") {
             // Lazy Home indicator load: availability/slots/blocked are screen-specific
             // and cached by the controller so tab switching does not refetch them.
             guard !isRunningForPreviews else { return }
+            guard !deferNetworkLoads, !controller.isStartupNetworkPassInFlight else { return }
             guard isVisible else {
                 controller.cancelAvailabilitySummary(date: selectedDateKey)
                 return
@@ -189,6 +189,12 @@ struct HostBoardView: View {
                   selectedDate.reservationDateString() == Date.reservationDateString() else {
                 return
             }
+            // Brief pause after launch sync so the next batch does not race QUIC setup.
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled,
+                  !deferNetworkLoads,
+                  !controller.isStartupNetworkPassInFlight,
+                  isVisible else { return }
             controller.ensureAvailabilitySummary(date: selectedDateKey)
         }
     }
@@ -345,6 +351,7 @@ struct HostBoardView: View {
             await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
             ReservationHaptics.success()
         case .confirmAndSendEmail:
+            guard ReservationEmailWorkflow.isBackendConfirmEmailEnabled else { return }
             await controller.confirmReservation(reservation: reservation, context: modelContext)
             ReservationHaptics.success()
         case .seat:

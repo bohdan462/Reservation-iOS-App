@@ -350,6 +350,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
     private let username: String
     private let applicationPassword: String
     private let session: URLSession
+    private let requestSerializer = ReservationAPIRequestSerializer()
 
     var debugBaseURLDescription: String {
         baseURL.absoluteString
@@ -375,7 +376,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
 
     private static let defaultSession: URLSession = {
         let configuration = URLSessionConfiguration.default
-        configuration.waitsForConnectivity = true
+        configuration.waitsForConnectivity = false
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 30
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -402,9 +403,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
     // Network: GET /ping.
     func ping(reason: ReservationAPIRequestReason = .ping) async throws -> PingResponseDTO {
         let url = try apiURL(path: "ping")
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let request = makeRequest(url: url, method: "GET", requiresAuth: false)
         let data = try await perform(request, retryCount: 0, reason: reason, requiresAuth: false)
         return try decode(PingResponseDTO.self, from: data, request: request)
     }
@@ -890,6 +889,11 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if #available(iOS 14.5, *) {
+            // Prefer HTTP/2 over QUIC; GoDaddy often drops HTTP/3 mid-request (-1005).
+            request.assumesHTTP3Capable = false
+        }
+        request.setValue("close", forHTTPHeaderField: "Connection")
         if requiresAuth {
             request.setValue(makeAuthHeader(), forHTTPHeaderField: "Authorization")
         }
@@ -1049,7 +1053,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
 
         while attempt <= effectiveRetryCount {
             do {
-                let (data, response) = try await session.data(for: request)
+                let (data, response) = try await requestSerializer.data(for: request, session: session)
                 try validate(response: response, data: data, request: request)
                 let successDiagnostics = ReservationAPIDiagnostics.make(
                     request: request,
@@ -1160,6 +1164,40 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
 private struct WordPressAPIError: Decodable {
     let code: String
     let message: String
+}
+
+// MARK: - Request Serialization
+
+// One in-flight request at a time to avoid QUIC connection storms on cold start.
+private actor ReservationAPIRequestSerializer {
+    private var isRunning = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func data(for request: URLRequest, session: URLSession) async throws -> (Data, URLResponse) {
+        await acquire()
+        defer { release() }
+        try? await Task.sleep(for: .milliseconds(200))
+        return try await session.data(for: request)
+    }
+
+    private func acquire() async {
+        if !isRunning {
+            isRunning = true
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    private func release() {
+        if waiters.isEmpty {
+            isRunning = false
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
 }
 
 // MARK: - Retry Classification

@@ -8,7 +8,7 @@ import SwiftUI
 // MARK: - Staff Host Actions
 
 // Business intent enum for staff actions.
-// Confirm only is PATCH status=confirmed; Confirm + Email calls the backend email endpoint.
+// Confirm only is PATCH status=confirmed; Confirm + Email uses POST /confirm when enabled.
 enum ReservationHostAction: String, Identifiable {
     case confirmOnly
     case confirmAndSendEmail
@@ -108,6 +108,24 @@ enum ReservationHostAction: String, Identifiable {
         case .confirmOnly, .confirmAndSendEmail, .seat, .assignTable, .complete:
             return nil
         }
+    }
+
+    static var isBackendConfirmEmailEnabled: Bool {
+        ReservationEmailWorkflow.isBackendConfirmEmailEnabled
+    }
+
+    var isInteractionEnabled: Bool {
+        switch self {
+        case .confirmAndSendEmail:
+            return Self.isBackendConfirmEmailEnabled
+        default:
+            return true
+        }
+    }
+
+    var disabledLabel: String? {
+        guard self == .confirmAndSendEmail, !isInteractionEnabled else { return nil }
+        return "Confirm + Email (backend disabled)"
     }
 
     // MARK: - Status Patch Mapping
@@ -229,9 +247,15 @@ enum ReservationHostAction: String, Identifiable {
             let helper = reservation.email.nilIfBlank == nil
                 ? "\n\nNo guest email on this reservation."
                 : ""
-            return "Choose Confirm only to update the reservation without email, or Confirm + Email to ask the server to send the confirmation email.\(helper)"
+            let manualFlow = Self.isBackendConfirmEmailEnabled
+                ? "Choose Confirm only to update the reservation without email, or Confirm + Email to ask the server to send the confirmation email."
+                : "Confirm only updates the reservation on the server. Backend email is disabled for the pilot — use Detail → More → Send confirmation email for the manual Gmail/Mail flow."
+            return "\(manualFlow)\(helper)"
         case .confirmAndSendEmail:
-            return "\(summary)\n\nThis will mark the reservation confirmed and ask the server to send a confirmation email to \(reservation.email)."
+            if Self.isBackendConfirmEmailEnabled {
+                return "\(summary)\n\nThis will mark the reservation confirmed and ask the server to send a confirmation email to \(reservation.email)."
+            }
+            return "Backend confirmation email is disabled for the pilot. Use Detail → More → Send confirmation email instead."
         case .seat:
             return "\(summary)\n\nThis only updates staff status. No email will be sent."
         case .assignTable:
@@ -369,10 +393,15 @@ struct ReservationActionButtons: View {
             if includeSecondary, actions.count > 1 {
                 Menu {
                     ForEach(actions.dropFirst()) { action in
-                        Button(role: action.role) {
-                            onAction(action)
-                        } label: {
-                            Label(action.fullTitle, systemImage: action.systemImage)
+                        if let disabledLabel = action.disabledLabel {
+                            Button(disabledLabel) {}
+                                .disabled(true)
+                        } else {
+                            Button(role: action.role) {
+                                onAction(action)
+                            } label: {
+                                Label(action.fullTitle, systemImage: action.systemImage)
+                            }
                         }
                     }
                 } label: {
@@ -396,12 +425,17 @@ struct ReservationActionButtons: View {
             if actions.count > 1 {
                 Menu {
                     ForEach(actions.dropFirst()) { action in
+                        if let disabledLabel = action.disabledLabel {
+                            Button(disabledLabel) {}
+                                .disabled(true)
+                        } else {
                             Button(role: action.role) {
                                 onAction(action)
                             } label: {
                                 Label(action.fullTitle, systemImage: action.systemImage)
                             }
                         }
+                    }
                 } label: {
                     Label("More", systemImage: "ellipsis")
                         .labelStyle(.titleAndIcon)
@@ -453,7 +487,8 @@ struct ReservationActionButtons: View {
             RoundedRectangle(cornerRadius: compact ? 8 : 9, style: .continuous)
                 .stroke(pendingInlineAction == action ? Color.primary.opacity(0.55) : Color.primary.opacity(isPrimary ? 0.22 : 0.14), lineWidth: 1)
         )
-        .disabled(isBusy)
+        .disabled(isBusy || !action.isInteractionEnabled)
+        .opacity(action.isInteractionEnabled ? 1 : 0.45)
         .accessibilityLabel(accessibilityLabel(for: action))
     }
 
@@ -523,6 +558,28 @@ struct ReservationActionButtons: View {
             return "Cancel reservation for \(reservation.guestName)"
         case .noShow:
             return "Mark no show for \(reservation.guestName)"
+        }
+    }
+}
+
+// MARK: - Confirm Dialog Helpers
+
+enum ReservationConfirmDialog {
+    @ViewBuilder
+    static func backendEmailButton(
+        hasUsableEmail: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        if ReservationEmailWorkflow.isBackendConfirmEmailEnabled {
+            if hasUsableEmail {
+                Button("Confirm + Email", action: action)
+            } else {
+                Button("Confirm + Email") {}
+                    .disabled(true)
+            }
+        } else {
+            Button("Confirm + Email (backend disabled)") {}
+                .disabled(true)
         }
     }
 }

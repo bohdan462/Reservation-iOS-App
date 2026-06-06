@@ -15,6 +15,9 @@ final class ReservationsController: ObservableObject {
         didSet { publishOperationState() }
     }
 
+    // True while the one-time cold-start reservation + setup sync is still running.
+    @Published private(set) var isStartupNetworkPassInFlight = false
+
     // Tracks the quiet host-board loop that keeps today's cache warm.
     @Published private(set) var isAutoRefreshing = false {
         didSet { publishOperationState() }
@@ -161,6 +164,17 @@ final class ReservationsController: ObservableObject {
         await performActiveWindowRefresh(context: context, mode: .startup, force: true)
     }
 
+    // Intent: Runs the cold-start sync pass without blocking the launch splash.
+    // Network: GET active window, then GET restaurant-setup (serialized by the API client).
+    func performStartupNetworkPass(context: ModelContext) async {
+        guard !isStartupNetworkPassInFlight else { return }
+        isStartupNetworkPassInFlight = true
+        defer { isStartupNetworkPassInFlight = false }
+
+        await loadIfNeeded(context: context)
+        _ = try? await loadRestaurantSetup(context: context)
+    }
+
     // MARK: - Legacy Refresh Entry Points
 
     // Intent: Refreshes the schedule window cache, not every historical reservation.
@@ -217,6 +231,11 @@ final class ReservationsController: ObservableObject {
     // Network: GET /managed-reservations?from=...&to=... when stale.
     func scheduleBecameActive(context: ModelContext) async {
         let scope = activeWindowScope()
+        if isScopeInFailureCooldown(scope) {
+            recordRefreshDecision(scope: scope, mode: .schedule, outcome: "skipped_cooldown")
+            ReservationAPILogger.skip(reason: .autoSkipCooldown, message: "\(scope.description) schedule activation skipped because failure cooldown is active")
+            return
+        }
         guard !isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) else {
             recordRefreshDecision(scope: scope, mode: .schedule, outcome: "skipped_fresh")
             ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "\(scope.description) schedule activation skipped because cache is fresh")
@@ -286,6 +305,11 @@ final class ReservationsController: ObservableObject {
     // Network: GET /managed-reservations?status=new and status=needs_review.
     func reviewBecameActive(context: ModelContext) async {
         let scope = activeWindowScope()
+        if isScopeInFailureCooldown(scope) {
+            recordRefreshDecision(scope: scope, mode: .review, outcome: "skipped_cooldown")
+            ReservationAPILogger.skip(reason: .autoSkipCooldown, message: "\(scope.description) review activation skipped because failure cooldown is active")
+            return
+        }
         guard !isScopeFresh(scope, freshnessInterval: reviewFreshnessInterval) else {
             recordRefreshDecision(scope: scope, mode: .review, outcome: "skipped_fresh")
             ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "\(scope.description) review activation skipped because cache is fresh")
@@ -1097,11 +1121,10 @@ final class ReservationsController: ObservableObject {
         }
 
         do {
-            async let availability = loadRestaurantDayAvailability(date: date)
-            async let slots = loadReservationSlots(date: date)
-            async let blocked = loadRestaurantBlockedSlots(date: date)
-
-            let (loadedAvailability, loadedSlots, loadedBlocked) = try await (availability, slots, blocked)
+            // Serialize availability reads so they do not race the active-window sync.
+            let loadedAvailability = try await loadRestaurantDayAvailability(date: date)
+            let loadedSlots = try await loadReservationSlots(date: date)
+            let loadedBlocked = try await loadRestaurantBlockedSlots(date: date)
             availabilitySummaryByDate[date] = ReservationAvailabilitySummary(
                 availability: loadedAvailability,
                 slots: loadedSlots,
@@ -1337,6 +1360,69 @@ final class ReservationsController: ObservableObject {
         }
     }
 
+    // MARK: - Manual Confirmation Email
+
+    // Intent: Records the pilot manual Gmail/Mail flow without calling POST /confirm.
+    // Network: PATCH status=confirmed when needed and append a staff note audit line.
+    // Note: confirmation_email_sent_at is only set by POST /confirm today; staff notes carry manual proof.
+    func recordManualConfirmationSent(
+        reservation: ReservationRecord,
+        context: ModelContext
+    ) async throws -> ReservationDTO {
+        try ensureMutationsAllowedOnline()
+
+        let id = reservation.remoteID
+        guard !actionInProgressIDs.contains(id) else {
+            throw ReservationControllerError.actionAlreadyInProgress
+        }
+
+        if reservation.hasManualConfirmationEmailRecord,
+           reservation.statusValue == .confirmed || reservation.statusValue == .seated {
+            let repository = ReservationRepository(context: context)
+            let service = ReservationMutationService(client: environment.apiClient, repository: repository)
+            return try await service.reconcileReservation(id: id)
+        }
+
+        actionInProgressIDs.insert(id)
+        defer { actionInProgressIDs.remove(id) }
+
+        let timestamp = Self.manualConfirmationTimestamp()
+        let noteLine = "\(ReservationEmailWorkflow.manualConfirmationStaffNoteMarker) \(timestamp)."
+        let existingNotes = reservation.staffNotes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let staffNotes = existingNotes.isEmpty
+            ? noteLine
+            : existingNotes + "\n\n" + noteLine
+
+        var request = ReservationUpdateRequest(staffNotes: staffNotes)
+        switch reservation.statusValue {
+        case .new, .needsReview:
+            request.status = .confirmed
+        default:
+            break
+        }
+
+        let repository = ReservationRepository(context: context)
+        let service = ReservationMutationService(client: environment.apiClient, repository: repository)
+        let updated = try await service.updateReservation(id: id, request: request)
+        markScopesTouched(after: updated)
+        latestEmailStatusByReservationID[id] = .sent
+        postNotice(
+            severity: .success,
+            source: .email,
+            title: "Manual confirmation recorded",
+            message: "Reservation confirmed on the server and manual email noted in staff notes."
+        )
+        return updated
+    }
+
+    private static func manualConfirmationTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.string(from: Date())
+    }
+
     // MARK: - Confirm With Email
 
     // Intent: Confirms reservation and asks backend to send/record confirmation email.
@@ -1346,6 +1432,16 @@ final class ReservationsController: ObservableObject {
         reservation: ReservationRecord,
         context: ModelContext
     ) async {
+        guard ReservationEmailWorkflow.isBackendConfirmEmailEnabled else {
+            postNotice(
+                severity: .info,
+                source: .email,
+                title: "Backend email disabled",
+                message: "Use Detail → More → Send confirmation email for the manual pilot flow."
+            )
+            return
+        }
+
         guard canStartMutationOnline() else { return }
 
         let id = reservation.remoteID
@@ -2075,17 +2171,15 @@ final class ReservationsController: ObservableObject {
         return true
     }
 
-    private func isScopeFresh(_ scope: ReservationSyncScope, freshnessInterval: TimeInterval) -> Bool {
-        guard let state = syncStateByScope[scope] else {
+    private func isScopeInFailureCooldown(_ scope: ReservationSyncScope) -> Bool {
+        guard let cooldownUntil = syncStateByScope[scope]?.cooldownUntil else {
             return false
         }
+        return cooldownUntil > Date()
+    }
 
-        if let cooldownUntil = state.cooldownUntil,
-           cooldownUntil > Date() {
-            return true
-        }
-
-        guard let lastSuccessAt = state.lastSuccessAt else {
+    private func isScopeFresh(_ scope: ReservationSyncScope, freshnessInterval: TimeInterval) -> Bool {
+        guard let lastSuccessAt = syncStateByScope[scope]?.lastSuccessAt else {
             return false
         }
 
