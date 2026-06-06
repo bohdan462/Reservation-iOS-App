@@ -60,6 +60,9 @@ struct ReservationsListView: View {
             tabContainer(.schedule) {
                 ReservationScheduleView(environment: environment, isActive: selectedTab == .schedule)
             }
+            tabContainer(.guests) {
+                GuestLookupView(environment: environment, isActive: selectedTab == .guests)
+            }
             tabContainer(.review) {
                 ReservationReviewQueueView(
                     reservations: pendingReviewRows,
@@ -170,7 +173,7 @@ struct ReservationsListView: View {
         switch selectedTab {
         case .schedule, .review:
             return 112
-        case .home, .more:
+        case .home, .guests, .more:
             return 62
         }
     }

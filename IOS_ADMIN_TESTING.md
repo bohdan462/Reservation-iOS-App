@@ -30,6 +30,7 @@ Controlled pilot testing and developer troubleshooting:
 | Hard delete | Hidden screen row action | `canHardDeleteReservations` | **Developer only** |
 | Restaurant settings | More → Operations | `canManageRestaurantSettings` | Manager + Developer |
 | Business analytics | More → Business Analytics | `canViewAnalytics` | Manager + Developer |
+| Guest Lookup / Book Call-In | Guests tab | `canCreateManualReservations` for create | Manager + Developer |
 | Guest manage link | Detail → More menu | `canGenerateGuestManageLinks` | Manager + Developer |
 
 **Role note:** `Tryzub_ReservationsApp` uses `AppRoleStore` and `RoleSelectionView`. The selectable pilot roles are **Manager** and **Developer**; `staff` still exists in the capability model but is not selectable today. Switching role in More recreates the root reservation shell with the selected capability set.
@@ -210,6 +211,19 @@ Shows:
 | Verify | **No** `confirmationEmailSentAt` change; **no** Mail sheet auto-opens |
 | Paste in Gmail/Mail | Manual MVP confirmation workflow |
 
+### Guest Lookup / Call-In
+
+| Step | Expected |
+| --- | --- |
+| Open Guests tab | Cached guest lookup appears; no backend guest table is fetched |
+| Type 1 letter | No results yet; search activates at 2 name characters or 4 phone digits |
+| Search by phone digits | Results prioritize matching phone |
+| Tap Book Call-In | Manual form opens with name/phone/email prefilled |
+| Phone confirmed unchecked | Add Reservation stays disabled / blocked |
+| Check Phone confirmed with caller | Valid call-in can be created through `POST /managed-reservations` as `manual_call_in` |
+| Airplane mode | Cached guest results remain visible; create actions are disabled/blocked |
+| API log while typing | No GET/POST requests from search typing |
+
 ### Confirm Only vs Confirm + Email
 
 | Step | Expected |
@@ -262,6 +276,8 @@ Shows:
 - [ ] Edit reservation time/party — save diff confirmation works
 - [ ] Hide obvious test duplicate — gone from lists
 - [ ] List tab shows upcoming reservations; search in All scope
+- [ ] Guests tab searches cached guests by name/phone without network calls
+- [ ] Guest result → Book Call-In prefills manual form and requires phone confirmation
 - [ ] Review tab shows pending queue
 - [ ] Generate guest manage link — paste into Mail manually
 - [ ] Notices appear and dismiss; app usable during slow network

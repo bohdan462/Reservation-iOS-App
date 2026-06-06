@@ -27,6 +27,7 @@ One-restaurant internal iOS app. **WordPress REST API is source of truth.** **Sw
 | SwiftData model | `Persistence/ReservationRecord.swift` |
 | DTOs | `Network/ReservationDTO.swift` |
 | Settings UI + store | `Features/Reservations/RestaurantSettingsStore.swift` |
+| Operational guest lookup | `Features/Guests/*` |
 | Guest memory | `Features/GuestInsights/*` |
 | Dev diagnostics | `Features/Reservations/DeveloperDiagnosticsView.swift` |
 | Roles + role picker | `Core/Roles/AppUserRole.swift`, `App/AppRoleStore.swift` |
@@ -35,7 +36,7 @@ One-restaurant internal iOS app. **WordPress REST API is source of truth.** **Sw
 
 ---
 
-## 1. Source tree (41 Swift files)
+## 1. Source tree (46 Swift files)
 
 ```
 Tryzub Reservations/
@@ -46,6 +47,10 @@ Tryzub Reservations/
 │   └── AppNotice.swift                 # Notice model (severity, source)
 ├── Core/Roles/AppUserRole.swift        # staff | manager | developer + AppCapabilities
 ├── Features/
+│   ├── Guests/                         # 3 files — cache-derived call-in lookup
+│   │   ├── GuestLookupModels.swift
+│   │   ├── GuestLookupStore.swift
+│   │   └── GuestLookupView.swift
 │   ├── GuestInsights/                  # 7 files — cache-only analytics
 │   │   ├── GuestInsightsController.swift
 │   │   ├── GuestInsightsModels.swift
@@ -113,10 +118,11 @@ Custom `ReservationFloatingTabBar` — **not** `TabView`.
 | --- | --- | --- | --- |
 | `.home` | Home | `HomeDashboardView` → `HostBoardView` | Active-window cache; pull-refresh; 60s active-window delta/full auto-refresh when visible; cached availability summary |
 | `.schedule` | List | `ReservationScheduleView` | Upcoming uses active-window cache; activation only ensures active window freshness; All mode pages history explicitly |
+| `.guests` | Guests | `GuestLookupView` | Cache-derived search only; no network while typing |
 | `.review` | Review | `ReservationReviewQueueView` | Filters active-window pending rows; activation only ensures active window freshness |
 | `.more` | More | `ReservationMoreView` | Child screens only on navigation |
 
-**Mount strategy:** All four tabs stay in `ZStack`; visibility via `opacity` / `allowsHitTesting` / `zIndex`. Each main tab has its own `NavigationStack`; More uses a typed destination path to avoid cancelled-detail path mismatch crashes.
+**Mount strategy:** All five tabs stay in `ZStack`; visibility via `opacity` / `allowsHitTesting` / `zIndex`. Each main tab has its own `NavigationStack`; More uses a typed destination path to avoid cancelled-detail path mismatch crashes. Desired next navigation cleanup is Host / Bookings / Guests / More; Review remains a separate tab for now.
 
 **Shared state:** `@EnvironmentObject ReservationsController`, `HiddenReservationsStore`.
 
@@ -132,6 +138,7 @@ Custom `ReservationFloatingTabBar` — **not** `TabView`.
 | Edit details / table | ✓ | ✓ | ✓ |
 | Confirm / cancel | ✗ | ✓ | ✓ |
 | Manual create | ✗ | ✓ | ✓ |
+| Guest Lookup call-in booking | ✗ | ✓ | ✓ |
 | Guest manage link | ✗ | ✓ | ✓ |
 | Hidden reservations | ✗ | ✓ | ✓ |
 | Restaurant settings | ✗ | ✓ | ✓ |
@@ -148,6 +155,7 @@ Custom `ReservationFloatingTabBar` — **not** `TabView`.
 | Seat, assign table, complete | ✓ | ✓ | ✓ |
 | Confirm, cancel, no-show | ✗ | ✓ | ✓ |
 | Manual create | ✗ | ✓ | ✓ |
+| Guest Lookup / Book Call-In | ✗ | ✓ | ✓ |
 | Guest manage link | ✗ | ✓ | ✓ |
 | Guest Memory / Regulars | ✓ | ✓ | ✓ |
 | Restaurant settings subtree | ✗ | ✓ | ✓ |
@@ -209,6 +217,16 @@ All HTTP; Basic auth; sanitized request logging; one-at-a-time request serialize
 - Filters active-window cached pending rows
 - `reviewBecameActive` on tab focus only ensures active-window freshness
 
+### Guests — `GuestLookupView`
+
+- Operational call-in lookup tab; V1 is **call-in only**.
+- Builds `GuestLookupResult` profiles from cached, non-hidden `ReservationRecord` rows.
+- Phone digits are the strongest identity key, email is secondary, and name-only matches stay weak/separate.
+- Search activates only with at least 2 name characters or 4 phone digits.
+- No network calls while searching; does **not** call `GuestInsightsController` or `RegularGuestsController`.
+- Book Call-In opens `ManualReservationFormView(prefill:)`; lookup-prefilled calls require local “Phone confirmed with caller” before create.
+- No backend guest profile table and no Walk-In UI yet.
+
 ### Detail — `ReservationDetailView`
 
 - Layered cards: hero, actions, contact, notes, service load, guest insights preview
@@ -221,6 +239,7 @@ All HTTP; Basic auth; sanitized request logging; one-at-a-time request serialize
 ### Create / Edit — `ManualReservationFormView.swift`
 
 - **Create:** review confirmation → `createAcceptedManualReservation` (confirmed, no email)
+- **Guest lookup prefill:** `ManualReservationPrefill` sets name/phone/email, still submits `source_type=manual_call_in`, and requires local phone confirmation before create.
 - **Edit (`ReservationEditFormView`):** save diff confirmation → PATCH; hide button for eligible manual rows
 - Slot chips via `RestaurantSettingsStore.ensureDateOperations` or controller slot load
 
@@ -241,9 +260,11 @@ All HTTP; Basic auth; sanitized request logging; one-at-a-time request serialize
 
 ### Guest Insights
 
+- `GuestLookupView` (Guests tab) — operational, cache-derived, lightweight call-in lookup
 - `RegularGuestsView` (More) — all roles
 - `GuestInsightsView` — from detail preview; **no network**
 - Known performance risk: broad cache `@Query` plus repeated in-memory clustering; refactor into cached summaries before growing history.
+- Operational Guest Lookup is separate from Guest Memory; do not reuse heavy clustering for call-in search.
 
 ### Diagnostics — `DeveloperDiagnosticsView`
 
@@ -296,6 +317,7 @@ All HTTP; Basic auth; sanitized request logging; one-at-a-time request serialize
 | Home pull-refresh | Active-window full refresh | Refresh indicator |
 | Schedule tab focus (stale) | Active-window full refresh | No |
 | Review tab focus (stale) | Active-window full refresh | No |
+| Guests search typing | Local cache search only | No |
 | More → Hidden open | `include_hidden=1` upsert | Screen loading state |
 | More → Cancelled open | Cancelled window upsert | Screen loading state |
 | More → Settings child | Per-screen lazy GET | Screen loading state |

@@ -19,8 +19,9 @@ flowchart TB
         Env["AppEnvironment<br/>apiClient + selected role + capabilities"]
         Shell["ReservationsListView<br/>tab shell"]
         Ctrl["ReservationsController<br/>workflow coordinator"]
-        Views["Feature views<br/>Home · List · Review · More"]
-        Guest["GuestInsights<br/>cache-only"]
+        Views["Feature views<br/>Home · List · Guests · Review · More"]
+        GuestLookup["GuestLookup<br/>cache-derived call-in"]
+        Guest["GuestInsights<br/>cache-only analytics"]
         Settings["RestaurantSettingsStore<br/>lazy settings/ops UI"]
         SD["SwiftData<br/>ReservationRecord"]
     end
@@ -47,6 +48,7 @@ flowchart TB
     Shell --> Ctrl
     Shell --> Views
     Views --> Ctrl
+    Views --> GuestLookup
     Views --> Guest
     Views --> Settings
     Settings --> API
@@ -68,6 +70,7 @@ flowchart TB
 - Views call **controller workflow methods** for reservations; settings screens use `RestaurantSettingsStore` with the shared API client.
 - Home availability/slots/blocked summary is controller-owned and date-keyed (`ensureAvailabilitySummary`, `cachedReservationSlots`, `cachedRestaurantBlockedSlots`) so Add/Edit can reuse cached slot data.
 - `ReservationsController.operationState` mirrors refresh, mutation, reconcile, create, import-count, and offline state for granular UI/diagnostics without changing existing workflow methods.
+- Guest Lookup never touches network while searching; it derives call-in matches from cached `ReservationRecord` rows and hands a `ManualReservationPrefill` to the manual create form.
 - Guest Insights never touches network or SwiftData writes.
 
 ---
@@ -114,6 +117,7 @@ flowchart LR
     subgraph Shell["ReservationsListView — all tabs MOUNTED"]
         H["Home<br/>HomeDashboardView → HostBoardView"]
         L["List<br/>ReservationScheduleView"]
+        G["Guests<br/>GuestLookupView"]
         R["Review<br/>ReservationReviewQueueView"]
         M["More<br/>ReservationMoreView"]
     end
@@ -126,12 +130,14 @@ flowchart LR
 | --- | --- | --- | --- |
 | Home | `HomeDashboardView` → `HostBoardView` | Yes — auto-refresh, clock, availability | active-window `@Query` filtered to selected date |
 | List | `ReservationScheduleView` | Yes — activation ensure-fresh | active-window `@Query`; All mode paged on demand |
+| Guests | `GuestLookupView` | Yes — search/debounce only while active | non-hidden cached reservations grouped into lightweight guest profiles |
 | Review | `ReservationReviewQueueView` | Yes — activation ensure-fresh | active-window pending-review `@Query` |
 | More | `ReservationMoreView` | No | Navigation pushes only |
 
 **What matters**
 - Tabs stay in the tree (opacity/zIndex) to avoid NavigationStack + `@Query` rebuild lag.
 - Inactive tabs do not run auto-refresh loops (`isActive` guards `.task` loops).
+- Guests search is cache-only and does not call Guest Insights / Regular Guests clustering.
 - More sub-screens fetch **only when navigated to** (settings, hidden, cancelled, diagnostics).
 
 ---
@@ -357,7 +363,39 @@ flowchart LR
 
 ---
 
-## 9. Guest manage link & email direction
+## 9. Guest Lookup / Call-In booking
+
+```mermaid
+sequenceDiagram
+    participant Staff
+    participant G as GuestLookupView
+    participant Store as GuestLookupStore
+    participant Cache as SwiftData ReservationRecord
+    participant Form as ManualReservationFormView
+    participant C as ReservationsController
+    participant API as API Client
+
+    Staff->>G: search name or phone
+    G->>Store: debounce query
+    Store->>Cache: use cached non-hidden rows
+    Store-->>G: GuestLookupResult list
+    Staff->>G: Book Call-In
+    G->>Form: ManualReservationPrefill
+    Staff->>Form: confirm phone with caller
+    Form->>C: createAcceptedManualReservation
+    C->>API: POST /managed-reservations (manual_call_in)
+```
+
+**What matters**
+- V1 is call-in only; no Walk-In UI yet.
+- No backend guest profile table exists. Lookup profiles are derived from the local reservation cache.
+- Phone digits are the strongest identity key; email is secondary; name-only matches remain weak and are not aggressively merged.
+- Search is local only. No API calls happen during typing, and the screen does not use Guest Insights / Regular Guests clustering.
+- Prefilled manual create still uses server-first `POST /managed-reservations` and does not save locally until the backend returns a reservation.
+
+---
+
+## 10. Guest manage link & email direction
 
 ```mermaid
 sequenceDiagram
@@ -388,7 +426,7 @@ sequenceDiagram
 
 ---
 
-## 10. SwiftData cache flow
+## 11. SwiftData cache flow
 
 ```mermaid
 flowchart TD
@@ -412,7 +450,7 @@ flowchart TD
 
 ---
 
-## 11. Backend integration map
+## 12. Backend integration map
 
 ```mermaid
 flowchart LR
@@ -443,7 +481,7 @@ flowchart LR
 
 ---
 
-## 12. Current Architecture Audit
+## 13. Current Architecture Audit
 
 ### Strong
 
@@ -477,6 +515,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | `RegularGuestsView` | Partly mitigated | Broad `@Query` still observes cached reservations, but clustering now runs through `RegularGuestsStore` instead of body computed properties. | Keep store caching; next improvement is snapshot/off-main analysis if cache grows further. |
 | `GuestInsightsView` | Partly mitigated | Detail and Guest Insights compute reports into state keyed by selected row/cache freshness instead of body-time computed properties. | Keep reports lazy; next improvement is lightweight snapshots to avoid passing broad SwiftData arrays. |
+| `GuestLookupView` | New lightweight path | Broad non-hidden cache query feeds `GuestLookupStore`, but search uses cached profiles and no O(n²) clustering. | Keep call-in lookup separate from Guest Insights / Regular Guests. |
 | Guest-analysis screens | Confirmed | Cache-only does not mean cheap. Guest Memory and Guest Insights are intentionally lazy, but broad local analysis can still block navigation on large caches. | Treat any new guest-analysis work like analytics: precompute/cache reports, debounce search, and never run clustering from a SwiftUI body property. |
 | Mounted tabs + `@Query` | Partly mitigated | Tabs stay mounted for navigation stability; each tab still observes SwiftData writes and may recompute local filters after upserts. | Keep active-window narrowed queries; consider controller-published counts for badges if cache grows. |
 | Schedule All | Guarded | User-triggered All mode can still load many pages and upsert many rows; this is expected but can jank if used during service. | Keep All mode explicit; add page-level UI copy and avoid background loading more than one page. |
@@ -501,7 +540,7 @@ flowchart LR
 
 ---
 
-## 13. Next Refactor Plan
+## 14. Next Refactor Plan
 
 1. **Guest analysis snapshots:** Regular Guests and Guest Insights are now memoized, but still operate on SwiftData objects on the main actor. If cache grows further, copy lightweight snapshots and analyze off the UI path.
 2. **Extract form slot state:** Add/Edit now blocks unverified/closed dates more safely, but slot loading and cached-slot selection still live in the form view. Move them into a small form view model before visual redesign.
@@ -514,7 +553,7 @@ flowchart LR
 
 ---
 
-## 14. Known weak spots (document, do not fix in this pass)
+## 15. Known weak spots (document, do not fix in this pass)
 
 | Area | Issue |
 | --- | --- |

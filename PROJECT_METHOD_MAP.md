@@ -8,6 +8,7 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 - `ReservationHostAction.confirmOnly` → `updateStatus(.confirmed)` → PATCH — **no email**
 - `ReservationHostAction.confirmAndSendEmail` → `confirmReservation` → POST `/confirm` — **backend email**
 - `createAcceptedManualReservation` → POST — confirmed, **no email**
+- `GuestLookupView` → cache-derived operational call-in lookup — **no network while searching**
 - `generateGuestManageLink` → POST `/guest-manage-link` — **manual Gmail/Mail MVP**, no email sent
 - `ManualEmailDraftService.confirmationDraft` → local text only — no endpoint, no email sent, no status change
 
@@ -196,6 +197,7 @@ All throw `actionAlreadyInProgress` if overlapping load/save flags set.
 | Controller state | `isCreatingReservation` |
 | Audience | manager+ |
 | Name clear? | Yes |
+| Guest lookup prefill | Optional `ManualReservationPrefill`; still posts `source_type=manual_call_in` and requires local phone confirmation when source is `callInGuestLookup` |
 
 #### `updateReservation(id:request:context:)`
 | Field | Value |
@@ -505,6 +507,19 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 | Network | None |
 | Notes | Placeholder emails excluded from identity matching |
 
+## GuestLookupStore
+
+**Files:** `Features/Guests/GuestLookupModels.swift`, `Features/Guests/GuestLookupStore.swift`, `Features/Guests/GuestLookupView.swift`
+
+| Method / path | Behavior |
+| --- | --- |
+| `GuestLookupStore.updateCache(records:cacheKey:)` | Builds lightweight profiles from cached non-hidden `ReservationRecord` rows only when cache freshness changes |
+| `GuestLookupStore.updateSearch(_:)` | Local search only; activates at 2 name characters or 4 phone digits |
+| Identity priority | Phone digits, then email, then weak name-only rows kept separate |
+| Create handoff | `GuestLookupResult.prefill` → `ManualReservationFormView(prefill:)` |
+| Network | None while searching; create still goes through `createAcceptedManualReservation` |
+| Explicit non-goal | Does not use Guest Insights / Regular Guests clustering and does not create backend guest tables |
+
 ---
 
 ## Major view lifecycle methods
@@ -538,6 +553,13 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 | `.task(id: isActive)` | `reviewBecameActive` → active-window freshness check |
 | `.refreshable` | active-window refresh |
 
+### GuestLookupView
+| Trigger | Effect |
+| --- | --- |
+| `.task(id: cacheKey)` | Rebuild cached lookup profiles only when the visible cache snapshot changes |
+| Search typing | Debounced local search against cached profiles; no API call |
+| Book Call-In | Opens `ManualReservationFormView(prefill:)` and requires phone confirmation before create |
+
 ### ReservationDetailView
 | Trigger | Effect |
 | --- | --- |
@@ -551,6 +573,7 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 | Trigger | Effect |
 | --- | --- |
 | Create save | Confirmation alert → `createAcceptedManualReservation` |
+| Guest lookup prefill | Optional `ManualReservationPrefill`; still creates `manual_call_in` and requires local phone confirmation for lookup-prefilled calls |
 | Edit save | Diff review → `updateReservation` PATCH |
 | Hide | `hideWrongEntry` |
 | Slot load | `ensureDateOperations` or controller slot fetch |

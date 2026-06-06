@@ -8,6 +8,7 @@ import SwiftUI
 enum ReservationsAppTab: Hashable, CaseIterable, Identifiable {
     case home
     case schedule
+    case guests
     case review
     case more
 
@@ -19,6 +20,8 @@ enum ReservationsAppTab: Hashable, CaseIterable, Identifiable {
             return "Home"
         case .schedule:
             return "List"
+        case .guests:
+            return "Guests"
         case .review:
             return "Review"
         case .more:
@@ -32,6 +35,8 @@ enum ReservationsAppTab: Hashable, CaseIterable, Identifiable {
             return "house"
         case .schedule:
             return "calendar"
+        case .guests:
+            return "person.2"
         case .review:
             return "exclamationmark.triangle"
         case .more:
@@ -45,6 +50,8 @@ enum ReservationsAppTab: Hashable, CaseIterable, Identifiable {
             return "house.fill"
         case .schedule:
             return "calendar"
+        case .guests:
+            return "person.2.fill"
         case .review:
             return "exclamationmark.triangle.fill"
         case .more:

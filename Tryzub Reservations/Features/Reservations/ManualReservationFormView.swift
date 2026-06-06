@@ -10,22 +10,27 @@ import SwiftData
 
 struct ManualReservationFormView: View {
     let failure: ImportFailureDTO?
+    let prefill: ManualReservationPrefill?
     let onCreateReservation: (ReservationCreateRequest) async throws -> ReservationDTO
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var controller: ReservationsController
     @State private var draft: ReservationFormDraft
+    @State private var isPhoneConfirmedForLookup: Bool
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showCreateConfirmation = false
 
     init(
         failure: ImportFailureDTO? = nil,
+        prefill: ManualReservationPrefill? = nil,
         onCreateReservation: @escaping (ReservationCreateRequest) async throws -> ReservationDTO
     ) {
         self.failure = failure
+        self.prefill = prefill
         self.onCreateReservation = onCreateReservation
-        _draft = State(initialValue: ReservationFormDraft(failure: failure))
+        _draft = State(initialValue: ReservationFormDraft(failure: failure, prefill: prefill))
+        _isPhoneConfirmedForLookup = State(initialValue: prefill?.source != .callInGuestLookup)
     }
 
     var body: some View {
@@ -38,6 +43,8 @@ struct ManualReservationFormView: View {
                 errorMessage: errorMessage,
                 failure: failure,
                 reservation: nil,
+                requiresPhoneConfirmation: prefill?.source == .callInGuestLookup,
+                isPhoneConfirmedForLookup: $isPhoneConfirmedForLookup,
                 onCancel: { dismiss() },
                 onSubmit: { prepareCreateConfirmation() }
             )
@@ -103,6 +110,9 @@ struct ManualReservationFormView: View {
                 setup: controller.restaurantSetup,
                 applyLeadTime: controller.hasLoadedRestaurantSetup
             )
+            if prefill?.source == .callInGuestLookup, !isPhoneConfirmedForLookup {
+                throw ReservationFormValidationError(message: "Confirm the caller's phone number before creating this call-in reservation.")
+            }
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -146,12 +156,14 @@ struct ReservationEditFormView: View {
             draft: $draft,
             originalDraft: originalDraft,
             isSaving: isSaving,
-            errorMessage: errorMessage,
-            failure: nil,
-            reservation: reservation,
-            onCancel: { dismiss() },
-            onSubmit: { prepareSaveConfirmation() },
-            onHideReservation: reservation.canSoftHideAsWrongEntry && !reservation.isHidden
+                errorMessage: errorMessage,
+                failure: nil,
+                reservation: reservation,
+                requiresPhoneConfirmation: false,
+                isPhoneConfirmedForLookup: .constant(false),
+                onCancel: { dismiss() },
+                onSubmit: { prepareSaveConfirmation() },
+                onHideReservation: reservation.canSoftHideAsWrongEntry && !reservation.isHidden
                 ? { isShowingHideConfirmation = true }
                 : nil
         )
@@ -324,6 +336,8 @@ private struct ReservationFormContent: View {
     let errorMessage: String?
     let failure: ImportFailureDTO?
     var reservation: ReservationRecord?
+    let requiresPhoneConfirmation: Bool
+    @Binding var isPhoneConfirmedForLookup: Bool
     let onCancel: () -> Void
     let onSubmit: () -> Void
     var onHideReservation: (() -> Void)?
@@ -449,6 +463,20 @@ private struct ReservationFormContent: View {
                     .keyboardType(.emailAddress)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+            }
+
+            if requiresPhoneConfirmation {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle(isOn: $isPhoneConfirmedForLookup) {
+                        Label("Phone confirmed with caller", systemImage: "checkmark.shield")
+                            .font(.subheadline.weight(.semibold))
+                    }
+
+                    Text("Required for call-in bookings started from Guest Lookup.")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(TryzubColors.mutedText)
+                }
+                .padding(.top, 2)
             }
         }
         .onAppear {
@@ -746,6 +774,10 @@ private struct ReservationFormContent: View {
     }
 
     private var formBlockingMessage: String? {
+        if requiresPhoneConfirmation, !isPhoneConfirmedForLookup {
+            return "Confirm the caller's phone number before creating this call-in reservation."
+        }
+
         if let availabilityValidationMessage {
             return availabilityValidationMessage
         }
@@ -1240,7 +1272,7 @@ private struct ReservationFormDraft {
     var status: ReservationStatus
     var supersededById: String
 
-    init(failure: ImportFailureDTO?) {
+    init(failure: ImportFailureDTO?, prefill: ManualReservationPrefill? = nil) {
         let snapshot = failure?.reservation
         guestName = snapshot?.guestName ?? ""
         email = snapshot?.email ?? ""
@@ -1257,6 +1289,12 @@ private struct ReservationFormDraft {
             staffNotes = "Created manually from failed Flamingo import \(failure.sourceSubmissionId.map(String.init) ?? "unknown")."
         } else {
             staffNotes = ""
+        }
+
+        if failure == nil, let prefill {
+            guestName = prefill.guestName
+            phone = prefill.phoneDigits.map(ReservationInputNormalizer.sanitizedUSPhoneInput) ?? ""
+            email = prefill.email ?? ""
         }
     }
 
