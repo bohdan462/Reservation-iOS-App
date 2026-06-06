@@ -1185,7 +1185,7 @@ private struct HostBoardReservationRow: View {
     }
 
     private func handle(_ action: ReservationHostAction) {
-        if action == .assignTable || (action == .seat && !reservation.hasTableAssignment) {
+        if action == .assignTable {
             tableAssignmentReservation = reservation
         } else {
             onAction(action, reservation)

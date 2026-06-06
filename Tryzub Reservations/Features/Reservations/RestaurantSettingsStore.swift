@@ -543,6 +543,7 @@ struct RestaurantSettingsView: View {
     @State private var errorMessage: String?
     @State private var successMessage: String?
     @State private var didLoadInitialDraft = false
+    @AppStorage(ReservationTableOptionsStore.storageKey) private var tableOptionsRawValue = ReservationTableOptionsStore.defaultRawValue
 
     private var hasChanges: Bool {
         draft != savedDraft
@@ -594,6 +595,15 @@ struct RestaurantSettingsView: View {
                         .font(.subheadline.weight(.medium))
 
                     SettingsHelperText("Booking window is how far ahead guests can book. Large party threshold marks reservations for review. Minimum lead time controls how soon before service online bookings are allowed.")
+                }
+
+                SettingsCard(title: "Table Names", systemImage: "table.furniture") {
+                    SettingsTextEditor(
+                        title: "iOS-local table list",
+                        text: $tableOptionsRawValue,
+                        minHeight: 92
+                    )
+                    SettingsHelperText("Temporary local list for Assign Table chips. Use one table per line or comma-separated names. Backend restaurant setup does not yet expose table_names.")
                 }
 
                 SettingsCard(title: "Email Identity", systemImage: "envelope") {
@@ -694,7 +704,7 @@ struct RestaurantSettingsView: View {
         do {
             let request = try draft.updateRequest()
             let saved = try await settingsStore.saveRestaurantSetup(request: request)
-            _ = try? await controller.loadRestaurantSetup()
+            _ = try? await controller.loadRestaurantSetup(force: true)
             setup = saved
             draft = RestaurantSetupDraft(setup: saved)
             savedDraft = draft
@@ -1576,6 +1586,32 @@ private struct SettingsNumberField: View {
     var body: some View {
         SettingsTextField(title: title, text: $text)
             .keyboardType(.numberPad)
+    }
+}
+
+private struct SettingsTextEditor: View {
+    let title: String
+    @Binding var text: String
+    var minHeight: CGFloat = 88
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: $text)
+                .font(.subheadline.weight(.medium))
+                .frame(minHeight: minHeight)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .scrollContentBackground(.hidden)
+                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                }
+        }
     }
 }
 

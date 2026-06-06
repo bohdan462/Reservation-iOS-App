@@ -152,14 +152,12 @@ enum ReservationHostAction: String, Identifiable {
 
         if capabilities.canSeatReservations,
            status == .confirmed {
-            if !reservation.hasTableAssignment,
+            actions.append(.seat)
+
+            if includeSecondary,
+               !reservation.hasTableAssignment,
                capabilities.canEditReservationDetails {
                 actions.append(.assignTable)
-                if includeSecondary {
-                    actions.append(.seat)
-                }
-            } else {
-                actions.append(.seat)
             }
         }
 
@@ -552,13 +550,34 @@ private extension String {
     }
 }
 
+private extension Array where Element: Hashable {
+    func uniquedPreservingOrder() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
+    }
+}
+
 // MARK: - Table Assignment Popover
+
+enum ReservationTableOptionsStore {
+    static let storageKey = "tryzub.localTableNames"
+    static let defaultRawValue = "A1\nA2\nA3\nB1\nB2\nB3\nBar\nPatio"
+
+    static func options(from rawValue: String) -> [String] {
+        rawValue
+            .components(separatedBy: CharacterSet(charactersIn: ",\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .uniquedPreservingOrder()
+    }
+}
 
 struct TableAssignmentSheet: View {
     let reservation: ReservationRecord
     let onSave: (String) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(ReservationTableOptionsStore.storageKey) private var tableOptionsRawValue = ReservationTableOptionsStore.defaultRawValue
     @State private var tableName: String
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -681,7 +700,7 @@ struct TableAssignmentSheet: View {
     }
 
     private var tableSuggestions: [String] {
-        ["A1", "A2", "A3", "B1", "B2", "B3", "Bar", "Patio"]
+        ReservationTableOptionsStore.options(from: tableOptionsRawValue)
     }
 
     // Intent: Staff assigns a table through the caller's PATCH handler.

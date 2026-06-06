@@ -23,6 +23,7 @@ enum ReservationAPIRequestReason: String {
     case failureCount = "failure_count"
     case importFailuresFull = "import_failures_full"
     case cancelledReservations = "cancelled_reservations"
+    case cancelledReservationsPage = "cancelled_reservations_page"
     case scheduleWindow = "schedule_window"
     case scheduleAllPage = "schedule_all_page"
     case reviewQueues = "review_queues"
@@ -48,7 +49,7 @@ enum ReservationAPIRequestReason: String {
     case manualSkipCooldown = "manual_skip_cooldown"
     case scopeSkipInFlight = "scope_skip_in_flight"
     case scopeSkipFresh = "scope_skip_fresh"
-    case scheduleAllBlocked = "schedule_all_blocked"
+    case scheduleAllBlocked = "schedule_all_page_blocked"
     case autoSkipBusy = "auto_skip_busy"
     case autoSkipInactive = "auto_skip_inactive"
 }

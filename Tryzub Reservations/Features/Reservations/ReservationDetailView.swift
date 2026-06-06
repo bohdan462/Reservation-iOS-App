@@ -479,8 +479,6 @@ struct ReservationDetailView: View {
     private func handleAction(_ action: ReservationHostAction) {
         if action == .assignTable {
             tableAssignmentReservation = reservation
-        } else if action == .seat, !reservation.hasTableAssignment {
-            tableAssignmentReservation = reservation
         } else if action == .confirmOnly || action == .confirmAndSendEmail || action == .cancel || action == .noShow {
             pendingAction = action
         } else {
@@ -492,13 +490,7 @@ struct ReservationDetailView: View {
 
     // Intent: Converts detail actions into controller calls.
     // Confirm = PATCH status confirmed; Confirm + Email = POST /confirm.
-    private func perform(_ action: ReservationHostAction, allowSeatWithoutTable: Bool = false) async {
-        if action == .seat, !allowSeatWithoutTable, !reservation.hasTableAssignment {
-            pendingAction = nil
-            tableAssignmentReservation = reservation
-            return
-        }
-
+    private func perform(_ action: ReservationHostAction) async {
         pendingAction = nil
         isSavingQuickAction = true
         errorMessage = nil

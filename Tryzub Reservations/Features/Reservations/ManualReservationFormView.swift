@@ -318,8 +318,6 @@ private struct ReservationFormContent: View {
     var onHideReservation: (() -> Void)?
 
     @EnvironmentObject private var controller: ReservationsController
-    @State private var isEmailExpanded = false
-    @State private var isNotesPresented = false
     @State private var isCustomTimePresented = false
     @State private var didApplyInitialSettings = false
     @State private var suggestedSlots: ReservationSlotsResponseDTO?
@@ -349,12 +347,6 @@ private struct ReservationFormContent: View {
                 }
             }
         }
-        .sheet(isPresented: $isNotesPresented) {
-            ReservationNotesSheet(
-                guestNotes: $draft.guestNotes,
-                staffNotes: $draft.staffNotes
-            )
-        }
         .onAppear {
             applyInitialSettingsIfNeeded()
             ensureSlotLoad()
@@ -373,7 +365,8 @@ private struct ReservationFormContent: View {
 
     private var formShell: some View {
         formFields
-            .frame(maxWidth: 680, alignment: .leading)
+            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
             .padding(.horizontal, 12)
             .padding(.top, 8)
     }
@@ -394,9 +387,9 @@ private struct ReservationFormContent: View {
 
             if mode.showsEditControls {
                 editDetailsCard
-            } else {
-                secondaryActions
             }
+
+            notesSection
         }
     }
 
@@ -409,34 +402,10 @@ private struct ReservationFormContent: View {
                     .keyboardType(.phonePad)
             }
 
-            if isEmailExpanded || !draft.email.trimmed.isEmpty {
-                HStack(alignment: .bottom, spacing: 8) {
-                    ReservationFormTextField(title: "Email optional", text: $draft.email, prompt: "Leave blank if none")
-                        .keyboardType(.emailAddress)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-
-                    Button {
-                        draft.email = ""
-                        isEmailExpanded = false
-                        ReservationHaptics.selection()
-                    } label: {
-                        Image(systemName: "chevron.up")
-                            .frame(width: 32, height: 34)
-                    }
-                    .buttonStyle(ReservationHeaderIconButtonStyle())
-                }
-            } else {
-                Button {
-                    isEmailExpanded = true
-                    ReservationHaptics.selection()
-                } label: {
-                    Label("Add email (optional)", systemImage: "envelope")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(TryzubColors.mutedText)
-                }
-                .buttonStyle(.plain)
-            }
+            ReservationFormTextField(title: "Email optional", text: $draft.email, prompt: "Leave blank if none")
+                .keyboardType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
         }
     }
 
@@ -589,48 +558,6 @@ private struct ReservationFormContent: View {
         }
     }
 
-    private var secondaryActions: some View {
-        HStack(spacing: 10) {
-            Button {
-                isNotesPresented = true
-                ReservationHaptics.selection()
-            } label: {
-                Label(notesButtonTitle, systemImage: "note.text")
-                    .font(.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 36)
-            }
-            .buttonStyle(.plain)
-            
-            .foregroundStyle(.primary.opacity(0.78))
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            }
-     
-            if !mode.showsEditControls {
-                ReservationChoiceChip(
-                    title: reliableEmailHint,
-                    subtitle: "Email",
-                    isSelected: false,
-                    minWidth: 100,
-                    minHeight: 36
-                )
-            }
-        }
-       
-    }
-
-    private var notesButtonTitle: String {
-        draft.guestNotes.trimmed.isEmpty && draft.staffNotes.trimmed.isEmpty
-            ? "Add Notes"
-            : "Notes Added"
-    }
-
-    private var reliableEmailHint: String {
-        draft.email.trimmed.isEmpty ? "-" : "Provided"
-    }
-
     private var editDetailsCard: some View {
         ReservationServiceCard(title: "Service Details", systemImage: "slider.horizontal.3", spacing: 8) {
             LazyVGrid(
@@ -660,24 +587,8 @@ private struct ReservationFormContent: View {
                     .keyboardType(.numberPad)
             }
 
-            HStack(spacing: 8) {
-                Button {
-                    isNotesPresented = true
-                    ReservationHaptics.selection()
-                } label: {
-                    Label(notesButtonTitle, systemImage: "note.text")
-                        .font(.caption2.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 32)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(TryzubColors.primaryText)
-                .background(TryzubColors.cardBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                        .stroke(TryzubColors.border, lineWidth: 1)
-                }
-
-                if let onHideReservation {
+            if let onHideReservation {
+                HStack {
                     Button(role: .destructive, action: onHideReservation) {
                         Label("Hide", systemImage: "archivebox")
                             .font(.caption2.weight(.semibold))
@@ -692,6 +603,13 @@ private struct ReservationFormContent: View {
                     }
                 }
             }
+        }
+    }
+
+    private var notesSection: some View {
+        ReservationServiceCard(title: "Notes", systemImage: "note.text", spacing: 8) {
+            ReservationFormTextEditor(title: "Guest notes", text: $draft.guestNotes, minHeight: 96)
+            ReservationFormTextEditor(title: "Staff notes", text: $draft.staffNotes, minHeight: 112)
         }
     }
 
@@ -713,9 +631,11 @@ private struct ReservationFormContent: View {
             .foregroundStyle(Color(.systemBackground))
             .padding(.vertical, 14)
             .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+            .frame(maxWidth: 680)
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, mode.primaryButtonBottomInset)
+            .frame(maxWidth: .infinity)
             .background(.regularMaterial)
         }
         .buttonStyle(.plain)
@@ -1060,34 +980,6 @@ private struct ReservationFormDraft {
 }
 
 // MARK: - Form Pieces
-
-private struct ReservationNotesSheet: View {
-    @Binding var guestNotes: String
-    @Binding var staffNotes: String
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 12) {
-                ReservationFormTextEditor(title: "Guest notes", text: $guestNotes, minHeight: 120)
-                ReservationFormTextEditor(title: "Staff notes", text: $staffNotes, minHeight: 150)
-                Spacer()
-            }
-            .padding(16)
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("Reservation Notes")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        ReservationHaptics.selection()
-                        dismiss()
-                    }
-                }
-            }
-        }
-    }
-}
 
 private struct ReservationFormCard<Content: View>: View {
     let title: String

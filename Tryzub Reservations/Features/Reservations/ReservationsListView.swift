@@ -618,7 +618,11 @@ private struct ReservationScheduleView: View {
                 page: page,
                 search: search,
                 isAllScope: scope == .all,
-                callerContext: caller
+                isScheduleTabActive: isActive,
+                callerContext: "\(caller) tab=Schedule scope=\(scope.rawValue) generation=\(generation)",
+                isStillAllowed: {
+                    isActive && scope == .all && generation == allModeLoadGeneration
+                }
             )
             guard generation == allModeLoadGeneration, isActive, scope == .all else {
                 ReservationAPILogger.skip(
@@ -1153,6 +1157,8 @@ private struct HiddenReservationsView: View {
     @State private var errorMessage: String?
     @State private var hardDeleteCandidate: ReservationRecord?
     @State private var hardDeletingIDs: Set<Int> = []
+    @State private var loadedPage = 0
+    @State private var totalPages = 1
 
     private var hiddenRows: [ReservationRecord] {
         ReservationRecord.sortedNewestFirst(
@@ -1239,6 +1245,24 @@ private struct HiddenReservationsView: View {
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                     }
+
+                    if loadedPage > 0 && loadedPage < totalPages {
+                        Button {
+                            Task {
+                                await loadHiddenReservations(force: false, page: loadedPage + 1)
+                            }
+                        } label: {
+                            if isLoading {
+                                ProgressView()
+                                    .frame(maxWidth: .infinity, minHeight: 40)
+                            } else {
+                                Text("Load More")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity, minHeight: 40)
+                            }
+                        }
+                        .disabled(isLoading)
+                    }
                 }
             }
         }
@@ -1250,7 +1274,7 @@ private struct HiddenReservationsView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     Task {
-                        await loadHiddenReservations(force: true)
+                        await loadHiddenReservations(force: true, page: 1)
                     }
                 } label: {
                     if isLoading {
@@ -1286,14 +1310,14 @@ private struct HiddenReservationsView: View {
         }
         .task {
             // Lazy admin/dev load: hidden rows are fetched only when this screen opens.
-            await loadHiddenReservations(force: false)
+            await loadHiddenReservations(force: false, page: 1)
         }
         .refreshable {
-            await loadHiddenReservations(force: true)
+            await loadHiddenReservations(force: true, page: 1)
         }
     }
 
-    private func loadHiddenReservations(force: Bool) async {
+    private func loadHiddenReservations(force: Bool, page: Int) async {
         guard !isLoading else { return }
         guard controller.capabilities.canViewHiddenReservations else {
             errorMessage = "This account cannot view hidden reservations."
@@ -1307,7 +1331,13 @@ private struct HiddenReservationsView: View {
         }
 
         do {
-            _ = try await controller.loadHiddenReservations(context: modelContext, force: force)
+            let response = try await controller.loadHiddenReservationsPage(
+                context: modelContext,
+                page: page,
+                force: force
+            )
+            loadedPage = page == 1 ? response.page : max(loadedPage, response.page)
+            totalPages = max(response.totalPages, 1)
         } catch {
             errorMessage = error.isOfflineLike
                 ? "No internet connection. Showing saved reservations."

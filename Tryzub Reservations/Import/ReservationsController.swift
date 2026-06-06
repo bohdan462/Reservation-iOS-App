@@ -64,6 +64,13 @@ final class ReservationsController: ObservableObject {
 
     // MARK: - Sync State
 
+    private var restaurantSetupLoadedAt: Date?
+    private var dayAvailabilityCacheByDate: [String: (value: RestaurantDayAvailabilityDTO, loadedAt: Date)] = [:]
+    private var dayAvailabilityTasksByDate: [String: Task<RestaurantDayAvailabilityDTO, Error>] = [:]
+    private var reservationSlotsCacheByDate: [String: (value: ReservationSlotsResponseDTO, loadedAt: Date)] = [:]
+    private var reservationSlotsTasksByDate: [String: Task<ReservationSlotsResponseDTO, Error>] = [:]
+    private var blockedSlotsCacheByDate: [String: (value: RestaurantBlockedSlotsResponseDTO, loadedAt: Date)] = [:]
+    private var blockedSlotsTasksByDate: [String: Task<RestaurantBlockedSlotsResponseDTO, Error>] = [:]
     private var lastAutoRefreshAttemptAt: Date?
     private var lastAutoRefreshFailureAt: Date?
     private var manualAttemptByScope: [ReservationSyncScope: Date] = [:]
@@ -88,6 +95,8 @@ final class ReservationsController: ObservableObject {
     private let importFailureCountFreshnessInterval: TimeInterval = 300
     private let offlineNoticeCooldown: TimeInterval = 60
     private let availabilitySummaryFreshnessInterval: TimeInterval = 180
+    private let restaurantSetupFreshnessInterval: TimeInterval = 300
+    private let dateOperationsFreshnessInterval: TimeInterval = 180
 
     // MARK: - Dependencies
 
@@ -221,12 +230,14 @@ final class ReservationsController: ObservableObject {
         page: Int,
         search: String?,
         isAllScope: Bool,
-        callerContext: String
+        isScheduleTabActive: Bool,
+        callerContext: String,
+        isStillAllowed: @escaping () -> Bool = { true }
     ) async throws -> ReservationsResponse {
-        guard isAllScope else {
+        guard isScheduleTabActive, isAllScope else {
             ReservationAPILogger.skip(
                 reason: .scheduleAllBlocked,
-                message: "schedule_all_page blocked caller=\(callerContext) because Schedule scope is not All"
+                message: "schedule_all_page blocked caller=\(callerContext) isScheduleTabActive=\(isScheduleTabActive) isAllScope=\(isAllScope)"
             )
             throw ReservationControllerError.actionAlreadyInProgress
         }
@@ -242,6 +253,14 @@ final class ReservationsController: ObservableObject {
             includeHidden: false,
             reason: .scheduleAllPage
         )
+
+        guard isStillAllowed() else {
+            ReservationAPILogger.skip(
+                reason: .scheduleAllBlocked,
+                message: "schedule_all_page cache write blocked caller=\(callerContext) page=\(page)"
+            )
+            return response
+        }
 
         let repository = ReservationRepository(context: context)
         try repository.upsert(response.data)
@@ -280,20 +299,47 @@ final class ReservationsController: ObservableObject {
     // SwiftData: Upserts returned rows only; this status-scoped response is not broad delete truth.
     @discardableResult
     func loadCancelledReservations(context: ModelContext, force: Bool = false) async throws -> [ReservationDTO] {
+        let response = try await loadCancelledReservationsPage(context: context, page: 1, force: force)
+        return response.data
+    }
+
+    @discardableResult
+    func loadCancelledReservationsPage(
+        context: ModelContext,
+        page: Int,
+        force: Bool = false
+    ) async throws -> ReservationsResponse {
         let window = cancelledReservationsWindow()
         let scope = ReservationSyncScope.cancelledWindow(from: window.from, to: window.to)
 
-        if !force && isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) {
-            return []
+        if page == 1, !force, isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) {
+            return ReservationsResponse(
+                success: true,
+                serverTime: nil,
+                page: 1,
+                perPage: 100,
+                total: 0,
+                totalPages: 1,
+                data: []
+            )
         }
 
         guard beginScope(scope, intent: force ? .manual : .screenActive) else {
             ReservationAPILogger.skip(reason: .scopeSkipInFlight, message: "\(scope.description) skipped because this scope is already in flight")
-            return []
+            return ReservationsResponse(
+                success: true,
+                serverTime: nil,
+                page: page,
+                perPage: 100,
+                total: 0,
+                totalPages: 1,
+                data: []
+            )
         }
 
         do {
-            let rows = try await environment.apiClient.fetchAllReservations(
+            let response = try await environment.apiClient.fetchReservations(
+                page: page,
                 perPage: 100,
                 date: nil,
                 from: window.from,
@@ -301,12 +347,14 @@ final class ReservationsController: ObservableObject {
                 status: .cancelled,
                 search: nil,
                 includeHidden: false,
-                reason: .cancelledReservations
+                reason: .cancelledReservationsPage
             )
             let repository = ReservationRepository(context: context)
-            try repository.upsert(rows)
+            if !response.data.isEmpty {
+                try repository.upsert(response.data)
+            }
             markScopeSuccess(scope)
-            return rows
+            return response
         } catch {
             if error.isCancellationLike {
                 markScopeCancelled(scope)
@@ -688,8 +736,16 @@ final class ReservationsController: ObservableObject {
     // Intent: Loads the lightweight setup row used by manual-create defaults and settings.
     // Network: GET /restaurant-setup.
     @discardableResult
-    func loadRestaurantSetup(context: ModelContext? = nil) async throws -> RestaurantSetup {
+    func loadRestaurantSetup(context: ModelContext? = nil, force: Bool = false) async throws -> RestaurantSetup {
+        if !force,
+           let restaurantSetupLoadedAt,
+           Date().timeIntervalSince(restaurantSetupLoadedAt) < restaurantSetupFreshnessInterval {
+            ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "restaurant_setup skipped because cache is fresh")
+            return restaurantSetup
+        }
+
         guard !isLoadingRestaurantSetup else {
+            ReservationAPILogger.skip(reason: .scopeSkipInFlight, message: "restaurant_setup skipped because request is already in flight")
             return restaurantSetup
         }
 
@@ -700,6 +756,7 @@ final class ReservationsController: ObservableObject {
             let dto = try await environment.apiClient.fetchRestaurantSetup(reason: .restaurantSetup)
             let setup = RestaurantSetup(dto: dto)
             restaurantSetup = setup
+            restaurantSetupLoadedAt = Date()
             return setup
         } catch {
             if error.isCancellationLike {
@@ -753,6 +810,7 @@ final class ReservationsController: ObservableObject {
             )
             let setup = RestaurantSetup(dto: dto)
             restaurantSetup = setup
+            restaurantSetupLoadedAt = Date()
             postNotice(severity: .success, source: .admin, title: "Restaurant settings saved")
             return setup
         } catch {
@@ -821,17 +879,37 @@ final class ReservationsController: ObservableObject {
     // Network: GET /restaurant-day-availability?date=YYYY-MM-DD.
     @discardableResult
     func loadRestaurantDayAvailability(date: String) async throws -> RestaurantDayAvailabilityDTO {
-        guard !isLoadingRestaurantDayAvailability else {
-            throw ReservationControllerError.actionAlreadyInProgress
+        if let cached = dayAvailabilityCacheByDate[date],
+           Date().timeIntervalSince(cached.loadedAt) < dateOperationsFreshnessInterval {
+            ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "restaurant_day_availability(\(date)) skipped because cache is fresh")
+            return cached.value
+        }
+
+        if let task = dayAvailabilityTasksByDate[date] {
+            ReservationAPILogger.skip(reason: .scopeSkipInFlight, message: "restaurant_day_availability(\(date)) skipped because request is already in flight")
+            return try await task.value
         }
 
         isLoadingRestaurantDayAvailability = true
-        defer { isLoadingRestaurantDayAvailability = false }
+        let task = Task { [environment] in
+            try await environment.apiClient.fetchRestaurantDayAvailability(
+                date: date,
+                reason: .restaurantDayAvailability
+            )
+        }
+        dayAvailabilityTasksByDate[date] = task
 
-        return try await environment.apiClient.fetchRestaurantDayAvailability(
-            date: date,
-            reason: .restaurantDayAvailability
-        )
+        do {
+            let availability = try await task.value
+            dayAvailabilityCacheByDate[date] = (availability, Date())
+            dayAvailabilityTasksByDate[date] = nil
+            isLoadingRestaurantDayAvailability = false
+            return availability
+        } catch {
+            dayAvailabilityTasksByDate[date] = nil
+            isLoadingRestaurantDayAvailability = false
+            throw error
+        }
     }
 
     // Intent: Saves a manual availability override for one date.
@@ -854,6 +932,8 @@ final class ReservationsController: ObservableObject {
                 request: request,
                 reason: .restaurantDayAvailabilityPatch
             )
+            dayAvailabilityCacheByDate[date] = (availability, Date())
+            availabilitySummaryByDate[date] = nil
             postNotice(severity: .success, source: .admin, title: "Today availability saved")
             return availability
         } catch {
@@ -873,20 +953,68 @@ final class ReservationsController: ObservableObject {
     // Network: GET /reservation-slots?date=YYYY-MM-DD.
     @discardableResult
     func loadReservationSlots(date: String) async throws -> ReservationSlotsResponseDTO {
-        try await environment.apiClient.fetchReservationSlots(
-            date: date,
-            reason: .reservationSlots
-        )
+        if let cached = reservationSlotsCacheByDate[date],
+           Date().timeIntervalSince(cached.loadedAt) < dateOperationsFreshnessInterval {
+            ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "reservation_slots(\(date)) skipped because cache is fresh")
+            return cached.value
+        }
+
+        if let task = reservationSlotsTasksByDate[date] {
+            ReservationAPILogger.skip(reason: .scopeSkipInFlight, message: "reservation_slots(\(date)) skipped because request is already in flight")
+            return try await task.value
+        }
+
+        let task = Task { [environment] in
+            try await environment.apiClient.fetchReservationSlots(
+                date: date,
+                reason: .reservationSlots
+            )
+        }
+        reservationSlotsTasksByDate[date] = task
+
+        do {
+            let slots = try await task.value
+            reservationSlotsCacheByDate[date] = (slots, Date())
+            reservationSlotsTasksByDate[date] = nil
+            return slots
+        } catch {
+            reservationSlotsTasksByDate[date] = nil
+            throw error
+        }
     }
 
     // Intent: Reads staff-blocked public slots for one service date.
     // Network: GET /restaurant-blocked-slots?date=YYYY-MM-DD.
     @discardableResult
     func loadRestaurantBlockedSlots(date: String) async throws -> RestaurantBlockedSlotsResponseDTO {
-        try await environment.apiClient.fetchRestaurantBlockedSlots(
-            date: date,
-            reason: .restaurantBlockedSlots
-        )
+        if let cached = blockedSlotsCacheByDate[date],
+           Date().timeIntervalSince(cached.loadedAt) < dateOperationsFreshnessInterval {
+            ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "restaurant_blocked_slots(\(date)) skipped because cache is fresh")
+            return cached.value
+        }
+
+        if let task = blockedSlotsTasksByDate[date] {
+            ReservationAPILogger.skip(reason: .scopeSkipInFlight, message: "restaurant_blocked_slots(\(date)) skipped because request is already in flight")
+            return try await task.value
+        }
+
+        let task = Task { [environment] in
+            try await environment.apiClient.fetchRestaurantBlockedSlots(
+                date: date,
+                reason: .restaurantBlockedSlots
+            )
+        }
+        blockedSlotsTasksByDate[date] = task
+
+        do {
+            let blocked = try await task.value
+            blockedSlotsCacheByDate[date] = (blocked, Date())
+            blockedSlotsTasksByDate[date] = nil
+            return blocked
+        } catch {
+            blockedSlotsTasksByDate[date] = nil
+            throw error
+        }
     }
 
     // MARK: - Home Availability Summary Cache
@@ -941,18 +1069,9 @@ final class ReservationsController: ObservableObject {
         }
 
         do {
-            async let availability = environment.apiClient.fetchRestaurantDayAvailability(
-                date: date,
-                reason: .restaurantDayAvailability
-            )
-            async let slots = environment.apiClient.fetchReservationSlots(
-                date: date,
-                reason: .reservationSlots
-            )
-            async let blocked = environment.apiClient.fetchRestaurantBlockedSlots(
-                date: date,
-                reason: .restaurantBlockedSlots
-            )
+            async let availability = loadRestaurantDayAvailability(date: date)
+            async let slots = loadReservationSlots(date: date)
+            async let blocked = loadRestaurantBlockedSlots(date: date)
 
             let (loadedAvailability, loadedSlots, loadedBlocked) = try await (availability, slots, blocked)
             availabilitySummaryByDate[date] = ReservationAvailabilitySummary(
@@ -1256,14 +1375,32 @@ final class ReservationsController: ObservableObject {
     // Network: GET /managed-reservations?include_hidden=1 across pages.
     @discardableResult
     func loadHiddenReservations(context: ModelContext, force: Bool = false) async throws -> [ReservationDTO] {
+        let response = try await loadHiddenReservationsPage(context: context, page: 1, force: force)
+        return response.data.filter { $0.isHidden == true }
+    }
+
+    @discardableResult
+    func loadHiddenReservationsPage(
+        context: ModelContext,
+        page: Int,
+        force: Bool = false
+    ) async throws -> ReservationsResponse {
         guard capabilities.canViewHiddenReservations else {
             throw ReservationControllerError.permissionDenied
         }
 
         let scope = ReservationSyncScope.hiddenReservations
 
-        if !force && isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) {
-            return []
+        if page == 1, !force && isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) {
+            return ReservationsResponse(
+                success: true,
+                serverTime: nil,
+                page: 1,
+                perPage: 100,
+                total: 0,
+                totalPages: 1,
+                data: []
+            )
         }
 
         guard beginScope(scope, intent: force ? .manual : .screenActive) else {
@@ -1271,13 +1408,21 @@ final class ReservationsController: ObservableObject {
                 reason: .scopeSkipInFlight,
                 message: "\(scope.description) skipped because this scope is already in flight"
             )
-            return []
+            return ReservationsResponse(
+                success: true,
+                serverTime: nil,
+                page: page,
+                perPage: 100,
+                total: 0,
+                totalPages: 1,
+                data: []
+            )
         }
 
         do {
-            let hiddenRows = try await fetchAndCacheHiddenReservations(context: context)
+            let response = try await fetchAndCacheHiddenReservationsPage(context: context, page: page)
             markScopeSuccess(scope)
-            return hiddenRows
+            return response
         } catch {
             if error.isCancellationLike {
                 markScopeCancelled(scope)
@@ -1291,35 +1436,25 @@ final class ReservationsController: ObservableObject {
         }
     }
 
-    private func fetchAndCacheHiddenReservations(context: ModelContext) async throws -> [ReservationDTO] {
+    private func fetchAndCacheHiddenReservationsPage(context: ModelContext, page: Int) async throws -> ReservationsResponse {
         let repository = ReservationRepository(context: context)
-        var currentPage = 1
-        var totalPages = 1
-        var hiddenRows: [ReservationDTO] = []
+        let response = try await environment.apiClient.fetchReservations(
+            page: page,
+            perPage: 100,
+            date: nil,
+            from: nil,
+            to: nil,
+            status: nil,
+            search: nil,
+            includeHidden: true,
+            reason: .hiddenReservations
+        )
 
-        repeat {
-            let response = try await environment.apiClient.fetchReservations(
-                page: currentPage,
-                perPage: 100,
-                date: nil,
-                from: nil,
-                to: nil,
-                status: nil,
-                search: nil,
-                includeHidden: true,
-                reason: .hiddenReservations
-            )
+        if !response.data.isEmpty {
+            try repository.upsert(response.data)
+        }
 
-            if !response.data.isEmpty {
-                try repository.upsert(response.data)
-            }
-
-            hiddenRows.append(contentsOf: response.data.filter { $0.isHidden == true })
-            totalPages = max(response.totalPages, 1)
-            currentPage += 1
-        } while currentPage <= totalPages
-
-        return hiddenRows
+        return response
     }
 
     // Intent: Generates a guest manage link for manual Gmail/Mail confirmation copy.

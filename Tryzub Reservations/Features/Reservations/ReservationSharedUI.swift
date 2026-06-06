@@ -571,6 +571,19 @@ struct ServiceLoadChart: View {
 
     private var peakHour: Int? { ServiceTimeline.peakHour(in: slots) }
     private var maxGuests: Int { max(slots.map(\.guestCount).max() ?? 0, 1) }
+    private var xDomain: ClosedRange<Double> {
+        guard let first = slots.first?.hour,
+              let last = slots.last?.hour else {
+            return 0...1
+        }
+
+        let lower = min(Double(first), Double(last)) - 0.5
+        let upper = max(Double(first), Double(last)) + 0.5
+        guard lower.isFinite, upper.isFinite, lower < upper else {
+            return 0...1
+        }
+        return lower...upper
+    }
 
     var body: some View {
         if slots.isEmpty {
@@ -593,7 +606,7 @@ struct ServiceLoadChart: View {
                 .foregroundStyle(barStyle(for: slot))
                 .cornerRadius(2.5)
             }
-            .chartXScale(domain: (Double(slots.first?.hour ?? 0) - 0.5)...(Double(slots.last?.hour ?? 0) + 0.5))
+            .chartXScale(domain: xDomain)
             .chartYScale(domain: 0...Double(maxGuests))
             .chartYAxis {
                 AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in

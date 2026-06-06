@@ -238,15 +238,21 @@ enum ReservationRowPresenter {
     }
 
     private static func notesIndicator(for reservation: ReservationRecord) -> String? {
-        if reservation.hasStaffNotes {
-            return "Staff Review"
+        var labels: [String] = []
+
+        if reservation.statusValue == .needsReview {
+            labels.append("Needs Review")
         }
 
         if reservation.hasGuestNotes {
-            return "Guest Notes"
+            labels.append("Guest Notes")
         }
 
-        return nil
+        if reservation.hasStaffNotes {
+            labels.append("Staff Notes")
+        }
+
+        return labels.isEmpty ? nil : labels.joined(separator: " • ")
     }
 
     private static func isMuted(_ reservation: ReservationRecord) -> Bool {
