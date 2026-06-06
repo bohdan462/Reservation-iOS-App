@@ -91,7 +91,7 @@ struct ManualReservationFormView: View {
         } catch {
             ReservationHaptics.warning()
             errorMessage = error.isOfflineLike
-                ? "Offline — showing saved reservations. Edits require internet."
+                ? "Offline. Showing saved reservations. Edits require internet."
                 : "Could not create reservation. Please try again."
         }
     }
@@ -181,7 +181,7 @@ struct ReservationEditFormView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This hides the reservation from normal lists while keeping it in backend history.")
+            Text("Hide the reservation while keeping it in backend history.")
         }
     }
 
@@ -214,7 +214,7 @@ struct ReservationEditFormView: View {
         } catch {
             ReservationHaptics.warning()
             errorMessage = error.isOfflineLike
-                ? "Offline — showing saved reservations. Edits require internet."
+                ? "Offline. Showing saved reservations. Edits require internet."
                 : "Could not save changes. Please try again."
         }
     }
@@ -390,7 +390,7 @@ private struct ReservationFormContent: View {
             }
 
             if controller.isNetworkDegraded {
-                ReservationFormWarningCard(message: "Offline — showing saved reservations. Edits require internet.")
+                ReservationFormWarningCard(message: "Offline. Showing saved reservations. Edits require internet.")
             }
 
             if let formBlockingMessage {
@@ -1118,7 +1118,7 @@ private enum ReservationFormValidator {
 
         let phoneDigits = ReservationInputNormalizer.phoneDigits(draft.phone)
         guard isPlausibleUSPhone(phoneDigits) else {
-            throw ReservationFormValidationError(message: "Enter a valid 10-digit phone number.")
+            throw ReservationFormValidationError(message: "Enter a valid 10 digit phone number.")
         }
 
         let email = ReservationInputNormalizer.normalizedEmail(draft.email)
