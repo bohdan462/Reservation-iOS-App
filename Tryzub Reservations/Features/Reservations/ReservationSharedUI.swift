@@ -225,6 +225,8 @@ struct TryzubInfoChip: View {
 struct TryzubStatusBadge: View {
     let title: String
     var tint: Color = TryzubColors.mutedText
+    var minHeight: CGFloat?
+    var horizontalPadding: CGFloat?
 
     var body: some View {
         Text(title)
@@ -232,8 +234,8 @@ struct TryzubStatusBadge: View {
             .foregroundStyle(tint)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 8)
-            .frame(minHeight: 26)
+            .padding(.horizontal, horizontalPadding ?? 8)
+            .frame(minHeight: minHeight ?? 26)
             .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous)
@@ -445,7 +447,7 @@ struct ReservationSecondaryActionButton: View {
 
 struct ReservationOpenCalendarButton: View {
     @Binding var selectedDate: Date
-    var title = "Calendar"
+    var title = ""
     @State private var showsCalendarPicker = false
 
     var body: some View {
@@ -453,12 +455,17 @@ struct ReservationOpenCalendarButton: View {
             showsCalendarPicker = true
             ReservationHaptics.selection()
         } label: {
-            Label(title, systemImage: "calendar")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.primary.opacity(0.78))
-                .frame(minHeight: 36)
+            Image(systemName: "calendar")
+                .fixedSize()
+                .frame(width: 42, height: 40)
+              
+//            Label(title, systemImage: "calendar")
+//                .font(.subheadline.weight(.semibold))
+//                .frame(width: 42, height: 40)
+//                .foregroundStyle(.primary.opacity(0.78))
+                
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ReservationHeaderIconButtonStyle())
         .popover(isPresented: $showsCalendarPicker) {
             DatePicker("Service date", selection: $selectedDate, displayedComponents: .date)
                 .datePickerStyle(.graphical)

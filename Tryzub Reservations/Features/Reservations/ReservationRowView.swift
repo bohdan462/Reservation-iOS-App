@@ -239,11 +239,11 @@ enum ReservationRowPresenter {
 
     private static func notesIndicator(for reservation: ReservationRecord) -> String? {
         if reservation.hasStaffNotes {
-            return "STAFF"
+            return "Staff Review"
         }
 
         if reservation.hasGuestNotes {
-            return "Notes"
+            return "Guest Notes"
         }
 
         return nil
@@ -410,9 +410,9 @@ struct ReservationRowView<Accessory: View>: View {
             items.append(ReservationRowDetailLabelData(text: notesIndicator, systemImage: "note.text"))
         }
 
-        if let phoneText = presentation.phoneText {
-            items.append(ReservationRowDetailLabelData(text: phoneText, systemImage: "phone"))
-        }
+//        if let phoneText = presentation.phoneText {
+//            items.append(ReservationRowDetailLabelData(text: phoneText, systemImage: "phone"))
+//        }
 
         return items
     }
@@ -643,12 +643,33 @@ extension ReservationRowView where Accessory == EmptyView {
 
 struct ReservationStatusBadge: View {
     let status: ReservationStatus
+    var style: BadgeStyle = .standard
+
+    enum BadgeStyle {
+        case standard
+        case homeRow
+    }
 
     var body: some View {
-        TryzubStatusBadge(title: status.shortDisplayName, tint: .secondary)
-            .font(.caption2.weight(.medium))
+        TryzubStatusBadge(
+            title: status.shortDisplayName,
+            tint: .secondary,
+            minHeight: style == .homeRow ? 22 : 26,
+            horizontalPadding: style == .homeRow ? 6 : 8
+        )
+        .font(style == .homeRow ? .caption2.weight(.semibold) : .caption2.weight(.medium))
     }
 }
+
+//OLD
+//struct ReservationStatusBadge: View {
+//    let status: ReservationStatus
+//
+//    var body: some View {
+//        TryzubStatusBadge(title: status.shortDisplayName, tint: .secondary)
+//            .font(.caption2.weight(.medium))
+//    }
+//}
 
 // MARK: - Inline Metadata
 

@@ -796,55 +796,96 @@ private struct HomeServiceHeader: View {
         }
 
         return "Synced \(lastSyncedAt.formatted(date: .omitted, time: .shortened))"
+        
+        
     }
-
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 14) {
+        ViewThatFits(in: .horizontal) {
+            // Wide (iPad): everything on one row
+            HStack(alignment: .top, spacing: 10) {
+                titleBlock
+                dateStrip
+                    .frame(maxWidth: .infinity)
+                openCalendarButton
+            
+                actionBar
+                    .fixedSize()
+            }
+
+            // Narrow (iPhone): title + actions, then dates below
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
                     titleBlock
-//                        .frame(minWidth: 120)
-                  
-                    dateStrip
-                        .frame(maxWidth: .infinity)
-                        .layoutPriority(0)
-                    openCalendarButton
-                    
-                    
+                    Spacer(minLength: 8)
                     actionBar
                         .fixedSize()
                 }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    titleBlock
-                    actionBar
-                }
-            }
-
-            ViewThatFits(in: .horizontal) {
-//                HStack(alignment: .center, spacing: 12) {
-//                    dateStrip
-//
-//                    Spacer(minLength: 12)
-//
-//                    openCalendarButton
-//                }
-
-                VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 10) {
                     dateStrip
+                        .frame(maxWidth: .infinity)
                     openCalendarButton
                 }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-//        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.primary.opacity(0.07), lineWidth: 1)
         }
     }
+    
+//OLD VERSION
+//    var body: some View {
+//        VStack(alignment: .leading, spacing: 16) {
+//            ViewThatFits(in: .horizontal) {
+//                HStack(alignment: .top, spacing: 14) {
+//                    titleBlock
+////                        .frame(minWidth: 120)
+//                  
+//                    dateStrip
+//                        .frame(maxWidth: .infinity)
+//                        .layoutPriority(0)
+//                    openCalendarButton
+//                    
+//                    
+//                    actionBar
+//                        .fixedSize()
+//                }
+//
+//                VStack(alignment: .leading, spacing: 12) {
+//                    titleBlock
+//                    actionBar
+//                }
+//            }
+//
+//            ViewThatFits(in: .horizontal) {
+////                HStack(alignment: .center, spacing: 12) {
+////                    dateStrip
+////
+////                    Spacer(minLength: 12)
+////
+////                    openCalendarButton
+////                }
+//
+//                VStack(alignment: .leading, spacing: 10) {
+//                    dateStrip
+//                    openCalendarButton
+//                }
+//            }
+//        }
+//        .padding(.horizontal, 16)
+//        .padding(.vertical, 14)
+////        .frame(maxWidth: .infinity, alignment: .leading)
+//        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+//        .overlay {
+//            RoundedRectangle(cornerRadius: 14, style: .continuous)
+//                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+//        }
+//    }
 
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -882,7 +923,7 @@ private struct HomeServiceHeader: View {
                     ReservationHaptics.selection()
                     onManualRefresh()
                 } label: {
-                    Label("Refresh Reservations", systemImage: "arrow.clockwise")
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(isSyncing)
 
@@ -906,12 +947,11 @@ private struct HomeServiceHeader: View {
                     ReservationHaptics.selection()
                     onAddReservation()
                 } label: {
-                    Label("Add", systemImage: "plus")
+                   Image(systemName: "plus")
                         .font(.subheadline.weight(.semibold))
-                     
-//                        .frame(minWidth: 72, minHeight: 38)
+                        .frame(width: 42, height: 40)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ReservationHeaderIconButtonStyle())
             }
 
             
