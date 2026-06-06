@@ -34,12 +34,12 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 #### `loadIfNeeded(context:)`
 | Field | Value |
 | --- | --- |
-| Who calls | `ReservationsListView.task` |
-| Business action | App startup — show cache, refresh today if needed |
-| Network | Yes → `performTodayRefresh(.startup)` |
-| SwiftData | Yes — `syncTodayFull` → `replaceDateScope` |
-| Controller state | `hasCompletedInitialLoad`, `lastSyncedAt`, notices |
-| Endpoint | `GET /managed-reservations?date=today&per_page=50` |
+| Who calls | `ReservationsListView.performStartupNetworkPass` |
+| Business action | App startup — show cache, refresh active operational window |
+| Network | Yes → `performActiveWindowRefresh(.startup)` |
+| SwiftData | Yes — `syncActiveWindowFull` → `replaceDateWindow` |
+| Controller state | `hasAttemptedInitialLoad`, `lastSyncedAt`, notices |
+| Endpoint | `GET /managed-reservations?from=today-1&to=today+bookingWindow` |
 | Audience | all |
 | Name clear? | Yes |
 
@@ -47,11 +47,11 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 | Field | Value |
 | --- | --- |
 | Who calls | Home pull-refresh, toolbar refresh, `refreshDashboard` |
-| Business action | Staff manually refreshes today board |
-| Network | Yes — today **full replace** (not delta) |
-| SwiftData | Yes — replace today scope |
+| Business action | Staff manually refreshes the shared operational window |
+| Network | Yes — active-window **full replace** (not delta) |
+| SwiftData | Yes — replace active date window |
 | Controller state | `isSyncing`, scope timestamps, notices; blocked if mutation in flight or 8s cooldown |
-| Endpoint | `GET /managed-reservations?date=today` |
+| Endpoint | `GET /managed-reservations?from&to` |
 | Audience | all |
 | Name clear? | Yes |
 
@@ -59,11 +59,11 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 | Field | Value |
 | --- | --- |
 | Who calls | `HostBoardView.runAutoRefreshLoop` (60s while visible) |
-| Business action | Quiet background today refresh |
-| Network | Yes — **delta** if cursor exists, else full |
-| SwiftData | Delta: upsert only; full: replace today |
+| Business action | Quiet background active-window refresh while Home is visible |
+| Network | Yes — active-window **delta** if cursor exists, else full |
+| SwiftData | Delta: upsert only; full: replace active window |
 | Controller state | `isAutoRefreshing`; guards: app active, no interaction, not busy, 60s interval, 180s failure cooldown |
-| Endpoint | `GET ?date=today` or `&updated_since={cursor}` |
+| Endpoint | `GET ?from&to` or `GET ?from&to&updated_since={cursor}` |
 | Audience | all |
 | Name clear? | Yes |
 
@@ -72,8 +72,8 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 | --- | --- |
 | Who calls | `ReservationScheduleView.task(id: isActive)` |
 | Business action | User opens List tab |
-| Network | Yes — only if schedule scope stale (>300s) |
-| SwiftData | `replaceDateWindow(today..today+30)` |
+| Network | Yes — only if active-window scope stale (>300s) |
+| SwiftData | `replaceDateWindow(active window)` |
 | Endpoint | `GET /managed-reservations?from&to` paged |
 | Audience | all |
 
@@ -83,35 +83,36 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 | Who calls | Schedule pull-refresh, toolbar |
 | Business action | Manual schedule window refresh |
 | Network | Yes — full replace window |
-| Endpoint | `GET ?from&to` |
+| Endpoint | `GET ?from&to` active window |
 | Audience | all |
 
 #### `loadScheduleAllPage(context:page:search:perPage:)`
 | Field | Value |
 | --- | --- |
-| Who calls | Schedule "All" scope, search, load more |
+| Who calls | Schedule "All" scope, search, refresh, load more; every call passes caller context |
 | Business action | Paginated reservation search |
 | Network | Yes |
 | SwiftData | **upsert only** — no deletes |
 | Endpoint | `GET /managed-reservations?page&per_page&search` |
 | Audience | all |
+| Guard | Requires Schedule tab active **and** scope `.all`; blocked calls log `schedule_all_page_blocked` |
 
 #### `reviewBecameActive(context:)`
 | Field | Value |
 | --- | --- |
 | Who calls | `ReservationReviewQueueView.task(id: isActive)` |
 | Business action | User opens Review tab |
-| Network | Yes — if stale (>120s) |
-| SwiftData | `replaceReviewQueue` — upsert only, **no deletes** |
-| Endpoint | `GET ?status=needs_review` + `GET ?status=new` |
+| Network | Yes — only if active-window scope stale (>120s) |
+| SwiftData | `replaceDateWindow(active window)` if refresh proceeds |
+| Endpoint | `GET /managed-reservations?from&to` paged |
 | Audience | all |
 
 #### `requestReviewRefresh(context:source:)`
 | Field | Value |
 | --- | --- |
 | Who calls | Review pull-refresh, toolbar |
-| Network | Yes — review queues |
-| SwiftData | upsert-only review queue |
+| Network | Yes — active-window full refresh |
+| SwiftData | replace active date window |
 | Audience | all |
 
 #### `loadCancelledReservations(context:force:)`
@@ -127,27 +128,30 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 #### `refreshScheduleWindowCache(context:)`
 | Field | Value |
 | --- | --- |
-| Who calls | verify in code — alias to schedule refresh |
-| Name clear? | Yes |
+| Who calls | No current external call sites found; retained compatibility wrapper |
+| Effect | Calls `requestScheduleRefresh(context:source: .manual)` |
+| Name clear? | Mostly; current refresh is active-window-backed rather than old schedule-only data |
 
 #### `refreshDashboard(context:)`
 | Field | Value |
 | --- | --- |
-| Who calls | verify in code — wraps manual today refresh |
+| Who calls | No current external call sites found; Home calls `requestManualTodayRefresh` directly |
+| Effect | Calls `requestManualTodayRefresh`, which now refreshes the active window despite stale "today" comments in code |
 | Returns | `Bool` success |
-| Suggested rename | `refreshToday` |
+| Suggested rename | `refreshActiveWindowFromHome` |
 
 #### `refreshReviewQueues(context:)`
 | Field | Value |
 | --- | --- |
-| Who calls | verify in code — alias to `requestReviewRefresh` |
+| Who calls | No current external call sites found; retained compatibility wrapper |
+| Effect | Calls `requestReviewRefresh(context:source: .manual)`, which now uses active-window refresh |
 
 ### Local cache helper
 
 #### `save(_:context:)`
 | Field | Value |
 | --- | --- |
-| Who calls | verify in code — `onCreated` callbacks |
+| Who calls | No current external call sites found |
 | Network | No |
 | SwiftData | `upsert` single DTO |
 | Name clear? | **Misleading** — suggest `upsertServerReservationIntoCache` |
@@ -340,10 +344,12 @@ All throw `actionAlreadyInProgress` if overlapping load/save flags set.
 
 | Method | Network | SwiftData write | Deletes orphans? | Called by controller? |
 | --- | --- | --- | --- | --- |
-| `syncTodayFull` | `GET ?date=today` | `replaceDateScope` | **Yes** (today) | Yes — startup/manual |
-| `syncTodayChanges(since:)` | `GET ?updated_since=` | `upsert` if non-empty | **No** | Yes — auto only |
-| `syncScheduleWindowFull` | `GET ?from&to` paged | `replaceDateWindow` | **Yes** in window | Yes |
-| `syncReviewQueues` | 2× status GET | `replaceReviewQueue` | **No** | Yes |
+| `syncActiveWindowFull` | `GET ?from&to` paged | `replaceDateWindow` | **Yes** in active window | Yes — normal startup/manual/stale activation |
+| `syncActiveWindowChanges` | `GET ?from&to&updated_since=` paged | `upsert` if non-empty | **No** | Yes — auto only |
+| `syncTodayFull` | `GET ?date=today` | `replaceDateScope` | **Yes** (today) | Legacy/private path; not normal active-window flow |
+| `syncTodayChanges(since:)` | `GET ?date=today&updated_since=` | `upsert` if non-empty | **No** | Legacy/private path; not normal active-window flow |
+| `syncScheduleWindowFull` | `GET ?from&to` paged | `replaceDateWindow` | **Yes** in window | Legacy/private path |
+| `syncReviewQueues` | 2× status GET | `replaceReviewQueue` | **No** | Legacy/private path/diagnostic understanding |
 | `syncAllReservations` | All pages | `upsert` | No | **No** — diagnostics-capable only |
 | `syncToday` / `syncScheduleWindow` | Wrappers | Same as full | — | Yes (aliases) |
 | `saveReservation` | None | `upsert` one | No | Via `controller.save` |
@@ -401,13 +407,13 @@ Thin pass-through to API client.
 
 **File:** `Network/ReservationsAPIClient.swift`
 
-**Config:** Base URL from app entry; Basic auth; 30s/60s timeouts; GET retry floor ≥1; logs to `APIRequestLogStore` (100 events).
+**Config:** Base URL from app entry; Basic auth; one-at-a-time request serializer; 15s request timeout; 30s resource timeout; GET retry capped at one retry for timeout/connection-lost; non-GET no retry; logs to `APIRequestLogStore` (100 events).
 
 ### Endpoint method table
 
 | Client method | HTTP | Path | Auth | Default retry |
 | --- | --- | --- | --- | --- |
-| `ping` | GET | `/ping` | Public | ≥1 |
+| `ping` | GET | `/ping` | Public | caller / max 1 |
 | `fetchReservations` | GET | `/managed-reservations` | Protected | caller / ≥1 |
 | `fetchAllReservations` | GET | `/managed-reservations` (paged) | Protected | caller |
 | `fetchReservation` | GET | `/managed-reservations/{id}` | Protected | 1 |
@@ -416,19 +422,19 @@ Thin pass-through to API client.
 | `confirmReservation` | POST | `.../confirm` | Protected | 0 |
 | `createGuestManageLink` | POST | `.../guest-manage-link` | Protected | 0 |
 | `hardDeleteReservation` | DELETE | `...?force=1` | Protected | 0 |
-| `fetchImportFailures` | GET | `.../import-failures` | Protected | ≥1 |
-| `fetchRestaurantSetup` | GET | `/restaurant-setup` | Protected | ≥1 |
+| `fetchImportFailures` | GET | `.../import-failures` | Protected | caller / max 1 |
+| `fetchRestaurantSetup` | GET | `/restaurant-setup` | Protected | caller / max 1 |
 | `updateRestaurantSetup` | PATCH | `/restaurant-setup` | Protected | 0 |
-| `fetchRestaurantHours` | GET | `/restaurant-hours` | Protected | ≥1 |
+| `fetchRestaurantHours` | GET | `/restaurant-hours` | Protected | caller / max 1 |
 | `updateRestaurantHours` | PATCH | `/restaurant-hours` | Protected | 0 |
-| `fetchRestaurantDayAvailability` | GET | `/restaurant-day-availability` | Protected | ≥1 |
+| `fetchRestaurantDayAvailability` | GET | `/restaurant-day-availability` | Protected | caller / max 1 |
 | `updateRestaurantDayAvailability` | PATCH | same | Protected | 0 |
-| `fetchReservationSlots` | GET | `/reservation-slots` | **Public** | ≥1 |
-| `fetchRestaurantBlockedSlots` | GET | `/restaurant-blocked-slots` | Protected | ≥1 |
+| `fetchReservationSlots` | GET | `/reservation-slots` | **Public** | caller / max 1 |
+| `fetchRestaurantBlockedSlots` | GET | `/restaurant-blocked-slots` | Protected | caller / max 1 |
 | `createRestaurantBlockedSlots` | POST | `/restaurant-blocked-slots` | Protected | 0 |
 | `deleteRestaurantBlockedSlots` | DELETE | body slots | Protected | 0 |
 | `deleteAllRestaurantBlockedSlots` | DELETE | `?date=` | Protected | 0 |
-| `fetchReservationAnalyticsSummary` | GET | `/reservation-analytics/summary` | Protected | ≥1 |
+| `fetchReservationAnalyticsSummary` | GET | `/reservation-analytics/summary` | Protected | caller / max 1 |
 
 **List query params:** `page`, `per_page`, `date`, `from`, `to`, `status`, `search`, `updated_since`, `include_hidden=1`
 
@@ -506,7 +512,7 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 ### ReservationsListView
 | Trigger | Method / effect |
 | --- | --- |
-| `.task` | `loadIfNeeded`, `loadRestaurantSetup` |
+| `.task` | `performStartupNetworkPass` behind launch overlay |
 | `tabContainer` | Mount all tabs; toggle visibility |
 | `visibleNotices` | Tab-filter notice sources |
 
@@ -515,22 +521,22 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 | --- | --- |
 | `.task(id: isVisible && isAppActive)` | `runAutoRefreshLoop` → `autoRefreshDashboardIfAllowed` |
 | `.task(id: isVisible)` | `runClockLoop` |
-| `.task(id: isVisible-date)` | `loadTodayAvailabilitySummary` — **direct apiClient** |
+| `.task(id: isVisible-date)` | controller `ensureAvailabilitySummary` after startup deferral |
 | `.refreshable` | `requestManualTodayRefresh` |
 | `handleAction` / `perform` | Route to controller; confirm dialog |
 
 ### ReservationScheduleView
 | Trigger | Effect |
 | --- | --- |
-| `.task(id: isActive)` | `scheduleBecameActive` |
-| `.refreshable` | `requestScheduleRefresh` |
-| Load more / search | `loadScheduleAllPage` |
+| `.task(id: isActive)` | `scheduleBecameActive` → active-window freshness check |
+| `.refreshable` | Upcoming: active-window refresh; All: `loadScheduleAllPage` |
+| Load more / search | `loadScheduleAllPage` only when active and scope `.all` |
 
 ### ReservationReviewQueueView
 | Trigger | Effect |
 | --- | --- |
-| `.task(id: isActive)` | `reviewBecameActive` |
-| `.refreshable` | `requestReviewRefresh` |
+| `.task(id: isActive)` | `reviewBecameActive` → active-window freshness check |
+| `.refreshable` | active-window refresh |
 
 ### ReservationDetailView
 | Trigger | Effect |
@@ -552,7 +558,7 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 ### HiddenReservationsView
 | Trigger | Effect |
 | --- | --- |
-| `.task` | `loadHiddenReservations` |
+| `.task` | `loadHiddenReservationsPage(page: 1)` lazily |
 | Restore | `restoreHiddenReservation` |
 | Hard delete | `hardDeleteReservation` (developer) |
 
@@ -577,7 +583,7 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 | `confirmReservation` | `confirmReservationAndSendEmail` | Implies email endpoint |
 | `save(_:context:)` | `upsertServerReservationIntoCache` | Not a server save |
 | `createReservation` (controller) | Remove or merge with `createAcceptedManualReservation` | Dead UI path |
-| `refreshDashboard` | `refreshToday` | Only refreshes today |
+| `refreshDashboard` | `refreshActiveWindowFromHome` | Name sounds Home-only, but current flow refreshes the shared active window |
 | `ReservationImportService.swift` | `ReservationSyncService.swift` | File name legacy |
 
 ---
@@ -591,3 +597,53 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 | Mutation failure | Staff-safe error notice; action ID cleared in `defer` |
 | Uncertain mutation | "Checking reservation" notice; affected ID enters reconcile state; GET by ID; success/failure notice |
 | Empty delta | No upsert; no delete; cursor still updated if server returns `server_time` |
+
+---
+
+## Current Task / Memory / UI-Blocking Audit
+
+| File / area | Confirmed or suspected | Risk | Fix now? | Recommended fix |
+| --- | --- | --- | --- | --- |
+| `Features/GuestInsights/RegularGuestsView.swift` | Confirmed | Broad `@Query` observes all cached reservations; `allSummaries`, `displayedSummaries`, and `summaryGrid` recompute clustering/filtering from body-driven computed properties. | Later | Add `RegularGuestsStore` or memoized summary cache keyed by latest `lastSyncedAt`, record count, filter/search/sort. |
+| `Features/GuestInsights/RegularGuestsController.swift` | Confirmed | `exactAndStrongClusters` performs pairwise matching across records; cost grows quickly with cache size. | Later | Pre-index by phone/email/name keys before pairwise fallback. |
+| `Features/GuestInsights/GuestInsightsView.swift` | Confirmed | `report` computed property analyzes broad `allReservations` during view body evaluation. | Later | Compute report once in `@State`/view model on appear or pass precomputed report. |
+| `Features/Reservations/ReservationsListView.swift` root `@Query pendingReviewRows` | Mitigated | Narrowed to active window and pending statuses, but still updates while all tabs are mounted. | Later | Keep unless badge count becomes janky; then publish count from controller/cache snapshot. |
+| `HomeDashboardView` active-window `@Query` | Mitigated | Active-window query observes upserts and filters selected date in computed property. | Later | Current scope is acceptable; avoid expanding to all history. |
+| `ReservationScheduleView.displayedReservations` | Mitigated | Filters/sorts active-window cache in body; All mode uses local page IDs and repository lookup. | Later | Keep All mode explicit; consider section snapshots if active window grows beyond pilot scale. |
+| `HostBoardView.runAutoRefreshLoop` / `runClockLoop` | Mitigated | Async loops exist, but `.task(id:)` cancels them as visibility/app-active changes. | Later | Keep `isVisible` guards; never start loops from hidden tabs. |
+| `HostBoardView` availability task | Mitigated | `.task(id:)` can restart on date/launch state changes; controller de-dupes and cancels by date. | Later | Keep controller cache; avoid view-local availability state. |
+| `ManualReservationFormView.ensureSlotLoad` | Confirmed | Stores a `slotLoadTask` and cancels on disappear/date change; still does view-level slot/cache orchestration. | Later | Move to form view model after UI polish stabilizes. |
+| `RestaurantSettingsStore.dateOperationsTask` | Mitigated | Long-lived task is stored and cancelled/replaced for date operations. | Later | Keep as store-owned; ensure all future paths clear save/loading flags in `defer`. |
+| `ReservationsController` availability task dictionaries | Mitigated | Date-keyed task dictionaries can leak if not cleared; current `defer` clears summary tasks and GET task catch/success paths clear per-date tasks. | Later | Add tests around cancellation/throw paths if test target appears. |
+| `ReservationRepository.records(remoteIDs:)` | Confirmed | Fetches one SwiftData descriptor per ID; schedule All page lookup can be N queries. | Later | Add batched remote-ID lookup when SwiftData predicate ergonomics allow. |
+| `ServiceLoadChart`, `ServiceTimelineGraph`, `GuestInsightBarChart` | Mitigated | Chart/Geometry math can produce NaN if domains/dimensions are bad; current code clamps finite sizes and max denominators. | Later | Continue requiring `tryzubFinite*` helpers for new chart/GeometryReader code. |
+| `More` navigation | Confirmed fixed | Nested path-based stacks caused `AnyNavigationPath` comparison crash for Cancelled details. | Done | Cancelled detail now uses parent typed path; avoid nested mixed path types under More. |
+
+---
+
+## Add/Edit Reservation Correctness Audit
+
+| Requirement | Current state |
+| --- | --- |
+| Shared create/edit logic | `ManualReservationFormView` and `ReservationEditFormView` share `ReservationFormContent`, `ReservationFormDraft`, `ReservationFormValidator`, and `ReservationInputNormalizer`. |
+| Guest name | Trim/collapse whitespace before request; required. |
+| Phone | Visible input allows common formatting; request sends normalized digits; invalid lengths fail locally. |
+| Email | Optional; normalized/trimmed/lowercased; validated only when non-empty. |
+| Date/time | Date submits `YYYY-MM-DD`; time submits normalized backend-accepted time; changing date reloads/revalidates slots. |
+| Today/past time | Validator blocks past selected times for today and applies setup lead time when setup has loaded. |
+| Closed date | Form blocks dates whose backend slot response says closed; first uncached date still requires a slot fetch. |
+| Notes/table | Guest notes, staff notes, and table trim before request; optional fields remain visible. |
+| Backend failure | Form stays open; controller posts staff-safe error; no local reservation is inserted before server success. |
+| Offline/degraded | Create/edit buttons are disabled or blocked through controller degraded state. |
+
+---
+
+## Semantic Labeling Contract
+
+| Concept | Meaning | Display rule |
+| --- | --- | --- |
+| Status badge | Lifecycle: new, review, confirmed, seated, completed, cancelled, no-show | Keep separate from notes. |
+| Needs Review | Attention state/reason | May show as status/attention, never as Guest Notes or Staff Notes. |
+| Guest Notes | Guest-provided note text | Show only when `guest_notes` exists. |
+| Staff Notes | Internal staff note text | Show only when `staff_notes` exists. |
+| Seated duration | Local UI timing until backend provides `seated_at` | `localSeatedAtByReservationID` is cache/UI-only and should be replaced by server `seated_at` later. |

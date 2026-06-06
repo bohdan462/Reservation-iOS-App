@@ -25,14 +25,14 @@ Controlled pilot testing and developer troubleshooting:
 | Tool | Path | Required capability | Effective role today |
 | --- | --- | --- | --- |
 | API & App Diagnostics | More → API & App Diagnostics | `canViewDeveloperDiagnostics` | **Developer only** |
-| Failed Imports | More → Failed Imports | `canViewFailedImports` **AND** `canViewDeveloperDiagnostics` | **Developer only** (UI quirk) |
+| Failed Imports | More → Failed Imports | `canViewFailedImports` | Manager + Developer |
 | Hidden Reservations | More → Hidden Reservations | `canViewHiddenReservations` | Manager + Developer |
 | Hard delete | Hidden screen row action | `canHardDeleteReservations` | **Developer only** |
 | Restaurant settings | More → Operations | `canManageRestaurantSettings` | Manager + Developer |
 | Business analytics | More → Business Analytics | `canViewAnalytics` | Manager + Developer |
 | Guest manage link | Detail → More menu | `canGenerateGuestManageLinks` | Manager + Developer |
 
-**Production note:** `Tryzub_ReservationsApp` hardcodes `role: .developer`. Before boss TestFlight, switch to `.manager` or `.staff` to test real gating.
+**Role note:** `Tryzub_ReservationsApp` uses `AppRoleStore` and `RoleSelectionView`. The selectable pilot roles are **Manager** and **Developer**; `staff` still exists in the capability model but is not selectable today. Switching role in More recreates the root reservation shell with the selected capability set.
 
 ---
 
@@ -52,6 +52,8 @@ Implemented as `AdminFetchTest` buttons in `DeveloperDiagnosticsView`. Each post
 | Test `reservation_analytics_summary` | `GET /reservation-analytics/summary` | Protected |
 
 ### Reservations
+
+These buttons are manual diagnostics probes. They are not the normal startup/tab refresh contract. Normal Home/Schedule/Review refresh uses the shared active-window path documented below.
 
 | Button | Endpoint |
 | --- | --- |
@@ -118,11 +120,13 @@ Marks green check when `APIRequestLogStore.hasSuccessfulCall(containing:)` match
 - `GET /restaurant-blocked-slots`
 - `GET /reservation-analytics/summary`
 - `GET /managed-reservations?date=YYYY-MM-DD`
+- `GET /managed-reservations?from=YYYY-MM-DD&to=YYYY-MM-DD`
 - `GET /managed-reservations`
 - `GET /managed-reservations/{id}`
 - `PATCH /managed-reservations/{id}`
 - `POST /managed-reservations`
 - `POST /managed-reservations/{id}/confirm`
+- `POST /managed-reservations/{id}/guest-manage-link`
 - `GET /managed-reservations/import-failures`
 - `POST /restaurant-blocked-slots`
 - `DELETE /restaurant-blocked-slots`
@@ -143,7 +147,7 @@ Marks green check when `APIRequestLogStore.hasSuccessfulCall(containing:)` match
 
 **Sync scope snapshots** (per `ReservationSyncScope`):
 
-- Today, Schedule window, Review queues, Import failure count, per-reservation reconcile
+- Active window, Today legacy/diagnostic, Schedule window legacy/diagnostic, Cancelled window, Hidden reservations, Review queues legacy/diagnostic, Import failure count, per-reservation reconcile
 - last attempt / success / failure / in-flight / cooldown
 
 **Operation State section shows:**
@@ -190,9 +194,9 @@ Shows:
 
 | Step | Expected |
 | --- | --- |
-| Open Failed Imports (developer UI today) | GET full import-failures list |
+| Open Failed Imports (manager/developer) | GET full import-failures list |
 | Open failure detail → repair form | Creates via `createAcceptedManualReservation` |
-| Home Form Problems badge | Visible only when developer caps both true |
+| Home Form Problems badge | Visible when the selected role has `canViewFailedImports`; fetch is lazy/gated, not part of normal reservation refresh |
 
 ### Guest manage link
 
@@ -218,10 +222,11 @@ Shows:
 
 | Step | Expected |
 | --- | --- |
-| Open Home; wait 60s with app foreground | Auto refresh uses delta if prior today sync stored cursor |
-| Kill app; reopen Home; wait 60s | Cursor lost — auto may full-replace today (verify in log: no `updated_since`) |
-| Manual pull-refresh | Always full today replace — never delta |
-| Check request log | `updated_since` query param only on auto today refresh |
+| Launch app; allow startup pass to finish | One `active_window` full refresh appears with `from` and `to`; response `server_time` is stored in memory |
+| Keep Home visible and app foreground | Quiet auto-refresh uses `active_window_delta` if a cursor exists |
+| Check request log | `active_window_delta` includes `from`, `to`, and `updated_since`; empty deltas upsert nothing and never delete cache rows |
+| Kill app; reopen Home; wait 60s | Cursor lost — first auto may full-replace the active window; app does not invent a cursor from device time |
+| Manual pull-refresh | Active window full refresh — not delta |
 
 ### No-internet testing
 
@@ -244,7 +249,7 @@ Shows:
 
 ## 10. TestFlight boss-testing checklist
 
-### Boss should test (manager role — switch before build)
+### Boss should test (manager role)
 
 - [ ] Credentials screen saves and app loads reservations
 - [ ] Home shows today seated + upcoming; date picker works
@@ -278,9 +283,9 @@ Shows:
 - [ ] Request log has no credentials or raw PII
 - [ ] Scope snapshots show reasonable cooldowns after failures
 - [ ] Hidden → restore → hard delete on test row only
-- [ ] `updated_since` appears in auto-refresh log after initial sync
-- [ ] Manager role build: Failed Imports **hidden** (current UI); confirm boss won't need it
-- [ ] Staff role build: confirm/cancel/create hidden; seat still works
+- [ ] `active_window_delta` appears in auto-refresh log after initial sync and includes `from`, `to`, and `updated_since`
+- [ ] Manager role: API Diagnostics and hard delete hidden; Failed Imports visible
+- [ ] Staff role is not selectable in the current pilot picker; if enabled later, confirm create/confirm/cancel are hidden and seat still works
 
 ---
 
@@ -304,9 +309,19 @@ Staff on a live floor should **never** use these casually:
 
 ---
 
-## 12. Notification center preview
+## 12. Notices and notification behavior
 
-Diagnostics shows live `controller.notices`. Examples:
+The app uses `controller.notices` as an in-session notice center:
+
+- The floating notice overlay shows the newest notice for the current visible tab context.
+- Tapping the overlay opens a notice sheet.
+- More → Notices opens the same current notice list.
+- Success and info notices auto-dismiss after about **4 seconds**.
+- Warning and error notices stay visible until staff dismisses them or clears all.
+- The controller keeps the latest **20 current notices** in memory.
+- Notices are not persisted; history is lost on force quit/relaunch.
+
+Examples:
 
 - refresh failed / auto-refresh failed
 - offline warning
@@ -316,7 +331,7 @@ Diagnostics shows live `controller.notices`. Examples:
 - admin test pass/fail
 - manage link ready / failed
 
-Dismiss individually or clear all from diagnostics.
+Developer diagnostics can show extra request reason / error code / developer details for the same notices. Manager-facing notices stay staff-readable.
 
 ---
 
@@ -329,7 +344,9 @@ Dismiss individually or clear all from diagnostics.
 - No fake-reservation generator
 - No automatic Mail send test
 - Cursors not persisted across app restart
-- Manager cannot open Failed Imports in current UI (developer gate)
+- Staff role exists in code but is not selectable in the current pilot role picker
+- Guest Memory / Regulars may be expensive on large caches and should be refactored before broad historical usage
+- Add/Edit forms share validation/normalization but still need final visual polish
 
 ---
 
@@ -344,7 +361,7 @@ Dismiss individually or clear all from diagnostics.
 - [ ] Endpoint checklist greens after session
 - [ ] Import endpoint stays Clean
 - [ ] Scope snapshots update after refresh failures
-- [ ] Cache counts match expectation after today sync
+- [ ] Cache counts match expectation after active-window sync
 - [ ] Hide → restore → hard delete on test ID only
 - [ ] Guest manage link POST appears in log; pasteboard works
 - [ ] Confirm + Email POST `/confirm` appears only when explicitly tested

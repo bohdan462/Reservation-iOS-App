@@ -4,7 +4,7 @@
 **Local cache:** SwiftData `ReservationRecord` only — never authoritative  
 **Hard rule:** iOS must **not** call `POST /managed-reservations/import` during normal workflow (not implemented in client; diagnostics tracks accidental use)
 
-**Production note:** `Tryzub_ReservationsApp` hardcodes `role: .developer` today. Capability tables below reflect the role model; pilot builds should switch to `.staff` or `.manager` before boss testing.
+**Role note:** `Tryzub_ReservationsApp` uses `AppRoleStore` and `RoleSelectionView`. The selectable pilot roles are `.manager` and `.developer`; `.staff` still exists in the capability model but is not currently offered in the role picker.
 
 ---
 
@@ -15,12 +15,13 @@ flowchart TB
     subgraph iOS["Tryzub Reservations iOS"]
         App["Tryzub_ReservationsApp"]
         Creds["AppCredentialStore / Keychain"]
-        Env["AppEnvironment<br/>apiClient + role + capabilities"]
+        Role["AppRoleStore<br/>manager/developer picker"]
+        Env["AppEnvironment<br/>apiClient + selected role + capabilities"]
         Shell["ReservationsListView<br/>tab shell"]
         Ctrl["ReservationsController<br/>workflow coordinator"]
         Views["Feature views<br/>Home · List · Review · More"]
         Guest["GuestInsights<br/>cache-only"]
-        Settings["RestaurantSettingsStore<br/>lazy settings UI"]
+        Settings["RestaurantSettingsStore<br/>lazy settings/ops UI"]
         SD["SwiftData<br/>ReservationRecord"]
     end
 
@@ -39,14 +40,16 @@ flowchart TB
     WP["WordPress Tryzub plugin REST"]
 
     App --> Creds
-    Creds --> Env
-    App --> Shell
+    Creds --> Role
+    Role --> Env
+    App --> Role
+    Env --> Shell
     Shell --> Ctrl
     Shell --> Views
     Views --> Ctrl
     Views --> Guest
     Views --> Settings
-    Settings --> Ctrl
+    Settings --> API
     Ctrl --> Sync
     Ctrl --> Mut
     Ctrl --> IFail
@@ -61,9 +64,9 @@ flowchart TB
 ```
 
 **What matters**
-- One shared `ReservationsAPIClient` per session; repositories/services are created per `ModelContext` operation.
-- Views call **controller workflow methods** for reservations; settings screens mostly use `RestaurantSettingsStore` → controller.
-- **Exception:** `HostBoardView` calls `environment.apiClient` directly for today availability/slots/blocked summary (lazy, 120s cache) — not through controller.
+- One shared `ReservationsAPIClient` per selected-role session; repositories/services are created per `ModelContext` operation.
+- Views call **controller workflow methods** for reservations; settings screens use `RestaurantSettingsStore` with the shared API client.
+- Home availability/slots/blocked summary is controller-owned and date-keyed (`ensureAvailabilitySummary`, `cachedReservationSlots`, `cachedRestaurantBlockedSlots`) so Add/Edit can reuse cached slot data.
 - `ReservationsController.operationState` mirrors refresh, mutation, reconcile, create, import-count, and offline state for granular UI/diagnostics without changing existing workflow methods.
 - Guest Insights never touches network or SwiftData writes.
 
@@ -82,19 +85,24 @@ flowchart TD
     F -->|no| G["CredentialsSetupView"]
     G --> H["save → Keychain"]
     H --> F
-    F -->|yes| I["ReservationsListView"]
+    F -->|yes| Role{Role selected?}
+    Role -->|no| R["RoleSelectionView"]
+    R --> Role
+    Role -->|yes| I["ReservationsListView"]
     I --> J["ReservationsController(environment)"]
     I --> K["HiddenReservationsStore()"]
     I --> L[".modelContainer(ReservationRecord)"]
     I --> M[".task"]
-    M --> N["loadIfNeeded → today full sync"]
-    M --> O["loadRestaurantSetup → GET /restaurant-setup"]
+    M --> N["performStartupNetworkPass"]
+    N --> O["active_window full sync<br/>GET /managed-reservations?from&to"]
+    O --> P["restaurant setup<br/>GET /restaurant-setup"]
 ```
 
 **What matters**
 - Credentials: env vars override Keychain on launch (simulator/dev); device uses Keychain after first save.
+- Role: manager/developer selection is persisted in `UserDefaults`; changing role recreates `ReservationsListView` with a new `AppEnvironment`.
 - SwiftData container is scene-level; all tabs share one cache.
-- Startup network: today reservations (full replace) + restaurant setup (in-memory `@Published` on controller).
+- Startup network: active reservation window (full replace) + restaurant setup (in-memory `@Published` on controller), launched behind a splash overlay without blocking cached SwiftData rendering.
 - No reservation fetch happens before credentials gate passes.
 
 ---
@@ -116,9 +124,9 @@ flowchart LR
 
 | Tab | Root view | `isActive` gating | Primary data source |
 | --- | --- | --- | --- |
-| Home | `HomeDashboardView` → `HostBoardView` | Yes — auto-refresh, clock, availability | `@Query` + today sync |
-| List | `ReservationScheduleView` | Yes — activation fetch | `@Query` + schedule window |
-| Review | `ReservationReviewQueueView` | Yes — activation fetch | `@Query` + review queues |
+| Home | `HomeDashboardView` → `HostBoardView` | Yes — auto-refresh, clock, availability | active-window `@Query` filtered to selected date |
+| List | `ReservationScheduleView` | Yes — activation ensure-fresh | active-window `@Query`; All mode paged on demand |
+| Review | `ReservationReviewQueueView` | Yes — activation ensure-fresh | active-window pending-review `@Query` |
 | More | `ReservationMoreView` | No | Navigation pushes only |
 
 **What matters**
@@ -138,49 +146,47 @@ sequenceDiagram
     participant R as ReservationRepository
     participant API as API Client
 
-    Note over V,API: Startup / manual today
-    V->>C: loadIfNeeded / requestManualTodayRefresh
-    C->>S: syncTodayFull
-    S->>API: GET /managed-reservations?date=today
-    S->>R: replaceDateScope(today) — deletes orphans
+    Note over V,API: Startup / manual Home/List/Review refresh
+    V->>C: performStartupNetworkPass / request*Refresh
+    C->>S: syncActiveWindowFull(from,to)
+    S->>API: GET /managed-reservations?from&to
+    S->>R: replaceDateWindow(active window) — deletes orphans in window
     C->>C: updateServerCursor(server_time)
 
-    Note over V,API: Auto today (60s, Home visible)
+    Note over V,API: Auto refresh (60s, Home visible)
     V->>C: autoRefreshDashboardIfAllowed
     alt cursor exists
-        C->>S: syncTodayChanges(updated_since)
+        C->>S: syncActiveWindowChanges(from,to,updated_since)
         S->>R: upsert only — no deletes
     else no cursor
-        C->>S: syncTodayFull
+        C->>S: syncActiveWindowFull(from,to)
     end
 
     Note over V,API: Schedule tab activation (stale > 300s)
     V->>C: scheduleBecameActive
-    C->>S: syncScheduleWindowFull(today..today+30)
-    S->>R: replaceDateWindow — deletes orphans in window
+    C->>C: skip if active window fresh/in-flight/cooldown
 
     Note over V,API: Review tab activation (stale > 120s)
     V->>C: reviewBecameActive
-    C->>S: syncReviewQueues
-    S->>R: replaceReviewQueue — upsert only, no deletes
+    C->>C: skip if active window fresh/in-flight/cooldown
 ```
 
 ### Sync strategy summary
 
 | Scope | Trigger | Endpoint | Write mode | Deletes local orphans? | Cursor (`server_time`) |
 | --- | --- | --- | --- | --- | --- |
-| Today startup/manual | `loadIfNeeded`, pull-refresh | `GET ?date=today` | `replaceDateScope` | **Yes** (non-hidden) | Stored |
-| Today auto | Home loop 60s | `GET ?date=today&updated_since=` | `upsert` | **No** | Stored |
-| Schedule window | Tab active / refresh | `GET ?from&to` paged | `replaceDateWindow` | **Yes** in window | Stored |
-| Review queues | Tab active / refresh | `GET ?status=needs_review` + `new` | `replaceReviewQueue` | **No** | None |
+| Active window full | Startup; manual Home/List/Review refresh; stale activation | `GET ?from&to` paged | `replaceDateWindow` | **Yes** in window | Stored |
+| Active window delta | Home quiet auto-refresh after cursor | `GET ?from&to&updated_since=` paged | `upsert` | **No** | Stored |
+| Schedule upcoming | Tab active / refresh | Shared active window | cache-first | No separate fetch | Shared |
+| Review pending | Tab active / refresh | Shared active window | cache-first | No separate fetch | Shared |
 | Schedule All pages | Search / load more | `GET` paginated | `upsert` | **No** | None |
 | Cancelled | More screen open | `GET ?status=cancelled` | `upsert` | **No** | None |
 | Hidden archive | Hidden screen open | `GET ?include_hidden=1` | `upsert` | **No** | None |
-| Import failure count | Admin/dev screen or explicit diagnostics | `GET /import-failures?per_page=1` | None | — | None |
+| Import failure count/list | More Failed Imports sheet or explicit diagnostics | `GET /import-failures` | None | — | None |
 
 **What matters**
 - `server_time` cursor is **in-memory on controller only** — not persisted across app kill.
-- Delta sync (`updated_since`) is **today auto-refresh only**; manual/startup always full-replace today.
+- Delta sync (`updated_since`) is active-window auto-refresh only and always includes `from` and `to`.
 - Empty delta response: upsert skipped; no deletes.
 - Network failure: offline notice (60s cooldown); cache remains visible; scope failure cooldown applies (today manual 8s, auto failure 180s).
 
@@ -295,7 +301,7 @@ flowchart TD
 | `canViewDeveloperDiagnostics` | ✗ | ✗ | ✓ |
 | `canHardDeleteReservations` | ✗ | ✗ | ✓ |
 
-**UI quirk (verify before pilot):** Failed Imports nav link requires **both** `canViewFailedImports` **and** `canViewDeveloperDiagnostics` — managers cannot reach it in UI despite having import capability.
+**UI note:** Failed Imports is available from More when `canViewFailedImports` is true. API Diagnostics and hard delete remain developer-only.
 
 ---
 
@@ -304,8 +310,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     More["More tab"] --> RS["RestaurantSettingsStore"]
-    RS --> Ctrl["ReservationsController"]
-    Ctrl --> API["ReservationsAPIClient"]
+    RS --> API["ReservationsAPIClient"]
 
     RS --> Setup["RestaurantSettingsView<br/>GET/PATCH /restaurant-setup"]
     RS --> Hours["WeeklyHoursView<br/>GET/PATCH /restaurant-hours"]
@@ -318,14 +323,15 @@ flowchart TD
     EDO --> Avail["GET day-availability"]
     EDO --> BlockedGET["GET /restaurant-blocked-slots"]
 
-    Home["HostBoardView today summary"] --> API2["apiClient direct<br/>same 3 GETs, 120s cache"]
+    Home["HostBoardView today summary"] --> Ctrl["ReservationsController<br/>date-keyed availability cache"]
+    Ctrl --> API
 ```
 
 **What matters**
 - Settings loads are **lazy** — do not block Home/List/Review tab switches.
 - `ensureDateOperations` owns Task lifecycle (prevents stuck spinners on date change).
 - `GET /reservation-slots` is **public** (no auth).
-- Home availability indicator uses direct API client, not `RestaurantSettingsStore`.
+- Home availability indicator uses controller TTL/in-flight de-dupe, not local `@State` or `RestaurantSettingsStore`.
 
 ---
 
@@ -433,18 +439,88 @@ flowchart LR
     end
 ```
 
-**API client defaults:** 30s request timeout, 60s resource timeout, GET retries ≥1 on timeout/connection lost, mutations no retry by default.
+**API client defaults:** one in-flight request at a time, 15s request timeout, 30s resource timeout, GET retries capped at one retry for timeout/connection-lost, mutations no retry by default.
 
 ---
 
-## Known weak spots (document, do not fix in this pass)
+## 12. Current Architecture Audit
+
+### Strong
+
+- Backend remains the source of truth. SwiftData writes happen after successful GET/PATCH/POST/DELETE responses, not as optimistic truth.
+- Home, Schedule upcoming, and Review now share the active operational window cache.
+- Active-window delta sync is correctly scoped with `from`, `to`, and `updated_since`; delta responses upsert only and never delete missing rows.
+- Startup is cache-first: `ReservationsListView` renders immediately behind a minimum-duration launch overlay while network work runs in the background.
+- Mutations are row/action scoped through `actionInProgressIDs`, `isCreatingReservation`, and reconcile IDs.
+- Offline/degraded state is visible through notices and blocks create/edit/confirm/seat/complete/hide/restore/hard-delete/manage-link actions.
+- API diagnostics are sanitized, reason-tagged, and include skip/fresh/in-flight decisions.
+- NaN/layout safety helpers exist (`tryzubFiniteNonNegativeLayoutValue`, `tryzubSafeRatio`) and are used in major chart/geometry surfaces.
+
+### Fragile
+
+- `ReservationsController` still owns many concerns: reservation sync, restaurant setup cache, availability cache, mutation state, notices, diagnostics, and local seated timestamps.
+- `server_time` cursors are in-memory only; app restart loses delta continuity.
+- `performTodayRefresh`, `performScheduleWindowRefresh`, and `performReviewQueuesRefresh` remain as legacy/private paths. Current normal flow uses active-window refresh; future edits must avoid reactivating the old split paths.
+- `loadScheduleAllPage` intentionally fetches broad history only in All mode. Any new Schedule search/filter code must keep `isActive && scope == .all` guards.
+- `ReservationRepository.records(remoteIDs:)` fetches one descriptor per ID; acceptable for small pages but a batch predicate would be better for larger pages.
+- More navigation now uses a typed path for top-level destinations and cancelled-row detail. Adding nested `NavigationStack(path:)` inside More children can reintroduce SwiftUI path type mismatch crashes.
+
+### Over-complicated
+
+- The reservation controller has both legacy flags and `ReservationOperationState`; they currently mirror each other rather than replacing old flags.
+- Create/edit form state is shared, but slot loading, closed-day validation, and fallback defaults still live inside the form view.
+- `RestaurantSettingsStore` is a store plus several embedded screens in one file; it is navigable but large.
+
+### Performance and Memory Risks
+
+| Area | Status | Risk | Recommendation |
+| --- | --- | --- | --- |
+| `RegularGuestsView` | Confirmed | Broad `@Query` over all reservations; `allSummaries` and `displayedSummaries` rebuild clustering from scratch during body updates. `RegularGuestsController.exactAndStrongClusters` compares record pairs, so large caches can hitch More. | Next refactor: add a small `RegularGuestsStore` / cached summaries keyed by record count + latest sync timestamp; debounce search/filter work. |
+| `GuestInsightsView` | Confirmed | `report` is a computed property that creates `GuestInsightsController` and scans `allReservations` during body evaluation. Detail passes broad cache arrays. | Next refactor: compute once in `@State`/store on appear or pass a precomputed lightweight snapshot. |
+| Mounted tabs + `@Query` | Partly mitigated | Tabs stay mounted for navigation stability; each tab still observes SwiftData writes and may recompute local filters after upserts. | Keep active-window narrowed queries; consider controller-published counts for badges if cache grows. |
+| Schedule All | Guarded | User-triggered All mode can still load many pages and upsert many rows; this is expected but can jank if used during service. | Keep All mode explicit; add page-level UI copy and avoid background loading more than one page. |
+| Availability tasks | Mitigated | Controller stores per-date tasks; cancellation exists when Home hides, but task dictionaries must be cleaned on every path. | Keep current `defer`; audit after any new date operation task. |
+| Launch loader | Low | Internal animation/message task; task is cancelled by view lifecycle. | No change unless previews show loops. |
+| Charts/Geometry | Partly mitigated | Major chart math clamps finite values. Remaining Swift Charts domain generation should continue to guard empty/max-zero data. | Keep safe helpers mandatory for any new chart/GeometryReader math. |
+
+### State Ownership
+
+- Clean: API transport in `ReservationsAPIClient`; SwiftData writes in `ReservationRepository`; server mutations in `ReservationMutationService`; reservation workflows in `ReservationsController`.
+- Still blurred: availability slot cache is in `ReservationsController`, while restaurant operations screens also have `RestaurantSettingsStore` caches; Add/Edit reads controller cache directly.
+- Still blurred: manual email draft logic lives near detail UI. It is a safe boundary for the MVP, but should become its own service file before the full Gmail/Mail compose pass.
+
+### Docs Corrected In This Audit
+
+- Role selection is no longer hardcoded developer; manager/developer are selectable and persisted.
+- Startup is active-window + setup, not today-only.
+- Home/Schedule/Review normal refresh is active-window cache-first, not separate schedule/review fetches.
+- Home availability is controller-cached, not view-local direct API state.
+- Failed Imports is manager-capable in UI as a sheet, not developer-only navigation.
+- Request timeouts are 15s/30s with GET retry capped at one retry.
+
+---
+
+## 13. Next Refactor Plan
+
+1. **Guest Memory performance store:** Move Regulars/Guest Insights derived summaries into a store or memoized analyzer. Start with `RegularGuestsView` because it has broad `@Query` and O(n²) clustering.
+2. **Extract form slot state:** Move Add/Edit slot loading, closed-day validation, and cached-slot selection into a small form view model so the view mostly renders state.
+3. **Split controller caches:** Extract restaurant setup/availability cache helpers from `ReservationsController` into a focused `AvailabilityOperationsStore` only if it reduces controller churn without changing routes.
+4. **Retire legacy sync paths:** Remove or quarantine `performTodayRefresh`, `performScheduleWindowRefresh`, and `performReviewQueuesRefresh` after confirming no callers use them.
+5. **Persist active-window cursor:** Store the active-window `server_time` cursor with a matching window key so app restart can delta sooner without using the device clock.
+6. **Repository batch fetch:** Replace per-ID `records(remoteIDs:)` loops with a batched predicate helper when SwiftData predicate support is stable enough.
+7. **Manual Gmail compose pass:** Keep backend email untouched; build a manual draft/compose UI around guest manage link generation and explicit staff confirmation.
+8. **Staff role pilot:** Decide whether `.staff` should be selectable; if not, remove staff rows from pilot-facing docs or keep it as a future mode.
+
+---
+
+## 14. Known weak spots (document, do not fix in this pass)
 
 | Area | Issue |
 | --- | --- |
-| Role | Production hardcoded `.developer` — pilot needs explicit role selection |
-| Failed Imports | Manager capability exists but UI requires developer |
-| HostBoard availability | Direct `apiClient` bypasses controller |
-| Guest Insights | Quality limited to cached history — no guest API |
+| Role | Role picker offers manager/developer only; `.staff` exists but is not selectable in current UI |
+| Failed Imports | Manager can open the sheet; this is operationally powerful and should remain trained/admin-only |
+| Home availability | Controller cache exists, but only today auto-loads; other dates load from Add/Edit/settings when requested |
+| Guest Insights / Regulars | Cache-only and potentially heavy; broad `@Query` plus O(n²) clustering can block More on large caches |
 | Cursors | Lost on app restart — first auto-refresh may full-replace |
 | `createReservation` controller method | Exists but UI uses `createAcceptedManualReservation` only |
-| Mutation progress | `actionInProgressIDs` disables buttons; verify in code if any view blocks entire screen |
+| Mutation progress | `actionInProgressIDs` disables affected row/actions; some sheets still need clearer button-level progress polish |

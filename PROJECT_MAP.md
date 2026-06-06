@@ -29,7 +29,7 @@ One-restaurant internal iOS app. **WordPress REST API is source of truth.** **Sw
 | Settings UI + store | `Features/Reservations/RestaurantSettingsStore.swift` |
 | Guest memory | `Features/GuestInsights/*` |
 | Dev diagnostics | `Features/Reservations/DeveloperDiagnosticsView.swift` |
-| Roles | `Core/Roles/AppUserRole.swift` |
+| Roles + role picker | `Core/Roles/AppUserRole.swift`, `App/AppRoleStore.swift` |
 | Credentials | `App/AppCredentials.swift` |
 | App entry | `Tryzub_ReservationsApp.swift` |
 
@@ -95,11 +95,13 @@ Tryzub Reservations/
 | --- | --- |
 | 1 | `AppCredentialStore` loads env vars (`TRYZUB_API_USERNAME`, `TRYZUB_API_PASSWORD`) or Keychain |
 | 2 | No credentials → `CredentialsSetupView` (save to Keychain) |
-| 3 | Credentials OK → `ReservationsListView(environment:)` with `ReservationsAPIClient` + **`role: .developer`** (hardcoded) |
-| 4 | `.modelContainer(for: ReservationRecord.self)` |
-| 5 | Root `.task` → `controller.loadIfNeeded` + `controller.loadRestaurantSetup` |
+| 3 | Credentials OK but no role → `RoleSelectionView` (manager/developer) |
+| 4 | Role selected → `ReservationsListView(environment:)` with one shared `ReservationsAPIClient` and selected capabilities |
+| 5 | `.modelContainer(for: ReservationRecord.self)` at scene level |
+| 6 | Root `.task` shows launch overlay and starts `performStartupNetworkPass` in background |
+| 7 | Startup network pass serializes active-window full sync first, then `GET /restaurant-setup` |
 
-**Audience:** All roles see credentials gate once per device.
+**Audience:** All roles see credentials gate once per device. Current selectable roles are manager and developer; staff capability code exists but staff is not selectable in `AppRoleStore.selectableRoles`.
 
 ---
 
@@ -109,12 +111,12 @@ Custom `ReservationFloatingTabBar` — **not** `TabView`.
 
 | Tab | Label | Root | Fetches when |
 | --- | --- | --- | --- |
-| `.home` | Home | `HomeDashboardView` → `HostBoardView` | Startup today sync; pull-refresh; 60s auto-refresh when visible; lazy availability GETs |
-| `.schedule` | List | `ReservationScheduleView` | Tab activation if stale (300s); pull-refresh; paginated search |
-| `.review` | Review | `ReservationReviewQueueView` | Tab activation if stale (120s); pull-refresh |
+| `.home` | Home | `HomeDashboardView` → `HostBoardView` | Active-window cache; pull-refresh; 60s active-window delta/full auto-refresh when visible; cached availability summary |
+| `.schedule` | List | `ReservationScheduleView` | Upcoming uses active-window cache; activation only ensures active window freshness; All mode pages history explicitly |
+| `.review` | Review | `ReservationReviewQueueView` | Filters active-window pending rows; activation only ensures active window freshness |
 | `.more` | More | `ReservationMoreView` | Child screens only on navigation |
 
-**Mount strategy:** All four tabs stay in `ZStack`; visibility via `opacity` / `allowsHitTesting` / `zIndex`. Each tab has its own `NavigationStack`.
+**Mount strategy:** All four tabs stay in `ZStack`; visibility via `opacity` / `allowsHitTesting` / `zIndex`. Each main tab has its own `NavigationStack`; More uses a typed destination path to avoid cancelled-detail path mismatch crashes.
 
 **Shared state:** `@EnvironmentObject ReservationsController`, `HiddenReservationsStore`.
 
@@ -163,13 +165,13 @@ Custom `ReservationFloatingTabBar` — **not** `TabView`.
 
 ### ReservationsController (`Import/ReservationsController.swift`)
 
-Owns: sync scopes, `server_time` cursors, `operationState`, `isSyncing` / `isAutoRefreshing`, `actionInProgressIDs`, reconcile IDs, notices, import failure count, `restaurantSetup`, admin tests.
+Owns: active-window sync scopes, `server_time` cursors, `operationState`, `isSyncing` / `isAutoRefreshing`, `actionInProgressIDs`, reconcile IDs, notices, import failure count, `restaurantSetup`, Home availability summary cache, local seated timestamps, admin tests.
 
-Views should call controller — **exception:** `HostBoardView` calls `apiClient` for today availability summary.
+Reservation views should call controller. Settings screens use `RestaurantSettingsStore` with the shared API client. Home availability summary is controller-cached and TTL guarded.
 
 ### ReservationSyncService (`Import/ReservationImportService.swift`)
 
-GET list operations → repository replace or upsert. Returns `ReservationSyncResult(rowCount, serverTime)`.
+GET list operations → repository replace or upsert. Current normal workflow uses active-window full/delta paths. Returns `ReservationSyncResult(rowCount, serverTime)`.
 
 ### ReservationMutationService
 
@@ -181,7 +183,7 @@ SwiftData upsert/replace/delete. Match key: `remoteID`.
 
 ### ReservationsAPIClient
 
-All HTTP; Basic auth; request logging; GET retry floor.
+All HTTP; Basic auth; sanitized request logging; one-at-a-time request serializer; 15s request timeout / 30s resource timeout; GET retry capped at one retry; non-GET no blind retry.
 
 ---
 
@@ -191,19 +193,21 @@ All HTTP; Basic auth; request logging; GET retry floor.
 
 - Service date picker, stats card, `ServiceLoadChart`, seated + upcoming panels
 - Auto-refresh loop (60s) via `autoRefreshDashboardIfAllowed`
-- Today availability line: direct GET day-availability + slots + blocked (120s cache)
+- Today availability line: controller `ensureAvailabilitySummary` → day-availability + slots + blocked (180s cache, in-flight de-duped, cancellable when Home hides)
 - Staff actions → controller; confirm dialog splits Confirm Only / Confirm + Email
 - Form Problems button: developer-only (both caps)
 
 ### List — `ReservationScheduleView`
 
 - Scopes: Upcoming window (from cache) or All (paginated server search)
-- `scheduleBecameActive` on tab focus
+- `scheduleBecameActive` on tab focus only ensures active-window freshness
+- `schedule_all_page` only runs when Schedule is active, scope is `.all`, and the user selects All/searches/refreshes/loads more
 
 ### Review — `ReservationReviewQueueView`
 
 - Default filter: Pending = `new` + `needs_review`, oldest first
-- `reviewBecameActive` on tab focus
+- Filters active-window cached pending rows
+- `reviewBecameActive` on tab focus only ensures active-window freshness
 
 ### Detail — `ReservationDetailView`
 
@@ -222,8 +226,8 @@ All HTTP; Basic auth; request logging; GET retry floor.
 
 ### More — `ReservationMoreView`
 
-- Operations: Cancelled, Hidden, settings links, manual create, analytics, guest memory
-- Developer section: Failed Imports, API Diagnostics
+- Notices screen, role picker, Cancelled, Hidden, settings links, manual create, analytics, guest memory
+- Developer / Support section: Failed Imports sheet for roles with `canViewFailedImports`, API Diagnostics for developer
 - Duplicate resolution instructions (manual supersede workflow)
 
 ### Hidden — `HiddenReservationsView` (in `ReservationsListView.swift`)
@@ -239,6 +243,7 @@ All HTTP; Basic auth; request logging; GET retry floor.
 
 - `RegularGuestsView` (More) — all roles
 - `GuestInsightsView` — from detail preview; **no network**
+- Known performance risk: broad cache `@Query` plus repeated in-memory clustering; refactor into cached summaries before growing history.
 
 ### Diagnostics — `DeveloperDiagnosticsView`
 
@@ -286,11 +291,11 @@ All HTTP; Basic auth; request logging; GET retry floor.
 
 | When | Network call | Blocks UI? |
 | --- | --- | --- |
-| App launch | Today full sync + restaurant setup | Shows cache first |
-| Home visible, every 60s | Today delta or full | No — background |
-| Home pull-refresh | Today full | Refresh indicator |
-| Schedule tab focus (stale) | Schedule window full replace | No |
-| Review tab focus (stale) | Review queues upsert | No |
+| App launch | Active-window full sync + restaurant setup | Shows cache first behind launch overlay |
+| Home visible, every 60s | Active-window delta if cursor exists, else full | No — background |
+| Home pull-refresh | Active-window full refresh | Refresh indicator |
+| Schedule tab focus (stale) | Active-window full refresh | No |
+| Review tab focus (stale) | Active-window full refresh | No |
 | More → Hidden open | `include_hidden=1` upsert | Screen loading state |
 | More → Cancelled open | Cancelled window upsert | Screen loading state |
 | More → Settings child | Per-screen lazy GET | Screen loading state |
@@ -352,10 +357,10 @@ All HTTP; Basic auth; request logging; GET retry floor.
 | `controller.notices` | `AppNoticeOverlay` | Tab-filtered toasts + sheet |
 | `actionInProgressIDs` | Action buttons | Disables per-reservation actions |
 | `isCreatingReservation` | Create form | Disables create |
-| `isSyncing` / `isAutoRefreshing` | Controller | verify in code for spinners |
+| `isSyncing` / `isAutoRefreshing` | Controller | Header/toolbar progress only; cached rows stay visible |
 | `RestaurantSettingsStore.isLoading*` | Settings screens | Per-screen progress |
 
-**Known UX risk:** Long mutations block individual reservation actions, not entire tab — verify in code if any sheet lacks progress indicator.
+**Known UX risk:** Long mutations block individual reservation actions, not entire tab. Some sheets may still need clearer per-button progress copy during the next UI polish pass.
 
 ---
 
@@ -375,8 +380,8 @@ All HTTP; Basic auth; request logging; GET retry floor.
 | Guest Insights (cache-only) | Implemented |
 | Developer diagnostics | Implemented |
 | Hard delete (dev cleanup) | Implemented |
-| Role picker at runtime | **Not implemented** — hardcoded developer |
-| Manager Failed Imports UI | **Gated to developer** |
+| Role picker at runtime | Implemented for manager/developer; staff exists in code but is not selectable |
+| Manager Failed Imports UI | Implemented as a sheet when `canViewFailedImports` |
 | Backend cancel/confirmation emails from iOS | Partial — Confirm + Email only; cancel says no email yet |
 | Persistent sync cursor across restarts | **Not implemented** |
 
@@ -384,17 +389,48 @@ All HTTP; Basic auth; request logging; GET retry floor.
 
 ## 14. Known weak spots — do not break during pilot
 
-1. **Role hardcoded to developer** — change before boss TestFlight unless intentional.
+1. **Staff role exists but is not selectable** — decide whether pilot should expose staff mode.
 2. **`POST /import` must stay unused** — backend import is separate pipeline.
 3. **Review queue replace does not delete** — stale `needs_review` rows may linger until status PATCH or full date replace.
 4. **Guest Insights** depends on cache depth — incomplete history on fresh install.
-5. **HostBoard direct API calls** — bypass controller; duplicate of settings store pattern.
+5. **Guest Memory broad query** — can become the next major jank source as cache grows.
 6. **`createReservation` controller method** — dead path; UI uses `createAcceptedManualReservation`.
 7. **Cursors in-memory** — app restart loses `updated_since` optimization.
 
 ---
 
-## 15. What not to touch during pilot
+## 15. Current Engineering Audit
+
+### Strong
+
+- Active-window cache now serves Home, Schedule upcoming, and Review.
+- `updated_since` delta is scoped to the active window and upsert-only.
+- Mutations are server-first and row-scoped; uncertain failures reconcile by ID.
+- Offline/degraded mode keeps cache readable and blocks unsafe mutations.
+- Availability/setup/slot reads are TTL guarded and in-flight de-duped.
+- API diagnostics show request reasons, skip/fresh/in-flight decisions, and sanitized snippets.
+
+### Fragile / Risky
+
+- `ReservationsController` is still too broad. It coordinates sync, mutations, settings setup cache, availability cache, notices, diagnostics, and local seated timestamps.
+- Guest Memory is the top performance risk. `RegularGuestsView` observes all reservations and rebuilds clustered summaries in computed properties used by body.
+- `GuestInsightsView` recomputes a full report from broad `allReservations` during body evaluation.
+- Mounted tabs reduce navigation churn but still observe SwiftData writes; large upserts can trigger recomputation across hidden tabs.
+- More uses a typed navigation path. Child screens should not add nested path-based `NavigationStack`s unless carefully isolated.
+- Legacy sync helpers remain in the controller; avoid using old today/schedule/review replace paths for normal tab activation.
+
+### Next Refactor Chunks
+
+1. Cache/memoize Regular Guests summaries in a small store.
+2. Compute Guest Insights reports once per selected reservation instead of in body.
+3. Move Add/Edit slot loading and closed-day validation out of the view.
+4. Extract availability operations from `ReservationsController` only after the form/store boundary is clear.
+5. Persist active-window cursor by window key.
+6. Remove or quarantine legacy sync helpers after call-site audit.
+
+---
+
+## 16. What not to touch during pilot
 
 - Backend route paths and DTO field names
 - `replaceDateScope` / `replaceDateWindow` delete semantics
