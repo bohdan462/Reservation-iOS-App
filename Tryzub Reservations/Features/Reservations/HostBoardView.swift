@@ -1124,8 +1124,9 @@ private struct HostBoardReservationRow: View {
             reservation: reservation,
             showsDate: false,
             context: rowContext,
+            contextNote: seatedDurationText,
             capabilities: controller.capabilities,
-            onTableTap: controller.capabilities.canEditReservationDetails
+            onTableTap: controller.capabilities.canEditReservationDetails && !controller.isNetworkDegraded
                 ? { tableAssignmentReservation = reservation }
                 : nil
         ) {
@@ -1134,7 +1135,7 @@ private struct HostBoardReservationRow: View {
                 capabilities: controller.capabilities,
                 compact: true,
                 includeSecondary: false,
-                isBusy: controller.isActionInProgress(for: reservation)
+                isBusy: controller.isActionInProgress(for: reservation) || controller.isNetworkDegraded
             ) { action in
                 handle(action)
             }
@@ -1182,6 +1183,10 @@ private struct HostBoardReservationRow: View {
             return .todaySeated
         }
         return .todayUpcoming
+    }
+
+    private var seatedDurationText: String? {
+        controller.seatedDurationText(for: reservation)
     }
 
     private func handle(_ action: ReservationHostAction) {

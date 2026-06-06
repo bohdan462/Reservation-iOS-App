@@ -577,6 +577,7 @@ struct TableAssignmentSheet: View {
     let onSave: (String) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var controller: ReservationsController
     @AppStorage(ReservationTableOptionsStore.storageKey) private var tableOptionsRawValue = ReservationTableOptionsStore.defaultRawValue
     @State private var tableName: String
     @State private var isSaving = false
@@ -602,6 +603,13 @@ struct TableAssignmentSheet: View {
                             .font(.caption.weight(.medium))
                             .foregroundStyle(TryzubColors.danger)
                             .lineLimit(2)
+                    }
+
+                    if controller.isNetworkDegraded {
+                        Label("Offline — showing saved reservations. Edits require internet.", systemImage: "wifi.slash")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(TryzubColors.mutedText)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     TextField("Table", text: $tableName)
@@ -669,7 +677,7 @@ struct TableAssignmentSheet: View {
                             Text("Save")
                         }
                     }
-                    .disabled(isSaving)
+                    .disabled(isSaving || controller.isNetworkDegraded)
                 }
             }
         }
@@ -705,6 +713,11 @@ struct TableAssignmentSheet: View {
 
     // Intent: Staff assigns a table through the caller's PATCH handler.
     private func save() async {
+        guard !controller.isNetworkDegraded else {
+            errorMessage = "Offline — edits require internet."
+            return
+        }
+
         isSaving = true
         errorMessage = nil
 

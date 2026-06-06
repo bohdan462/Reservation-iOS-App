@@ -61,6 +61,7 @@ final class ReservationsController: ObservableObject {
     @Published private(set) var availabilitySummaryByDate: [String: ReservationAvailabilitySummary] = [:]
     @Published private(set) var availabilitySummaryLoadingDates: Set<String> = []
     @Published private(set) var availabilitySummaryErrorsByDate: [String: String] = [:]
+    @Published private(set) var localSeatedAtByReservationID: [Int: Date] = [:]
 
     // MARK: - Sync State
 
@@ -114,12 +115,23 @@ final class ReservationsController: ObservableObject {
         isSyncing || isAutoRefreshing
     }
 
+    var isNetworkDegraded: Bool {
+        guard let lastOfflineNoticeAt else { return false }
+        return Date().timeIntervalSince(lastOfflineNoticeAt) < offlineNoticeCooldown
+    }
+
+    var hasLoadedRestaurantSetup: Bool {
+        restaurantSetupLoadedAt != nil
+    }
+
     private var hasAttemptedInitialLoad = false
+    private let localSeatedTimestampsKey = "tryzub.localSeatedTimestamps"
 
     // MARK: - Initialization
 
     init(environment: AppEnvironment) {
         self.environment = environment
+        self.localSeatedAtByReservationID = Self.loadLocalSeatedTimestamps()
     }
 
     // MARK: - App / Screen Lifecycle
@@ -1130,6 +1142,8 @@ final class ReservationsController: ObservableObject {
         _ request: ReservationCreateRequest,
         context: ModelContext
     ) async throws -> ReservationDTO {
+        try ensureMutationsAllowedOnline()
+
         guard !isCreatingReservation else {
             throw ReservationControllerError.actionAlreadyInProgress
         }
@@ -1152,6 +1166,10 @@ final class ReservationsController: ObservableObject {
                 throw error
             }
 
+            if error.isOfflineLike {
+                postOfflineNotice(source: .mutation, requestReason: .mutationCreate, error: error)
+            }
+
             errorMessage = "Manual reservation was not created. Please retry before relying on this reservation."
             postNotice(
                 severity: .error,
@@ -1170,6 +1188,8 @@ final class ReservationsController: ObservableObject {
         _ request: ReservationCreateRequest,
         context: ModelContext
     ) async throws -> ReservationDTO {
+        try ensureMutationsAllowedOnline()
+
         guard !isCreatingReservation else {
             throw ReservationControllerError.actionAlreadyInProgress
         }
@@ -1196,6 +1216,10 @@ final class ReservationsController: ObservableObject {
                 throw error
             }
 
+            if error.isOfflineLike {
+                postOfflineNotice(source: .mutation, requestReason: .mutationCreate, error: error)
+            }
+
             errorMessage = "Manual reservation was not created. Please retry before relying on this reservation."
             postNotice(
                 severity: .error,
@@ -1217,6 +1241,8 @@ final class ReservationsController: ObservableObject {
         request: ReservationUpdateRequest,
         context: ModelContext
     ) async throws -> ReservationDTO {
+        try ensureMutationsAllowedOnline()
+
         guard !actionInProgressIDs.contains(id) else {
             throw ReservationControllerError.actionAlreadyInProgress
         }
@@ -1235,6 +1261,10 @@ final class ReservationsController: ObservableObject {
         } catch {
             if error.isCancellationLike {
                 throw error
+            }
+
+            if error.isOfflineLike {
+                postOfflineNotice(source: .mutation, requestReason: .mutationPatch, error: error)
             }
 
             if error.mayHaveReachedReservationServer {
@@ -1278,11 +1308,12 @@ final class ReservationsController: ObservableObject {
         context: ModelContext
     ) async {
         do {
-            _ = try await updateReservation(
+            let updated = try await updateReservation(
                 id: reservation.remoteID,
                 request: ReservationUpdateRequest(status: status),
                 context: context
             )
+            updateLocalSeatedTimestamp(after: updated)
         } catch {
             if errorMessage == nil {
                 errorMessage = "Update did not sync. Please retry or check the reservation before relying on this change."
@@ -1299,6 +1330,8 @@ final class ReservationsController: ObservableObject {
         reservation: ReservationRecord,
         context: ModelContext
     ) async {
+        guard canStartMutationOnline() else { return }
+
         let id = reservation.remoteID
 
         guard !actionInProgressIDs.contains(id) else { return }
@@ -1336,6 +1369,10 @@ final class ReservationsController: ObservableObject {
         } catch {
             if error.isCancellationLike {
                 return
+            }
+
+            if error.isOfflineLike {
+                postOfflineNotice(source: .mutation, requestReason: .mutationConfirm, error: error)
             }
 
             if error.mayHaveReachedReservationServer {
@@ -1465,6 +1502,8 @@ final class ReservationsController: ObservableObject {
             throw ReservationControllerError.permissionDenied
         }
 
+        try ensureMutationsAllowedOnline()
+
         let id = reservation.remoteID
         guard !actionInProgressIDs.contains(id) else {
             throw ReservationControllerError.actionAlreadyInProgress
@@ -1486,6 +1525,9 @@ final class ReservationsController: ObservableObject {
             )
             return link
         } catch {
+            if error.isOfflineLike {
+                postOfflineNotice(source: .email, requestReason: .guestManageLink, error: error)
+            }
             postNotice(
                 severity: .error,
                 source: .email,
@@ -1509,6 +1551,8 @@ final class ReservationsController: ObservableObject {
             throw ReservationControllerError.permissionDenied
         }
 
+        try ensureMutationsAllowedOnline()
+
         let id = reservation.remoteID
         let reservationDate = reservation.reservationDate
         guard !actionInProgressIDs.contains(id) else {
@@ -1531,6 +1575,9 @@ final class ReservationsController: ObservableObject {
                 message: cleanupReason
             )
         } catch {
+            if error.isOfflineLike {
+                postOfflineNotice(source: .admin, requestReason: .hardDelete, error: error)
+            }
             postNotice(
                 severity: .error,
                 source: .admin,
@@ -1551,6 +1598,8 @@ final class ReservationsController: ObservableObject {
         reason hiddenReason: String = "Wrong manual entry",
         context: ModelContext
     ) async throws -> ReservationDTO {
+        try ensureMutationsAllowedOnline()
+
         let id = reservation.remoteID
         guard !actionInProgressIDs.contains(id) else {
             throw ReservationControllerError.actionAlreadyInProgress
@@ -1577,6 +1626,9 @@ final class ReservationsController: ObservableObject {
             )
             return hiddenReservation
         } catch {
+            if error.isOfflineLike {
+                postOfflineNotice(source: .mutation, requestReason: .mutationPatch, error: error)
+            }
             errorMessage = "Could not hide this entry. Please retry before relying on service lists."
             postMutationFailureNotice(
                 title: "Hide did not sync",
@@ -1593,6 +1645,8 @@ final class ReservationsController: ObservableObject {
         reservation: ReservationRecord,
         context: ModelContext
     ) async throws -> ReservationDTO {
+        try ensureMutationsAllowedOnline()
+
         let id = reservation.remoteID
         guard !actionInProgressIDs.contains(id) else {
             throw ReservationControllerError.actionAlreadyInProgress
@@ -1612,6 +1666,9 @@ final class ReservationsController: ObservableObject {
             postNotice(severity: .success, source: .mutation, title: "Reservation restored")
             return restoredReservation
         } catch {
+            if error.isOfflineLike {
+                postOfflineNotice(source: .mutation, requestReason: .mutationPatch, error: error)
+            }
             postMutationFailureNotice(
                 title: "Restore did not sync",
                 message: "Could not restore this reservation. Please retry."
@@ -2188,16 +2245,88 @@ final class ReservationsController: ObservableObject {
         lastOfflineNoticeAt = now
         publishOperationState()
         notices.removeAll {
-            $0.title == "You're offline. Showing saved data."
+            $0.title == "Offline — showing saved reservations."
         }
         postNotice(
             severity: .warning,
             source: source,
-            title: "You're offline. Showing saved data.",
-            message: "Cached reservations remain visible. Pull to refresh when the connection returns.",
+            title: "Offline — showing saved reservations.",
+            message: "Cached reservations remain visible. Edits require internet.",
             requestReason: requestReason,
             errorCode: errorLogCode(error),
             developerDiagnostics: error.reservationAPIDeveloperDetail
+        )
+    }
+
+    private func ensureMutationsAllowedOnline() throws {
+        guard !isNetworkDegraded else {
+            postMutationBlockedOfflineNotice()
+            throw ReservationControllerError.networkUnavailable
+        }
+    }
+
+    private func canStartMutationOnline() -> Bool {
+        guard !isNetworkDegraded else {
+            postMutationBlockedOfflineNotice()
+            return false
+        }
+        return true
+    }
+
+    func seatedDurationText(for reservation: ReservationRecord, now: Date = Date()) -> String? {
+        guard reservation.statusValue == .seated,
+              let seatedAt = localSeatedAtByReservationID[reservation.remoteID] else {
+            return nil
+        }
+
+        let elapsed = max(0, Int(now.timeIntervalSince(seatedAt)))
+        let minutes = elapsed / 60
+        if minutes < 1 {
+            return "Seated just now"
+        }
+        if minutes < 60 {
+            return "Seated \(minutes)m"
+        }
+        let hours = minutes / 60
+        let remainingMinutes = minutes % 60
+        return String(format: "Seated %dh %02dm", hours, remainingMinutes)
+    }
+
+    private func updateLocalSeatedTimestamp(after reservation: ReservationDTO) {
+        if reservation.status == .seated {
+            if localSeatedAtByReservationID[reservation.id] == nil {
+                localSeatedAtByReservationID[reservation.id] = Date()
+                persistLocalSeatedTimestamps()
+            }
+        } else if localSeatedAtByReservationID[reservation.id] != nil {
+            localSeatedAtByReservationID[reservation.id] = nil
+            persistLocalSeatedTimestamps()
+        }
+    }
+
+    private func persistLocalSeatedTimestamps() {
+        let raw = Dictionary(
+            uniqueKeysWithValues: localSeatedAtByReservationID.map { (String($0.key), $0.value.timeIntervalSince1970) }
+        )
+        UserDefaults.standard.set(raw, forKey: localSeatedTimestampsKey)
+    }
+
+    private static func loadLocalSeatedTimestamps() -> [Int: Date] {
+        guard let raw = UserDefaults.standard.dictionary(forKey: "tryzub.localSeatedTimestamps") as? [String: TimeInterval] else {
+            return [:]
+        }
+        return raw.reduce(into: [Int: Date]()) { result, pair in
+            guard let id = Int(pair.key), pair.value.isFinite else { return }
+            result[id] = Date(timeIntervalSince1970: pair.value)
+        }
+    }
+
+    private func postMutationBlockedOfflineNotice() {
+        postNotice(
+            severity: .warning,
+            source: .mutation,
+            title: "Offline — showing saved reservations.",
+            message: "Edits require internet. Try again when the connection returns."
         )
     }
 
@@ -2258,6 +2387,7 @@ private enum ReservationControllerError: LocalizedError {
     case actionAlreadyInProgress
     case permissionDenied
     case missingReservationID
+    case networkUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -2267,6 +2397,8 @@ private enum ReservationControllerError: LocalizedError {
             return "This account cannot use this admin tool."
         case .missingReservationID:
             return "Enter a reservation ID first."
+        case .networkUnavailable:
+            return "Edits require internet. Showing saved reservations."
         }
     }
 }

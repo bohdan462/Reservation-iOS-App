@@ -69,7 +69,9 @@ struct ReservationRowPresentation: Identifiable {
     let compactPartyText: String
     let tableText: String?
     let phoneText: String?
-    let notesIndicator: String?
+    let needsReviewIndicator: String?
+    let guestNotesIndicator: String?
+    let staffNotesIndicator: String?
     let statusText: String
     let status: ReservationStatus
     let sourceText: String?
@@ -110,7 +112,9 @@ enum ReservationRowPresenter {
             compactPartyText: "\(reservation.partySize)",
             tableText: reservation.tableDisplay,
             phoneText: reservation.phone.isEmpty ? nil : reservation.formattedPhone,
-            notesIndicator: notesIndicator(for: reservation),
+            needsReviewIndicator: reservation.statusValue == .needsReview ? "Needs Review" : nil,
+            guestNotesIndicator: reservation.hasGuestNotes ? "Guest Notes" : nil,
+            staffNotesIndicator: reservation.hasStaffNotes ? "Staff Notes" : nil,
             statusText: reservation.statusValue.shortDisplayName,
             status: reservation.statusValue,
             sourceText: reservation.sourceDisplayName,
@@ -235,24 +239,6 @@ enum ReservationRowPresenter {
 
         let months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
         return "\(months[month - 1]) \(day)"
-    }
-
-    private static func notesIndicator(for reservation: ReservationRecord) -> String? {
-        var labels: [String] = []
-
-        if reservation.statusValue == .needsReview {
-            labels.append("Needs Review")
-        }
-
-        if reservation.hasGuestNotes {
-            labels.append("Guest Notes")
-        }
-
-        if reservation.hasStaffNotes {
-            labels.append("Staff Notes")
-        }
-
-        return labels.isEmpty ? nil : labels.joined(separator: " • ")
     }
 
     private static func isMuted(_ reservation: ReservationRecord) -> Bool {
@@ -412,8 +398,16 @@ struct ReservationRowView<Accessory: View>: View {
             ReservationRowDetailLabelData(text: presentation.tableText ?? "No table", systemImage: "table.furniture", isTable: true)
         ]
 
-        if let notesIndicator = presentation.notesIndicator {
-            items.append(ReservationRowDetailLabelData(text: notesIndicator, systemImage: "note.text"))
+        if let needsReviewIndicator = presentation.needsReviewIndicator {
+            items.append(ReservationRowDetailLabelData(text: needsReviewIndicator, systemImage: "exclamationmark.triangle"))
+        }
+
+        if let guestNotesIndicator = presentation.guestNotesIndicator {
+            items.append(ReservationRowDetailLabelData(text: guestNotesIndicator, systemImage: "note.text"))
+        }
+
+        if let staffNotesIndicator = presentation.staffNotesIndicator {
+            items.append(ReservationRowDetailLabelData(text: staffNotesIndicator, systemImage: "note.text.badge.plus"))
         }
 
 //        if let phoneText = presentation.phoneText {
@@ -429,8 +423,16 @@ struct ReservationRowView<Accessory: View>: View {
             ReservationRowDetailLabelData(text: presentation.tableText ?? "No table", systemImage: "table.furniture", isTable: true)
         ]
 
-        if let notesIndicator = presentation.notesIndicator {
-            items.append(ReservationRowDetailLabelData(text: notesIndicator, systemImage: "note.text"))
+        if let needsReviewIndicator = presentation.needsReviewIndicator {
+            items.append(ReservationRowDetailLabelData(text: needsReviewIndicator, systemImage: "exclamationmark.triangle"))
+        }
+
+        if let guestNotesIndicator = presentation.guestNotesIndicator {
+            items.append(ReservationRowDetailLabelData(text: guestNotesIndicator, systemImage: "note.text"))
+        }
+
+        if let staffNotesIndicator = presentation.staffNotesIndicator {
+            items.append(ReservationRowDetailLabelData(text: staffNotesIndicator, systemImage: "note.text.badge.plus"))
         }
 
         return items
@@ -579,6 +581,9 @@ private struct ReservationRowDetailsLine: View {
                 metaView(item)
             }
             if let item = items[safe: 3] {
+                metaView(item)
+            }
+            if let item = items[safe: 4] {
                 metaView(item)
             }
         }

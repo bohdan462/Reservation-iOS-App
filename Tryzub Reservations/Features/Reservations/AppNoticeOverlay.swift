@@ -56,9 +56,9 @@ struct AppNoticeOverlay: View {
             .task(id: notice.id) {
                 switch notice.severity {
                 case .success, .info:
-                    try? await Task.sleep(for: .seconds(3))
+                    try? await Task.sleep(for: .seconds(4))
                 case .warning, .error:
-                    try? await Task.sleep(for: .seconds(5))
+                    return
                 }
 
                 if notices.contains(notice) {
@@ -99,6 +99,11 @@ private struct AppNoticeListView: View {
                         NoticeDetailRow(notice: notice) {
                             onDismiss(notice)
                         }
+                    }
+                    Section {
+                        Text("Success and info notices clear automatically after a few seconds. Warnings and errors stay here until dismissed. The app keeps the latest 20 current notices.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }

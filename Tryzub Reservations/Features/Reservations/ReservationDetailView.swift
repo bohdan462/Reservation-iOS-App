@@ -368,6 +368,7 @@ struct ReservationDetailView: View {
             reservation: reservation,
             capabilities: controller.capabilities,
             isBusy: isSavingQuickAction || controller.isActionInProgress(for: reservation),
+            isNetworkDegraded: controller.isNetworkDegraded,
             isGeneratingGuestManageLink: isGeneratingGuestManageLink,
             hasGuestManageLink: guestManageLink != nil,
             onAction: handleAction,
@@ -772,6 +773,7 @@ private struct DetailActionBar: View {
     let reservation: ReservationRecord
     let capabilities: AppCapabilities
     let isBusy: Bool
+    let isNetworkDegraded: Bool
     let isGeneratingGuestManageLink: Bool
     let hasGuestManageLink: Bool
     let onAction: (ReservationHostAction) -> Void
@@ -792,12 +794,19 @@ private struct DetailActionBar: View {
 
     var body: some View {
         VStack(spacing: 10) {
+            if isNetworkDegraded {
+                Label("Offline — edits require internet.", systemImage: "wifi.slash")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TryzubColors.mutedText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             ReservationActionButtons(
                 reservation: reservation,
                 capabilities: capabilities,
                 compact: false,
                 includeSecondary: false,
-                isBusy: isBusy,
+                isBusy: isBusy || isNetworkDegraded,
                 onAction: onAction
             )
             .frame(maxWidth: .infinity)
@@ -806,10 +815,11 @@ private struct DetailActionBar: View {
                 secondaryButton(title: "Edit", systemImage: "pencil") {
                     onEdit()
                 }
-                .disabled(!capabilities.canEditReservationDetails)
+                .disabled(!capabilities.canEditReservationDetails || isNetworkDegraded)
 
                 if showsMoreMenu {
                     moreMenu
+                        .disabled(isNetworkDegraded)
                 }
             }
         }

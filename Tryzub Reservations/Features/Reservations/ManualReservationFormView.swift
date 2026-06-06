@@ -33,6 +33,7 @@ struct ManualReservationFormView: View {
             ReservationFormContent(
                 mode: failure == nil ? .manualCreate : .fixFailedImport,
                 draft: $draft,
+                originalDraft: nil,
                 isSaving: isSaving,
                 errorMessage: errorMessage,
                 failure: failure,
@@ -96,19 +97,18 @@ struct ManualReservationFormView: View {
     }
 
     private func validateRequiredFields() -> Bool {
-        if draft.guestName.trimmed.isEmpty {
-            errorMessage = "Guest name is required."
+        do {
+            _ = try ReservationFormValidator.validate(
+                draft: draft,
+                setup: controller.restaurantSetup,
+                applyLeadTime: controller.hasLoadedRestaurantSetup
+            )
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
             ReservationHaptics.warning()
             return false
         }
-
-        if draft.phone.trimmed.isEmpty {
-            errorMessage = "Phone number is required for call-in reservations."
-            ReservationHaptics.warning()
-            return false
-        }
-
-        return true
     }
 }
 
@@ -144,6 +144,7 @@ struct ReservationEditFormView: View {
         ReservationFormContent(
             mode: .edit,
             draft: $draft,
+            originalDraft: originalDraft,
             isSaving: isSaving,
             errorMessage: errorMessage,
             failure: nil,
@@ -234,19 +235,19 @@ struct ReservationEditFormView: View {
     }
 
     private func validateRequiredFields() -> Bool {
-        if draft.guestName.trimmed.isEmpty {
-            errorMessage = "Guest name is required."
+        do {
+            _ = try ReservationFormValidator.validate(
+                draft: draft,
+                setup: controller.restaurantSetup,
+                originalDraft: originalDraft,
+                applyLeadTime: controller.hasLoadedRestaurantSetup
+            )
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
             ReservationHaptics.warning()
             return false
         }
-
-        if draft.phone.trimmed.isEmpty {
-            errorMessage = "Phone is required."
-            ReservationHaptics.warning()
-            return false
-        }
-
-        return true
     }
 }
 
@@ -309,6 +310,7 @@ private enum ReservationFormMode {
 private struct ReservationFormContent: View {
     let mode: ReservationFormMode
     @Binding var draft: ReservationFormDraft
+    let originalDraft: ReservationFormDraft?
     let isSaving: Bool
     let errorMessage: String?
     let failure: ImportFailureDTO?
@@ -375,6 +377,14 @@ private struct ReservationFormContent: View {
         VStack(alignment: .leading, spacing: 8) {
             if let errorMessage {
                 ReservationFormWarningCard(message: errorMessage)
+            }
+
+            if controller.isNetworkDegraded {
+                ReservationFormWarningCard(message: "Offline — showing saved reservations. Edits require internet.")
+            }
+
+            if let validationMessage {
+                ReservationFormWarningCard(message: validationMessage)
             }
 
             if let failure {
@@ -478,6 +488,12 @@ private struct ReservationFormContent: View {
 
             if let blockedWarningText {
                 Label(blockedWarningText, systemImage: "exclamationmark.triangle")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TryzubColors.danger)
+            }
+
+            if let timeValidationMessage {
+                Label(timeValidationMessage, systemImage: "clock.badge.exclamationmark")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(TryzubColors.danger)
             }
@@ -639,7 +655,30 @@ private struct ReservationFormContent: View {
             .background(.regularMaterial)
         }
         .buttonStyle(.plain)
-        .disabled(isSaving)
+        .disabled(isSaving || controller.isNetworkDegraded || validationMessage != nil)
+    }
+
+    private var validationMessage: String? {
+        do {
+            _ = try ReservationFormValidator.validate(
+                draft: draft,
+                setup: controller.restaurantSetup,
+                originalDraft: originalDraft,
+                applyLeadTime: controller.hasLoadedRestaurantSetup
+            )
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    private var timeValidationMessage: String? {
+        ReservationFormValidator.timeValidationMessage(
+            draft: draft,
+            setup: controller.restaurantSetup,
+            originalDraft: originalDraft,
+            applyLeadTime: controller.hasLoadedRestaurantSetup
+        )
     }
 
     private var quickDates: [Date] {
@@ -657,15 +696,29 @@ private struct ReservationFormContent: View {
     }
 
     private var timeChoices: [Date] {
+        let rawChoices: [Date]
         if let suggestedSlots, suggestedSlots.isOpen, !suggestedSlots.slots.isEmpty {
-            return suggestedSlots.slots.compactMap { ManualReservationFormPresenter.dateForSlotValue($0.value) }
+            rawChoices = suggestedSlots.slots.compactMap { ManualReservationFormPresenter.dateForSlotValue($0.value) }
+        } else {
+            rawChoices = controller.restaurantSetup.suggestedTimes(for: draft.reservationDate)
         }
 
-        return controller.restaurantSetup.suggestedTimes(for: draft.reservationDate)
+        return rawChoices.filter(isTimeChoiceAllowed)
     }
 
     private func timeLabel(_ date: Date) -> String {
         ReservationFormatters.shortTime.string(from: date)
+    }
+
+    private func isTimeChoiceAllowed(_ time: Date) -> Bool {
+        var testDraft = draft
+        testDraft.reservationTime = time
+        return ReservationFormValidator.timeValidationMessage(
+            draft: testDraft,
+            setup: controller.restaurantSetup,
+            originalDraft: nil,
+            applyLeadTime: controller.hasLoadedRestaurantSetup
+        ) == nil
     }
 
     private func isSameTime(_ lhs: Date, _ rhs: Date) -> Bool {
@@ -677,7 +730,9 @@ private struct ReservationFormContent: View {
     private func dateChoiceButton(_ date: Date) -> some View {
         Button {
             draft.reservationDate = date
-            if let firstTime = controller.restaurantSetup.suggestedTimes(for: date).first {
+            if let firstTime = controller.restaurantSetup
+                .suggestedTimes(for: date)
+                .first(where: isTimeChoiceAllowed) {
                 draft.reservationTime = firstTime
             }
             ReservationHaptics.selection()
@@ -800,6 +855,160 @@ private enum ManualReservationFormPresenter {
 
 // MARK: - Draft Model
 
+private struct ReservationFormState {
+    let guestName: String
+    let email: String
+    let phoneDigits: String
+    let partySize: Int
+    let guestNotes: String?
+    let staffNotes: String?
+    let tableName: String?
+}
+
+private enum ReservationInputNormalizer {
+    static func collapsedWhitespace(_ value: String) -> String {
+        value
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+    }
+
+    static func phoneDigits(_ value: String) -> String {
+        value.filter(\.isNumber)
+    }
+
+    static func normalizedEmail(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    static func normalizedOptionalText(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private enum ReservationFormValidator {
+    static func validate(
+        draft: ReservationFormDraft,
+        setup: RestaurantSetup,
+        originalDraft: ReservationFormDraft? = nil,
+        applyLeadTime: Bool = true
+    ) throws -> ReservationFormState {
+        let guestName = ReservationInputNormalizer.collapsedWhitespace(draft.guestName)
+        guard guestName.count >= 2 else {
+            throw ReservationFormValidationError(message: "Guest name is required.")
+        }
+
+        let phoneDigits = ReservationInputNormalizer.phoneDigits(draft.phone)
+        guard isPlausibleUSPhone(phoneDigits) else {
+            throw ReservationFormValidationError(message: "Enter a valid 10-digit phone number.")
+        }
+
+        let email = ReservationInputNormalizer.normalizedEmail(draft.email)
+        if !email.isEmpty, !isPlausibleEmail(email) {
+            throw ReservationFormValidationError(message: "Enter a valid email address or leave email blank.")
+        }
+
+        guard (1...60).contains(draft.partySize) else {
+            throw ReservationFormValidationError(message: "Party size must be between 1 and 60.")
+        }
+
+        if let message = timeValidationMessage(
+            draft: draft,
+            setup: setup,
+            originalDraft: originalDraft,
+            applyLeadTime: applyLeadTime
+        ) {
+            throw ReservationFormValidationError(message: message)
+        }
+
+        return ReservationFormState(
+            guestName: guestName,
+            email: email,
+            phoneDigits: phoneDigits,
+            partySize: draft.partySize,
+            guestNotes: ReservationInputNormalizer.normalizedOptionalText(draft.guestNotes),
+            staffNotes: ReservationInputNormalizer.normalizedOptionalText(draft.staffNotes),
+            tableName: ReservationInputNormalizer.normalizedOptionalText(draft.tableName)
+        )
+    }
+
+    static func timeValidationMessage(
+        draft: ReservationFormDraft,
+        setup: RestaurantSetup,
+        originalDraft: ReservationFormDraft? = nil,
+        applyLeadTime: Bool = true,
+        now: Date = Date()
+    ) -> String? {
+        if let originalDraft,
+           Calendar.current.isDate(originalDraft.reservationDate, inSameDayAs: draft.reservationDate),
+           isSameClockTime(originalDraft.reservationTime, draft.reservationTime) {
+            return nil
+        }
+
+        let timeZone = TimeZone(identifier: setup.timezone) ?? TimeZone(identifier: "America/Chicago") ?? .current
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+
+        guard calendar.isDate(draft.reservationDate, inSameDayAs: now),
+              let selectedServiceTime = serviceDateTime(for: draft, calendar: calendar) else {
+            return nil
+        }
+
+        let leadMinutes = applyLeadTime ? max(setup.minimumLeadTimeMinutes, 0) : 0
+        let earliestAllowed = calendar.date(byAdding: .minute, value: leadMinutes, to: now) ?? now
+        if selectedServiceTime <= now {
+            return "This time has already passed. Choose a later time."
+        }
+        if leadMinutes > 0, selectedServiceTime < earliestAllowed {
+            return "Choose a time at least \(leadMinutes) minutes from now."
+        }
+        return nil
+    }
+
+    private static func serviceDateTime(for draft: ReservationFormDraft, calendar: Calendar) -> Date? {
+        let dateParts = calendar.dateComponents([.year, .month, .day], from: draft.reservationDate)
+        let timeParts = Calendar.current.dateComponents([.hour, .minute], from: draft.reservationTime)
+        var components = DateComponents()
+        components.timeZone = calendar.timeZone
+        components.year = dateParts.year
+        components.month = dateParts.month
+        components.day = dateParts.day
+        components.hour = timeParts.hour
+        components.minute = timeParts.minute
+        components.second = 0
+        return calendar.date(from: components)
+    }
+
+    private static func isSameClockTime(_ lhs: Date, _ rhs: Date) -> Bool {
+        let lhsParts = Calendar.current.dateComponents([.hour, .minute], from: lhs)
+        let rhsParts = Calendar.current.dateComponents([.hour, .minute], from: rhs)
+        return lhsParts.hour == rhsParts.hour && lhsParts.minute == rhsParts.minute
+    }
+
+    private static func isPlausibleUSPhone(_ digits: String) -> Bool {
+        digits.count == 10 || (digits.count == 11 && digits.first == "1")
+    }
+
+    private static func isPlausibleEmail(_ email: String) -> Bool {
+        let parts = email.split(separator: "@")
+        guard parts.count == 2,
+              parts[0].isEmpty == false,
+              parts[1].contains("."),
+              parts[1].hasSuffix(".") == false else {
+            return false
+        }
+        return true
+    }
+}
+
+private struct ReservationFormValidationError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? {
+        message
+    }
+}
+
 private struct ReservationFormDraft {
     var guestName: String
     var email: String
@@ -852,17 +1061,18 @@ private struct ReservationFormDraft {
         sourceType: ReservationSourceType,
         setup: RestaurantSetup
     ) -> ReservationCreateRequest {
-        ReservationCreateRequest(
+        let state = (try? ReservationFormValidator.validate(draft: self, setup: setup)) ?? fallbackState()
+        return ReservationCreateRequest(
             sourceSubmissionId: sourceSubmissionId,
-            guestName: guestName.trimmed,
-            email: email.trimmed,
-            phone: phone.trimmed,
+            guestName: state.guestName,
+            email: state.email,
+            phone: state.phoneDigits,
             reservationDate: Self.formatDate(reservationDate),
             reservationTime: Self.formatTime(reservationTime),
-            partySize: partySize,
-            guestNotes: guestNotes.trimmed.nilIfBlank,
-            staffNotes: staffNotes.trimmed.nilIfBlank,
-            tableName: tableName.trimmed.nilIfBlank,
+            partySize: state.partySize,
+            guestNotes: state.guestNotes,
+            staffNotes: state.staffNotes,
+            tableName: state.tableName,
             sourceType: sourceType,
             createdByDevice: "ios",
             status: status
@@ -870,18 +1080,31 @@ private struct ReservationFormDraft {
     }
 
     func updateRequest() -> ReservationUpdateRequest {
-        ReservationUpdateRequest(
-            guestName: guestName.trimmed,
-            email: email.trimmed,
-            phone: phone.trimmed,
+        let state = (try? ReservationFormValidator.validate(draft: self, setup: .default)) ?? fallbackState()
+        return ReservationUpdateRequest(
+            guestName: state.guestName,
+            email: state.email,
+            phone: state.phoneDigits,
             reservationDate: Self.formatDate(reservationDate),
             reservationTime: Self.formatTime(reservationTime),
-            partySize: partySize,
-            guestNotes: guestNotes.trimmed,
-            staffNotes: staffNotes.trimmed,
+            partySize: state.partySize,
+            guestNotes: state.guestNotes ?? "",
+            staffNotes: state.staffNotes ?? "",
             status: status,
-            tableName: tableName.trimmed,
+            tableName: state.tableName ?? "",
             supersededById: Int(supersededById.trimmed)
+        )
+    }
+
+    private func fallbackState() -> ReservationFormState {
+        ReservationFormState(
+            guestName: ReservationInputNormalizer.collapsedWhitespace(guestName),
+            email: ReservationInputNormalizer.normalizedEmail(email),
+            phoneDigits: ReservationInputNormalizer.phoneDigits(phone),
+            partySize: max(partySize, 1),
+            guestNotes: ReservationInputNormalizer.normalizedOptionalText(guestNotes),
+            staffNotes: ReservationInputNormalizer.normalizedOptionalText(staffNotes),
+            tableName: ReservationInputNormalizer.normalizedOptionalText(tableName)
         )
     }
 

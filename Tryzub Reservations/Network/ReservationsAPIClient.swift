@@ -376,8 +376,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
     private static let defaultSession: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.waitsForConnectivity = true
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 60
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 30
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.httpMaximumConnectionsPerHost = 1
         return URLSession(configuration: configuration)
@@ -1044,8 +1044,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         var lastNetworkError: URLError?
         let startedAt = ReservationAPILogger.start(request: request, reason: reason)
         let effectiveRetryCount = request.httpMethod?.uppercased() == "GET"
-            ? max(retryCount, 1)
-            : retryCount
+            ? min(max(retryCount, 0), 1)
+            : 0
 
         while attempt <= effectiveRetryCount {
             do {

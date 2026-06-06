@@ -1211,6 +1211,7 @@ private struct HiddenReservationsView: View {
                                     .frame(maxWidth: .infinity, minHeight: 38)
                             }
                             .buttonStyle(.plain)
+                            .disabled(controller.isNetworkDegraded)
                             .foregroundStyle(.primary.opacity(0.82))
                             .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
                             .overlay {
@@ -1238,7 +1239,7 @@ private struct HiddenReservationsView: View {
                                     RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
                                         .stroke(Color.red.opacity(0.28), lineWidth: 1)
                                 }
-                                .disabled(hardDeletingIDs.contains(reservation.remoteID))
+                                .disabled(hardDeletingIDs.contains(reservation.remoteID) || controller.isNetworkDegraded)
                             }
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
@@ -1495,7 +1496,7 @@ private struct ReservationNavigationRow: View {
             context: context,
             contextNote: contextNote,
             capabilities: controller.capabilities,
-            onTableTap: controller.capabilities.canEditReservationDetails
+            onTableTap: controller.capabilities.canEditReservationDetails && !controller.isNetworkDegraded
                 ? { tableAssignmentReservation = reservation }
                 : nil
         ) {
@@ -1504,7 +1505,7 @@ private struct ReservationNavigationRow: View {
                 capabilities: controller.capabilities,
                 compact: true,
                 includeSecondary: false,
-                isBusy: controller.isActionInProgress(for: reservation)
+                isBusy: controller.isActionInProgress(for: reservation) || controller.isNetworkDegraded
             ) { action in
                 handleAction(action)
             }
