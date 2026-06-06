@@ -66,11 +66,15 @@ struct AppNoticeOverlay: View {
                 }
             }
             .sheet(isPresented: $showingDetails) {
-                AppNoticeListView(
-                    notices: notices,
-                    onDismiss: onDismiss,
-                    onClearAll: onClearAll
-                )
+                NavigationStack {
+                    AppNoticesScreen(
+                        notices: notices,
+                        onDismiss: onDismiss,
+                        onClearAll: onClearAll,
+                        showsDismissButton: true
+                    )
+                }
+                .presentationDetents([.medium, .large])
             }
             .transition(.move(edge: .top).combined(with: .opacity))
             .animation(.easeInOut(duration: 0.18), value: notices)
@@ -78,53 +82,55 @@ struct AppNoticeOverlay: View {
     }
 }
 
-private struct AppNoticeListView: View {
+struct AppNoticesScreen: View {
     let notices: [AppNotice]
     let onDismiss: (AppNotice) -> Void
     let onClearAll: () -> Void
+    var showsDismissButton = false
 
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            List {
-                if notices.isEmpty {
-                    ContentUnavailableView(
-                        "No Notices",
-                        systemImage: "checkmark.circle",
-                        description: Text("The app has no current warnings.")
-                    )
-                } else {
-                    ForEach(notices) { notice in
-                        NoticeDetailRow(notice: notice) {
-                            onDismiss(notice)
-                        }
-                    }
-                    Section {
-                        Text("Success and info notices clear automatically after a few seconds. Warnings and errors stay here until dismissed. The app keeps the latest 20 current notices.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        List {
+            if notices.isEmpty {
+                ContentUnavailableView(
+                    "No Notices",
+                    systemImage: "checkmark.circle",
+                    description: Text("The app has no current warnings.")
+                )
+            } else {
+                ForEach(notices) { notice in
+                    NoticeDetailRow(notice: notice) {
+                        onDismiss(notice)
                     }
                 }
+                Section {
+                    Text("Success and info notices clear automatically after a few seconds. Warnings and errors stay here until dismissed. The app keeps the latest 20 current notices.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-            .navigationTitle("Notices")
-            .toolbar {
+        }
+        .navigationTitle("Notices")
+        .toolbar {
+            if showsDismissButton {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
                         dismiss()
                     }
                 }
+            }
 
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Clear") {
-                        onClearAll()
+            ToolbarItem(placement: .primaryAction) {
+                Button("Clear") {
+                    onClearAll()
+                    if showsDismissButton {
                         dismiss()
                     }
-                    .disabled(notices.isEmpty)
                 }
+                .disabled(notices.isEmpty)
             }
         }
-        .presentationDetents([.medium, .large])
     }
 }
 

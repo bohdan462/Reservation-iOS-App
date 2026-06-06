@@ -285,6 +285,15 @@ private enum ReservationFormMode {
         return false
     }
 
+    var usesManualGuestInput: Bool {
+        switch self {
+        case .manualCreate, .fixFailedImport:
+            return true
+        case .edit:
+            return false
+        }
+    }
+
     /// Edit is pushed inside a NavigationStack — back chevron is enough; no Cancel.
     var showsNavigationCancel: Bool {
         switch self {
@@ -405,16 +414,49 @@ private struct ReservationFormContent: View {
     private var contactCard: some View {
         ReservationServiceCard(title: "Guest", systemImage: "person", spacing: 8) {
             HStack(spacing: 8) {
-                ReservationFormTextField(title: "Name", text: $draft.guestName, prompt: "Guest name")
-                    .textContentType(.name)
-                ReservationFormTextField(title: "Phone", text: $draft.phone, prompt: "Phone")
-                    .keyboardType(.phonePad)
+                if mode.usesManualGuestInput {
+                    ReservationFormTextField(
+                        title: "Name",
+                        text: $draft.guestName,
+                        prompt: "Guest name",
+                        inputKind: .guestName
+                    )
+                    ReservationFormTextField(
+                        title: "Phone",
+                        text: $draft.phone,
+                        prompt: "(312) 345-5674",
+                        inputKind: .guestPhone
+                    )
+                } else {
+                    ReservationFormTextField(title: "Name", text: $draft.guestName, prompt: "Guest name")
+                        .textContentType(.name)
+                    ReservationFormTextField(title: "Phone", text: $draft.phone, prompt: "Phone")
+                        .keyboardType(.phonePad)
+                }
             }
 
-            ReservationFormTextField(title: "Email optional", text: $draft.email, prompt: "Leave blank if none")
-                .keyboardType(.emailAddress)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+            if mode.usesManualGuestInput {
+                ReservationFormTextField(
+                    title: "Email optional",
+                    text: $draft.email,
+                    prompt: "Leave blank if none",
+                    inputKind: .guestEmail
+                )
+            } else {
+                ReservationFormTextField(title: "Email optional", text: $draft.email, prompt: "Leave blank if none")
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
+        }
+        .onAppear {
+            guard mode.usesManualGuestInput else { return }
+            if draft.guestName.contains(where: \.isNumber) {
+                draft.guestName = ReservationInputNormalizer.sanitizedGuestName(draft.guestName)
+            }
+            if draft.phone.allSatisfy(\.isNumber), !draft.phone.isEmpty {
+                draft.phone = ReservationInputNormalizer.sanitizedUSPhoneInput(draft.phone)
+            }
         }
     }
 
@@ -968,6 +1010,45 @@ private enum ReservationInputNormalizer {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
+
+    static func sanitizedGuestName(_ value: String) -> String {
+        let withoutDigits = value.filter { !$0.isNumber }
+        return withoutDigits
+            .split(separator: " ", omittingEmptySubsequences: false)
+            .map { word in
+                guard let first = word.first else { return String(word) }
+                return String(first).uppercased() + word.dropFirst()
+            }
+            .joined(separator: " ")
+    }
+
+    static func sanitizedUSPhoneInput(_ value: String) -> String {
+        var digits = value.filter(\.isNumber)
+        while digits.first == "1" {
+            digits.removeFirst()
+        }
+        return formatUSPhoneDisplay(String(digits.prefix(10)))
+    }
+
+    static func formatUSPhoneDisplay(_ digits: String) -> String {
+        guard !digits.isEmpty else { return "" }
+
+        var formatted = ""
+        for (index, character) in digits.enumerated() {
+            switch index {
+            case 0:
+                formatted += "("
+            case 3:
+                formatted += ") "
+            case 6:
+                formatted += "-"
+            default:
+                break
+            }
+            formatted.append(character)
+        }
+        return formatted
+    }
 }
 
 private enum ReservationFormValidator {
@@ -1312,9 +1393,34 @@ private struct ReservationFormCard<Content: View>: View {
 }
 
 private struct ReservationFormTextField: View {
+    enum InputKind {
+        case plain
+        case guestName
+        case guestPhone
+        case guestEmail
+    }
+
     let title: String
     @Binding var text: String
     let prompt: String
+    var inputKind: InputKind = .plain
+
+    private var displayBinding: Binding<String> {
+        switch inputKind {
+        case .plain, .guestEmail:
+            return $text
+        case .guestName:
+            return Binding(
+                get: { text },
+                set: { text = ReservationInputNormalizer.sanitizedGuestName($0) }
+            )
+        case .guestPhone:
+            return Binding(
+                get: { text },
+                set: { text = ReservationInputNormalizer.sanitizedUSPhoneInput($0) }
+            )
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -1322,7 +1428,7 @@ private struct ReservationFormTextField: View {
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
 
-            TextField(prompt, text: $text)
+            TextField(prompt, text: displayBinding)
                 .font(.body)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -1331,6 +1437,33 @@ private struct ReservationFormTextField: View {
                     RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
                         .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                 }
+                .modifier(ReservationFormTextFieldModifiers(inputKind: inputKind))
+        }
+    }
+}
+
+private struct ReservationFormTextFieldModifiers: ViewModifier {
+    let inputKind: ReservationFormTextField.InputKind
+
+    func body(content: Content) -> some View {
+        switch inputKind {
+        case .plain:
+            content
+        case .guestName:
+            content
+                .textContentType(.none)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+        case .guestPhone:
+            content
+                .textContentType(.none)
+                .keyboardType(.phonePad)
+        case .guestEmail:
+            content
+                .textContentType(.none)
+                .keyboardType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
         }
     }
 }

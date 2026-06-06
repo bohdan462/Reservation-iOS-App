@@ -859,6 +859,7 @@ private struct ReservationReviewQueueView: View {
 private struct ReservationMoreView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var roleStore: AppRoleStore
 
     @StateObject private var settingsStore: RestaurantSettingsStore
     @State private var showManualCreate = false
@@ -876,6 +877,36 @@ private struct ReservationMoreView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
+                Section {
+                    NavigationLink(value: ReservationMoreDestination.notices) {
+                        HStack {
+                            Label("Notices", systemImage: "bell")
+                            Spacer()
+                            if !controller.notices.isEmpty {
+                                Text("\(controller.notices.count)")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+
+                Section("App Mode") {
+                    Picker(
+                        "Role",
+                        selection: Binding(
+                            get: { roleStore.selectedRole ?? controller.environment.role },
+                            set: { roleStore.select($0) }
+                        )
+                    ) {
+                        ForEach(AppRoleStore.selectableRoles, id: \.self) { role in
+                            Text(role.displayName).tag(role)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .listRowBackground(Color.clear)
+                }
+
                 Section("Restaurant Operations") {
                     NavigationLink(value: ReservationMoreDestination.cancelled) {
                         Label("Cancelled Reservations", systemImage: "xmark.circle")
@@ -1002,11 +1033,18 @@ private struct ReservationMoreView: View {
         case .diagnostics:
             DeveloperDiagnosticsView(environment: environment)
                 .environmentObject(controller)
+        case .notices:
+            AppNoticesScreen(
+                notices: controller.notices,
+                onDismiss: controller.dismissNotice,
+                onClearAll: controller.clearAllNotices
+            )
         }
     }
 }
 
 private enum ReservationMoreDestination: Hashable {
+    case notices
     case cancelled
     case cancelledDetail(remoteID: Int)
     case hidden
@@ -1698,7 +1736,11 @@ private struct ReservationNavigationRow: View {
 
 #if DEBUG
 #Preview("Reservations") {
-    ReservationsListView(environment: AppEnvironment(apiClient: ReservationsAPIClient.preview, role: .developer))
+    let roleStore = AppRoleStore()
+    roleStore.select(.developer)
+
+    return ReservationsListView(environment: AppEnvironment(apiClient: ReservationsAPIClient.preview, role: .developer))
+        .environmentObject(roleStore)
         .modelContainer(ReservationPreviewData.previewContainer)
 }
 #endif

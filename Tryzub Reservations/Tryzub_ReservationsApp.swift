@@ -11,25 +11,53 @@ import SwiftData
 @main
 struct Tryzub_ReservationsApp: App {
     @StateObject private var credentialStore = AppCredentialStore()
+    @StateObject private var roleStore = AppRoleStore()
 
     var body: some Scene {
         WindowGroup {
+            AppRootView(
+                credentialStore: credentialStore,
+                roleStore: roleStore
+            )
+        }
+        .modelContainer(for: ReservationRecord.self)
+    }
+}
+
+private struct AppRootView: View {
+    @ObservedObject var credentialStore: AppCredentialStore
+    @ObservedObject var roleStore: AppRoleStore
+
+    var body: some View {
+        Group {
             if let credentials = credentialStore.credentials {
-                ReservationsListView(
-                    environment: AppEnvironment(
-                        apiClient: ReservationsAPIClient(
-                            baseURL: URL(string: "https://tryzubchicago.com/wp-json/tryzub/v1")!,
-                            username: credentials.username,
-                            applicationPassword: credentials.applicationPassword
-                        ),
-                        role: .developer
-                    )
-                )
+                if let role = roleStore.selectedRole {
+                    ReservationsListView(environment: makeEnvironment(credentials: credentials, role: role))
+                        .id(role)
+                        .environmentObject(roleStore)
+                } else {
+                    RoleSelectionView(roleStore: roleStore)
+                }
             } else {
                 CredentialsSetupView(credentialStore: credentialStore)
             }
         }
-        .modelContainer(for: ReservationRecord.self)
+        .onChange(of: credentialStore.credentials) { _, credentials in
+            if credentials == nil {
+                roleStore.clear()
+            }
+        }
+    }
+
+    private func makeEnvironment(credentials: AppCredentials, role: AppUserRole) -> AppEnvironment {
+        AppEnvironment(
+            apiClient: ReservationsAPIClient(
+                baseURL: URL(string: "https://tryzubchicago.com/wp-json/tryzub/v1")!,
+                username: credentials.username,
+                applicationPassword: credentials.applicationPassword
+            ),
+            role: role
+        )
     }
 }
 
