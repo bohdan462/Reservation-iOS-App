@@ -35,7 +35,7 @@ One-restaurant internal iOS app. **WordPress REST API is source of truth.** **Sw
 
 ---
 
-## 1. Source tree (39 Swift files)
+## 1. Source tree (41 Swift files)
 
 ```
 Tryzub Reservations/
@@ -413,17 +413,17 @@ All HTTP; Basic auth; sanitized request logging; one-at-a-time request serialize
 ### Fragile / Risky
 
 - `ReservationsController` is still too broad. It coordinates sync, mutations, settings setup cache, availability cache, notices, diagnostics, and local seated timestamps.
-- Guest Memory is the top performance risk. `RegularGuestsView` observes all reservations and rebuilds clustered summaries in computed properties used by body.
-- `GuestInsightsView` recomputes a full report from broad `allReservations` during body evaluation.
+- Guest Memory is the top performance risk. `RegularGuestsView` observes all reservations; its summaries must stay cached/memoized rather than rebuilt from SwiftUI body.
+- Guest Insights is cache-only but CPU-heavy. Detail/Guest Insights should render precomputed reports rather than scanning broad reservation arrays during body evaluation.
 - Mounted tabs reduce navigation churn but still observe SwiftData writes; large upserts can trigger recomputation across hidden tabs.
 - More uses a typed navigation path. Child screens should not add nested path-based `NavigationStack`s unless carefully isolated.
 - Legacy sync helpers remain in the controller; avoid using old today/schedule/review replace paths for normal tab activation.
 
 ### Next Refactor Chunks
 
-1. Cache/memoize Regular Guests summaries in a small store.
-2. Compute Guest Insights reports once per selected reservation instead of in body.
-3. Move Add/Edit slot loading and closed-day validation out of the view.
+1. Move guest-analysis work to lightweight snapshots/off-main analysis if cache grows beyond pilot size.
+2. Move Add/Edit slot loading and closed-day validation into a focused form store before visual redesign.
+3. Split controller availability/setup caches only if it reduces churn without changing routes.
 4. Extract availability operations from `ReservationsController` only after the form/store boundary is clear.
 5. Persist active-window cursor by window key.
 6. Remove or quarantine legacy sync helpers after call-site audit.

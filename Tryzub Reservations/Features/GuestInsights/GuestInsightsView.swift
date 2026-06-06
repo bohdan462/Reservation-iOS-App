@@ -12,26 +12,28 @@ struct GuestInsightsView: View {
     let selectedReservation: ReservationRecord
     let allReservations: [ReservationRecord]
 
-    // Read-only analysis from cached ReservationRecord rows; no network or mutation.
-    private var report: GuestInsightReport {
-        GuestInsightsController().analyze(
-            selected: selectedReservation,
-            allReservations: allReservations
-        )
-    }
+    @State private var report: GuestInsightReport?
 
     var body: some View {
-        let report = report
-
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
-                GuestInsightHeader(report: report)
-                GuestInsightSnapshotGrid(report: report)
-                GuestInsightNotesSection(report: report)
-                GuestInsightBookingHistorySection(report: report)
-                GuestInsightPreferencesSection(report: report)
-                GuestInsightPossibleMatchesSection(report: report)
-                GuestInsightWarningsSection(warnings: report.warnings)
+                if let report {
+                    GuestInsightHeader(report: report)
+                    GuestInsightSnapshotGrid(report: report)
+                    GuestInsightNotesSection(report: report)
+                    GuestInsightBookingHistorySection(report: report)
+                    GuestInsightPreferencesSection(report: report)
+                    GuestInsightPossibleMatchesSection(report: report)
+                    GuestInsightWarningsSection(warnings: report.warnings)
+                } else {
+                    HStack {
+                        Spacer()
+                        ProgressView("Loading guest insights...")
+                            .font(.caption)
+                        Spacer()
+                    }
+                    .padding(.vertical, 40)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
@@ -40,6 +42,32 @@ struct GuestInsightsView: View {
         .navigationTitle("Guest Insights")
         .navigationBarTitleDisplayMode(.inline)
         .fontDesign(.rounded)
+        .task(id: cacheKey) {
+            // Read-only analysis from cached ReservationRecord rows; no network or mutation.
+            report = GuestInsightsController().analyze(
+                selected: selectedReservation,
+                allReservations: allReservations
+            )
+        }
+    }
+
+    private var cacheKey: GuestInsightsCacheKey {
+        GuestInsightsCacheKey(selectedReservation: selectedReservation, reservations: allReservations)
+    }
+}
+
+private struct GuestInsightsCacheKey: Hashable {
+    let selectedID: Int
+    let visibleCount: Int
+    let maxLastSyncedAt: Date?
+    let maxUpdatedAt: Date?
+
+    init(selectedReservation: ReservationRecord, reservations: [ReservationRecord]) {
+        selectedID = selectedReservation.remoteID
+        let visible = reservations.filter { !$0.isHidden }
+        visibleCount = visible.count
+        maxLastSyncedAt = visible.map(\.lastSyncedAt).max()
+        maxUpdatedAt = visible.compactMap(\.updatedAt).max()
     }
 }
 

@@ -182,7 +182,7 @@ sequenceDiagram
 | Schedule All pages | Search / load more | `GET` paginated | `upsert` | **No** | None |
 | Cancelled | More screen open | `GET ?status=cancelled` | `upsert` | **No** | None |
 | Hidden archive | Hidden screen open | `GET ?include_hidden=1` | `upsert` | **No** | None |
-| Import failure count/list | More Failed Imports sheet or explicit diagnostics | `GET /import-failures` | None | — | None |
+| Import failure count/list | More Failed Imports sheet or explicit diagnostics | `GET /managed-reservations/import-failures` | None | — | None |
 
 **What matters**
 - `server_time` cursor is **in-memory on controller only** — not persisted across app kill.
@@ -426,7 +426,7 @@ flowchart LR
         R2["POST /confirm"]
         R3["POST /guest-manage-link"]
         R4["DELETE ?force=1"]
-        R5["GET /import-failures"]
+        R5["GET /managed-reservations/import-failures"]
         S1["restaurant-setup"]
         S2["restaurant-hours"]
         S3["restaurant-day-availability"]
@@ -475,8 +475,9 @@ flowchart LR
 
 | Area | Status | Risk | Recommendation |
 | --- | --- | --- | --- |
-| `RegularGuestsView` | Confirmed | Broad `@Query` over all reservations; `allSummaries` and `displayedSummaries` rebuild clustering from scratch during body updates. `RegularGuestsController.exactAndStrongClusters` compares record pairs, so large caches can hitch More. | Next refactor: add a small `RegularGuestsStore` / cached summaries keyed by record count + latest sync timestamp; debounce search/filter work. |
-| `GuestInsightsView` | Confirmed | `report` is a computed property that creates `GuestInsightsController` and scans `allReservations` during body evaluation. Detail passes broad cache arrays. | Next refactor: compute once in `@State`/store on appear or pass a precomputed lightweight snapshot. |
+| `RegularGuestsView` | Partly mitigated | Broad `@Query` still observes cached reservations, but clustering now runs through `RegularGuestsStore` instead of body computed properties. | Keep store caching; next improvement is snapshot/off-main analysis if cache grows further. |
+| `GuestInsightsView` | Partly mitigated | Detail and Guest Insights compute reports into state keyed by selected row/cache freshness instead of body-time computed properties. | Keep reports lazy; next improvement is lightweight snapshots to avoid passing broad SwiftData arrays. |
+| Guest-analysis screens | Confirmed | Cache-only does not mean cheap. Guest Memory and Guest Insights are intentionally lazy, but broad local analysis can still block navigation on large caches. | Treat any new guest-analysis work like analytics: precompute/cache reports, debounce search, and never run clustering from a SwiftUI body property. |
 | Mounted tabs + `@Query` | Partly mitigated | Tabs stay mounted for navigation stability; each tab still observes SwiftData writes and may recompute local filters after upserts. | Keep active-window narrowed queries; consider controller-published counts for badges if cache grows. |
 | Schedule All | Guarded | User-triggered All mode can still load many pages and upsert many rows; this is expected but can jank if used during service. | Keep All mode explicit; add page-level UI copy and avoid background loading more than one page. |
 | Availability tasks | Mitigated | Controller stores per-date tasks; cancellation exists when Home hides, but task dictionaries must be cleaned on every path. | Keep current `defer`; audit after any new date operation task. |
@@ -502,8 +503,8 @@ flowchart LR
 
 ## 13. Next Refactor Plan
 
-1. **Guest Memory performance store:** Move Regulars/Guest Insights derived summaries into a store or memoized analyzer. Start with `RegularGuestsView` because it has broad `@Query` and O(n²) clustering.
-2. **Extract form slot state:** Move Add/Edit slot loading, closed-day validation, and cached-slot selection into a small form view model so the view mostly renders state.
+1. **Guest analysis snapshots:** Regular Guests and Guest Insights are now memoized, but still operate on SwiftData objects on the main actor. If cache grows further, copy lightweight snapshots and analyze off the UI path.
+2. **Extract form slot state:** Add/Edit now blocks unverified/closed dates more safely, but slot loading and cached-slot selection still live in the form view. Move them into a small form view model before visual redesign.
 3. **Split controller caches:** Extract restaurant setup/availability cache helpers from `ReservationsController` into a focused `AvailabilityOperationsStore` only if it reduces controller churn without changing routes.
 4. **Retire legacy sync paths:** Remove or quarantine `performTodayRefresh`, `performScheduleWindowRefresh`, and `performReviewQueuesRefresh` after confirming no callers use them.
 5. **Persist active-window cursor:** Store the active-window `server_time` cursor with a matching window key so app restart can delta sooner without using the device clock.

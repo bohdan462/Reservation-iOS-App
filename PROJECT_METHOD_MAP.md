@@ -290,7 +290,7 @@ All throw `actionAlreadyInProgress` if overlapping load/save flags set.
 #### `refreshImportFailureCount` / `refreshImportFailureCountIfNeeded`
 | Field | Value |
 | --- | --- |
-| Endpoint | `GET /import-failures?page=1&per_page=1` |
+| Endpoint | `GET /managed-reservations/import-failures?page=1&per_page=1` |
 | Audience | manager+ capability; explicit admin/dev or diagnostics check only |
 | SwiftData | No |
 
@@ -298,7 +298,7 @@ All throw `actionAlreadyInProgress` if overlapping load/save flags set.
 | Field | Value |
 | --- | --- |
 | Who calls | `ImportFailuresView` |
-| Endpoint | `GET /import-failures` |
+| Endpoint | `GET /managed-reservations/import-failures` |
 | Audience | manager+ capability |
 
 ### Diagnostics & notices
@@ -346,12 +346,12 @@ All throw `actionAlreadyInProgress` if overlapping load/save flags set.
 | --- | --- | --- | --- | --- |
 | `syncActiveWindowFull` | `GET ?from&to` paged | `replaceDateWindow` | **Yes** in active window | Yes — normal startup/manual/stale activation |
 | `syncActiveWindowChanges` | `GET ?from&to&updated_since=` paged | `upsert` if non-empty | **No** | Yes — auto only |
-| `syncTodayFull` | `GET ?date=today` | `replaceDateScope` | **Yes** (today) | Legacy/private path; not normal active-window flow |
-| `syncTodayChanges(since:)` | `GET ?date=today&updated_since=` | `upsert` if non-empty | **No** | Legacy/private path; not normal active-window flow |
+| `syncTodayFull` | `GET ?date=today` | `replaceDateScope` | **Yes** (today) | **Legacy/private/diagnostic only. Do not use for normal Home/List/Review activation.** |
+| `syncTodayChanges(since:)` | `GET ?date=today&updated_since=` | `upsert` if non-empty | **No** | **Legacy/private/diagnostic only. Normal delta is active-window scoped with `from` and `to`.** |
 | `syncScheduleWindowFull` | `GET ?from&to` paged | `replaceDateWindow` | **Yes** in window | Legacy/private path |
 | `syncReviewQueues` | 2× status GET | `replaceReviewQueue` | **No** | Legacy/private path/diagnostic understanding |
 | `syncAllReservations` | All pages | `upsert` | No | **No** — diagnostics-capable only |
-| `syncToday` / `syncScheduleWindow` | Wrappers | Same as full | — | Yes (aliases) |
+| `syncToday` / `syncScheduleWindow` | Wrappers | Same as full | — | Legacy aliases; future code should prefer active-window full/delta unless a diagnostic explicitly needs the old scope. |
 | `saveReservation` | None | `upsert` one | No | Via `controller.save` |
 
 ---
@@ -604,9 +604,9 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 
 | File / area | Confirmed or suspected | Risk | Fix now? | Recommended fix |
 | --- | --- | --- | --- | --- |
-| `Features/GuestInsights/RegularGuestsView.swift` | Confirmed | Broad `@Query` observes all cached reservations; `allSummaries`, `displayedSummaries`, and `summaryGrid` recompute clustering/filtering from body-driven computed properties. | Later | Add `RegularGuestsStore` or memoized summary cache keyed by latest `lastSyncedAt`, record count, filter/search/sort. |
+| `Features/GuestInsights/RegularGuestsView.swift` | Partly mitigated | Broad `@Query` still observes cached reservations, but `RegularGuestsStore` now caches clustered summaries and debounces search display updates. | Later | Move analysis to lightweight snapshots/off-main work if cache grows further. |
 | `Features/GuestInsights/RegularGuestsController.swift` | Confirmed | `exactAndStrongClusters` performs pairwise matching across records; cost grows quickly with cache size. | Later | Pre-index by phone/email/name keys before pairwise fallback. |
-| `Features/GuestInsights/GuestInsightsView.swift` | Confirmed | `report` computed property analyzes broad `allReservations` during view body evaluation. | Later | Compute report once in `@State`/view model on appear or pass precomputed report. |
+| `Features/GuestInsights/GuestInsightsView.swift` | Partly mitigated | Report is now computed into state keyed by selected reservation/cache freshness instead of as a body computed property. | Later | Avoid passing broad SwiftData arrays by using lightweight snapshots. |
 | `Features/Reservations/ReservationsListView.swift` root `@Query pendingReviewRows` | Mitigated | Narrowed to active window and pending statuses, but still updates while all tabs are mounted. | Later | Keep unless badge count becomes janky; then publish count from controller/cache snapshot. |
 | `HomeDashboardView` active-window `@Query` | Mitigated | Active-window query observes upserts and filters selected date in computed property. | Later | Current scope is acceptable; avoid expanding to all history. |
 | `ReservationScheduleView.displayedReservations` | Mitigated | Filters/sorts active-window cache in body; All mode uses local page IDs and repository lookup. | Later | Keep All mode explicit; consider section snapshots if active window grows beyond pilot scale. |

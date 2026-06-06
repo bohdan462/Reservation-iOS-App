@@ -56,35 +56,24 @@ final class ReservationRepository: ReservationRepositoryProtocol {
         let existingRecords = try records(remoteIDs: reservations.map(\.id))
         upsert(reservations, into: existingRecords)
         try context.save()
-        let afterRecords = try records(remoteIDs: reservations.map(\.id))
         ReservationSyncDiagnostics.repositoryUpsert(
             scope: "upsert",
             input: reservations,
-            localRecords: afterRecords
+            localRecordCount: existingRecords.count + max(reservations.count - existingRecords.count, 0)
         )
     }
 
     // Intent: Reads only the cached rows needed for schedule-all/detail lookups.
     func records(remoteIDs: [Int]) throws -> [ReservationRecord] {
-        let uniqueIDs = Set(remoteIDs)
+        let uniqueIDs = Array(Set(remoteIDs))
         guard !uniqueIDs.isEmpty else { return [] }
 
-        var results: [ReservationRecord] = []
-        results.reserveCapacity(uniqueIDs.count)
-
-        for id in uniqueIDs {
-            var descriptor = FetchDescriptor<ReservationRecord>(
-                predicate: #Predicate { record in
-                    record.remoteID == id
-                }
-            )
-            descriptor.fetchLimit = 1
-            if let record = try context.fetch(descriptor).first {
-                results.append(record)
+        let descriptor = FetchDescriptor<ReservationRecord>(
+            predicate: #Predicate { record in
+                uniqueIDs.contains(record.remoteID)
             }
-        }
-
-        return results
+        )
+        return try context.fetch(descriptor)
     }
 
     // Intent: Successful date-scoped GET is server truth for that date in normal visible lists.
@@ -245,13 +234,11 @@ enum ReservationSyncDiagnostics {
     static func repositoryUpsert(
         scope: String,
         input: [ReservationDTO],
-        localRecords: [ReservationRecord]
+        localRecordCount: Int
     ) {
         guard isEnabled else { return }
 
-        let dates = Set(input.map(\.reservationDate)).sorted()
-        let scopedLocalCount = localRecords.filter { dates.contains($0.reservationDate) }.count
-        emit("[CACHE] scope=\(scope) server=\(input.count) before=- upserted=\(input.count) removed=0 after=\(scopedLocalCount) firstIDs=\(input.prefix(10).map(\.id))")
+        emit("[CACHE] scope=\(scope) server=\(input.count) before=- upserted=\(input.count) removed=0 localMatchedOrInserted=\(localRecordCount) firstIDs=\(input.prefix(10).map(\.id))")
     }
 
     static func cacheWrite(

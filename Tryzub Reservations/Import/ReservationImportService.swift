@@ -64,7 +64,8 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
 
     // MARK: - Today Sync
 
-    // Intent: Refreshes today's host-board reservation cache.
+    // Legacy/private path: refreshes today's date scope only.
+    // Normal Home/List/Review refresh uses the shared active-window full/delta flow below.
     // Network: GET /managed-reservations?date=today.
     // SwiftData: Replaces this date scope with fetched server DTOs.
     @discardableResult
@@ -88,7 +89,8 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         return ReservationSyncResult(rowCount: response.data.count, serverTime: response.serverTime)
     }
 
-    // Intent: Quietly applies server changes since the last backend cursor.
+    // Legacy/private path: applies server changes for today's date only.
+    // Normal auto-refresh uses active-window delta with from/to/updated_since.
     // Network: GET /managed-reservations?date=today&updated_since=...
     func syncTodayChanges(since: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult {
         let today = Date.reservationDateString()
@@ -169,7 +171,8 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
 
     // MARK: - Schedule Window Sync
 
-    // Intent: Refreshes the upcoming schedule window used by Schedule.
+    // Legacy/private path: refreshes a caller-provided schedule window.
+    // Normal Schedule upcoming uses the shared active-window cache.
     // Network: GET /managed-reservations?from=...&to=... across pages.
     // SwiftData: Replaces only the requested date window with fetched server DTOs.
     @discardableResult
@@ -195,7 +198,8 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
 
     // MARK: - Pending Review Sync
 
-    // Intent: Refreshes the staff pending queue from new and needs_review rows.
+    // Legacy/private path: refreshes the staff pending queue from new and needs_review rows.
+    // Normal Review tab activation filters the shared active-window cache.
     // Network: GET /managed-reservations?status=needs_review and status=new.
     // SwiftData: Upserts fetched server DTOs without deleting records missing from this status snapshot.
     func syncReviewQueues(reason: ReservationAPIRequestReason) async throws {

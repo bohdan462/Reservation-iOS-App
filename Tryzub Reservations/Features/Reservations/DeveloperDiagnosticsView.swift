@@ -194,14 +194,15 @@ struct DeveloperDiagnosticsView: View {
     }
 
     private var cacheSection: some View {
-        Section("SwiftData Cache") {
-            row("Cached reservations", "\(reservations.count)")
-            row("Today cached", "\(todayRows.count)")
-            row("New", "\(reservations.filter { $0.statusValue == .new }.count)")
-            row("Needs review", "\(reservations.filter { $0.statusValue == .needsReview }.count)")
-            row("Confirmed", "\(reservations.filter { $0.statusValue == .confirmed }.count)")
-            row("Without table", "\(reservations.filter { !$0.hasTableAssignment }.count)")
-            row("Latest local sync", latestLocalSyncText)
+        let stats = cacheStats
+        return Section("SwiftData Cache") {
+            row("Cached reservations", "\(stats.total)")
+            row("Today cached", "\(stats.today)")
+            row("New", "\(stats.new)")
+            row("Needs review", "\(stats.needsReview)")
+            row("Confirmed", "\(stats.confirmed)")
+            row("Without table", "\(stats.withoutTable)")
+            row("Latest local sync", stats.latestLocalSyncText)
         }
     }
 
@@ -265,8 +266,31 @@ struct DeveloperDiagnosticsView: View {
         }
     }
 
-    private var latestLocalSyncText: String {
-        reservations.compactMap(\.lastSyncedAt).max()?.formatted(date: .abbreviated, time: .shortened) ?? "Never"
+    private var cacheStats: DeveloperCacheStats {
+        reservations.reduce(into: DeveloperCacheStats()) { stats, reservation in
+            stats.total += 1
+            if reservation.isToday {
+                stats.today += 1
+            }
+            switch reservation.statusValue {
+            case .new:
+                stats.new += 1
+            case .needsReview:
+                stats.needsReview += 1
+            case .confirmed:
+                stats.confirmed += 1
+            case .seated, .completed, .cancelled, .noShow:
+                break
+            }
+            if !reservation.hasTableAssignment {
+                stats.withoutTable += 1
+            }
+            if let latest = stats.latestLocalSync {
+                stats.latestLocalSync = max(latest, reservation.lastSyncedAt)
+            } else {
+                stats.latestLocalSync = reservation.lastSyncedAt
+            }
+        }
     }
 
     private var didCallManualImportEndpoint: Bool {
@@ -323,6 +347,20 @@ struct DeveloperDiagnosticsView: View {
                 testResults.removeLast(testResults.count - 10)
             }
         }
+    }
+}
+
+private struct DeveloperCacheStats {
+    var total = 0
+    var today = 0
+    var new = 0
+    var needsReview = 0
+    var confirmed = 0
+    var withoutTable = 0
+    var latestLocalSync: Date?
+
+    var latestLocalSyncText: String {
+        latestLocalSync?.formatted(date: .abbreviated, time: .shortened) ?? "Never"
     }
 }
 

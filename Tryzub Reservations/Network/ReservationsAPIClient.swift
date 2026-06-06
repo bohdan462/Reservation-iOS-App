@@ -1169,16 +1169,19 @@ private struct WordPressAPIError: Decodable {
 // MARK: - Request Serialization
 
 // One in-flight request at a time to avoid QUIC connection storms on cold start.
-private actor ReservationAPIRequestSerializer {
-    private var isRunning = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private actor ReservationAPIRequestSerializer {
+        private var isRunning = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
 
-    func data(for request: URLRequest, session: URLSession) async throws -> (Data, URLResponse) {
-        await acquire()
-        defer { release() }
-        try? await Task.sleep(for: .milliseconds(200))
-        return try await session.data(for: request)
-    }
+        func data(for request: URLRequest, session: URLSession) async throws -> (Data, URLResponse) {
+            try Task.checkCancellation()
+            await acquire()
+            defer { release() }
+            try Task.checkCancellation()
+            try? await Task.sleep(for: .milliseconds(200))
+            try Task.checkCancellation()
+            return try await session.data(for: request)
+        }
 
     private func acquire() async {
         if !isRunning {

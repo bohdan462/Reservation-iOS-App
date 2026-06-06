@@ -1134,10 +1134,7 @@ private struct CancelledReservationsView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
-    @Query(sort: [
-        SortDescriptor(\ReservationRecord.reservationDate, order: .reverse),
-        SortDescriptor(\ReservationRecord.reservationTime, order: .reverse)
-    ])
+    @Query
     private var reservations: [ReservationRecord]
 
     let environment: AppEnvironment
@@ -1146,8 +1143,30 @@ private struct CancelledReservationsView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
 
-    private var window: (from: String, to: String) {
-        CancelledReservationsPresenter.defaultWindow()
+    private let window: (from: String, to: String)
+
+    init(
+        environment: AppEnvironment,
+        onOpenDetails: @escaping (ReservationRecord) -> Void
+    ) {
+        self.environment = environment
+        self.onOpenDetails = onOpenDetails
+        let window = CancelledReservationsPresenter.defaultWindow()
+        self.window = window
+        let statusCancelled = ReservationStatus.cancelled.rawValue
+        let from = window.from
+        let to = window.to
+        _reservations = Query(
+            filter: #Predicate<ReservationRecord> { record in
+                record.status == statusCancelled
+                    && record.reservationDate >= from
+                    && record.reservationDate <= to
+            },
+            sort: [
+                SortDescriptor(\ReservationRecord.reservationDate, order: .reverse),
+                SortDescriptor(\ReservationRecord.reservationTime, order: .reverse)
+            ]
+        )
     }
 
     private var cancelledRows: [ReservationRecord] {
@@ -1271,10 +1290,7 @@ private enum CancelledReservationsPresenter {
 private struct HiddenReservationsView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
-    @Query(sort: [
-        SortDescriptor(\ReservationRecord.reservationDate, order: .reverse),
-        SortDescriptor(\ReservationRecord.reservationTime, order: .reverse)
-    ])
+    @Query
     private var reservations: [ReservationRecord]
 
     let environment: AppEnvironment
@@ -1289,6 +1305,19 @@ private struct HiddenReservationsView: View {
     private var hiddenRows: [ReservationRecord] {
         ReservationRecord.sortedNewestFirst(
             reservations.filter(\.isHidden)
+        )
+    }
+
+    init(environment: AppEnvironment) {
+        self.environment = environment
+        _reservations = Query(
+            filter: #Predicate<ReservationRecord> { record in
+                record.isHidden
+            },
+            sort: [
+                SortDescriptor(\ReservationRecord.reservationDate, order: .reverse),
+                SortDescriptor(\ReservationRecord.reservationTime, order: .reverse)
+            ]
         )
     }
 
@@ -1615,6 +1644,8 @@ private struct ReservationNavigationRow: View {
 
     @State private var pendingAction: ReservationHostAction?
     @State private var tableAssignmentReservation: ReservationRecord?
+    @State private var hideCandidate: ReservationRecord?
+    @State private var hardDeleteCandidate: ReservationRecord?
 
     var body: some View {
         ReservationRowView(
@@ -1656,6 +1687,28 @@ private struct ReservationNavigationRow: View {
                     handleAction(action)
                 } label: {
                     Label(action.fullTitle, systemImage: action.systemImage)
+                }
+            }
+
+            if showsReservationCleanupActions {
+                Divider()
+
+                if canHideFromLongPress {
+                    Button(role: .destructive) {
+                        hideCandidate = reservation
+                    } label: {
+                        Label("Hide from normal lists", systemImage: "eye.slash")
+                    }
+                    .disabled(controller.isNetworkDegraded || controller.isActionInProgress(for: reservation))
+                }
+
+                if controller.capabilities.canHardDeleteReservations {
+                    Button(role: .destructive) {
+                        hardDeleteCandidate = reservation
+                    } label: {
+                        Label("Permanently delete", systemImage: "trash")
+                    }
+                    .disabled(controller.isNetworkDegraded || controller.isActionInProgress(for: reservation))
                 }
             }
         }
@@ -1701,6 +1754,50 @@ private struct ReservationNavigationRow: View {
                 Text(pendingAction.dialogMessage(for: reservation))
             }
         }
+        .confirmationDialog(
+            "Hide this reservation?",
+            isPresented: Binding(
+                get: { hideCandidate != nil },
+                set: { if !$0 { hideCandidate = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Hide from normal lists", role: .destructive) {
+                if let candidate = hideCandidate {
+                    Task {
+                        await hideReservation(candidate)
+                    }
+                }
+            }
+
+            Button("Cancel", role: .cancel) {
+                hideCandidate = nil
+            }
+        } message: {
+            Text(hideConfirmationMessage)
+        }
+        .confirmationDialog(
+            "Permanently delete this reservation?",
+            isPresented: Binding(
+                get: { hardDeleteCandidate != nil },
+                set: { if !$0 { hardDeleteCandidate = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Permanently delete reservation", role: .destructive) {
+                if let candidate = hardDeleteCandidate {
+                    Task {
+                        await hardDeleteReservation(candidate)
+                    }
+                }
+            }
+
+            Button("Cancel", role: .cancel) {
+                hardDeleteCandidate = nil
+            }
+        } message: {
+            Text("Developer mode only. This permanently removes the server reservation and deletes the local cache row after the server confirms.")
+        }
         .sheet(item: $tableAssignmentReservation) { reservation in
             TableAssignmentSheet(reservation: reservation) { tableName in
                 _ = try await controller.updateReservation(
@@ -1721,6 +1818,28 @@ private struct ReservationNavigationRow: View {
             capabilities: controller.capabilities
         )
         .contextMenuActions
+    }
+
+    private var canHideFromLongPress: Bool {
+        guard !reservation.isHidden else { return false }
+
+        if controller.capabilities.canHardDeleteReservations {
+            return true
+        }
+
+        return reservation.canSoftHideAsWrongEntry
+    }
+
+    private var showsReservationCleanupActions: Bool {
+        canHideFromLongPress || controller.capabilities.canHardDeleteReservations
+    }
+
+    private var hideConfirmationMessage: String {
+        if controller.capabilities.canHardDeleteReservations {
+            return "Developer mode can hide any reservation from normal staff lists without deleting backend history."
+        }
+
+        return "Staff and manager modes can only hide manual reservations. The reservation remains in backend history."
     }
 
     // MARK: - Staff Action Routing
@@ -1764,6 +1883,43 @@ private struct ReservationNavigationRow: View {
             ReservationHaptics.success()
         case .noShow:
             await controller.updateStatus(reservation: reservation, status: .noShow, context: modelContext)
+            ReservationHaptics.warning()
+        }
+    }
+
+    // Intent: Long-press cleanup action. Non-developer modes only reach this for manual rows.
+    // Network: PATCH /managed-reservations/{id} with is_hidden=true.
+    private func hideReservation(_ reservation: ReservationRecord) async {
+        hideCandidate = nil
+
+        do {
+            let reason = controller.capabilities.canHardDeleteReservations
+                ? "iOS developer cleanup"
+                : "Wrong manual entry"
+            _ = try await controller.hideWrongEntry(
+                reservation: reservation,
+                reason: reason,
+                context: modelContext
+            )
+            ReservationHaptics.warning()
+        } catch {
+            ReservationHaptics.warning()
+        }
+    }
+
+    // Intent: Developer-only cleanup of test/noise reservations.
+    // Network: DELETE /managed-reservations/{id}?force=1.
+    private func hardDeleteReservation(_ reservation: ReservationRecord) async {
+        hardDeleteCandidate = nil
+
+        do {
+            try await controller.hardDeleteReservation(
+                reservation: reservation,
+                context: modelContext,
+                cleanupReason: "iOS developer long-press cleanup"
+            )
+            ReservationHaptics.warning()
+        } catch {
             ReservationHaptics.warning()
         }
     }

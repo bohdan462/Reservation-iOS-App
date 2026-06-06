@@ -112,6 +112,12 @@ struct ReservationAPIDiagnostics: Equatable {
             options: [.regularExpression]
         )
 
+        redacted = redacted.replacingOccurrences(
+            of: #""(guest_name|guestName|guest_notes|guestNotes|staff_notes|staffNotes|name)"\s*:\s*"[^"]*""#,
+            with: #""$1":"[redacted]""#,
+            options: [.regularExpression]
+        )
+
         if redacted.count <= 600 {
             return redacted
         }

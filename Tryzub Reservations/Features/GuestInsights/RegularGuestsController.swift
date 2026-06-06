@@ -7,6 +7,13 @@ import Foundation
 
 // MARK: - Read-Only Regular Guest Analysis
 
+struct RegularGuestSummaryMetrics: Equatable {
+    var regularCount = 0
+    var becomingCount = 0
+    var notesCount = 0
+    var possibleCount = 0
+}
+
 struct RegularGuestsController {
     private let identityResolver = GuestIdentityResolver()
     private let intentDeduper = GuestReservationIntentDeduper()
@@ -15,7 +22,7 @@ struct RegularGuestsController {
     // Network: None. Mutation: None.
     // Duplicate same-intent copies are collapsed before visit counts are shown.
     func buildSummaries(from reservations: [ReservationRecord]) -> [RegularGuestSummary] {
-        let records = uniqueRecords(reservations)
+        let records = uniqueRecords(reservations.filter { !$0.isHidden })
         guard !records.isEmpty else { return [] }
 
         let clusters = exactAndStrongClusters(from: records)
@@ -33,17 +40,41 @@ struct RegularGuestsController {
         filter: RegularGuestFilter,
         sort: RegularGuestSort
     ) -> [RegularGuestSummary] {
+        displayedSummaries(
+            from: buildSummaries(from: reservations),
+            searchText: searchText,
+            filter: filter,
+            sort: sort
+        )
+    }
+
+    // Intent: Applies staff search/filter/sort choices to already-built summaries.
+    // Keeps SwiftUI views from rebuilding guest clusters during body updates.
+    func displayedSummaries(
+        from summaries: [RegularGuestSummary],
+        searchText: String,
+        filter: RegularGuestFilter,
+        sort: RegularGuestSort
+    ) -> [RegularGuestSummary] {
         let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        var summaries = buildSummaries(from: reservations)
-            .filter { includes($0, filter: filter) }
+        var filtered = summaries.filter { includes($0, filter: filter) }
 
         if !trimmedSearch.isEmpty {
-            summaries = summaries.filter { $0.searchText.contains(trimmedSearch) }
+            filtered = filtered.filter { $0.searchText.contains(trimmedSearch) }
         }
 
-        return summaries.sorted { lhs, rhs in
+        return filtered.sorted { lhs, rhs in
             compare(lhs, rhs, sort: sort)
         }
+    }
+
+    func metrics(from summaries: [RegularGuestSummary]) -> RegularGuestSummaryMetrics {
+        RegularGuestSummaryMetrics(
+            regularCount: summaries.filter { $0.regularityLevel.rank >= GuestRegularityLevel.regular.rank }.count,
+            becomingCount: summaries.filter { $0.regularityLevel == .becomingRegular }.count,
+            notesCount: summaries.filter { $0.hasStaffNotes || $0.hasGuestNotes }.count,
+            possibleCount: summaries.filter { $0.possibleMatchCount > 0 }.count
+        )
     }
 
     // MARK: - Guest Clustering

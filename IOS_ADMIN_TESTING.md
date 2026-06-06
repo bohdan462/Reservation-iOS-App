@@ -59,10 +59,10 @@ These buttons are manual diagnostics probes. They are not the normal startup/tab
 | --- | --- |
 | Test `startup_today` | `GET /managed-reservations?date=today` (retry 0) |
 | Test `manual_today` | Same (retry 1) |
-| Test `failure_count` | `GET /import-failures?page=1&per_page=1` |
+| Test `failure_count` | `GET /managed-reservations/import-failures?page=1&per_page=1` |
 | Test `schedule_window` | `GET ?from=today&to=today+30` |
 | Test `review_queues` | `GET ?status=needs_review` + `?status=new` |
-| Test `import_failures_full` | `GET /import-failures?page=1&per_page=50` |
+| Test `import_failures_full` | `GET /managed-reservations/import-failures?page=1&per_page=50` |
 | Test fetch by ID | `GET /managed-reservations/{id}` — enter ID in field |
 
 **These do not:** create, confirm, cancel, seat, hide, block slots, or send email.

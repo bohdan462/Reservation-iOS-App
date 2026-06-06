@@ -17,24 +17,11 @@ struct RegularGuestsView: View {
     private var reservations: [ReservationRecord]
 
     @State private var searchText = ""
+    @State private var debouncedSearchText = ""
     @State private var filter: RegularGuestFilter = .allSeenBefore
     @State private var sort: RegularGuestSort = .mostReservations
 
-    // Small read-only analyzer for grouping guests and applying in-memory filters.
-    private let controller = RegularGuestsController()
-
-    private var allSummaries: [RegularGuestSummary] {
-        controller.buildSummaries(from: reservations)
-    }
-
-    private var displayedSummaries: [RegularGuestSummary] {
-        controller.displayedSummaries(
-            from: reservations,
-            searchText: searchText,
-            filter: filter,
-            sort: sort
-        )
-    }
+    @StateObject private var store = RegularGuestsStore()
 
     var body: some View {
         ScrollView {
@@ -52,6 +39,31 @@ struct RegularGuestsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Name, phone, email, notes")
         .fontDesign(.rounded)
+        .task(id: cacheKey) {
+            store.updateRecords(
+                reservations,
+                cacheKey: cacheKey,
+                searchText: debouncedSearchText,
+                filter: filter,
+                sort: sort
+            )
+        }
+        .task(id: searchText) {
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            debouncedSearchText = searchText
+            store.updateDisplay(searchText: searchText, filter: filter, sort: sort)
+        }
+        .onChange(of: filter) { _, newValue in
+            store.updateDisplay(searchText: debouncedSearchText, filter: newValue, sort: sort)
+        }
+        .onChange(of: sort) { _, newValue in
+            store.updateDisplay(searchText: debouncedSearchText, filter: filter, sort: newValue)
+        }
     }
 
     // MARK: - Header
@@ -71,24 +83,11 @@ struct RegularGuestsView: View {
     // MARK: - Summary Cards
 
     private var summaryGrid: some View {
-        let regularCount = allSummaries.filter {
-            $0.regularityLevel.rank >= GuestRegularityLevel.regular.rank
-        }.count
-        let becomingCount = allSummaries.filter {
-            $0.regularityLevel == .becomingRegular
-        }.count
-        let notesCount = allSummaries.filter {
-            $0.hasStaffNotes || $0.hasGuestNotes
-        }.count
-        let possibleCount = allSummaries.filter {
-            $0.possibleMatchCount > 0
-        }.count
-
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 142), spacing: 10)], spacing: 10) {
-            RegularGuestMetricCard(title: "Regulars", value: "\(regularCount)", caption: "5+ visits")
-            RegularGuestMetricCard(title: "Becoming", value: "\(becomingCount)", caption: "3-4 visits")
-            RegularGuestMetricCard(title: "Notes found", value: "\(notesCount)", caption: "Staff or guest notes")
-            RegularGuestMetricCard(title: "Possible matches", value: "\(possibleCount)", caption: "Review only")
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 142), spacing: 10)], spacing: 10) {
+            RegularGuestMetricCard(title: "Regulars", value: "\(store.metrics.regularCount)", caption: "5+ visits")
+            RegularGuestMetricCard(title: "Becoming", value: "\(store.metrics.becomingCount)", caption: "3-4 visits")
+            RegularGuestMetricCard(title: "Notes found", value: "\(store.metrics.notesCount)", caption: "Staff or guest notes")
+            RegularGuestMetricCard(title: "Possible matches", value: "\(store.metrics.possibleCount)", caption: "Review only")
         }
     }
 
@@ -121,7 +120,7 @@ struct RegularGuestsView: View {
             }
 
             HStack {
-                Text("\(displayedSummaries.count) \(displayedSummaries.count == 1 ? "guest" : "guests")")
+                Text("\(store.displayedSummaries.count) \(store.displayedSummaries.count == 1 ? "guest" : "guests")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -145,7 +144,15 @@ struct RegularGuestsView: View {
 
     @ViewBuilder
     private var results: some View {
-        if displayedSummaries.isEmpty {
+        if store.isComputing && store.displayedSummaries.isEmpty {
+            HStack {
+                Spacer()
+                ProgressView("Loading guest memory...")
+                    .font(.caption)
+                Spacer()
+            }
+            .padding(.vertical, 24)
+        } else if store.displayedSummaries.isEmpty {
             ContentUnavailableView(
                 "No Guests Found",
                 systemImage: "person.2",
@@ -155,7 +162,7 @@ struct RegularGuestsView: View {
             .padding(.vertical, 24)
         } else {
             LazyVStack(spacing: 10) {
-                ForEach(displayedSummaries) { summary in
+                ForEach(store.displayedSummaries) { summary in
                     if let representative = representativeRecord(for: summary) {
                         NavigationLink {
                             GuestInsightsView(
@@ -174,6 +181,77 @@ struct RegularGuestsView: View {
 
     private func representativeRecord(for summary: RegularGuestSummary) -> ReservationRecord? {
         reservations.first { $0.remoteID == summary.representativeReservationID }
+    }
+
+    private var cacheKey: RegularGuestsCacheKey {
+        RegularGuestsCacheKey(reservations: reservations)
+    }
+}
+
+// MARK: - Regular Guest Store
+
+private struct RegularGuestsCacheKey: Hashable {
+    let visibleCount: Int
+    let maxLastSyncedAt: Date?
+    let maxUpdatedAt: Date?
+    let maxRemoteID: Int
+
+    init(reservations: [ReservationRecord]) {
+        let visible = reservations.filter { !$0.isHidden }
+        visibleCount = visible.count
+        maxLastSyncedAt = visible.map(\.lastSyncedAt).max()
+        maxUpdatedAt = visible.compactMap(\.updatedAt).max()
+        maxRemoteID = visible.map(\.remoteID).max() ?? 0
+    }
+}
+
+@MainActor
+private final class RegularGuestsStore: ObservableObject {
+    @Published private(set) var metrics = RegularGuestSummaryMetrics()
+    @Published private(set) var displayedSummaries: [RegularGuestSummary] = []
+    @Published private(set) var isComputing = false
+
+    private let controller = RegularGuestsController()
+    private var cacheKey: RegularGuestsCacheKey?
+    private var allSummaries: [RegularGuestSummary] = []
+
+    func updateRecords(
+        _ reservations: [ReservationRecord],
+        cacheKey: RegularGuestsCacheKey,
+        searchText: String,
+        filter: RegularGuestFilter,
+        sort: RegularGuestSort
+    ) {
+        guard self.cacheKey != cacheKey else {
+            updateDisplay(searchText: searchText, filter: filter, sort: sort)
+            return
+        }
+
+        self.cacheKey = cacheKey
+        isComputing = true
+        let summaries = controller.buildSummaries(from: reservations)
+        allSummaries = summaries
+        metrics = controller.metrics(from: summaries)
+        displayedSummaries = controller.displayedSummaries(
+            from: summaries,
+            searchText: searchText,
+            filter: filter,
+            sort: sort
+        )
+        isComputing = false
+    }
+
+    func updateDisplay(
+        searchText: String,
+        filter: RegularGuestFilter,
+        sort: RegularGuestSort
+    ) {
+        displayedSummaries = controller.displayedSummaries(
+            from: allSummaries,
+            searchText: searchText,
+            filter: filter,
+            sort: sort
+        )
     }
 }
 

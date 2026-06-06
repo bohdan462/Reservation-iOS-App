@@ -139,9 +139,9 @@ final class ReservationsController: ObservableObject {
 
     // MARK: - App / Screen Lifecycle
 
-    // Intent: App starts with cached reservations visible, then refreshes today's cache.
+    // Intent: App starts with cached reservations visible, then refreshes the shared active window.
     // Called by: ReservationsListView root task.
-    // Network: GET /managed-reservations?date=today when refresh proceeds.
+    // Network: GET /managed-reservations?from=...&to=... when refresh proceeds.
     func loadIfNeeded(context: ModelContext) async {
         guard !hasAttemptedInitialLoad else { return }
         hasAttemptedInitialLoad = true
@@ -183,19 +183,20 @@ final class ReservationsController: ObservableObject {
         await requestScheduleRefresh(context: context, source: .manual)
     }
 
-    // MARK: - Today Sync
+    // MARK: - Active Window Sync
 
-    // Intent: Staff manually refreshes today's reservation cache.
-    // Called by: Today pull-to-refresh and toolbar refresh.
-    // Network: GET /managed-reservations?date=today.
+    // Intent: Legacy wrapper for Home refresh; current implementation refreshes the shared active window.
+    // Called by: Home pull-to-refresh and toolbar refresh.
+    // Network: GET /managed-reservations?from=...&to=....
     @discardableResult
     func refreshDashboard(context: ModelContext) async -> Bool {
         await requestManualTodayRefresh(context: context, source: .manual)
     }
 
-    // Intent: Runs staff-requested today refresh with busy/cooldown guards.
+    // Intent: Runs staff-requested Home refresh with busy/cooldown guards.
+    // Current normal flow is shared active-window full refresh, not a today-only endpoint.
     // Writes: SwiftData through ReservationSyncService.
-    // Network: GET /managed-reservations?date=today.
+    // Network: GET /managed-reservations?from=...&to=....
     @discardableResult
     func requestManualTodayRefresh(
         context: ModelContext,
@@ -565,6 +566,8 @@ final class ReservationsController: ObservableObject {
         context: ModelContext,
         mode: ReservationRefreshMode
     ) async -> Bool {
+        // Legacy/private path retained for diagnostics and fallback only.
+        // Normal Home/List/Review refresh must use performActiveWindowRefresh.
         let scope = todayScope()
 
         guard !hasActiveReservationRefresh else {
@@ -644,8 +647,8 @@ final class ReservationsController: ObservableObject {
         return true
     }
 
-    // Intent: Legacy view action for refreshing the pending review queues.
-    // Network: GET /managed-reservations?status=new and status=needs_review.
+    // Intent: Legacy view action name; current implementation refreshes the active window.
+    // Network: GET /managed-reservations?from=...&to=....
     func refreshReviewQueues(context: ModelContext) async {
         await requestReviewRefresh(context: context, source: .manual)
     }
@@ -655,6 +658,8 @@ final class ReservationsController: ObservableObject {
         context: ModelContext,
         force: Bool
     ) async -> Bool {
+        // Legacy/private path retained for diagnostics and fallback only.
+        // Schedule upcoming should normally render from the shared active-window cache.
         let scope = scheduleScope()
 
         if !force && isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) {
@@ -706,6 +711,8 @@ final class ReservationsController: ObservableObject {
         context: ModelContext,
         force: Bool
     ) async -> Bool {
+        // Legacy/private path retained for diagnostics and fallback only.
+        // Review tab activation should normally filter the shared active-window cache.
         let scope = ReservationSyncScope.reviewQueues
 
         if !force && isScopeFresh(scope, freshnessInterval: reviewFreshnessInterval) {
@@ -1069,6 +1076,10 @@ final class ReservationsController: ObservableObject {
 
     func cachedReservationSlots(date: String) -> ReservationSlotsResponseDTO? {
         reservationSlotsCacheByDate[date]?.value ?? availabilitySummaryByDate[date]?.slots
+    }
+
+    func cachedRestaurantDayAvailability(date: String) -> RestaurantDayAvailabilityDTO? {
+        dayAvailabilityCacheByDate[date]?.value ?? availabilitySummaryByDate[date]?.availability
     }
 
     func cachedRestaurantBlockedSlots(date: String) -> RestaurantBlockedSlotsResponseDTO? {
@@ -2073,7 +2084,7 @@ final class ReservationsController: ObservableObject {
                     retryCount: 0,
                     reason: .reconcileByID
                 )
-                summary = "#\(reservation.id) \(reservation.guestName)"
+                summary = "#\(reservation.id) fetched"
             }
 
             let result = AdminFetchTestResult(

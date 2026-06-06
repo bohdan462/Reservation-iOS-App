@@ -351,6 +351,7 @@ struct ReservationDetailView: View {
     @State private var guestManageLinkMessage: String?
     @State private var isGeneratingGuestManageLink = false
     @State private var guestConfirmationMailDraft: GuestConfirmationMailPresenter.Draft?
+    @State private var guestInsightReport: GuestInsightReport?
 
     var body: some View {
         GeometryReader { proxy in
@@ -445,17 +446,20 @@ struct ReservationDetailView: View {
         } message: {
             Text("This hides the server reservation from normal lists while keeping it in backend history.")
         }
+        .task(id: guestInsightCacheKey) {
+            // Cache-only hospitality analysis. Compute outside body so detail
+            // rendering and row mutations do not repeatedly scan all records.
+            guestInsightReport = GuestInsightsController().analyze(
+                selected: reservation,
+                allReservations: allCachedReservations
+            )
+        }
     }
 
     // MARK: - Detail Layout
 
     @ViewBuilder
     private func detailContent(isWide: Bool) -> some View {
-        // Read-only hospitality analysis from the local SwiftData cache.
-        let insightReport = GuestInsightsController().analyze(
-            selected: reservation,
-            allReservations: allCachedReservations
-        )
         let presentation = ReservationDetailPresentation.make(
             reservation: reservation,
             capabilities: controller.capabilities
@@ -480,7 +484,7 @@ struct ReservationDetailView: View {
                             reservation: reservation,
                             sameDayReservations: sameDayReservations
                         )
-                        guestInsightsLink(report: insightReport)
+                        guestInsightsSection
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -495,7 +499,7 @@ struct ReservationDetailView: View {
                         reservation: reservation,
                         sameDayReservations: sameDayReservations
                     )
-                    guestInsightsLink(report: insightReport)
+                    guestInsightsSection
                 }
             }
         }
@@ -615,10 +619,12 @@ struct ReservationDetailView: View {
         let timing = reservation.operationalTimingState()
 
         if reservation.statusValue == .needsReview {
-            let reason = reservation.hasStaffNotes
-                ? (reservation.staffNotes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Check this reservation before confirming.")
-                : "Check this reservation before confirming."
-            return ("Needs review", reason, "exclamationmark.triangle", .orange)
+            return (
+                "Needs review",
+                "Check this reservation before confirming. Guest Notes and Staff Notes are shown separately below.",
+                "exclamationmark.triangle",
+                .orange
+            )
         }
 
         if case .overdue = timing, let text = timing.insightText {
@@ -632,17 +638,31 @@ struct ReservationDetailView: View {
         return nil
     }
 
-    private func guestInsightsLink(report: GuestInsightReport) -> some View {
-        NavigationLink {
-            GuestInsightsView(
-                selectedReservation: reservation,
-                allReservations: allCachedReservations
-            )
-        } label: {
-            GuestInsightsPreviewCard(report: report)
+    @ViewBuilder
+    private var guestInsightsSection: some View {
+        if let guestInsightReport {
+            NavigationLink {
+                GuestInsightsView(
+                    selectedReservation: reservation,
+                    allReservations: allCachedReservations
+                )
+            } label: {
+                GuestInsightsPreviewCard(report: guestInsightReport)
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            DetailSectionCard(title: "Guest insights", systemImage: "person.text.rectangle") {
+                TryzubLoadingRow(title: "Loading guest insights...")
+            }
         }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var guestInsightCacheKey: ReservationDetailGuestInsightCacheKey {
+        ReservationDetailGuestInsightCacheKey(
+            selectedReservation: reservation,
+            reservations: allCachedReservations
+        )
     }
 
     // MARK: - Staff Action Routing
@@ -864,6 +884,21 @@ struct ReservationDetailView: View {
             errorMessage = "Email was sent, but the reservation could not be recorded on the server. Check details and retry if needed."
             ReservationHaptics.warning()
         }
+    }
+}
+
+private struct ReservationDetailGuestInsightCacheKey: Hashable {
+    let selectedID: Int
+    let visibleCount: Int
+    let maxLastSyncedAt: Date?
+    let maxUpdatedAt: Date?
+
+    init(selectedReservation: ReservationRecord, reservations: [ReservationRecord]) {
+        selectedID = selectedReservation.remoteID
+        let visible = reservations.filter { !$0.isHidden }
+        visibleCount = visible.count
+        maxLastSyncedAt = visible.map(\.lastSyncedAt).max()
+        maxUpdatedAt = visible.compactMap(\.updatedAt).max()
     }
 }
 
