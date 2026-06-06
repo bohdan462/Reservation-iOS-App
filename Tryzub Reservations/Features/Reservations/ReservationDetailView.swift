@@ -127,21 +127,21 @@ struct ReservationDetailPresentation {
 struct ManualEmailDraftService {
     // Builds copy staff can paste into Gmail/Mail after explicitly confirming the reservation.
     // This helper does not send email, call /confirm, or mark email as sent.
-    static func confirmationDraft(
+    static func confirmationSubject(reservation: ReservationRecord) -> String {
+        "Tryzub reservation confirmation for \(reservation.displayDate) at \(reservation.displayTime)"
+    }
+
+    static func confirmationPlainBody(
         reservation: ReservationRecord,
         manageLink: ReservationGuestManageLinkDTO
     ) -> String {
-        let firstName = reservation.guestName
-            .split(separator: " ")
-            .first
-            .map(String.init) ?? reservation.guestName
+        let firstName = guestFirstName(for: reservation)
         let expiresText = manageLink.expiresAt?.nilIfBlank.map {
             "\nThis self-service link expires at \($0)."
         } ?? ""
+        let tableLine = reservation.tableName?.nilIfBlank.map { "Table: \($0)\n" } ?? ""
 
         return """
-        Subject: Tryzub reservation confirmation for \(reservation.displayDate) at \(reservation.displayTime)
-
         Hi \(firstName),
 
         Your reservation at Tryzub Ukrainian Kitchen is confirmed.
@@ -149,13 +149,79 @@ struct ManualEmailDraftService {
         Date: \(reservation.displayDate)
         Time: \(reservation.displayTime)
         Party size: \(reservation.partySize)
-        \(reservation.tableName?.nilIfBlank.map { "Table: \($0)\n" } ?? "")
-        To view, change, or cancel your reservation, use this link:
+        \(tableLine)
+        View or manage your reservation:
         \(manageLink.url)\(expiresText)
 
         Thank you,
         Tryzub Ukrainian Kitchen
         """
+    }
+
+    static func confirmationHTMLBody(
+        reservation: ReservationRecord,
+        manageLink: ReservationGuestManageLinkDTO
+    ) -> String {
+        let firstName = htmlEscape(guestFirstName(for: reservation))
+        let expiresHTML = manageLink.expiresAt?.nilIfBlank.map {
+            "<p style=\"font-size: 14px; color: #666666;\">This self-service link expires at \(htmlEscape($0)).</p>"
+        } ?? ""
+        let tableHTML = reservation.tableName?.nilIfBlank.map {
+            "<strong>Table:</strong> \(htmlEscape($0))<br>"
+        } ?? ""
+        let linkURL = htmlAttributeEscape(manageLink.url)
+
+        return """
+        <!DOCTYPE html>
+        <html>
+        <body style="font-family: -apple-system, Helvetica, Arial, sans-serif; font-size: 16px; color: #111111; line-height: 1.5;">
+        <p>Hi \(firstName),</p>
+        <p>Your reservation at <strong>Tryzub Ukrainian Kitchen</strong> is confirmed.</p>
+        <p>
+        <strong>Date:</strong> \(htmlEscape(reservation.displayDate))<br>
+        <strong>Time:</strong> \(htmlEscape(reservation.displayTime))<br>
+        <strong>Party size:</strong> \(reservation.partySize)<br>
+        \(tableHTML)
+        </p>
+        <p style="margin: 28px 0;">
+        <a href="\(linkURL)" style="display: inline-block; padding: 14px 22px; background-color: #1F6B3A; color: #ffffff; text-decoration: none; border-radius: 10px; font-weight: 600;">View or manage reservation</a>
+        </p>
+        <p style="font-size: 14px; color: #666666;">Use the button above to view your reservation online, make changes, or cancel within the allowed time window.</p>
+        \(expiresHTML)
+        <p>Thank you,<br>Tryzub Ukrainian Kitchen</p>
+        </body>
+        </html>
+        """
+    }
+
+    static func confirmationDraft(
+        reservation: ReservationRecord,
+        manageLink: ReservationGuestManageLinkDTO
+    ) -> String {
+        """
+        Subject: \(confirmationSubject(reservation: reservation))
+
+        \(confirmationPlainBody(reservation: reservation, manageLink: manageLink))
+        """
+    }
+
+    private static func guestFirstName(for reservation: ReservationRecord) -> String {
+        reservation.guestName
+            .split(separator: " ")
+            .first
+            .map(String.init) ?? reservation.guestName
+    }
+
+    private static func htmlEscape(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    private static func htmlAttributeEscape(_ value: String) -> String {
+        htmlEscape(value)
     }
 }
 
@@ -185,6 +251,7 @@ struct ReservationDetailView: View {
     @State private var guestManageLink: ReservationGuestManageLinkDTO?
     @State private var guestManageLinkMessage: String?
     @State private var isGeneratingGuestManageLink = false
+    @State private var guestConfirmationMailDraft: GuestConfirmationMailPresenter.Draft?
 
     var body: some View {
         GeometryReader { proxy in
@@ -209,6 +276,12 @@ struct ReservationDetailView: View {
                     request: ReservationUpdateRequest(tableName: tableName),
                     context: modelContext
                 )
+            }
+        }
+        .sheet(item: $guestConfirmationMailDraft) { draft in
+            GuestConfirmationMailComposer(draft: draft) {
+                guestConfirmationMailDraft = nil
+                guestManageLinkMessage = "Review the confirmation email before sending."
             }
         }
         .navigationDestination(isPresented: $showEditScreen) {
@@ -355,7 +428,7 @@ struct ReservationDetailView: View {
 
         if let guestManageLinkMessage {
             DetailWarningCard(
-                title: "Manage link ready",
+                title: "Guest link ready",
                 message: guestManageLinkMessage,
                 symbolName: "link",
                 tint: TryzubColors.info
@@ -373,6 +446,9 @@ struct ReservationDetailView: View {
             hasGuestManageLink: guestManageLink != nil,
             onAction: handleAction,
             onEdit: { showEditScreen = true },
+            onSendGuestConfirmationEmail: controller.capabilities.canGenerateGuestManageLinks
+                ? { Task { await sendGuestConfirmationEmail() } }
+                : nil,
             onGenerateGuestManageLink: controller.capabilities.canGenerateGuestManageLinks
                 ? { Task { await generateGuestManageLink() } }
                 : nil,
@@ -586,10 +662,64 @@ struct ReservationDetailView: View {
             let link = try await controller.generateGuestManageLink(reservation: reservation)
             guestManageLink = link
             UIPasteboard.general.string = link.url
-            guestManageLinkMessage = "Manage link copied. A manual confirmation draft is available in More."
+            guestManageLinkMessage = "Guest link copied. You can also send a confirmation email from More."
             ReservationHaptics.success()
         } catch {
-            errorMessage = "Could not generate a manage link. Please retry."
+            errorMessage = "Could not generate a guest link. Please retry."
+            ReservationHaptics.warning()
+        }
+    }
+
+    private func sendGuestConfirmationEmail() async {
+        guard !isGeneratingGuestManageLink else { return }
+
+        let email = reservation.email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !email.isEmpty else {
+            errorMessage = "Add a guest email in Edit before sending confirmation."
+            ReservationHaptics.warning()
+            return
+        }
+
+        isGeneratingGuestManageLink = true
+        errorMessage = nil
+        guestManageLinkMessage = nil
+
+        defer {
+            isGeneratingGuestManageLink = false
+        }
+
+        do {
+            let link = try await controller.generateGuestManageLink(
+                reservation: reservation,
+                announceNotice: false
+            )
+            guestManageLink = link
+
+            guard let draft = GuestConfirmationMailPresenter.draft(
+                reservation: reservation,
+                manageLink: link
+            ) else {
+                errorMessage = "Add a guest email in Edit before sending confirmation."
+                ReservationHaptics.warning()
+                return
+            }
+
+            if GuestConfirmationMailPresenter.canSendMail() {
+                guestConfirmationMailDraft = draft
+                ReservationHaptics.success()
+            } else if GuestConfirmationMailPresenter.openMailtoFallback(draft: draft) {
+                guestManageLinkMessage = "Opened Mail with a plain-text confirmation draft."
+                ReservationHaptics.success()
+            } else {
+                UIPasteboard.general.string = ManualEmailDraftService.confirmationDraft(
+                    reservation: reservation,
+                    manageLink: link
+                )
+                guestManageLinkMessage = "Mail isn’t set up on this device. Confirmation draft copied."
+                ReservationHaptics.success()
+            }
+        } catch {
+            errorMessage = "Could not prepare the confirmation email. Please retry."
             ReservationHaptics.warning()
         }
     }
@@ -597,7 +727,7 @@ struct ReservationDetailView: View {
     private func copyGuestManageLink() {
         guard let url = guestManageLink?.url else { return }
         UIPasteboard.general.string = url
-        guestManageLinkMessage = "Manage link copied. Use it in the manual confirmation email."
+        guestManageLinkMessage = "Guest link copied. Paste it into your email if needed."
         ReservationHaptics.success()
     }
 
@@ -607,7 +737,7 @@ struct ReservationDetailView: View {
             reservation: reservation,
             manageLink: guestManageLink
         )
-        guestManageLinkMessage = "Confirmation draft copied. Review it in Gmail before sending."
+        guestManageLinkMessage = "Plain confirmation draft copied."
         ReservationHaptics.success()
     }
 }
@@ -778,6 +908,7 @@ private struct DetailActionBar: View {
     let hasGuestManageLink: Bool
     let onAction: (ReservationHostAction) -> Void
     let onEdit: () -> Void
+    let onSendGuestConfirmationEmail: (() -> Void)?
     let onGenerateGuestManageLink: (() -> Void)?
     let onCopyGuestManageLink: (() -> Void)?
     let onCopyConfirmationDraft: (() -> Void)?
@@ -855,12 +986,24 @@ private struct DetailActionBar: View {
                 Divider()
             }
 
+            if let onSendGuestConfirmationEmail {
+                Button {
+                    onSendGuestConfirmationEmail()
+                } label: {
+                    Label(
+                        isGeneratingGuestManageLink ? "Preparing email" : "Send confirmation email",
+                        systemImage: "envelope"
+                    )
+                }
+                .disabled(isGeneratingGuestManageLink)
+            }
+
             if let onGenerateGuestManageLink {
                 Button {
                     onGenerateGuestManageLink()
                 } label: {
                     Label(
-                        isGeneratingGuestManageLink ? "Generating manage link" : "Generate manage link",
+                        isGeneratingGuestManageLink ? "Generating guest link" : "Manual guest link",
                         systemImage: "link.badge.plus"
                     )
                 }
@@ -871,7 +1014,7 @@ private struct DetailActionBar: View {
                 Button {
                     onCopyGuestManageLink()
                 } label: {
-                    Label("Copy manage link", systemImage: "doc.on.doc")
+                    Label("Copy guest link", systemImage: "doc.on.doc")
                 }
             }
 
@@ -879,11 +1022,11 @@ private struct DetailActionBar: View {
                 Button {
                     onCopyConfirmationDraft()
                 } label: {
-                    Label("Copy confirmation draft", systemImage: "envelope.open")
+                    Label("Copy plain draft", systemImage: "doc.plaintext")
                 }
             }
 
-            if (onGenerateGuestManageLink != nil || onCopyGuestManageLink != nil || onCopyConfirmationDraft != nil),
+            if (onSendGuestConfirmationEmail != nil || onGenerateGuestManageLink != nil || onCopyGuestManageLink != nil || onCopyConfirmationDraft != nil),
                onHideWrongEntry != nil || onRestoreHidden != nil {
                 Divider()
             }
@@ -923,7 +1066,8 @@ private struct DetailActionBar: View {
     }
 
     private var hasAdminActions: Bool {
-        onGenerateGuestManageLink != nil
+        onSendGuestConfirmationEmail != nil
+            || onGenerateGuestManageLink != nil
             || onCopyGuestManageLink != nil
             || onCopyConfirmationDraft != nil
             || onHideWrongEntry != nil

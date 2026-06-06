@@ -1513,7 +1513,10 @@ final class ReservationsController: ObservableObject {
     // Intent: Generates a guest manage link for manual Gmail/Mail confirmation copy.
     // Network: POST /managed-reservations/{id}/guest-manage-link.
     // Email: Does not send email and does not mark email as sent.
-    func generateGuestManageLink(reservation: ReservationRecord) async throws -> ReservationGuestManageLinkDTO {
+    func generateGuestManageLink(
+        reservation: ReservationRecord,
+        announceNotice: Bool = true
+    ) async throws -> ReservationGuestManageLinkDTO {
         guard capabilities.canGenerateGuestManageLinks else {
             throw ReservationControllerError.permissionDenied
         }
@@ -1533,12 +1536,14 @@ final class ReservationsController: ObservableObject {
                 id: id,
                 reason: .guestManageLink
             )
-            postNotice(
-                severity: .success,
-                source: .email,
-                title: "Manage link ready",
-                message: "Copy it into the manual confirmation email."
-            )
+            if announceNotice {
+                postNotice(
+                    severity: .success,
+                    source: .email,
+                    title: "Guest link ready",
+                    message: "Copy it into the manual confirmation email."
+                )
+            }
             return link
         } catch {
             if error.isOfflineLike {
@@ -1547,8 +1552,8 @@ final class ReservationsController: ObservableObject {
             postNotice(
                 severity: .error,
                 source: .email,
-                title: "Manage link failed",
-                message: "Could not generate a guest manage link.",
+                title: "Guest link failed",
+                message: "Could not generate a guest self-service link.",
                 requestReason: .guestManageLink,
                 errorCode: errorLogCode(error)
             )
