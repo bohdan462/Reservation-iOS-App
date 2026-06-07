@@ -487,8 +487,14 @@ extension RestaurantSetup {
     }
 
     func defaultServiceSlot(now: Date = Date(), calendar: Calendar = .current) -> (date: Date, time: Date, partySize: Int) {
+        defaultStaffServiceSlot(now: now, calendar: calendar)
+    }
+
+    func defaultStaffServiceSlot(now: Date = Date(), calendar: Calendar = .current) -> (date: Date, time: Date, partySize: Int) {
         let serviceDate = calendar.startOfDay(for: now)
-        let time = suggestedTimes(for: serviceDate, now: now, calendar: calendar).first
+        let times = suggestedTimes(for: serviceDate, now: now, calendar: calendar, applyLeadTime: false)
+        let time = times.first(where: { $0 > now })
+            ?? times.first
             ?? calendar.date(bySettingHour: 18, minute: 0, second: 0, of: serviceDate)
             ?? serviceDate
 
@@ -498,7 +504,8 @@ extension RestaurantSetup {
     func suggestedTimes(
         for serviceDate: Date,
         now: Date = Date(),
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        applyLeadTime: Bool = true
     ) -> [Date] {
         let interval = max(slotIntervalMinutes, 15)
         let serviceMinutes = stride(from: 16 * 60 + 30, through: 21 * 60 + 30, by: interval)
@@ -512,9 +519,14 @@ extension RestaurantSetup {
                 return nil
             }
 
-            if calendar.isDate(slot, inSameDayAs: now),
-               slot.timeIntervalSince(now) < TimeInterval(minimumLeadTimeMinutes * 60) {
-                return nil
+            if calendar.isDate(slot, inSameDayAs: now) {
+                if slot <= now {
+                    return nil
+                }
+                if applyLeadTime,
+                   slot.timeIntervalSince(now) < TimeInterval(minimumLeadTimeMinutes * 60) {
+                    return nil
+                }
             }
 
             return slot

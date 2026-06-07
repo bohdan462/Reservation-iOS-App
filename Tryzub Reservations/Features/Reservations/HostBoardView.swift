@@ -213,6 +213,7 @@ struct HostBoardView: View {
                 reservations: snapshot.seated,
                 emptyTitle: "No one seated",
                 emptySystemImage: "person.2.slash",
+                referenceNow: snapshot.now,
                 environment: environment,
                 onAction: handleAction,
                 onOpenReservation: onOpenReservation
@@ -221,6 +222,7 @@ struct HostBoardView: View {
 
             HomeReservationsPanel(
                 snapshot: snapshot,
+                referenceNow: snapshot.now,
                 environment: environment,
                 onAction: handleAction,
                 onOpenReservation: onOpenReservation
@@ -310,6 +312,7 @@ struct HostBoardView: View {
                 emptyTitle: "No one seated",
                 emptySystemImage: "person.2.slash",
                 scrollsInternally: false,
+                referenceNow: snapshot.now,
                 environment: environment,
                 onAction: handleAction,
                 onOpenReservation: onOpenReservation
@@ -317,6 +320,7 @@ struct HostBoardView: View {
 
             HomeReservationsPanel(
                 snapshot: snapshot,
+                referenceNow: snapshot.now,
                 scrollsInternally: false,
                 environment: environment,
                 onAction: handleAction,
@@ -960,6 +964,7 @@ private struct HostBoardColumn: View {
     let emptyTitle: String
     let emptySystemImage: String
     var scrollsInternally = true
+    var referenceNow = Date()
     let environment: AppEnvironment
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
     let onOpenReservation: (ReservationRecord) -> Void
@@ -1005,6 +1010,7 @@ private struct HostBoardColumn: View {
                 ForEach(reservations) { reservation in
                     HostBoardReservationRow(
                         reservation: reservation,
+                        referenceNow: referenceNow,
                         environment: environment,
                         onAction: onAction,
                         onOpenReservation: onOpenReservation
@@ -1017,6 +1023,7 @@ private struct HostBoardColumn: View {
 
 private struct HomeReservationsPanel: View {
     let snapshot: HostBoardSnapshot
+    var referenceNow = Date()
     var scrollsInternally = true
     let environment: AppEnvironment
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
@@ -1082,6 +1089,7 @@ private struct HomeReservationsPanel: View {
                             ForEach(section.reservations) { reservation in
                                 HostBoardReservationRow(
                                     reservation: reservation,
+                                    referenceNow: referenceNow,
                                     environment: environment,
                                     onAction: onAction,
                                     onOpenReservation: onOpenReservation
@@ -1100,6 +1108,7 @@ private struct HostBoardReservationRow: View {
     @EnvironmentObject private var controller: ReservationsController
 
     let reservation: ReservationRecord
+    var referenceNow = Date()
     let environment: AppEnvironment
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
     let onOpenReservation: (ReservationRecord) -> Void
@@ -1115,6 +1124,7 @@ private struct HostBoardReservationRow: View {
             showsDate: false,
             context: rowContext,
             contextNote: seatedDurationText,
+            seatedDurationDotStyle: seatedDurationDotStyle,
             capabilities: controller.capabilities,
             onTableTap: controller.capabilities.canEditReservationDetails && !controller.isNetworkDegraded
                 ? { tableAssignmentReservation = reservation }
@@ -1199,7 +1209,12 @@ private struct HostBoardReservationRow: View {
     }
 
     private var seatedDurationText: String? {
-        controller.seatedDurationText(for: reservation)
+        controller.seatedDurationText(for: reservation, now: referenceNow)
+    }
+
+    private var seatedDurationDotStyle: TryzubStaffStatusDotStyle? {
+        guard rowContext == .todaySeated else { return nil }
+        return controller.seatedDurationDotStyle(for: reservation, now: referenceNow)
     }
 
     private func handle(_ action: ReservationHostAction) {

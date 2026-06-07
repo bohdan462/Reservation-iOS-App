@@ -1680,7 +1680,8 @@ private struct ReservationNavigationRow: View {
         ReservationRowView(
             reservation: reservation,
             context: context,
-            contextNote: contextNote,
+            contextNote: contextNote ?? seatedDurationText,
+            seatedDurationDotStyle: seatedDurationDotStyle,
             capabilities: controller.capabilities,
             onTableTap: controller.capabilities.canEditReservationDetails && !controller.isNetworkDegraded
                 ? { tableAssignmentReservation = reservation }
@@ -1859,6 +1860,14 @@ private struct ReservationNavigationRow: View {
                 }
             }
         }
+    }
+
+    private var seatedDurationText: String? {
+        controller.seatedDurationText(for: reservation)
+    }
+
+    private var seatedDurationDotStyle: TryzubStaffStatusDotStyle? {
+        controller.seatedDurationDotStyle(for: reservation)
     }
 
     // MARK: - Available Staff Actions

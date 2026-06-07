@@ -232,6 +232,26 @@ enum TryzubStaffStatusResolver {
     }
 }
 
+/// Seated-duration thresholds for reservation row attention dots.
+enum TryzubSeatedDurationResolver {
+    static let greenFlashingMinutes = 80
+    static let yellowStaticMinutes = 100
+    static let redFlashingMinutes = 120
+
+    static func dotStyle(elapsedMinutes: Int) -> TryzubStaffStatusDotStyle? {
+        if elapsedMinutes >= redFlashingMinutes {
+            return .redFlashing
+        }
+        if elapsedMinutes >= yellowStaticMinutes {
+            return .yellowStatic
+        }
+        if elapsedMinutes >= greenFlashingMinutes {
+            return .greenFlashing
+        }
+        return nil
+    }
+}
+
 #Preview("Staff Status Dot") {
     VStack(alignment: .leading, spacing: 16) {
         HStack(spacing: 10) {

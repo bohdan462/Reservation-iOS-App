@@ -279,6 +279,7 @@ struct ReservationRowView<Accessory: View>: View {
     var showsDate = true
     var context: ReservationRowContext = .schedule
     var contextNote: String?
+    var seatedDurationDotStyle: TryzubStaffStatusDotStyle?
     var capabilities: AppCapabilities?
     var onTableTap: (() -> Void)?
 
@@ -292,6 +293,7 @@ struct ReservationRowView<Accessory: View>: View {
         showsDate: Bool = true,
         context: ReservationRowContext = .schedule,
         contextNote: String? = nil,
+        seatedDurationDotStyle: TryzubStaffStatusDotStyle? = nil,
         capabilities: AppCapabilities? = nil,
         onTableTap: (() -> Void)? = nil,
         @ViewBuilder accessory: @escaping () -> Accessory
@@ -300,6 +302,7 @@ struct ReservationRowView<Accessory: View>: View {
         self.showsDate = showsDate
         self.context = context
         self.contextNote = contextNote
+        self.seatedDurationDotStyle = seatedDurationDotStyle
         self.capabilities = capabilities
         self.onTableTap = onTableTap
         self.accessory = accessory
@@ -344,6 +347,7 @@ struct ReservationRowView<Accessory: View>: View {
                 status: nil,
                 metaItems: wideMetaItems(for: presentation),
                 insight: presentation.insight,
+                seatedDurationDotStyle: seatedDurationDotStyle,
                 onTableTap: onTableTap,
                 usesCompactName: false
             )
@@ -382,6 +386,7 @@ struct ReservationRowView<Accessory: View>: View {
                 status: nil,
                 metaItems: compactMetaItems(for: presentation),
                 insight: presentation.insight,
+                seatedDurationDotStyle: seatedDurationDotStyle,
                 onTableTap: onTableTap,
                 usesCompactName: true
             )
@@ -525,6 +530,7 @@ private struct ReservationRowGuestSection: View {
     let status: ReservationStatus?
     let metaItems: [ReservationRowDetailLabelData]
     let insight: ReservationRowInsight?
+    var seatedDurationDotStyle: TryzubStaffStatusDotStyle?
     let onTableTap: (() -> Void)?
     let usesCompactName: Bool
 
@@ -547,7 +553,10 @@ private struct ReservationRowGuestSection: View {
             ReservationRowDetailsLine(items: metaItems, onTableTap: onTableTap)
 
             if let insight {
-                ReservationRowInsightLine(insight: insight)
+                ReservationRowInsightLine(
+                    insight: insight,
+                    seatedDurationDotStyle: seatedDurationDotStyle
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -617,9 +626,14 @@ private struct ReservationRowDetailsLine: View {
 
 private struct ReservationRowInsightLine: View {
     let insight: ReservationRowInsight
+    var seatedDurationDotStyle: TryzubStaffStatusDotStyle?
 
     var body: some View {
         HStack(spacing: 6) {
+            if let seatedDurationDotStyle {
+                TryzubStaffStatusDot(style: seatedDurationDotStyle, diameter: 5)
+            }
+
             Image(systemName: insight.systemImage)
                 .font(.caption2.weight(.semibold))
                 .frame(width: 12)
@@ -642,6 +656,7 @@ extension ReservationRowView where Accessory == EmptyView {
         showsDate: Bool = true,
         context: ReservationRowContext = .schedule,
         contextNote: String? = nil,
+        seatedDurationDotStyle: TryzubStaffStatusDotStyle? = nil,
         capabilities: AppCapabilities? = nil,
         onTableTap: (() -> Void)? = nil
     ) {
@@ -650,6 +665,7 @@ extension ReservationRowView where Accessory == EmptyView {
             showsDate: showsDate,
             context: context,
             contextNote: contextNote,
+            seatedDurationDotStyle: seatedDurationDotStyle,
             capabilities: capabilities,
             onTableTap: onTableTap
         ) {

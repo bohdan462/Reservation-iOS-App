@@ -2534,12 +2534,23 @@ final class ReservationsController: ObservableObject {
         return true
     }
 
-    func seatedDurationText(for reservation: ReservationRecord, now: Date = Date()) -> String? {
-        guard reservation.statusValue == .seated else {
+    func seatedElapsedMinutes(for reservation: ReservationRecord, now: Date = Date()) -> Int? {
+        guard let seatedAt = seatedAt(for: reservation) else {
             return nil
         }
 
-        guard let seatedAt = localSeatedAtByReservationID[reservation.remoteID] ?? seatedTimestampFallback(for: reservation) else {
+        return max(0, Int(now.timeIntervalSince(seatedAt))) / 60
+    }
+
+    func seatedDurationDotStyle(for reservation: ReservationRecord, now: Date = Date()) -> TryzubStaffStatusDotStyle? {
+        guard let minutes = seatedElapsedMinutes(for: reservation, now: now) else {
+            return nil
+        }
+        return TryzubSeatedDurationResolver.dotStyle(elapsedMinutes: minutes)
+    }
+
+    func seatedDurationText(for reservation: ReservationRecord, now: Date = Date()) -> String? {
+        guard let seatedAt = seatedAt(for: reservation) else {
             return nil
         }
 
@@ -2554,6 +2565,14 @@ final class ReservationsController: ObservableObject {
         let hours = minutes / 60
         let remainingMinutes = minutes % 60
         return String(format: "Seated %dh %02dm", hours, remainingMinutes)
+    }
+
+    private func seatedAt(for reservation: ReservationRecord) -> Date? {
+        guard reservation.statusValue == .seated else {
+            return nil
+        }
+
+        return localSeatedAtByReservationID[reservation.remoteID] ?? seatedTimestampFallback(for: reservation)
     }
 
     private func seatedTimestampFallback(for reservation: ReservationRecord) -> Date? {

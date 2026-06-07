@@ -16,7 +16,6 @@ struct ManualReservationFormView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var controller: ReservationsController
     @State private var draft: ReservationFormDraft
-    @State private var isPhoneConfirmedForLookup: Bool
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showCreateConfirmation = false
@@ -30,7 +29,6 @@ struct ManualReservationFormView: View {
         self.prefill = prefill
         self.onCreateReservation = onCreateReservation
         _draft = State(initialValue: ReservationFormDraft(failure: failure, prefill: prefill))
-        _isPhoneConfirmedForLookup = State(initialValue: prefill?.source != .callInGuestLookup)
     }
 
     var body: some View {
@@ -43,8 +41,7 @@ struct ManualReservationFormView: View {
                 errorMessage: errorMessage,
                 failure: failure,
                 reservation: nil,
-                requiresPhoneConfirmation: prefill?.source == .callInGuestLookup,
-                isPhoneConfirmedForLookup: $isPhoneConfirmedForLookup,
+                showsGuestLookupDetailReminder: prefill?.source == .callInGuestLookup,
                 onCancel: { dismiss() },
                 onSubmit: { prepareCreateConfirmation() }
             )
@@ -113,11 +110,8 @@ struct ManualReservationFormView: View {
             _ = try ReservationFormValidator.validate(
                 draft: draft,
                 setup: controller.restaurantSetup,
-                applyLeadTime: controller.hasLoadedRestaurantSetup
+                applyLeadTime: false
             )
-            if prefill?.source == .callInGuestLookup, !isPhoneConfirmedForLookup {
-                throw ReservationFormValidationError(message: "Confirm the caller's phone number before creating this call-in reservation.")
-            }
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -163,8 +157,7 @@ struct ReservationEditFormView: View {
                 errorMessage: errorMessage,
                 failure: nil,
                 reservation: reservation,
-                requiresPhoneConfirmation: false,
-                isPhoneConfirmedForLookup: .constant(false),
+                showsGuestLookupDetailReminder: false,
                 onCancel: { dismiss() },
                 onSubmit: { prepareSaveConfirmation() },
                 onHideReservation: reservation.canSoftHideAsWrongEntry && !reservation.isHidden
@@ -340,8 +333,7 @@ private struct ReservationFormContent: View {
     let errorMessage: String?
     let failure: ImportFailureDTO?
     var reservation: ReservationRecord?
-    let requiresPhoneConfirmation: Bool
-    @Binding var isPhoneConfirmedForLookup: Bool
+    var showsGuestLookupDetailReminder = false
     let onCancel: () -> Void
     let onSubmit: () -> Void
     var onHideReservation: (() -> Void)?
@@ -411,6 +403,10 @@ private struct ReservationFormContent: View {
                 ReservationFormWarningCard(message: "Offline. Showing saved reservations. Edits require internet.")
             }
 
+            if showsGuestLookupDetailReminder {
+                ReservationFormInfoCard(message: "Confirm details before submitting.")
+            }
+
             if let formBlockingMessage {
                 ReservationFormWarningCard(message: formBlockingMessage)
             }
@@ -469,19 +465,6 @@ private struct ReservationFormContent: View {
                     .autocorrectionDisabled()
             }
 
-            if requiresPhoneConfirmation {
-                VStack(alignment: .leading, spacing: 4) {
-                    Toggle(isOn: $isPhoneConfirmedForLookup) {
-                        Label("Phone confirmed with caller", systemImage: "checkmark.shield")
-                            .font(.subheadline.weight(.semibold))
-                    }
-
-                    Text("Required for call-in bookings started from Guest Lookup.")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(TryzubColors.mutedText)
-                }
-                .padding(.top, 2)
-            }
         }
         .onAppear {
             guard mode.usesManualGuestInput else { return }
@@ -777,11 +760,16 @@ private struct ReservationFormContent: View {
         onSubmit()
     }
 
-    private var formBlockingMessage: String? {
-        if requiresPhoneConfirmation, !isPhoneConfirmedForLookup {
-            return "Confirm the caller's phone number before creating this call-in reservation."
+    private var appliesGuestLeadTime: Bool {
+        switch mode {
+        case .manualCreate, .fixFailedImport:
+            return false
+        case .edit:
+            return controller.hasLoadedRestaurantSetup
         }
+    }
 
+    private var formBlockingMessage: String? {
         if let availabilityValidationMessage {
             return availabilityValidationMessage
         }
@@ -791,7 +779,7 @@ private struct ReservationFormContent: View {
                 draft: draft,
                 setup: controller.restaurantSetup,
                 originalDraft: originalDraft,
-                applyLeadTime: controller.hasLoadedRestaurantSetup
+                applyLeadTime: appliesGuestLeadTime
             )
             return nil
         } catch {
@@ -845,7 +833,7 @@ private struct ReservationFormContent: View {
             draft: draft,
             setup: controller.restaurantSetup,
             originalDraft: originalDraft,
-            applyLeadTime: controller.hasLoadedRestaurantSetup
+            applyLeadTime: appliesGuestLeadTime
         )
     }
 
@@ -870,7 +858,10 @@ private struct ReservationFormContent: View {
            !suggestedSlots.slots.isEmpty {
             rawChoices = suggestedSlots.slots.compactMap { ManualReservationFormPresenter.dateForSlotValue($0.value) }
         } else {
-            rawChoices = controller.restaurantSetup.suggestedTimes(for: draft.reservationDate)
+            rawChoices = controller.restaurantSetup.suggestedTimes(
+                for: draft.reservationDate,
+                applyLeadTime: appliesGuestLeadTime
+            )
         }
 
         return rawChoices.filter(isTimeChoiceAllowed)
@@ -895,7 +886,7 @@ private struct ReservationFormContent: View {
             draft: testDraft,
             setup: controller.restaurantSetup,
             originalDraft: nil,
-            applyLeadTime: controller.hasLoadedRestaurantSetup
+            applyLeadTime: appliesGuestLeadTime
         ) == nil
     }
 
@@ -909,7 +900,7 @@ private struct ReservationFormContent: View {
         Button {
             draft.reservationDate = date
             if let firstTime = controller.restaurantSetup
-                .suggestedTimes(for: date)
+                .suggestedTimes(for: date, applyLeadTime: appliesGuestLeadTime)
                 .first(where: isTimeChoiceAllowed) {
                 draft.reservationTime = firstTime
             }
@@ -933,11 +924,11 @@ private struct ReservationFormContent: View {
 
         switch mode {
         case .manualCreate:
-            draft.applyDefaultServiceSlot(setup: controller.restaurantSetup)
+            draft.applyDefaultStaffServiceSlot(setup: controller.restaurantSetup)
         case .fixFailedImport:
             draft.status = .confirmed
             if controller.restaurantSetup.suggestedTimes(for: draft.reservationDate).isEmpty {
-                draft.applyDefaultServiceSlot(setup: controller.restaurantSetup, keepGuestFields: true)
+                draft.applyDefaultStaffServiceSlot(setup: controller.restaurantSetup, keepGuestFields: true)
             }
         case .edit:
             break
@@ -1369,7 +1360,11 @@ private struct ReservationFormDraft {
     }
 
     mutating func applyDefaultServiceSlot(setup: RestaurantSetup, keepGuestFields: Bool = false) {
-        let slot = setup.defaultServiceSlot()
+        applyDefaultStaffServiceSlot(setup: setup, keepGuestFields: keepGuestFields)
+    }
+
+    mutating func applyDefaultStaffServiceSlot(setup: RestaurantSetup, keepGuestFields: Bool = false) {
+        let slot = setup.defaultStaffServiceSlot()
         reservationDate = slot.date
         reservationTime = slot.time
 
@@ -1605,6 +1600,19 @@ private struct ReservationFormWarningCard: View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.subheadline)
             .foregroundStyle(.red)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+private struct ReservationFormInfoCard: View {
+    let message: String
+
+    var body: some View {
+        Label(message, systemImage: "info.circle")
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(TryzubColors.mutedText)
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))

@@ -13,33 +13,129 @@ final class GuestLookupStore: ObservableObject {
     @Published private(set) var isSearchActive = false
 
     private var cacheKey: GuestLookupCacheKey?
-    private var profiles: [GuestLookupProfile] = []
+    private var searchIndex = GuestLookupSearchIndex.empty
+    private var searchTask: Task<Void, Never>?
+    private var lastExecutedQuery: GuestLookupNormalizedQuery?
 
     func updateCache(records: [ReservationRecord], cacheKey: GuestLookupCacheKey) {
         guard self.cacheKey != cacheKey else { return }
         self.cacheKey = cacheKey
-        profiles = Self.buildProfiles(from: records)
+        searchIndex = GuestLookupSearchIndex.build(from: records)
     }
 
-    func updateSearch(_ query: String) {
-        let trimmedQuery = GuestLookupNormalizer.collapsedWhitespace(query)
-        let queryDigits = GuestLookupNormalizer.phoneDigits(trimmedQuery)
-        let normalizedName = GuestLookupNormalizer.normalizedName(trimmedQuery)
-        let normalizedEmail = GuestLookupNormalizer.normalizedEmail(trimmedQuery)
+    func scheduleSearch(_ query: String) {
+        searchTask?.cancel()
 
-        guard queryDigits.count >= 4 || normalizedName.count >= 2 else {
+        let normalized = GuestLookupNormalizedQuery(query: query)
+        guard normalized.isActive else {
             isSearchActive = false
             results = []
+            lastExecutedQuery = nil
             return
         }
 
-        isSearchActive = true
+        if normalized == lastExecutedQuery {
+            return
+        }
 
-        let scoredResults: [GuestLookupScoredResult] = profiles.compactMap { profile in
+        let index = searchIndex
+        let debounce = normalized.debounceMilliseconds
+
+        searchTask = Task {
+            if debounce > 0 {
+                try? await Task.sleep(for: .milliseconds(debounce))
+            }
+            guard !Task.isCancelled else { return }
+
+            let matches = await Task.detached(priority: .userInitiated) {
+                index.search(normalized)
+            }.value
+
+            guard !Task.isCancelled else { return }
+
+            results = matches
+            isSearchActive = true
+            lastExecutedQuery = normalized
+        }
+    }
+
+    func updateSearch(_ query: String) {
+        scheduleSearch(query)
+    }
+}
+
+// MARK: - Search Index
+
+private struct GuestLookupNormalizedQuery: Equatable {
+    let raw: String
+    let queryDigits: String
+    let normalizedName: String
+    let normalizedEmail: String
+
+    init(query: String) {
+        raw = GuestLookupNormalizer.collapsedWhitespace(query)
+        queryDigits = GuestLookupNormalizer.phoneDigits(raw)
+        normalizedName = GuestLookupNormalizer.normalizedName(raw)
+        normalizedEmail = GuestLookupNormalizer.normalizedEmail(raw)
+    }
+
+    var isActive: Bool {
+        queryDigits.count >= 4 || normalizedName.count >= 2
+    }
+
+    var debounceMilliseconds: Int {
+        if queryDigits.count >= 7 { return 0 }
+        if queryDigits.count >= 5 { return 60 }
+        if queryDigits.count >= 4 { return 120 }
+        if normalizedName.count >= 5 { return 80 }
+        if normalizedName.count >= 3 { return 150 }
+        return 220
+    }
+}
+
+private struct GuestLookupSearchIndex {
+    let profiles: [GuestLookupProfile]
+    let phonePrefixToProfileIndexes: [String: [Int]]
+
+    static let empty = GuestLookupSearchIndex(profiles: [], phonePrefixToProfileIndexes: [:])
+
+    static func build(from records: [ReservationRecord]) -> GuestLookupSearchIndex {
+        let profiles = buildProfiles(from: records)
+        var phonePrefixToProfileIndexes: [String: [Int]] = [:]
+
+        for (index, profile) in profiles.enumerated() {
+            guard let phoneDigits = profile.phoneDigits, phoneDigits.count >= 4 else { continue }
+            for length in 4...phoneDigits.count {
+                let prefix = String(phoneDigits.prefix(length))
+                phonePrefixToProfileIndexes[prefix, default: []].append(index)
+            }
+        }
+
+        return GuestLookupSearchIndex(
+            profiles: profiles,
+            phonePrefixToProfileIndexes: phonePrefixToProfileIndexes
+        )
+    }
+
+    func search(_ query: GuestLookupNormalizedQuery) -> [GuestLookupResult] {
+        let candidateProfiles: [GuestLookupProfile]
+
+        if query.queryDigits.count >= 4,
+           let indexes = phonePrefixToProfileIndexes[query.queryDigits] {
+            var seen = Set<Int>()
+            candidateProfiles = indexes.compactMap { index in
+                guard seen.insert(index).inserted else { return nil }
+                return profiles[index]
+            }
+        } else {
+            candidateProfiles = profiles
+        }
+
+        let scoredResults: [GuestLookupScoredResult] = candidateProfiles.compactMap { profile in
             guard let score = profile.score(
-                queryDigits: queryDigits,
-                normalizedName: normalizedName,
-                normalizedEmail: normalizedEmail
+                queryDigits: query.queryDigits,
+                normalizedName: query.normalizedName,
+                normalizedEmail: query.normalizedEmail
             ) else {
                 return nil
             }
@@ -47,21 +143,21 @@ final class GuestLookupStore: ObservableObject {
             return GuestLookupScoredResult(score: score, profile: profile)
         }
 
-        results = scoredResults
-        .sorted { lhs, rhs in
-            if lhs.score != rhs.score {
-                return lhs.score < rhs.score
+        return scoredResults
+            .sorted { lhs, rhs in
+                if lhs.score != rhs.score {
+                    return lhs.score < rhs.score
+                }
+                if lhs.profile.lastReservationDate != rhs.profile.lastReservationDate {
+                    return (lhs.profile.lastReservationDate ?? "") > (rhs.profile.lastReservationDate ?? "")
+                }
+                if lhs.profile.totalReservations != rhs.profile.totalReservations {
+                    return lhs.profile.totalReservations > rhs.profile.totalReservations
+                }
+                return lhs.profile.displayName.localizedCaseInsensitiveCompare(rhs.profile.displayName) == .orderedAscending
             }
-            if lhs.profile.lastReservationDate != rhs.profile.lastReservationDate {
-                return (lhs.profile.lastReservationDate ?? "") > (rhs.profile.lastReservationDate ?? "")
-            }
-            if lhs.profile.totalReservations != rhs.profile.totalReservations {
-                return lhs.profile.totalReservations > rhs.profile.totalReservations
-            }
-            return lhs.profile.displayName.localizedCaseInsensitiveCompare(rhs.profile.displayName) == .orderedAscending
-        }
-        .prefix(25)
-        .map(\.profile.result)
+            .prefix(25)
+            .map(\.profile.result)
     }
 
     private static func buildProfiles(from records: [ReservationRecord]) -> [GuestLookupProfile] {
@@ -81,8 +177,6 @@ final class GuestLookupStore: ObservableObject {
             } else if let email, !email.isManualPlaceholderEmail {
                 key = "email:\(email)"
             } else {
-                // Name-only identity is weak. Keep those rows separate instead
-                // of aggressively merging unrelated guests with the same name.
                 key = "name:\(normalizedName):\(record.remoteID)"
             }
 

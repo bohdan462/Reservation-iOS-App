@@ -41,7 +41,7 @@ struct GuestLookupView: View {
                 if controller.isNetworkDegraded {
                     Section {
                         Label(
-                            "Offline — showing saved guests. New call-ins require internet.",
+                            "Offline — showing saved guests. Create requires internet.",
                             systemImage: "wifi.slash"
                         )
                         .font(.subheadline.weight(.medium))
@@ -53,12 +53,12 @@ struct GuestLookupView: View {
                     Button {
                         activeSheet = GuestLookupSheet(prefill: .blankCallIn)
                     } label: {
-                        Label("New Call-In", systemImage: "phone.badge.plus")
+                        Label("Create", systemImage: "plus.circle")
                             .font(.subheadline.weight(.semibold))
                     }
                     .disabled(isBookingDisabled)
                 } footer: {
-                    Text("Search cached reservations by guest name or phone. No backend guest profile is created.")
+                    Text("Search cached reservations by phone or name. No backend guest profile is created.")
                 }
 
                 if !store.isSearchActive {
@@ -66,7 +66,7 @@ struct GuestLookupView: View {
                         ContentUnavailableView(
                             "Search Guests",
                             systemImage: "person.text.rectangle",
-                            description: Text("Enter at least 2 name characters or 4 phone digits.")
+                            description: Text("Enter at least 4 phone digits or 2 name characters.")
                         )
                     }
                 } else if store.results.isEmpty {
@@ -74,17 +74,8 @@ struct GuestLookupView: View {
                         ContentUnavailableView(
                             "No Guest Found",
                             systemImage: "person.crop.circle.badge.questionmark",
-                            description: Text("Create a new call-in reservation if this caller is not in the cache.")
+                            description: Text("Try a different phone number or name.")
                         )
-
-                        Button {
-                            activeSheet = GuestLookupSheet(prefill: .blankCallIn)
-                        } label: {
-                            Label("New Call-In", systemImage: "phone.badge.plus")
-                                .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity, minHeight: 38)
-                        }
-                        .disabled(isBookingDisabled)
                     }
                 } else {
                     Section("Cached guests") {
@@ -105,7 +96,7 @@ struct GuestLookupView: View {
             }
             .navigationTitle("Guests")
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, prompt: "Search name or phone")
+            .searchable(text: $searchText, prompt: "Search phone or name")
             .listStyle(.plain)
             .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
             .fullScreenCover(item: $activeSheet) { sheet in
@@ -119,12 +110,13 @@ struct GuestLookupView: View {
             .task(id: isActive) {
                 refreshCacheIfVisible()
             }
-            .task(id: searchText) {
+            .onChange(of: searchText) { _, value in
                 guard isActive else { return }
-                let value = searchText
-                try? await Task.sleep(for: .milliseconds(250))
-                guard !Task.isCancelled else { return }
-                store.updateSearch(value)
+                store.scheduleSearch(value)
+            }
+            .onAppear {
+                guard isActive else { return }
+                store.scheduleSearch(searchText)
             }
         }
     }
@@ -140,7 +132,7 @@ struct GuestLookupView: View {
     private func refreshCacheIfVisible() {
         guard isActive else { return }
         store.updateCache(records: reservations, cacheKey: cacheKey)
-        store.updateSearch(searchText)
+        store.scheduleSearch(searchText)
     }
 }
 
@@ -197,7 +189,7 @@ private struct GuestLookupResultCard: View {
             }
 
             Button(action: onBook) {
-                Label("Book Call-In", systemImage: "phone.arrow.up.right")
+                Label("Book New Reservation", systemImage: "calendar.badge.plus")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity, minHeight: 38)
             }
