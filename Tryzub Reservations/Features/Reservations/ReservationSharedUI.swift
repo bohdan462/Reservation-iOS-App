@@ -659,24 +659,24 @@ struct ReservationDashedLine: View {
 struct ReservationServiceCard<Content: View>: View {
     let title: String
     let systemImage: String
-    var spacing: CGFloat = 10
-    var compact = true
+    var spacing: CGFloat = 12
     @ViewBuilder let content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
             Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(TryzubColors.primaryText)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
 
             content
         }
-        .padding(compact ? 10 : TryzubSpacing.cardPadding)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(TryzubColors.cardBackground, in: RoundedRectangle(cornerRadius: TryzubSpacing.cornerRadius, style: .continuous))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: TryzubSpacing.cornerRadius, style: .continuous)
-                .stroke(TryzubColors.border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
 }
@@ -686,30 +686,30 @@ struct ReservationChoiceChip: View {
     var subtitle: String?
     var isSelected: Bool
     var minWidth: CGFloat = 78
-    var minHeight: CGFloat = 38
+    var minHeight: CGFloat = 40
     var fillsWidth = true
     var selectedColor: Color = ReservationUIStyle.selectedControlColor
 
     var body: some View {
         VStack(spacing: 2) {
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.82)
 
             if let subtitle {
                 Text(subtitle)
-                    .font(.caption2.weight(.medium))
+                    .font(.caption.weight(.medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
                     .foregroundStyle(isSelected ? Color.white.opacity(0.82) : .secondary)
             }
         }
-        .foregroundStyle(isSelected ? Color.white : .primary.opacity(0.82))
+        .foregroundStyle(isSelected ? Color.white : .primary)
         .frame(maxWidth: fillsWidth ? .infinity : nil, minHeight: minHeight)
         .frame(minWidth: minWidth)
-        .padding(.horizontal, 10)
-        .background(isSelected ? selectedColor : Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+        .padding(.horizontal, 12)
+        .background(isSelected ? selectedColor : Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
                 .stroke(Color.primary.opacity(isSelected ? 0 : 0.10), lineWidth: 1)

@@ -58,7 +58,7 @@ struct GuestLookupView: View {
                     }
                     .disabled(isBookingDisabled)
                 } footer: {
-                    Text("Search cached reservations by phone or name. No backend guest profile is created.")
+                    Text("Use manual 'Create' if no guest is found.")
                 }
 
                 if !store.isSearchActive {

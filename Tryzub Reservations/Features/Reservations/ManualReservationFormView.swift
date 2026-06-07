@@ -249,7 +249,7 @@ struct ReservationEditFormView: View {
                 draft: draft,
                 setup: controller.restaurantSetup,
                 originalDraft: originalDraft,
-                applyLeadTime: controller.hasLoadedRestaurantSetup
+                applyLeadTime: false
             )
             return true
         } catch {
@@ -261,6 +261,13 @@ struct ReservationEditFormView: View {
 }
 
 // MARK: - Shared Reservation Form
+
+private enum ReservationFormLayout {
+    static let sectionSpacing: CGFloat = 12
+    static let columnSpacing: CGFloat = 12
+    static let fieldSpacing: CGFloat = 10
+    static let chipSpacing: CGFloat = 8
+}
 
 private enum ReservationFormMode {
     case manualCreate
@@ -351,12 +358,16 @@ private struct ReservationFormContent: View {
     @State private var loadedSlotsDateKey: String?
     @State private var slotLoadTask: Task<Void, Never>?
 
+    private var isWideForm: Bool {
+        horizontalSizeClass == .regular
+    }
+
     var body: some View {
         ScrollView {
             formShell
-                .padding(.bottom, 108)
+                .padding(.bottom, 96)
         }
-        .background(TryzubColors.screenBackground)
+        .background(Color(.systemGroupedBackground))
         .navigationTitle(mode.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -387,14 +398,63 @@ private struct ReservationFormContent: View {
 
     private var formShell: some View {
         formFields
-            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: isWideForm ? 920 : 760, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, isWideForm ? 20 : 16)
             .padding(.top, 8)
     }
 
+    private func formColumnPair<Left: View, Right: View>(
+        @ViewBuilder left: () -> Left,
+        @ViewBuilder right: () -> Right
+    ) -> some View {
+        HStack(alignment: .top, spacing: ReservationFormLayout.columnSpacing) {
+            left()
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            right()
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
     private var formFields: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: ReservationFormLayout.sectionSpacing) {
+            formBanners
+
+            if isWideForm {
+                formColumnPair {
+                    contactCard
+                } right: {
+                    dateCard
+                }
+
+                serviceChoicesGrid
+
+                if mode.showsEditControls {
+                    formColumnPair {
+                        editDetailsCard
+                    } right: {
+                        notesSection
+                    }
+                } else {
+                    notesSection
+                }
+            } else {
+                contactCard
+                dateCard
+                serviceChoicesGrid
+
+                if mode.showsEditControls {
+                    editDetailsCard
+                }
+
+                notesSection
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var formBanners: some View {
+        VStack(alignment: .leading, spacing: ReservationFormLayout.sectionSpacing) {
             if let errorMessage {
                 ReservationFormWarningCard(message: errorMessage)
             }
@@ -414,57 +474,22 @@ private struct ReservationFormContent: View {
             if let failure {
                 ReservationFormImportCard(failure: failure)
             }
-
-            contactCard
-            dateCard
-            serviceChoicesGrid
-
-            if mode.showsEditControls {
-                editDetailsCard
-            }
-
-            notesSection
         }
     }
 
     private var contactCard: some View {
-        ReservationServiceCard(title: "Guest", systemImage: "person", spacing: 8) {
-            HStack(spacing: 8) {
-                if mode.usesManualGuestInput {
-                    ReservationFormTextField(
-                        title: "Name",
-                        text: $draft.guestName,
-                        prompt: "Guest name",
-                        inputKind: .guestName
-                    )
-                    ReservationFormTextField(
-                        title: "Phone",
-                        text: $draft.phone,
-                        prompt: "(312) 345-5674",
-                        inputKind: .guestPhone
-                    )
+        ReservationFormSection(title: "Guest", systemImage: "person") {
+            VStack(spacing: ReservationFormLayout.fieldSpacing) {
+                if isWideForm {
+                    guestInputFields
                 } else {
-                    ReservationFormTextField(title: "Name", text: $draft.guestName, prompt: "Guest name")
-                        .textContentType(.name)
-                    ReservationFormTextField(title: "Phone", text: $draft.phone, prompt: "Phone")
-                        .keyboardType(.phonePad)
+                    HStack(spacing: ReservationFormLayout.fieldSpacing) {
+                        guestNameField
+                        guestPhoneField
+                    }
+                    guestEmailField
                 }
             }
-
-            if mode.usesManualGuestInput {
-                ReservationFormTextField(
-                    title: "Email optional",
-                    text: $draft.email,
-                    prompt: "Leave blank if none",
-                    inputKind: .guestEmail
-                )
-            } else {
-                ReservationFormTextField(title: "Email optional", text: $draft.email, prompt: "Leave blank if none")
-                    .keyboardType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-            }
-
         }
         .onAppear {
             guard mode.usesManualGuestInput else { return }
@@ -477,10 +502,64 @@ private struct ReservationFormContent: View {
         }
     }
 
+    @ViewBuilder
+    private var guestInputFields: some View {
+        guestNameField
+        guestPhoneField
+        guestEmailField
+    }
+
+    @ViewBuilder
+    private var guestNameField: some View {
+        if mode.usesManualGuestInput {
+            ReservationFormTextField(
+                title: "Name",
+                text: $draft.guestName,
+                prompt: "Guest name",
+                inputKind: .guestName
+            )
+        } else {
+            ReservationFormTextField(title: "Name", text: $draft.guestName, prompt: "Guest name")
+                .textContentType(.name)
+        }
+    }
+
+    @ViewBuilder
+    private var guestPhoneField: some View {
+        if mode.usesManualGuestInput {
+            ReservationFormTextField(
+                title: "Phone",
+                text: $draft.phone,
+                prompt: "(312) 345-5674",
+                inputKind: .guestPhone
+            )
+        } else {
+            ReservationFormTextField(title: "Phone", text: $draft.phone, prompt: "Phone")
+                .keyboardType(.phonePad)
+        }
+    }
+
+    @ViewBuilder
+    private var guestEmailField: some View {
+        if mode.usesManualGuestInput {
+            ReservationFormTextField(
+                title: "Email optional",
+                text: $draft.email,
+                prompt: "Leave blank if none",
+                inputKind: .guestEmail
+            )
+        } else {
+            ReservationFormTextField(title: "Email optional", text: $draft.email, prompt: "Leave blank if none")
+                .keyboardType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+        }
+    }
+
     private var dateCard: some View {
-        ReservationServiceCard(title: "Date", systemImage: "calendar", spacing: 8) {
+        ReservationFormSection(title: "Date", systemImage: "calendar") {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: ReservationSlotGridStyle.columnSpacing) {
+                HStack(spacing: ReservationFormLayout.chipSpacing) {
                     ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
                         dateChoiceButton(date)
                     }
@@ -491,48 +570,47 @@ private struct ReservationFormContent: View {
                 ReservationOpenCalendarButton(selectedDate: $draft.reservationDate)
                 Spacer()
                 Text(draft.reservationDate.formatted(.dateTime.month(.abbreviated).day().year()))
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(TryzubColors.mutedText)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
             }
         }
     }
 
     private var serviceChoicesGrid: some View {
         Group {
-            if horizontalSizeClass == .compact {
-                VStack(alignment: .leading, spacing: 8) {
+            if isWideForm {
+                formColumnPair {
                     timeCard
+                } right: {
                     partyCard
                 }
             } else {
-                HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: ReservationFormLayout.sectionSpacing) {
                     timeCard
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
                     partyCard
-                        .frame(width: 240)
                 }
             }
         }
     }
 
     private var timeCard: some View {
-        ReservationServiceCard(title: "Time", systemImage: "clock", spacing: 8) {
+        ReservationFormSection(title: "Time", systemImage: "clock") {
             if isLoadingPublicSlots && activeSuggestedSlots == nil {
                 ProgressView("Checking available times...")
-                    .font(.caption2)
-                    .frame(minHeight: 28, alignment: .leading)
+                    .font(.subheadline)
+                    .frame(minHeight: 32, alignment: .leading)
             } else if shouldBlockClosedDate {
                 Text("This date is closed. Choose another date.")
-                    .font(.caption2.weight(.medium))
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(TryzubColors.danger)
             } else if timeChoices.isEmpty {
-                Text("No public slots. Use Custom Time.")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(TryzubColors.mutedText)
+                Text("No service times for this date. Use Custom.")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
             } else {
                 LazyVGrid(
                     columns: timeColumns,
-                    spacing: ReservationSlotGridStyle.rowSpacing
+                    spacing: ReservationFormLayout.chipSpacing
                 ) {
                     ForEach(timeChoices, id: \.self) { time in
                         Button {
@@ -542,8 +620,8 @@ private struct ReservationFormContent: View {
                             ReservationChoiceChip(
                                 title: timeLabel(time),
                                 isSelected: isSameTime(draft.reservationTime, time),
-                                minWidth: 62,
-                                minHeight: 30
+                                minWidth: 58,
+                                minHeight: 36
                             )
                         }
                         .buttonStyle(.plain)
@@ -553,33 +631,32 @@ private struct ReservationFormContent: View {
 
             if let publicSlotsError {
                 Text(publicSlotsError)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(TryzubColors.mutedText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
 
             if let blockedWarningText {
                 Label(blockedWarningText, systemImage: "exclamationmark.triangle")
-                    .font(.caption2.weight(.semibold))
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(TryzubColors.danger)
             }
 
             if let timeValidationMessage {
                 Label(timeValidationMessage, systemImage: "clock.badge.exclamationmark")
-                    .font(.caption2.weight(.semibold))
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(TryzubColors.danger)
             }
 
             if !shouldBlockClosedDate {
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     Button {
                         isCustomTimePresented = true
                         ReservationHaptics.selection()
                     } label: {
                         Label("Custom", systemImage: "plus")
-                            .font(.caption2.weight(.semibold))
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(TryzubColors.primaryText)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .popover(isPresented: $isCustomTimePresented) {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Custom Time")
@@ -591,10 +668,9 @@ private struct ReservationFormContent: View {
                                 isCustomTimePresented = false
                                 ReservationHaptics.selection()
                             }
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity, minHeight: 36)
-                            .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .frame(maxWidth: .infinity)
                         }
                         .padding()
                         .frame(minWidth: 260, minHeight: 240)
@@ -608,8 +684,8 @@ private struct ReservationFormContent: View {
                             title: timeLabel(draft.reservationTime),
                             subtitle: "Custom",
                             isSelected: true,
-                            minWidth: 62,
-                            minHeight: 30,
+                            minWidth: 58,
+                            minHeight: 36,
                             fillsWidth: false
                         )
                     }
@@ -619,10 +695,10 @@ private struct ReservationFormContent: View {
     }
 
     private var partyCard: some View {
-        ReservationServiceCard(title: "Party", systemImage: "person.2", spacing: 8) {
+        ReservationFormSection(title: "Party", systemImage: "person.2") {
             LazyVGrid(
                 columns: partyColumns,
-                spacing: ReservationSlotGridStyle.rowSpacing
+                spacing: ReservationFormLayout.chipSpacing
             ) {
                 ForEach(1...8, id: \.self) { size in
                     Button {
@@ -632,7 +708,7 @@ private struct ReservationFormContent: View {
                         ReservationChoiceChip(
                             title: "\(size)",
                             isSelected: draft.partySize == size,
-                            minWidth: 44,
+                            minWidth: 40,
                             minHeight: 36
                         )
                     }
@@ -640,9 +716,10 @@ private struct ReservationFormContent: View {
                 }
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: ReservationFormLayout.fieldSpacing) {
                 Text("Party of \(draft.partySize)")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Stepper("Party of \(draft.partySize)", value: $draft.partySize, in: 1...60)
                     .labelsHidden()
@@ -651,44 +728,43 @@ private struct ReservationFormContent: View {
     }
 
     private var partyColumns: [GridItem] {
-        let count = horizontalSizeClass == .compact ? 4 : 4
-        return Array(repeating: GridItem(.flexible(), spacing: ReservationSlotGridStyle.columnSpacing), count: count)
+        Array(
+            repeating: GridItem(.flexible(), spacing: ReservationFormLayout.chipSpacing),
+            count: 4
+        )
     }
 
     private var timeColumns: [GridItem] {
-        if horizontalSizeClass == .compact {
-            return Array(repeating: GridItem(.flexible(), spacing: ReservationSlotGridStyle.columnSpacing), count: 2)
-        }
-        return ReservationSlotGridStyle.columns
-    }
-
-    private var statusColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: horizontalSizeClass == .compact ? 96 : 112), spacing: ReservationSlotGridStyle.columnSpacing)]
+        let count = isWideForm ? 4 : 3
+        return Array(
+            repeating: GridItem(.flexible(), spacing: ReservationFormLayout.chipSpacing),
+            count: count
+        )
     }
 
     private var editDetailsCard: some View {
-        ReservationServiceCard(title: "Service Details", systemImage: "slider.horizontal.3", spacing: 8) {
-            LazyVGrid(
-                columns: statusColumns,
-                spacing: ReservationSlotGridStyle.rowSpacing
-            ) {
-                ForEach(ReservationStatus.allCases) { status in
-                    Button {
-                        draft.status = status
-                        ReservationHaptics.selection()
-                    } label: {
-                        ReservationChoiceChip(
-                            title: status.shortDisplayName,
-                            isSelected: draft.status == status,
-                            minWidth: 86,
-                            minHeight: 36
-                        )
+        ReservationFormSection(title: "Service Details", systemImage: "slider.horizontal.3") {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: ReservationFormLayout.chipSpacing) {
+                    ForEach(ReservationStatus.allCases) { status in
+                        Button {
+                            draft.status = status
+                            ReservationHaptics.selection()
+                        } label: {
+                            ReservationChoiceChip(
+                                title: status.shortDisplayName,
+                                isSelected: draft.status == status,
+                                minWidth: 88,
+                                minHeight: 36,
+                                fillsWidth: false
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: ReservationFormLayout.fieldSpacing) {
                 ReservationFormTextField(title: "Table", text: $draft.tableName, prompt: "Unassigned")
                     .textInputAutocapitalization(.characters)
                 ReservationFormTextField(title: "Superseded by", text: $draft.supersededById, prompt: "ID")
@@ -696,58 +772,64 @@ private struct ReservationFormContent: View {
             }
 
             if let onHideReservation {
-                HStack {
-                    Button(role: .destructive, action: onHideReservation) {
-                        Label("Hide", systemImage: "archivebox")
-                            .font(.caption2.weight(.semibold))
-                            .frame(maxWidth: .infinity, minHeight: 32)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(TryzubColors.danger)
-                    .background(TryzubColors.attentionBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                            .stroke(TryzubColors.attentionBorder, lineWidth: 1)
-                    }
+                Button(role: .destructive, action: onHideReservation) {
+                    Label("Hide reservation", systemImage: "archivebox")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .tint(TryzubColors.danger)
             }
         }
     }
 
     private var notesSection: some View {
-        ReservationServiceCard(title: "Notes", systemImage: "note.text", spacing: 8) {
-            ReservationFormTextEditor(title: "Guest notes", text: $draft.guestNotes, minHeight: 96)
-            ReservationFormTextEditor(title: "Staff notes", text: $draft.staffNotes, minHeight: 112)
+        ReservationFormSection(title: "Notes", systemImage: "note.text") {
+            if isWideForm && !mode.showsEditControls {
+                HStack(alignment: .top, spacing: ReservationFormLayout.fieldSpacing) {
+                    ReservationFormTextEditor(title: "Guest notes", text: $draft.guestNotes, minHeight: 108)
+                    ReservationFormTextEditor(title: "Staff notes", text: $draft.staffNotes, minHeight: 108)
+                }
+            } else if isWideForm && mode.showsEditControls {
+                VStack(spacing: ReservationFormLayout.fieldSpacing) {
+                    ReservationFormTextEditor(title: "Guest notes", text: $draft.guestNotes, minHeight: 88)
+                    ReservationFormTextEditor(title: "Staff notes", text: $draft.staffNotes, minHeight: 88)
+                }
+            } else {
+                VStack(spacing: ReservationFormLayout.fieldSpacing) {
+                    ReservationFormTextEditor(title: "Guest notes", text: $draft.guestNotes, minHeight: 88)
+                    ReservationFormTextEditor(title: "Staff notes", text: $draft.staffNotes, minHeight: 88)
+                }
+            }
         }
     }
 
     private var primaryActionButton: some View {
-        Button(action: submitIfValid) {
-            HStack {
-                Spacer()
+        let isSubmitDisabled = controller.isNetworkDegraded || formBlockingMessage != nil
+
+        return VStack(spacing: 0) {
+            Divider()
+
+            Group {
                 if isSaving {
                     ProgressView()
-                        .tint(.white)
+                        .controlSize(.large)
+                        .frame(maxWidth: .infinity, minHeight: 50)
                 } else {
-                    Text(mode.primaryActionTitle)
-                        .font(.headline.weight(.semibold))
+                    Button(mode.primaryActionTitle, action: submitIfValid)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .frame(maxWidth: .infinity)
+                        .disabled(isSubmitDisabled)
                 }
-                Spacer()
             }
-            .frame(maxWidth: 150)
-            .frame(maxWidth: .infinity)
-            .foregroundStyle(.white)
-            .padding(.vertical, 14)
-            .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-            .frame(maxWidth: 680)
+            .frame(maxWidth: isWideForm ? 680 : .infinity)
             .padding(.horizontal, 16)
-            .padding(.top, 8)
+            .padding(.top, 12)
             .padding(.bottom, mode.primaryButtonBottomInset)
             .frame(maxWidth: .infinity)
-            .background(.regularMaterial)
+            .background(Color(.systemGroupedBackground))
         }
-        .buttonStyle(.plain)
-        .disabled(isSaving || controller.isNetworkDegraded || formBlockingMessage != nil)
     }
 
     private func submitIfValid() {
@@ -760,14 +842,8 @@ private struct ReservationFormContent: View {
         onSubmit()
     }
 
-    private var appliesGuestLeadTime: Bool {
-        switch mode {
-        case .manualCreate, .fixFailedImport:
-            return false
-        case .edit:
-            return controller.hasLoadedRestaurantSetup
-        }
-    }
+    /// Staff intake forms share the same service-time grid as call-in create — no guest lead time.
+    private var appliesStaffLeadTime: Bool { false }
 
     private var formBlockingMessage: String? {
         if let availabilityValidationMessage {
@@ -779,7 +855,7 @@ private struct ReservationFormContent: View {
                 draft: draft,
                 setup: controller.restaurantSetup,
                 originalDraft: originalDraft,
-                applyLeadTime: appliesGuestLeadTime
+                applyLeadTime: appliesStaffLeadTime
             )
             return nil
         } catch {
@@ -833,7 +909,7 @@ private struct ReservationFormContent: View {
             draft: draft,
             setup: controller.restaurantSetup,
             originalDraft: originalDraft,
-            applyLeadTime: appliesGuestLeadTime
+            applyLeadTime: appliesStaffLeadTime
         )
     }
 
@@ -852,19 +928,9 @@ private struct ReservationFormContent: View {
     }
 
     private var timeChoices: [Date] {
-        let rawChoices: [Date]
-        if let suggestedSlots = activeSuggestedSlots,
-           suggestedSlots.isOpen,
-           !suggestedSlots.slots.isEmpty {
-            rawChoices = suggestedSlots.slots.compactMap { ManualReservationFormPresenter.dateForSlotValue($0.value) }
-        } else {
-            rawChoices = controller.restaurantSetup.suggestedTimes(
-                for: draft.reservationDate,
-                applyLeadTime: appliesGuestLeadTime
-            )
-        }
-
-        return rawChoices.filter(isTimeChoiceAllowed)
+        controller.restaurantSetup
+            .suggestedTimes(for: draft.reservationDate, applyLeadTime: false)
+            .filter(isTimeChoiceAllowed)
     }
 
     private var activeSuggestedSlots: ReservationSlotsResponseDTO? {
@@ -886,7 +952,7 @@ private struct ReservationFormContent: View {
             draft: testDraft,
             setup: controller.restaurantSetup,
             originalDraft: nil,
-            applyLeadTime: appliesGuestLeadTime
+            applyLeadTime: appliesStaffLeadTime
         ) == nil
     }
 
@@ -900,7 +966,7 @@ private struct ReservationFormContent: View {
         Button {
             draft.reservationDate = date
             if let firstTime = controller.restaurantSetup
-                .suggestedTimes(for: date, applyLeadTime: appliesGuestLeadTime)
+                .suggestedTimes(for: date, applyLeadTime: false)
                 .first(where: isTimeChoiceAllowed) {
                 draft.reservationTime = firstTime
             }
@@ -911,7 +977,7 @@ private struct ReservationFormContent: View {
                 subtitle: date.formatted(.dateTime.weekday(.abbreviated)),
                 isSelected: Calendar.current.isDate(draft.reservationDate, inSameDayAs: date),
                 minWidth: 68,
-                minHeight: 32,
+                minHeight: 36,
                 fillsWidth: false
             )
         }
@@ -1470,16 +1536,17 @@ private struct ReservationFormDraft {
 
 // MARK: - Form Pieces
 
-private struct ReservationFormCard<Content: View>: View {
+private struct ReservationFormSection<Content: View>: View {
     let title: String
     let systemImage: String
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: ReservationFormLayout.fieldSpacing) {
             Label(title, systemImage: systemImage)
-                .font(.headline.weight(.medium))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(.secondary)
+                .textCase(.uppercase)
 
             content
         }
@@ -1489,6 +1556,18 @@ private struct ReservationFormCard<Content: View>: View {
         .overlay {
             RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+    }
+}
+
+private struct ReservationFormCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ReservationFormSection(title: title, systemImage: systemImage) {
+            content
         }
     }
 }
@@ -1524,16 +1603,16 @@ private struct ReservationFormTextField: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.caption.weight(.medium))
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
 
             TextField(prompt, text: displayBinding)
                 .font(.body)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                .padding(.vertical, 11)
+                .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
                         .stroke(Color.primary.opacity(0.08), lineWidth: 1)
@@ -1575,16 +1654,17 @@ private struct ReservationFormTextEditor: View {
     let minHeight: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.caption.weight(.medium))
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
 
             TextEditor(text: $text)
+                .font(.body)
                 .frame(minHeight: minHeight)
                 .scrollContentBackground(.hidden)
                 .padding(8)
-                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
                         .stroke(Color.primary.opacity(0.08), lineWidth: 1)
@@ -1602,7 +1682,11 @@ private struct ReservationFormWarningCard: View {
             .foregroundStyle(.red)
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
+                    .stroke(Color.red.opacity(0.18), lineWidth: 1)
+            }
     }
 }
 
@@ -1611,11 +1695,15 @@ private struct ReservationFormInfoCard: View {
 
     var body: some View {
         Label(message, systemImage: "info.circle")
-            .font(.subheadline.weight(.medium))
-            .foregroundStyle(TryzubColors.mutedText)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            }
     }
 }
 
