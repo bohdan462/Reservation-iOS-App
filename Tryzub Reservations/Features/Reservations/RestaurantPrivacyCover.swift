@@ -518,6 +518,10 @@ private final class PrivacyCoverGestureDelegate: NSObject, UIGestureRecognizerDe
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard isActive, let hostWindow = gestureRecognizer.view as? UIWindow else { return false }
 
+        if hostWindow.rootViewController?.presentedViewController != nil {
+            return false
+        }
+
         let location = gestureRecognizer.location(in: hostWindow)
         guard let hitView = hostWindow.hitTest(location, with: nil) else { return true }
         return !PrivacyCoverWindowTouchMonitor.isWithinNavigationChrome(hitView)

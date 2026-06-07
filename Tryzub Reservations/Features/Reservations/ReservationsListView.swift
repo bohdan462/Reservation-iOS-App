@@ -247,27 +247,27 @@ private struct HomeDashboardView: View {
                 // Staff manual refresh: controller decides whether this becomes a network GET.
                 await controller.requestManualTodayRefresh(context: modelContext)
             }
-            .fullScreenCover(isPresented: $showManualCreate) {
-                ManualReservationFormView { request in
-                    // Manual call-in create is accepted immediately; no email is sent.
-                    try await controller.createAcceptedManualReservation(request, context: modelContext)
-                }
-                .interactiveDismissDisabled()
-            }
-            .sheet(isPresented: $showImportFailures) {
-                ImportFailuresView(
-                    environment: environment,
-                    onCreateReservation: { request in
-                        // Failed import repair creates a managed reservation through the controller.
-                        try await controller.createAcceptedManualReservation(request, context: modelContext)
-                    },
-                    onCreated: { _ in }
-                )
-                .environmentObject(controller)
-            }
             .navigationDestination(for: Int.self) { remoteID in
                 reservationDestination(remoteID: remoteID)
             }
+        }
+        .fullScreenCover(isPresented: $showManualCreate) {
+            ManualReservationFormView { request in
+                // Manual call-in create is accepted immediately; no email is sent.
+                try await controller.createAcceptedManualReservation(request, context: modelContext)
+            }
+            .environmentObject(controller)
+        }
+        .sheet(isPresented: $showImportFailures) {
+            ImportFailuresView(
+                environment: environment,
+                onCreateReservation: { request in
+                    // Failed import repair creates a managed reservation through the controller.
+                    try await controller.createAcceptedManualReservation(request, context: modelContext)
+                },
+                onCreated: { _ in }
+            )
+            .environmentObject(controller)
         }
     }
 

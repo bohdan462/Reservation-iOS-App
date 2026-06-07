@@ -62,6 +62,7 @@ struct ManualReservationFormView: View {
             ) {
                 ReservationFormChangeReview(createSummary: draft.createSummaryRows())
             }
+            .interactiveDismissDisabled(isSaving)
         }
         .task {
             // Lazy form support load: setup provides manual-create defaults only.
@@ -71,7 +72,11 @@ struct ManualReservationFormView: View {
 
     private func prepareCreateConfirmation() {
         guard validateRequiredFields() else { return }
-        showCreateConfirmation = true
+        // Defer one run loop so the submit tap cannot immediately dismiss the sheet.
+        Task { @MainActor in
+            await Task.yield()
+            showCreateConfirmation = true
+        }
     }
 
     // Intent: Staff creates a fast call-in/manual reservation.
@@ -200,7 +205,10 @@ struct ReservationEditFormView: View {
             errorMessage = "No changes to save."
             return
         }
-        showSaveConfirmation = true
+        Task { @MainActor in
+            await Task.yield()
+            showSaveConfirmation = true
+        }
     }
 
     // Intent: Staff edits an existing managed reservation.
@@ -386,6 +394,12 @@ private struct ReservationFormContent: View {
         }
         .onChange(of: draft.reservationDate.reservationDateString()) { _, _ in
             ensureSlotLoad()
+        }
+        .onChange(of: loadedSlotsDateKey) { _, _ in
+            syncSelectedTimeToAvailableChoicesIfNeeded()
+        }
+        .onChange(of: loadedAvailabilityDateKey) { _, _ in
+            syncSelectedTimeToAvailableChoicesIfNeeded()
         }
         .onDisappear {
             slotLoadTask?.cancel()
@@ -595,7 +609,7 @@ private struct ReservationFormContent: View {
 
     private var timeCard: some View {
         ReservationFormSection(title: "Time", systemImage: "clock") {
-            if isLoadingPublicSlots && activeSuggestedSlots == nil {
+            if isLoadingPublicSlots && timeChoices.isEmpty {
                 ProgressView("Checking available times...")
                     .font(.subheadline)
                     .frame(minHeight: 32, alignment: .leading)
@@ -928,9 +942,49 @@ private struct ReservationFormContent: View {
     }
 
     private var timeChoices: [Date] {
-        controller.restaurantSetup
-            .suggestedTimes(for: draft.reservationDate, applyLeadTime: false)
-            .filter(isTimeChoiceAllowed)
+        staffTimeChoices(for: draft.reservationDate).filter(isTimeChoiceAllowed)
+    }
+
+    private func staffTimeChoices(for serviceDate: Date) -> [Date] {
+        let setup = controller.restaurantSetup
+        let calendar = Calendar.current
+        let dateKey = serviceDate.reservationDateString()
+
+        if let slots = resolvedPublicSlots(for: dateKey), !slots.slots.isEmpty {
+            let parsed = slots.slots.compactMap { slot in
+                ManualReservationFormPresenter.serviceDateTime(
+                    for: slot.value,
+                    on: serviceDate,
+                    calendar: calendar
+                )
+            }
+            if !parsed.isEmpty {
+                return parsed.sorted()
+            }
+        }
+
+        let availability = resolvedDayAvailability(for: dateKey)
+        return setup.suggestedTimes(
+            for: serviceDate,
+            applyLeadTime: false,
+            openTime: availability?.openTime,
+            closeTime: availability?.closeTime,
+            slotIntervalMinutes: availability?.slotIntervalMinutes
+        )
+    }
+
+    private func resolvedPublicSlots(for dateKey: String) -> ReservationSlotsResponseDTO? {
+        if loadedSlotsDateKey == dateKey {
+            return suggestedSlots
+        }
+        return controller.cachedReservationSlots(date: dateKey)
+    }
+
+    private func resolvedDayAvailability(for dateKey: String) -> RestaurantDayAvailabilityDTO? {
+        if loadedAvailabilityDateKey == dateKey {
+            return dayAvailability
+        }
+        return controller.cachedRestaurantDayAvailability(date: dateKey)
     }
 
     private var activeSuggestedSlots: ReservationSlotsResponseDTO? {
@@ -965,9 +1019,7 @@ private struct ReservationFormContent: View {
     private func dateChoiceButton(_ date: Date) -> some View {
         Button {
             draft.reservationDate = date
-            if let firstTime = controller.restaurantSetup
-                .suggestedTimes(for: date, applyLeadTime: false)
-                .first(where: isTimeChoiceAllowed) {
+            if let firstTime = staffTimeChoices(for: date).first(where: isTimeChoiceAllowed) {
                 draft.reservationTime = firstTime
             }
             ReservationHaptics.selection()
@@ -990,14 +1042,40 @@ private struct ReservationFormContent: View {
 
         switch mode {
         case .manualCreate:
-            draft.applyDefaultStaffServiceSlot(setup: controller.restaurantSetup)
+            draft.applyDefaultStaffServiceSlot(
+                setup: controller.restaurantSetup,
+                availability: controller.cachedRestaurantDayAvailability(
+                    date: draft.reservationDate.reservationDateString()
+                ),
+                publicSlots: controller.cachedReservationSlots(
+                    date: draft.reservationDate.reservationDateString()
+                )
+            )
         case .fixFailedImport:
             draft.status = .confirmed
-            if controller.restaurantSetup.suggestedTimes(for: draft.reservationDate).isEmpty {
-                draft.applyDefaultStaffServiceSlot(setup: controller.restaurantSetup, keepGuestFields: true)
+            if staffTimeChoices(for: draft.reservationDate).isEmpty {
+                draft.applyDefaultStaffServiceSlot(
+                    setup: controller.restaurantSetup,
+                    keepGuestFields: true,
+                    availability: controller.cachedRestaurantDayAvailability(
+                        date: draft.reservationDate.reservationDateString()
+                    ),
+                    publicSlots: controller.cachedReservationSlots(
+                        date: draft.reservationDate.reservationDateString()
+                    )
+                )
             }
         case .edit:
             break
+        }
+    }
+
+    private func syncSelectedTimeToAvailableChoicesIfNeeded() {
+        guard mode == .manualCreate || mode == .fixFailedImport else { return }
+        let choices = staffTimeChoices(for: draft.reservationDate).filter(isTimeChoiceAllowed)
+        guard let first = choices.first else { return }
+        if !choices.contains(where: { isSameTime($0, draft.reservationTime) }) {
+            draft.reservationTime = first
         }
     }
 
@@ -1106,6 +1184,21 @@ private enum ManualReservationFormPresenter {
 
     static func dateForSlotValue(_ value: String) -> Date? {
         timeWithSeconds.date(from: value) ?? timeWithoutSeconds.date(from: value)
+    }
+
+    static func serviceDateTime(
+        for slotValue: String,
+        on serviceDate: Date,
+        calendar: Calendar = .current
+    ) -> Date? {
+        guard let parsed = dateForSlotValue(slotValue) else { return nil }
+        let parts = calendar.dateComponents([.hour, .minute], from: parsed)
+        return calendar.date(
+            bySettingHour: parts.hour ?? 0,
+            minute: parts.minute ?? 0,
+            second: 0,
+            of: serviceDate
+        )
     }
 
     static func blockedWarningText(
@@ -1429,13 +1522,48 @@ private struct ReservationFormDraft {
         applyDefaultStaffServiceSlot(setup: setup, keepGuestFields: keepGuestFields)
     }
 
-    mutating func applyDefaultStaffServiceSlot(setup: RestaurantSetup, keepGuestFields: Bool = false) {
-        let slot = setup.defaultStaffServiceSlot()
-        reservationDate = slot.date
-        reservationTime = slot.time
+    mutating func applyDefaultStaffServiceSlot(
+        setup: RestaurantSetup,
+        keepGuestFields: Bool = false,
+        availability: RestaurantDayAvailabilityDTO? = nil,
+        publicSlots: ReservationSlotsResponseDTO? = nil,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) {
+        let serviceDate = calendar.startOfDay(for: now)
+        let times: [Date]
+
+        if let publicSlots, !publicSlots.slots.isEmpty {
+            times = publicSlots.slots.compactMap { slot in
+                ManualReservationFormPresenter.serviceDateTime(
+                    for: slot.value,
+                    on: serviceDate,
+                    calendar: calendar
+                )
+            }
+            .sorted()
+        } else {
+            times = setup.suggestedTimes(
+                for: serviceDate,
+                now: now,
+                calendar: calendar,
+                applyLeadTime: false,
+                openTime: availability?.openTime,
+                closeTime: availability?.closeTime,
+                slotIntervalMinutes: availability?.slotIntervalMinutes
+            )
+        }
+
+        let time = times.first(where: { calendar.isDate(serviceDate, inSameDayAs: now) ? $0 > now : true })
+            ?? times.first
+            ?? calendar.date(bySettingHour: 18, minute: 0, second: 0, of: serviceDate)
+            ?? serviceDate
+
+        reservationDate = serviceDate
+        reservationTime = time
 
         if !keepGuestFields {
-            partySize = max(slot.partySize, 1)
+            partySize = max(setup.defaultPartySize, 1)
         }
     }
 

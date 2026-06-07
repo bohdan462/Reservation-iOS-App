@@ -505,11 +505,19 @@ extension RestaurantSetup {
         for serviceDate: Date,
         now: Date = Date(),
         calendar: Calendar = .current,
-        applyLeadTime: Bool = true
+        applyLeadTime: Bool = true,
+        openTime: String? = nil,
+        closeTime: String? = nil,
+        slotIntervalMinutes overrideInterval: Int? = nil
     ) -> [Date] {
-        let interval = max(slotIntervalMinutes, 15)
-        let serviceMinutes = stride(from: 16 * 60 + 30, through: 21 * 60 + 30, by: interval)
-        return serviceMinutes.compactMap { minutes in
+        let interval = max(overrideInterval ?? slotIntervalMinutes, 15)
+        guard let startMinutes = Self.minutesFromTimeString(openTime),
+              let endMinutes = Self.minutesFromTimeString(closeTime),
+              endMinutes >= startMinutes else {
+            return []
+        }
+
+        return stride(from: startMinutes, through: endMinutes, by: interval).compactMap { minutes in
             guard let slot = calendar.date(
                 bySettingHour: minutes / 60,
                 minute: minutes % 60,
@@ -531,6 +539,25 @@ extension RestaurantSetup {
 
             return slot
         }
+    }
+
+    static func minutesFromTimeString(_ value: String?) -> Int? {
+        guard let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return nil
+        }
+
+        let normalized = raw.count >= 5 ? String(raw.prefix(5)) : raw
+        let parts = normalized.split(separator: ":")
+        guard parts.count >= 2,
+              let hour = Int(parts[0]),
+              let minute = Int(parts[1]),
+              (0...23).contains(hour),
+              (0...59).contains(minute) else {
+            return nil
+        }
+
+        return hour * 60 + minute
     }
 
     var formattedUpdatedAt: String? {
