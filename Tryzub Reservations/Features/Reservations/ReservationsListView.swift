@@ -20,17 +20,35 @@ struct ReservationsListView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var controller: ReservationsController
     @StateObject private var hiddenReservations = HiddenReservationsStore()
-    @Query
-    private var pendingReviewRows: [ReservationRecord]
-
-    @State private var selectedTab: ReservationsAppTab = .host
-    @State private var isLaunchLoadingPresented = true
 
     let environment: AppEnvironment
 
     init(environment: AppEnvironment) {
         self.environment = environment
         _controller = StateObject(wrappedValue: ReservationsController(environment: environment))
+    }
+
+    var body: some View {
+        ReservationsTabShell(environment: environment)
+            .environmentObject(controller)
+            .environmentObject(hiddenReservations)
+            .task {
+                await controller.performStartupNetworkPass(context: modelContext)
+            }
+    }
+}
+
+private struct ReservationsTabShell: View {
+    @EnvironmentObject private var controller: ReservationsController
+    @Query
+    private var pendingReviewRows: [ReservationRecord]
+
+    @State private var selectedTab: ReservationsAppTab = .host
+
+    let environment: AppEnvironment
+
+    init(environment: AppEnvironment) {
+        self.environment = environment
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
         let toDate = bounds.to
@@ -48,8 +66,7 @@ struct ReservationsListView: View {
         TabView(selection: $selectedTab) {
             HomeDashboardView(
                 environment: environment,
-                isActive: selectedTab == .host,
-                deferHomeNetworkLoads: isLaunchLoadingPresented
+                isActive: selectedTab == .host
             )
             .tabItem {
                 Label(hostTabTitle, systemImage: ReservationsAppTab.host.systemImage)
@@ -76,8 +93,6 @@ struct ReservationsListView: View {
                 .tag(ReservationsAppTab.more)
         }
         .fontDesign(.rounded)
-        .environmentObject(controller)
-        .environmentObject(hiddenReservations)
         .overlay(alignment: .topTrailing) {
             AppNoticeOverlay(
                 notices: visibleNotices,
@@ -87,45 +102,12 @@ struct ReservationsListView: View {
             .padding(.top, noticeTopPadding)
             .padding(.trailing, 14)
         }
-        .overlay {
-            if isLaunchLoadingPresented {
-                AppLaunchLoadingView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .ignoresSafeArea()
-                    .transition(.opacity)
-                    .zIndex(50)
-            }
-        }
-        .task {
-            await performInitialLaunchLoad()
-        }
         .onAppear {
             controller.setPendingReviewAttentionCount(pendingReviewCount)
         }
         .onChange(of: pendingReviewCount) { _, count in
             controller.setPendingReviewAttentionCount(count)
         }
-    }
-
-    private func performInitialLaunchLoad() async {
-        let minimumSplash = ContinuousClock.now
-
-        // Never block the shell on network — show cached SwiftData and refresh in the background.
-        Task {
-            await controller.performStartupNetworkPass(context: modelContext)
-        }
-
-        let elapsed = minimumSplash.duration(to: .now)
-        if elapsed < .seconds(1.1) {
-            try? await Task.sleep(for: .seconds(1.1) - elapsed)
-        }
-
-        withAnimation(.easeInOut(duration: 0.42)) {
-            isLaunchLoadingPresented = false
-        }
-
-        // Let the shell finish layout before staff actions can present iPad popovers/alerts.
-        try? await Task.sleep(for: .milliseconds(200))
     }
 
     private var visibleNotices: [AppNotice] {
@@ -182,12 +164,10 @@ private struct HomeDashboardView: View {
 
     let environment: AppEnvironment
     let isActive: Bool
-    let deferHomeNetworkLoads: Bool
 
-    init(environment: AppEnvironment, isActive: Bool, deferHomeNetworkLoads: Bool = false) {
+    init(environment: AppEnvironment, isActive: Bool) {
         self.environment = environment
         self.isActive = isActive
-        self.deferHomeNetworkLoads = deferHomeNetworkLoads
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
         let toDate = bounds.to
@@ -223,7 +203,6 @@ private struct HomeDashboardView: View {
                 selectedDate: $selectedDate,
                 failedImportCount: controller.importFailureCount,
                 isVisible: isActive,
-                deferNetworkLoads: deferHomeNetworkLoads,
                 isAppActive: scenePhase == .active && selectedDate.reservationDateString() == Date.reservationDateString(),
                 externalInteractionActive: showManualCreate || showImportFailures,
                 onAddReservation: {
