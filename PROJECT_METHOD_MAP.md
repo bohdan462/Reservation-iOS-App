@@ -6,11 +6,14 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 
 **Confirm semantics (current UI — not ambiguous in code):**
 - `ReservationHostAction.confirmOnly` → `updateStatus(.confirmed)` → PATCH — **no email**
-- `ReservationHostAction.confirmAndSendEmail` → `confirmReservation` → POST `/confirm` — **backend email**
+- `ReservationHostAction.confirmAndSendEmail` → `confirmReservation` → POST `/confirm` — **backend/provider email fallback, disabled in MVP UI**
 - `createAcceptedManualReservation` → POST — confirmed, **no email**
 - `GuestLookupView` → cache-derived operational call-in lookup — **no network while searching**
 - `generateGuestManageLink` → POST `/guest-manage-link` — **manual Gmail/Mail MVP**, no email sent
-- `ManualEmailDraftService.confirmationDraft` → local text only — no endpoint, no email sent, no status change
+- `ManualEmailDraftService.confirmationDraft` → local text only; activity can be logged with POST `/manual-email-log`
+- `recordManualConfirmationSent` → POST `/manual-email-log` with `manual_sent` — staff-reported manual send, no backend sending, no status change
+
+**Backend vs iOS roles:** WordPress enforces `manage_tryzub_reservations` / `manage_options` for operational routes and `manage_options` for hard delete. Host/manager/developer separation is an iOS capability layer for the pilot.
 
 ---
 
@@ -226,7 +229,7 @@ All throw `actionAlreadyInProgress` if overlapping load/save flags set.
 | SwiftData | upsert `response.data` |
 | Reconcile | Yes on uncertain failure |
 | Audience | manager+ |
-| Name clear? | **Misleading alone** — means "confirm **and send email**"; suggest `confirmReservationAndSendEmail` |
+| Name clear? | **Misleading alone** — means backend/provider email; disabled for normal manual Gmail MVP |
 
 #### `hideWrongEntry(reservation:reason:context:)`
 | Field | Value |
@@ -270,6 +273,16 @@ All throw `actionAlreadyInProgress` if overlapping load/save flags set.
 | Email | **Does not send** — copies reviewed draft text to pasteboard |
 | SwiftData | None |
 | Status change | None |
+
+#### `recordManualConfirmationDraftCreated` / `recordManualConfirmationSent` / `recordManualConfirmationFailed`
+| Field | Value |
+| --- | --- |
+| Who calls | `ReservationDetailView` manual Gmail/Mail flow |
+| Endpoint | `POST /managed-reservations/{id}/manual-email-log` |
+| Email | **Does not send** — records staff draft/sent/failure activity only |
+| SwiftData | `manual_sent` reconciles reservation by ID so `confirmationEmailSentAt` can update if backend set it |
+| Status change | None |
+| Privacy | Body snapshot is token-redacted before sending; diagnostics also redact manage tokens |
 
 #### `reconcileReservation(id:context:)`
 | Field | Value |
@@ -368,6 +381,7 @@ All throw `actionAlreadyInProgress` if overlapping load/save flags set.
 | `createReservation` | POST | upsert |
 | `confirmReservation` | POST `/{id}/confirm` | upsert `response.data` |
 | `createGuestManageLink` | POST `/{id}/guest-manage-link` | none |
+| `logManualEmail` | POST `/{id}/manual-email-log` | none |
 | `hardDeleteReservation` | DELETE `?force=1` | `deleteReservation` |
 | `reconcileReservation` | GET `/{id}` | upsert |
 
@@ -423,6 +437,7 @@ Thin pass-through to API client.
 | `updateReservation` | PATCH | `/managed-reservations/{id}` | Protected | 0 |
 | `confirmReservation` | POST | `.../confirm` | Protected | 0 |
 | `createGuestManageLink` | POST | `.../guest-manage-link` | Protected | 0 |
+| `logManualEmail` | POST | `.../manual-email-log` | Protected | 0 |
 | `hardDeleteReservation` | DELETE | `...?force=1` | Protected | 0 |
 | `fetchImportFailures` | GET | `.../import-failures` | Protected | caller / max 1 |
 | `fetchRestaurantSetup` | GET | `/restaurant-setup` | Protected | caller / max 1 |
@@ -565,7 +580,8 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 | --- | --- |
 | `perform(_:)` | `updateStatus` / `confirmReservation` / table PATCH |
 | `generateGuestManageLink` | POST guest-manage-link; pasteboard |
-| Copy confirmation draft | Local `ManualEmailDraftService` text; pasteboard only |
+| Send/copy confirmation draft | Local `ManualEmailDraftService` text; POST `manual-email-log` with `draft_created`; pasteboard/Mail only |
+| Mail composer `.sent` | POST `manual-email-log` with `manual_sent`; reconcile by ID |
 | Edit sheet | `ReservationEditFormView` → PATCH |
 | Hide | `hideWrongEntry` |
 

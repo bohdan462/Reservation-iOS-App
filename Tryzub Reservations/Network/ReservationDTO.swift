@@ -325,6 +325,28 @@ enum ReservationEmailStatus: String, Codable {
     }
 }
 
+enum ReservationManualEmailLogEmailType: String, Codable {
+    case confirmation
+}
+
+enum ReservationManualEmailLogStatus: String, Codable {
+    case draftCreated = "draft_created"
+    case manualSent = "manual_sent"
+    case manualFailed = "manual_failed"
+    case skipped
+}
+
+struct ReservationManualEmailLogRequest: Encodable {
+    var emailType: ReservationManualEmailLogEmailType = .confirmation
+    var status: ReservationManualEmailLogStatus
+    var toEmail: String?
+    var subject: String?
+    var bodySnapshot: String?
+    var provider: String = "manual_gmail"
+    var providerMessageId: String?
+    var errorMessage: String?
+}
+
 enum JSONValue: Codable, Equatable {
     case string(String)
     case number(Double)

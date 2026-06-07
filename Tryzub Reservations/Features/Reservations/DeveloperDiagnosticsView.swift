@@ -242,6 +242,7 @@ struct DeveloperDiagnosticsView: View {
             endpointRow("PATCH /managed-reservations/{id}", pathFragment: "/managed-reservations/")
             endpointRow("POST /managed-reservations", pathFragment: "/managed-reservations")
             endpointRow("POST /managed-reservations/{id}/confirm", pathFragment: "/confirm")
+            endpointRow("POST /managed-reservations/{id}/manual-email-log", pathFragment: "/manual-email-log")
             endpointRow("GET /managed-reservations/import-failures", pathFragment: "/managed-reservations/import-failures")
             endpointRow("POST /restaurant-blocked-slots", pathFragment: "/restaurant-blocked-slots")
             endpointRow("DELETE /restaurant-blocked-slots", pathFragment: "/restaurant-blocked-slots")

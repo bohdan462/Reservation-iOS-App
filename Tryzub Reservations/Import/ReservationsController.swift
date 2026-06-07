@@ -1442,13 +1442,80 @@ final class ReservationsController: ObservableObject {
 
     // MARK: - Manual Confirmation Email
 
-    // Intent: Records the pilot manual Gmail/Mail flow without calling POST /confirm.
-    // Network: PATCH status=confirmed when needed and append a staff note audit line.
-    // Note: confirmation_email_sent_at is only set by POST /confirm today; staff notes carry manual proof.
+    // Intent: Records that staff created a manual Gmail/Mail draft.
+    // Network: POST /managed-reservations/{id}/manual-email-log.
+    // Email: Does not send email, change status, or mark confirmation_email_sent_at.
+    func recordManualConfirmationDraftCreated(
+        reservation: ReservationRecord,
+        toEmail: String?,
+        subject: String?,
+        bodySnapshot: String?
+    ) async throws -> ReservationManualEmailLogDTO {
+        try await logManualConfirmationActivity(
+            reservation: reservation,
+            status: .draftCreated,
+            toEmail: toEmail,
+            subject: subject,
+            bodySnapshot: bodySnapshot,
+            errorMessage: nil,
+            context: nil,
+            reconcileAfterSuccess: false
+        )
+    }
+
+    // Intent: Records staff-reported manual Gmail/Mail send activity.
+    // Network: POST /managed-reservations/{id}/manual-email-log.
+    // Email: Does not call POST /confirm and does not change reservation status.
     func recordManualConfirmationSent(
         reservation: ReservationRecord,
+        toEmail: String?,
+        subject: String?,
+        bodySnapshot: String?,
         context: ModelContext
-    ) async throws -> ReservationDTO {
+    ) async throws -> ReservationManualEmailLogDTO {
+        try await logManualConfirmationActivity(
+            reservation: reservation,
+            status: .manualSent,
+            toEmail: toEmail,
+            subject: subject,
+            bodySnapshot: bodySnapshot,
+            errorMessage: nil,
+            context: context,
+            reconcileAfterSuccess: true
+        )
+    }
+
+    // Intent: Records a real Mail/Gmail failure when iOS receives one.
+    // Network: POST /managed-reservations/{id}/manual-email-log.
+    func recordManualConfirmationFailed(
+        reservation: ReservationRecord,
+        toEmail: String?,
+        subject: String?,
+        bodySnapshot: String?,
+        errorMessage: String?
+    ) async throws -> ReservationManualEmailLogDTO {
+        try await logManualConfirmationActivity(
+            reservation: reservation,
+            status: .manualFailed,
+            toEmail: toEmail,
+            subject: subject,
+            bodySnapshot: bodySnapshot,
+            errorMessage: errorMessage,
+            context: nil,
+            reconcileAfterSuccess: false
+        )
+    }
+
+    private func logManualConfirmationActivity(
+        reservation: ReservationRecord,
+        status: ReservationManualEmailLogStatus,
+        toEmail: String?,
+        subject: String?,
+        bodySnapshot: String?,
+        errorMessage: String?,
+        context: ModelContext?,
+        reconcileAfterSuccess: Bool
+    ) async throws -> ReservationManualEmailLogDTO {
         try ensureMutationsAllowedOnline()
 
         let id = reservation.remoteID
@@ -1456,51 +1523,81 @@ final class ReservationsController: ObservableObject {
             throw ReservationControllerError.actionAlreadyInProgress
         }
 
-        if reservation.hasManualConfirmationEmailRecord,
-           reservation.statusValue == .confirmed || reservation.statusValue == .seated {
-            let repository = ReservationRepository(context: context)
-            let service = ReservationMutationService(client: environment.apiClient, repository: repository)
-            return try await service.reconcileReservation(id: id)
-        }
-
         actionInProgressIDs.insert(id)
         defer { actionInProgressIDs.remove(id) }
 
-        let timestamp = Self.manualConfirmationTimestamp()
-        let noteLine = "\(ReservationEmailWorkflow.manualConfirmationStaffNoteMarker) \(timestamp)."
-        let existingNotes = reservation.staffNotes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let staffNotes = existingNotes.isEmpty
-            ? noteLine
-            : existingNotes + "\n\n" + noteLine
-
-        var request = ReservationUpdateRequest(staffNotes: staffNotes)
-        switch reservation.statusValue {
-        case .new, .needsReview:
-            request.status = .confirmed
-        default:
-            break
-        }
-
-        let repository = ReservationRepository(context: context)
-        let service = ReservationMutationService(client: environment.apiClient, repository: repository)
-        let updated = try await service.updateReservation(id: id, request: request)
-        markScopesTouched(after: updated)
-        latestEmailStatusByReservationID[id] = .sent
-        postNotice(
-            severity: .success,
-            source: .email,
-            title: "Manual confirmation recorded",
-            message: "Reservation confirmed on the server and manual email noted in staff notes."
+        let request = ReservationManualEmailLogRequest(
+            status: status,
+            toEmail: Self.nonBlank(toEmail),
+            subject: Self.nonBlank(subject),
+            bodySnapshot: Self.nonBlank(bodySnapshot),
+            provider: "manual_gmail",
+            providerMessageId: nil,
+            errorMessage: Self.nonBlank(errorMessage)
         )
-        return updated
+
+        do {
+            let log = try await environment.apiClient.logManualEmail(
+                reservationID: id,
+                request: request,
+                reason: .manualEmailLog
+            )
+
+            switch status {
+            case .draftCreated:
+                break
+            case .manualSent:
+                latestEmailStatusByReservationID[id] = .sent
+                if reconcileAfterSuccess, let context {
+                    do {
+                        let reconcileService = ReservationMutationService(
+                            client: environment.apiClient,
+                            repository: ReservationRepository(context: context)
+                        )
+                        let updated = try await reconcileService.reconcileReservation(id: id)
+                        markScopesTouched(after: updated)
+                    } catch {
+                        postNotice(
+                            severity: .warning,
+                            source: .email,
+                            title: "Manual confirmation recorded",
+                            message: "The email log saved, but this device could not refresh the reservation timestamp yet.",
+                            requestReason: .reconcileByID,
+                            errorCode: errorLogCode(error),
+                            developerDiagnostics: error.reservationAPIDeveloperDetail
+                        )
+                    }
+                }
+                postNotice(
+                    severity: .success,
+                    source: .email,
+                    title: "Manual confirmation recorded",
+                    message: "Staff-reported manual email activity was saved. Reservation status was not changed."
+                )
+            case .manualFailed:
+                latestEmailStatusByReservationID[id] = .failed
+                postNotice(
+                    severity: .warning,
+                    source: .email,
+                    title: "Manual email failure recorded",
+                    message: "Reservation status was not changed."
+                )
+            case .skipped:
+                latestEmailStatusByReservationID[id] = .skipped
+            }
+
+            return log
+        } catch {
+            if error.isOfflineLike {
+                postOfflineNotice(source: .email, requestReason: .manualEmailLog, error: error)
+            }
+            throw error
+        }
     }
 
-    private static func manualConfirmationTimestamp() -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone.current
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter.string(from: Date())
+    private static func nonBlank(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     // MARK: - Confirm With Email
@@ -1517,7 +1614,7 @@ final class ReservationsController: ObservableObject {
                 severity: .info,
                 source: .email,
                 title: "Backend email disabled",
-                message: "Use Detail → More → Send confirmation email for the manual pilot flow."
+                message: "Use Detail → More → Send confirmation draft for the manual pilot flow."
             )
             return
         }

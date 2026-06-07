@@ -32,6 +32,7 @@ enum ReservationAPIRequestReason: String {
     case mutationConfirm = "mutation_confirm"
     case mutationCreate = "mutation_create"
     case guestManageLink = "guest_manage_link"
+    case manualEmailLog = "manual_email_log"
     case hardDelete = "hard_delete"
     case hiddenReservations = "hidden_reservations"
     case restaurantSetup = "restaurant_setup"
@@ -217,6 +218,9 @@ enum ReservationAPILogger {
             if item.name.lowercased() == "search" {
                 return URLQueryItem(name: item.name, value: "<redacted>")
             }
+            if item.name.lowercased().contains("token") {
+                return URLQueryItem(name: item.name, value: "<redacted>")
+            }
             return item
         }
 
@@ -282,6 +286,7 @@ protocol ReservationsAPIClientProtocol: AnyObject {
     func createReservation(_ createRequest: ReservationCreateRequest, reason: ReservationAPIRequestReason) async throws -> ReservationDTO
     func confirmReservation(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationConfirmResponse
     func createGuestManageLink(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationGuestManageLinkDTO
+    func logManualEmail(reservationID: Int, request: ReservationManualEmailLogRequest, reason: ReservationAPIRequestReason) async throws -> ReservationManualEmailLogDTO
     func hardDeleteReservation(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationDeleteResponse
     func fetchRestaurantSetup(reason: ReservationAPIRequestReason) async throws -> RestaurantSetupDTO
     func updateRestaurantSetup(_ request: RestaurantSetupUpdateRequest, reason: ReservationAPIRequestReason) async throws -> RestaurantSetupDTO
@@ -593,6 +598,21 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let data = try await perform(request, reason: reason)
 
         return try decode(ReservationGuestManageLinkResponse.self, from: data, request: request).data
+    }
+
+    // Intent: Records staff Gmail/Mail activity for the manual MVP flow.
+    // Network: POST /managed-reservations/{id}/manual-email-log.
+    // Email: Does not send email and does not change reservation status.
+    func logManualEmail(
+        reservationID: Int,
+        request logRequest: ReservationManualEmailLogRequest,
+        reason: ReservationAPIRequestReason = .manualEmailLog
+    ) async throws -> ReservationManualEmailLogDTO {
+        let url = try apiURL(path: "managed-reservations/\(reservationID)/manual-email-log")
+        let request = try makeJSONRequest(url: url, method: "POST", body: logRequest)
+        let data = try await perform(request, reason: reason)
+
+        return try decode(ReservationManualEmailLogResponse.self, from: data, request: request).data
     }
 
     // Intent: Developer/admin cleanup for test rows only. Staff flows must soft-hide.

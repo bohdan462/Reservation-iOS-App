@@ -13,6 +13,7 @@ protocol ReservationMutationServiceProtocol {
     func createReservation(_ request: ReservationCreateRequest) async throws -> ReservationDTO
     func confirmReservation(id: Int) async throws -> ReservationConfirmResponse
     func createGuestManageLink(id: Int) async throws -> ReservationGuestManageLinkDTO
+    func logManualEmail(reservationID: Int, request: ReservationManualEmailLogRequest) async throws -> ReservationManualEmailLogDTO
     func hardDeleteReservation(id: Int) async throws
     func reconcileReservation(id: Int) async throws -> ReservationDTO
 }
@@ -76,6 +77,22 @@ final class ReservationMutationService: ReservationMutationServiceProtocol {
     // Email: Does not call backend email sending or mark email as sent.
     func createGuestManageLink(id: Int) async throws -> ReservationGuestManageLinkDTO {
         try await client.createGuestManageLink(id: id, reason: .guestManageLink)
+    }
+
+    // MARK: - Manual Email Activity Log
+
+    // Intent: Records what staff did in Mail/Gmail; it does not send email.
+    // Network: POST /managed-reservations/{id}/manual-email-log.
+    // SwiftData: None unless the controller reconciles the reservation afterward.
+    func logManualEmail(
+        reservationID: Int,
+        request: ReservationManualEmailLogRequest
+    ) async throws -> ReservationManualEmailLogDTO {
+        try await client.logManualEmail(
+            reservationID: reservationID,
+            request: request,
+            reason: .manualEmailLog
+        )
     }
 
     // MARK: - Developer Hard Delete

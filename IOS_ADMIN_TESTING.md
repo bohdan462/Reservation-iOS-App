@@ -33,7 +33,7 @@ Controlled pilot testing and developer troubleshooting:
 | Guest Lookup / Book Call-In | Guests tab | `canCreateManualReservations` for create | Manager + Developer |
 | Guest manage link | Detail → More menu | `canGenerateGuestManageLinks` | Manager + Developer |
 
-**Role note:** `Tryzub_ReservationsApp` uses `AppRoleStore` and `RoleSelectionView`. The selectable pilot roles are **Manager** and **Developer**; `staff` still exists in the capability model but is not selectable today. Switching role in More recreates the root reservation shell with the selected capability set.
+**Role note:** `Tryzub_ReservationsApp` uses `AppRoleStore` and `RoleSelectionView`. The selectable pilot roles are **Manager** and **Developer**; `staff` still exists in the capability model but is not selectable today. Switching role in More recreates the root reservation shell with the selected capability set. Backend roles are simpler: operational endpoints require `manage_tryzub_reservations` or `manage_options`; hard delete requires backend `manage_options`.
 
 ---
 
@@ -85,6 +85,7 @@ Diagnostics **Danger Zone** copy states mutations must use normal staff workflow
 | Hard delete | Irreversible |
 | `POST /managed-reservations/import` | **Forbidden** in iOS workflow |
 | Email send test | No isolated test endpoint |
+| Manual email log | Safe only from real Detail manual-flow actions; records staff activity but does not send email |
 
 ---
 
@@ -98,6 +99,7 @@ Each event includes:
 - `ReservationAPIRequestReason`
 - HTTP method
 - sanitized path/query (`search` redacted)
+- response snippets with guest names, emails, phones, notes, and manage-link tokens redacted
 - status code or error
 - duration
 - outcome (success / failure / skip / cancelled)
@@ -128,6 +130,7 @@ Marks green check when `APIRequestLogStore.hasSuccessfulCall(containing:)` match
 - `POST /managed-reservations`
 - `POST /managed-reservations/{id}/confirm`
 - `POST /managed-reservations/{id}/guest-manage-link`
+- `POST /managed-reservations/{id}/manual-email-log`
 - `GET /managed-reservations/import-failures`
 - `POST /restaurant-blocked-slots`
 - `DELETE /restaurant-blocked-slots`
@@ -206,10 +209,21 @@ Shows:
 | Open confirmed reservation (manager+) | Detail → More → Generate manage link |
 | Tap generate | POST `/guest-manage-link`; URL on pasteboard |
 | Copy link | More → Copy manage link; URL on pasteboard |
-| Copy draft | More → Copy confirmation draft; local text on pasteboard |
-| Notice | “Review it in Gmail before sending.” |
-| Verify | **No** `confirmationEmailSentAt` change; **no** Mail sheet auto-opens |
-| Paste in Gmail/Mail | Manual MVP confirmation workflow |
+| Send/copy draft | Local text is opened/copied; POST `/manual-email-log` with `draft_created` may appear |
+| Verify draft-created | **No** `confirmationEmailSentAt` change; reservation status unchanged |
+| Staff sends in Gmail/Mail | External manual MVP confirmation workflow |
+| Record sent / Mail composer `.sent` | POST `/manual-email-log` with `manual_sent`; app reconciles reservation by ID |
+| Verify manual-sent | `confirmationEmailSentAt` may appear after reconcile; status still changes only via Confirm Only |
+
+### Guest self-service page
+
+| Rule | Expected |
+| --- | --- |
+| Page title | “Your Booking Details” |
+| Online cancellation | Allowed until 2 hours before reservation time |
+| Same-day cancellation | Allowed when reservation is more than 2 hours away |
+| Less than 2 hours away | Guest must call restaurant |
+| Change request UI | Hidden/removed from MVP guest page |
 
 ### Guest Lookup / Call-In
 
@@ -229,7 +243,7 @@ Shows:
 | Step | Expected |
 | --- | --- |
 | Confirm Only on `new` row | PATCH only; no email notice |
-| Confirm + Email (usable email) | POST `/confirm`; notice reflects `emailStatus` |
+| Confirm + Email (usable email) | Backend/provider fallback only; POST `/confirm`; notice reflects `emailStatus` |
 | Confirm + Email disabled | Row without usable email — button disabled in dialog |
 
 ### `updated_since` / `server_time`
@@ -380,5 +394,6 @@ Developer diagnostics can show extra request reason / error code / developer det
 - [ ] Cache counts match expectation after active-window sync
 - [ ] Hide → restore → hard delete on test ID only
 - [ ] Guest manage link POST appears in log; pasteboard works
+- [ ] Manual email log POST appears for draft_created/manual_sent; no raw manage token appears in diagnostics
 - [ ] Confirm + Email POST `/confirm` appears only when explicitly tested
 - [ ] Airplane mode → offline notice → recovery refresh

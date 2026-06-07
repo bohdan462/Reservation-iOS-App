@@ -15,7 +15,7 @@ One-restaurant internal iOS app. **WordPress REST API is source of truth.** **Sw
 | Tab shell, navigation | `Features/Reservations/ReservationsListView.swift` |
 | Today board | `Features/Reservations/HostBoardView.swift` |
 | Reservation detail | `Features/Reservations/ReservationDetailView.swift` |
-| Manual Gmail/Mail draft text | `Features/Reservations/ReservationDetailView.swift` (`ManualEmailDraftService`) |
+| Manual Gmail/Mail draft text + log | `Features/Reservations/ReservationDetailView.swift` (`ManualEmailDraftService`), `POST /manual-email-log` |
 | Create / edit form | `Features/Reservations/ManualReservationFormView.swift` |
 | Staff action buttons | `Features/Reservations/ReservationActionButtons.swift` |
 | Design tokens, charts, slot grids | `Features/Reservations/ReservationSharedUI.swift` |
@@ -288,9 +288,10 @@ All HTTP; Basic auth; sanitized request logging; one-at-a-time request serialize
 | `GET /managed-reservations/{id}` | Reconcile, fetch-by-ID test | ✓ (reconcile) |
 | `POST /managed-reservations` | Manual create, import repair | ✓ |
 | `PATCH /managed-reservations/{id}` | Edit, status, hide, restore | ✓ |
-| `POST /managed-reservations/{id}/confirm` | Confirm + Email only | ✓ |
+| `POST /managed-reservations/{id}/confirm` | Backend/provider Confirm + Email fallback | Disabled in MVP UI |
 | `POST /managed-reservations/{id}/guest-manage-link` | Detail More menu | ✓ |
-| Local manual confirmation draft | Detail More menu after manage link | Local only |
+| `POST /managed-reservations/{id}/manual-email-log` | Detail manual Gmail/Mail activity | ✓ |
+| Local manual confirmation draft | Detail More menu after manage link | Local compose/copy only |
 | `DELETE /managed-reservations/{id}?force=1` | Hidden screen hard delete | Dev cleanup only |
 | `GET /managed-reservations/import-failures` | Failed Imports screen, explicit diagnostics/count checks | Dev/support |
 | `POST /managed-reservations/import` | — | **NOT USED** |
@@ -332,15 +333,18 @@ All HTTP; Basic auth; sanitized request logging; one-at-a-time request serialize
 | UI label | Controller | Endpoint | Email |
 | --- | --- | --- | --- |
 | Confirm Only | `updateStatus(.confirmed)` | PATCH | No |
-| Confirm + Email | `confirmReservation` | POST `/confirm` | Backend |
+| Confirm + Email | `confirmReservation` | POST `/confirm` | Backend/provider path, disabled in MVP UI |
 | Manual create | `createAcceptedManualReservation` | POST | No |
 | Generate manage link | `generateGuestManageLink` | POST `/guest-manage-link` | No — copy link |
-| Copy confirmation draft | `ManualEmailDraftService.confirmationDraft` | Local only | No — staff reviews/pastes into Gmail/Mail |
+| Send/Copy confirmation draft | `ManualEmailDraftService` + `recordManualConfirmationDraftCreated` | POST `/manual-email-log` with `draft_created` | No — staff reviews/sends in Gmail/Mail |
+| Record manual sent | `recordManualConfirmationSent` | POST `/manual-email-log` with `manual_sent`; reconcile by ID | No backend sending; staff reported manual send |
 | Hide wrong entry | `hideWrongEntry` | PATCH `is_hidden` | No |
 | Restore | `restoreHiddenReservation` | PATCH | No |
 | Hard delete | `hardDeleteReservation` | DELETE `force=1` | No |
 
-**MVP email direction:** Manual Gmail/Mail with pasted manage link for call-ins; optional backend email via Confirm + Email.
+**MVP email direction:** Manual Gmail/Mail with pasted manage link for call-ins. `manual_sent` records staff-reported activity only; backend cannot prove inbox delivery. Optional backend/provider email remains `/confirm` and is not the normal pilot path.
+
+**Guest self-service truth:** Public guest page is “Your Booking Details.” Guests may cancel online until 2 hours before reservation time, including same-day bookings more than 2 hours away. Inside 2 hours they must call. Guest change-request UI is hidden for MVP.
 
 ---
 

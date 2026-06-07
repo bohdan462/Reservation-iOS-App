@@ -205,7 +205,9 @@ enum ReservationHostAction: String, Identifiable {
             if capabilities.canConfirmReservations,
                status == .new || status == .needsReview {
                 actions.append(.confirmOnly)
-                if includeSecondary, reservation.hasUsableConfirmationEmail {
+                if includeSecondary,
+                   Self.isBackendConfirmEmailEnabled,
+                   reservation.hasUsableConfirmationEmail {
                     actions.append(.confirmAndSendEmail)
                 }
             }
@@ -226,6 +228,7 @@ enum ReservationHostAction: String, Identifiable {
            capabilities.canConfirmReservations,
            status == .confirmed,
            !reservation.hasConfirmationEmailRecord,
+           Self.isBackendConfirmEmailEnabled,
            reservation.hasUsableConfirmationEmail {
             actions.append(.confirmAndSendEmail)
         }
@@ -268,7 +271,7 @@ enum ReservationHostAction: String, Identifiable {
         case .confirmOnly:
             return "Confirm reservation?"
         case .confirmAndSendEmail:
-            return "Send confirmation email?"
+            return Self.isBackendConfirmEmailEnabled ? "Send backend confirmation email?" : "Manual email draft?"
         case .seat:
             return "Seat this party?"
         case .assignTable:
@@ -292,13 +295,13 @@ enum ReservationHostAction: String, Identifiable {
                 : ""
             let manualFlow = Self.isBackendConfirmEmailEnabled
                 ? "Choose Confirm only to update the reservation without email, or Confirm + Send Email to ask the server to send the confirmation email."
-                : "Choose Confirm only to update the reservation, or Confirm + Send Email to open a confirmation email in Mail."
+                : "Choose Confirm only to update status. Use Detail → More → Send confirmation draft for the manual Gmail/Mail flow."
             return "\(manualFlow)\(helper)"
         case .confirmAndSendEmail:
             if Self.isBackendConfirmEmailEnabled {
                 return "\(summary)\n\nThis will mark the reservation confirmed and ask the server to send a confirmation email to \(reservation.email)."
             }
-            return "Backend confirmation email is disabled for the pilot. Use Detail → More → Send confirmation email instead."
+            return "Backend confirmation email is disabled for the pilot. Use Detail → More → Send confirmation draft instead."
         case .seat:
             return "\(summary)\n\nThis only updates staff status. No email will be sent."
         case .assignTable:

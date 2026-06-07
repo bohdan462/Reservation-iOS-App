@@ -219,6 +219,12 @@ sequenceDiagram
     M->>R: upsert(response.data)
     C->>C: email status notice
 
+    Staff->>C: recordManualConfirmationSent
+    C->>API: POST /manual-email-log
+    API-->>C: log metadata
+    C->>M: reconcileReservation(id)
+    M->>R: upsert(if backend timestamp changed)
+
     Staff->>C: createAcceptedManualReservation
     C->>M: POST /managed-reservations
     M->>R: upsert
@@ -239,7 +245,8 @@ sequenceDiagram
 | Action | Endpoint | Email | Cache update |
 | --- | --- | --- | --- |
 | Confirm Only | PATCH `status=confirmed` | No | Upsert after success |
-| Confirm + Email | POST `/{id}/confirm` | Backend sends/records | Upsert after success |
+| Confirm + Email | POST `/{id}/confirm` | Backend/provider sends/records; disabled in MVP UI | Upsert after success |
+| Manual email log | POST `/{id}/manual-email-log` | Records `draft_created`, `manual_sent`, or `manual_failed`; does **not** send email or change status | `manual_sent` reconciles by ID |
 | Manual create | POST `/managed-reservations` | No | Upsert after success |
 | Edit fields | PATCH | No | Upsert after success |
 | Seat / cancel / complete / no-show | PATCH `status` | No | Upsert after success |
@@ -305,6 +312,8 @@ flowchart TD
 | `canViewFailedImports` | ✗ | ✓ | ✓ |
 | `canViewDeveloperDiagnostics` | ✗ | ✗ | ✓ |
 | `canHardDeleteReservations` | ✗ | ✗ | ✓ |
+
+**Backend enforcement:** WordPress remains simple for the pilot. Operational endpoints require `manage_tryzub_reservations` or `manage_options`; permanent hard delete requires `manage_options`. Host/manager/developer separation is primarily enforced in iOS UI/capabilities.
 
 **UI note:** Failed Imports is available from More when `canViewFailedImports` is true. API Diagnostics and hard delete remain developer-only.
 
@@ -409,7 +418,12 @@ sequenceDiagram
     API-->>C: { url, expires_at? }
     C-->>M: URL copied to pasteboard
     M->>M: Optional local draft text helper
-    M->>Mail: Staff pastes reviewed copy into confirmation email
+    M->>C: recordManualConfirmationDraftCreated
+    C->>API: POST /manual-email-log status=draft_created
+    M->>Mail: Staff sends reviewed copy in external email client
+    M->>C: recordManualConfirmationSent
+    C->>API: POST /manual-email-log status=manual_sent
+    C->>API: GET /managed-reservations/{id} reconcile
 
     Note over M,Mail: Optional backend email path
     M->>C: confirmReservation
@@ -418,10 +432,17 @@ sequenceDiagram
 ```
 
 **Current direction (from code comments)**
-- **Primary MVP for call-ins / no-auto-email:** Confirm Only (PATCH) + generate manage link + copy local draft + manual Mail/Gmail.
-- **Confirm + Email:** POST `/confirm` — backend sends/attempts email; UI shows `emailStatus` notices.
+- **Primary MVP for call-ins / no-auto-email:** Confirm Only (PATCH) + generate manage link + copy/open local draft + `manual-email-log`.
+- **Manual sent:** `manual_sent` means staff reported sending through Mail/Gmail. Backend cannot prove inbox delivery.
+- **Confirm + Email:** POST `/confirm` — backend/provider sends/attempts email; UI shows `emailStatus` notices when that fallback is enabled.
 - Manual create: always confirmed, **no email**.
-- Guest manage link and local draft generation do **not** set `confirmationEmailSentAt`.
+- Guest manage link and `draft_created` do **not** set `confirmationEmailSentAt`; `manual_sent` may set it on the backend.
+
+**Guest self-service page**
+- Public page title is “Your Booking Details.”
+- Guest cancellation is allowed until 2 hours before reservation time, including same-day reservations more than 2 hours away.
+- Less than 2 hours before reservation time, guest is instructed to call the restaurant.
+- Guest change-request UI is hidden/removed from the MVP guest page.
 
 ---
 

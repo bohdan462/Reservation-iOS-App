@@ -9,13 +9,15 @@ import UIKit
 
 enum GuestConfirmationMailPresenter {
     struct Draft: Identifiable, Equatable {
+        let reservationID: Int
         let recipients: [String]
         let subject: String
         let htmlBody: String
         let plainBody: String
+        let logBodySnapshot: String
 
         var id: String {
-            recipients.joined(separator: ",") + "|" + subject
+            "\(reservationID)|" + recipients.joined(separator: ",") + "|" + subject
         }
     }
 
@@ -31,6 +33,7 @@ enum GuestConfirmationMailPresenter {
         guard !email.isEmpty else { return nil }
 
         return Draft(
+            reservationID: reservation.remoteID,
             recipients: [email],
             subject: ManualEmailDraftService.confirmationSubject(reservation: reservation),
             htmlBody: ManualEmailDraftService.confirmationHTMLBody(
@@ -38,6 +41,10 @@ enum GuestConfirmationMailPresenter {
                 manageLink: manageLink
             ),
             plainBody: ManualEmailDraftService.confirmationPlainBody(
+                reservation: reservation,
+                manageLink: manageLink
+            ),
+            logBodySnapshot: ManualEmailDraftService.confirmationLogSnapshot(
                 reservation: reservation,
                 manageLink: manageLink
             )

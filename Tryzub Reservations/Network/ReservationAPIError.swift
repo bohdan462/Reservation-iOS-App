@@ -84,6 +84,9 @@ struct ReservationAPIDiagnostics: Equatable {
             if item.name.lowercased() == "search" {
                 return URLQueryItem(name: item.name, value: "<redacted>")
             }
+            if item.name.lowercased().contains("token") {
+                return URLQueryItem(name: item.name, value: "<redacted>")
+            }
             return item
         }
 
@@ -114,6 +117,30 @@ struct ReservationAPIDiagnostics: Equatable {
 
         redacted = redacted.replacingOccurrences(
             of: #""(guest_name|guestName|guest_notes|guestNotes|staff_notes|staffNotes|name)"\s*:\s*"[^"]*""#,
+            with: #""$1":"[redacted]""#,
+            options: [.regularExpression]
+        )
+
+        redacted = redacted.replacingOccurrences(
+            of: #""(token|raw_token|manage_token|manageToken)"\s*:\s*"[^"]*""#,
+            with: #""$1":"[redacted]""#,
+            options: [.regularExpression]
+        )
+
+        redacted = redacted.replacingOccurrences(
+            of: #""(body_snapshot|bodySnapshot)"\s*:\s*"[^"]*""#,
+            with: #""$1":"[redacted]""#,
+            options: [.regularExpression]
+        )
+
+        redacted = redacted.replacingOccurrences(
+            of: #"token=[^"'\s&<]+"#,
+            with: "token=[redacted]",
+            options: [.regularExpression]
+        )
+
+        redacted = redacted.replacingOccurrences(
+            of: #""(url)"\s*:\s*"[^"]*manage-reservation[^"]*""#,
             with: #""$1":"[redacted]""#,
             options: [.regularExpression]
         )

@@ -50,6 +50,19 @@ struct ReservationGuestManageLinkDTO: Codable, Equatable {
     let expiresAt: String?
 }
 
+struct ReservationManualEmailLogResponse: Codable {
+    let success: Bool
+    let data: ReservationManualEmailLogDTO
+}
+
+struct ReservationManualEmailLogDTO: Codable, Equatable {
+    let reservationId: Int?
+    let emailType: ReservationManualEmailLogEmailType
+    let status: ReservationManualEmailLogStatus
+    let provider: String?
+    let confirmationEmailSentAt: String?
+}
+
 struct ReservationDeleteResponse: Codable {
     let success: Bool?
     let message: String?

@@ -97,11 +97,11 @@ struct ReservationDetailPresentation {
 
     private static func emailStateText(for reservation: ReservationRecord) -> String {
         if reservation.hasConfirmationEmailRecord {
-            return "Email sent (server)"
+            return "Confirmation email recorded"
         }
 
         if reservation.hasManualConfirmationEmailRecord {
-            return "Manual email sent"
+            return "Manual email recorded (legacy note)"
         }
 
         if reservation.hasUsableConfirmationEmail {
@@ -261,6 +261,15 @@ struct ManualEmailDraftService {
         """
     }
 
+    static func confirmationLogSnapshot(
+        reservation: ReservationRecord,
+        manageLink: ReservationGuestManageLinkDTO
+    ) -> String {
+        let snapshot = confirmationDraft(reservation: reservation, manageLink: manageLink)
+            .replacingOccurrences(of: manageLink.url, with: "[guest-manage-link]")
+        return String(snapshot.prefix(1800))
+    }
+
     static func emailDateLine(for reservation: ReservationRecord) -> String {
         guard let date = ReservationFormatters.reservationDateKey.date(from: reservation.reservationDate) else {
             return reservation.displayDate
@@ -408,7 +417,7 @@ struct ReservationDetailView: View {
         )
         .sheet(item: $guestConfirmationMailDraft) { draft in
             GuestConfirmationMailComposer(draft: draft) { result in
-                handleGuestConfirmationMailFinished(result)
+                handleGuestConfirmationMailFinished(result, draft: draft)
             }
         }
         .navigationDestination(isPresented: $showEditScreen) {
@@ -577,6 +586,9 @@ struct ReservationDetailView: View {
             onEdit: { showEditScreen = true },
             onSendGuestConfirmationEmail: controller.capabilities.canGenerateGuestManageLinks
                 ? { Task { await sendGuestConfirmationEmail() } }
+                : nil,
+            onRecordManualConfirmationSent: guestManageLink != nil && reservation.hasUsableConfirmationEmail
+                ? { Task { await recordManualConfirmationSentFromCurrentDraft() } }
                 : nil,
             onGenerateGuestManageLink: controller.capabilities.canGenerateGuestManageLinks
                 ? { Task { await generateGuestManageLink() } }
@@ -812,7 +824,7 @@ struct ReservationDetailView: View {
             let link = try await controller.generateGuestManageLink(reservation: reservation)
             guestManageLink = link
             UIPasteboard.general.string = link.url
-            guestManageLinkMessage = "Guest link copied. You can also send a confirmation email from More."
+            guestManageLinkMessage = "Guest link copied. Use it in the manual confirmation draft."
             ReservationHaptics.success()
         } catch {
             errorMessage = "Could not generate a guest link. Please retry."
@@ -854,18 +866,20 @@ struct ReservationDetailView: View {
                 return
             }
 
+            await recordDraftCreated(draft)
+
             if GuestConfirmationMailPresenter.canSendMail() {
                 guestConfirmationMailDraft = draft
                 ReservationHaptics.success()
             } else if GuestConfirmationMailPresenter.openMailtoFallback(draft: draft) {
-                guestManageLinkMessage = "Opened Mail with a plain-text confirmation draft."
+                guestManageLinkMessage = "Opened Mail with a plain-text confirmation draft. Record sent after staff sends it."
                 ReservationHaptics.success()
             } else {
                 UIPasteboard.general.string = ManualEmailDraftService.confirmationDraft(
                     reservation: reservation,
                     manageLink: link
                 )
-                guestManageLinkMessage = "Mail isn’t set up on this device. Confirmation draft copied."
+                guestManageLinkMessage = "Mail isn’t set up on this device. Confirmation draft copied. Record sent after staff sends it."
                 ReservationHaptics.success()
             }
         } catch {
@@ -887,37 +901,99 @@ struct ReservationDetailView: View {
             reservation: reservation,
             manageLink: guestManageLink
         )
-        guestManageLinkMessage = "Plain confirmation draft copied."
+        if let draft = GuestConfirmationMailPresenter.draft(reservation: reservation, manageLink: guestManageLink) {
+            Task { await recordDraftCreated(draft) }
+        }
+        guestManageLinkMessage = "Plain confirmation draft copied. Record sent after staff sends it."
         ReservationHaptics.success()
     }
 
-    private func handleGuestConfirmationMailFinished(_ result: MFMailComposeResult) {
+    private func recordManualConfirmationSentFromCurrentDraft() async {
+        guard let guestManageLink,
+              let draft = GuestConfirmationMailPresenter.draft(
+                  reservation: reservation,
+                  manageLink: guestManageLink
+              ) else {
+            errorMessage = "Prepare a confirmation draft before recording it as sent."
+            ReservationHaptics.warning()
+            return
+        }
+
+        await finalizeManualConfirmationAfterSend(draft: draft)
+    }
+
+    private func handleGuestConfirmationMailFinished(
+        _ result: MFMailComposeResult,
+        draft: GuestConfirmationMailPresenter.Draft
+    ) {
         guestConfirmationMailDraft = nil
 
         switch result {
         case .sent:
             Task {
-                await finalizeManualConfirmationAfterSend()
+                await finalizeManualConfirmationAfterSend(draft: draft)
             }
-        case .cancelled, .saved, .failed:
-            guestManageLinkMessage = "Confirmation email was not sent. Reservation was not confirmed."
+        case .failed:
+            Task {
+                await recordManualConfirmationFailure(draft: draft)
+            }
+        case .cancelled, .saved:
+            guestManageLinkMessage = "Draft was not sent from Mail. Reservation status was not changed."
         @unknown default:
-            guestManageLinkMessage = "Confirmation email was not sent. Reservation was not confirmed."
+            guestManageLinkMessage = "Draft was not sent from Mail. Reservation status was not changed."
         }
     }
 
-    private func finalizeManualConfirmationAfterSend() async {
+    private func recordDraftCreated(_ draft: GuestConfirmationMailPresenter.Draft) async {
+        do {
+            _ = try await controller.recordManualConfirmationDraftCreated(
+                reservation: reservation,
+                toEmail: draft.recipients.first,
+                subject: draft.subject,
+                bodySnapshot: draft.logBodySnapshot
+            )
+        } catch {
+            if !error.isOfflineLike {
+                guestManageLinkMessage = "Draft ready. Could not record draft-created activity yet."
+            }
+        }
+    }
+
+    private func finalizeManualConfirmationAfterSend(draft: GuestConfirmationMailPresenter.Draft) async {
+        guard !isSavingQuickAction else { return }
+        isSavingQuickAction = true
+        defer { isSavingQuickAction = false }
+
         do {
             _ = try await controller.recordManualConfirmationSent(
                 reservation: reservation,
+                toEmail: draft.recipients.first,
+                subject: draft.subject,
+                bodySnapshot: draft.logBodySnapshot,
                 context: modelContext
             )
-            guestManageLinkMessage = "Confirmation email sent and reservation recorded."
+            guestManageLinkMessage = "Manual confirmation recorded."
             ReservationHaptics.success()
         } catch {
-            errorMessage = "Email was sent, but the reservation could not be recorded on the server. Check details and retry if needed."
+            errorMessage = "Email may have been sent, but the manual email log did not save. Check details and retry if needed."
             ReservationHaptics.warning()
         }
+    }
+
+    private func recordManualConfirmationFailure(draft: GuestConfirmationMailPresenter.Draft) async {
+        do {
+            _ = try await controller.recordManualConfirmationFailed(
+                reservation: reservation,
+                toEmail: draft.recipients.first,
+                subject: draft.subject,
+                bodySnapshot: draft.logBodySnapshot,
+                errorMessage: "Mail composer reported failure."
+            )
+            guestManageLinkMessage = "Mail failed. Failure was recorded; reservation status was not changed."
+        } catch {
+            guestManageLinkMessage = "Mail failed. Could not record failure on the server."
+        }
+        ReservationHaptics.warning()
     }
 }
 
@@ -1170,6 +1246,7 @@ private struct DetailActionBar: View {
     var onSeatRequiresTableChoice: (() -> Void)? = nil
     let onEdit: () -> Void
     let onSendGuestConfirmationEmail: (() -> Void)?
+    let onRecordManualConfirmationSent: (() -> Void)?
     let onGenerateGuestManageLink: (() -> Void)?
     let onCopyGuestManageLink: (() -> Void)?
     let onCopyConfirmationDraft: (() -> Void)?
@@ -1241,7 +1318,7 @@ private struct DetailActionBar: View {
 
             if reservation.hasUsableConfirmationEmail, let onSendGuestConfirmationEmail {
                 pendingConfirmationButton(
-                    title: isGeneratingGuestManageLink ? "Preparing email" : "Confirm + Send Email",
+                    title: isGeneratingGuestManageLink ? "Preparing draft" : "Send Confirmation Draft",
                     systemImage: "envelope",
                     isPrimary: false
                 ) {
@@ -1304,7 +1381,7 @@ private struct DetailActionBar: View {
                     onSendGuestConfirmationEmail()
                 } label: {
                     Label(
-                        isGeneratingGuestManageLink ? "Preparing email" : "Send confirmation email",
+                        isGeneratingGuestManageLink ? "Preparing draft" : "Send confirmation draft",
                         systemImage: "envelope"
                     )
                 }
@@ -1339,7 +1416,15 @@ private struct DetailActionBar: View {
                 }
             }
 
-            if (onSendGuestConfirmationEmail != nil || onGenerateGuestManageLink != nil || onCopyGuestManageLink != nil || onCopyConfirmationDraft != nil),
+            if hasGuestManageLink, let onRecordManualConfirmationSent {
+                Button {
+                    onRecordManualConfirmationSent()
+                } label: {
+                    Label("Record sent", systemImage: "envelope.badge")
+                }
+            }
+
+            if (onSendGuestConfirmationEmail != nil || onRecordManualConfirmationSent != nil || onGenerateGuestManageLink != nil || onCopyGuestManageLink != nil || onCopyConfirmationDraft != nil),
                onHideWrongEntry != nil || onRestoreHidden != nil {
                 Divider()
             }
@@ -1374,6 +1459,7 @@ private struct DetailActionBar: View {
 
     private var hasAdminActions: Bool {
         onSendGuestConfirmationEmail != nil
+            || onRecordManualConfirmationSent != nil
             || onGenerateGuestManageLink != nil
             || onCopyGuestManageLink != nil
             || onCopyConfirmationDraft != nil
