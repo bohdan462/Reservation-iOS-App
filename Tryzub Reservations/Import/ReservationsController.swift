@@ -16,7 +16,9 @@ final class ReservationsController: ObservableObject {
     }
 
     // True while the one-time cold-start reservation + setup sync is still running.
-    @Published private(set) var isStartupNetworkPassInFlight = false
+    @Published private(set) var isStartupNetworkPassInFlight = false {
+        didSet { refreshStaffStatusDotStyle() }
+    }
 
     // Tracks the quiet host-board loop that keeps today's cache warm.
     @Published private(set) var isAutoRefreshing = false {
@@ -37,7 +39,12 @@ final class ReservationsController: ObservableObject {
     }
 
     // Last successful server-to-cache reservation sync.
-    @Published private(set) var lastSyncedAt: Date?
+    @Published private(set) var lastSyncedAt: Date? {
+        didSet { refreshStaffStatusDotStyle() }
+    }
+
+    // Staff-facing live/sync indicator for Home and Bookings headers.
+    @Published private(set) var staffStatusDotStyle: TryzubStaffStatusDotStyle = .yellowStatic
 
     // Short staff-facing notices for refreshes, mutations, and diagnostics.
     @Published private(set) var notices: [AppNotice] = []
@@ -88,6 +95,10 @@ final class ReservationsController: ObservableObject {
     }
     private var availabilitySummaryTasksByDate: [String: Task<Void, Never>] = [:]
     private var lastOfflineNoticeAt: Date?
+    private var pendingReviewAttentionCount = 0
+    private var staffStatusBoundaryTask: Task<Void, Never>?
+    private let networkPathMonitor = NetworkPathMonitor()
+    @Published private(set) var isNetworkPathSatisfied = true
 
     // MARK: - Refresh Timing
 
@@ -119,8 +130,18 @@ final class ReservationsController: ObservableObject {
     }
 
     var isNetworkDegraded: Bool {
+        if !isNetworkPathSatisfied {
+            return true
+        }
         guard let lastOfflineNoticeAt else { return false }
         return Date().timeIntervalSince(lastOfflineNoticeAt) < offlineNoticeCooldown
+    }
+
+    /// Updates attention-driven green flash when new / needs-review rows change in SwiftData.
+    func setPendingReviewAttentionCount(_ count: Int) {
+        guard pendingReviewAttentionCount != count else { return }
+        pendingReviewAttentionCount = count
+        refreshStaffStatusDotStyle()
     }
 
     var hasLoadedRestaurantSetup: Bool {
@@ -135,6 +156,30 @@ final class ReservationsController: ObservableObject {
     init(environment: AppEnvironment) {
         self.environment = environment
         self.localSeatedAtByReservationID = Self.loadLocalSeatedTimestamps()
+        networkPathMonitor.start { [weak self] isSatisfied in
+            self?.applyNetworkPathStatus(isSatisfied)
+        }
+    }
+
+    deinit {
+        networkPathMonitor.stop()
+    }
+
+    private func applyNetworkPathStatus(_ isSatisfied: Bool) {
+        guard isNetworkPathSatisfied != isSatisfied else { return }
+        isNetworkPathSatisfied = isSatisfied
+
+        if isSatisfied {
+            lastOfflineNoticeAt = nil
+        } else if let lastOffline = lastOfflineNoticeAt {
+            if Date().timeIntervalSince(lastOffline) >= offlineNoticeCooldown {
+                lastOfflineNoticeAt = Date()
+            }
+        } else {
+            lastOfflineNoticeAt = Date()
+        }
+
+        publishOperationState()
     }
 
     // MARK: - App / Screen Lifecycle
@@ -2345,6 +2390,72 @@ final class ReservationsController: ObservableObject {
             serverCursors: serverCursorByScope,
             latestRefreshDecision: latestRefreshDecision
         )
+        refreshStaffStatusDotStyle()
+    }
+
+    private var isStaffNetworkActivityInFlight: Bool {
+        isStartupNetworkPassInFlight
+            || operationState.isSyncing
+            || operationState.isAutoRefreshing
+            || !operationState.activeSyncIntents.isEmpty
+            || operationState.isCreatingReservation
+            || operationState.isCheckingImportFailureCount
+            || operationState.hasUncertainMutationReconcileInProgress
+    }
+
+    private func refreshStaffStatusDotStyle(now: Date = Date()) {
+        let resolved = TryzubStaffStatusResolver.resolve(
+            isNetworkDegraded: isNetworkDegraded,
+            isNetworkActivityInFlight: isStaffNetworkActivityInFlight,
+            lastSyncedAt: lastSyncedAt,
+            pendingReviewCount: pendingReviewAttentionCount,
+            now: now
+        )
+
+        if staffStatusDotStyle != resolved {
+            staffStatusDotStyle = resolved
+        }
+
+        scheduleStaffStatusBoundaryTask(now: now)
+    }
+
+    private func scheduleStaffStatusBoundaryTask(now: Date = Date()) {
+        staffStatusBoundaryTask?.cancel()
+
+        var nextWake: Date?
+
+        if !isNetworkDegraded,
+           !isStaffNetworkActivityInFlight,
+           pendingReviewAttentionCount == 0,
+           let lastSyncedAt {
+            let staleAt = lastSyncedAt.addingTimeInterval(TryzubStaffStatusResolver.staleSyncThreshold)
+            if staleAt > now {
+                nextWake = staleAt
+            }
+        }
+
+        if let lastOffline = lastOfflineNoticeAt {
+            let offlineClearAt = lastOffline.addingTimeInterval(offlineNoticeCooldown)
+            if offlineClearAt > now {
+                nextWake = min(nextWake ?? offlineClearAt, offlineClearAt)
+            }
+        }
+
+        guard let wake = nextWake else { return }
+
+        let delay = wake.timeIntervalSince(now)
+        guard delay > 0.05 else {
+            refreshStaffStatusDotStyle()
+            return
+        }
+
+        staffStatusBoundaryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.refreshStaffStatusDotStyle()
+            }
+        }
     }
 
     private func recordRefreshDecision(

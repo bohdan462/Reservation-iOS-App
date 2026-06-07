@@ -99,6 +99,12 @@ struct ReservationsListView: View {
         .task {
             await performInitialLaunchLoad()
         }
+        .onAppear {
+            controller.setPendingReviewAttentionCount(pendingReviewCount)
+        }
+        .onChange(of: pendingReviewCount) { _, count in
+            controller.setPendingReviewAttentionCount(count)
+        }
     }
 
     private func performInitialLaunchLoad() async {
@@ -215,8 +221,6 @@ private struct HomeDashboardView: View {
                 reservations: selectedDateReservations,
                 environment: environment,
                 selectedDate: $selectedDate,
-                lastSyncedAt: controller.lastSyncedAt,
-                isSyncing: controller.isSyncing,
                 failedImportCount: controller.importFailureCount,
                 isVisible: isActive,
                 deferNetworkLoads: deferHomeNetworkLoads,
@@ -580,14 +584,29 @@ private struct ReservationScheduleView: View {
         }
     }
 
+    private var reviewAttentionCount: Int {
+        let today = Date.reservationDateString()
+        return reservations.filter { reservation in
+            !hiddenReservations.isHidden(reservation)
+                && reservation.reservationDate >= today
+                && (reservation.statusValue == .new || reservation.statusValue == .needsReview)
+        }.count
+    }
+
     private var scheduleControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Schedule", selection: $scope) {
-                ForEach(ReservationScheduleScope.allCases) { scope in
-                    Text(scope.rawValue).tag(scope)
-                }
-            }
-            .pickerStyle(.segmented)
+            TryzubSegmentedControl(
+                segments: ReservationScheduleScope.allCases.map { scope in
+                    TryzubSegmentedControl<ReservationScheduleScope>.Segment(
+                        value: scope,
+                        title: scope.rawValue,
+                        attentionDotStyle: scope == .needsReview && reviewAttentionCount > 0
+                            ? .greenFlashing
+                            : nil
+                    )
+                },
+                selection: $scope
+            )
 
             if scope == .all {
                 ReservationOptionalDateFilter(

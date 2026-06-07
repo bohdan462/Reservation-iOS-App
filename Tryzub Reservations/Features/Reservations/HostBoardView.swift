@@ -13,8 +13,6 @@ struct HostBoardView: View {
     let reservations: [ReservationRecord]
     let environment: AppEnvironment
     @Binding var selectedDate: Date
-    let lastSyncedAt: Date?
-    let isSyncing: Bool
     let failedImportCount: Int
     let isVisible: Bool
     var deferNetworkLoads: Bool = false
@@ -275,8 +273,6 @@ struct HostBoardView: View {
         HomeServiceHeader(
             title: environment.role == .developer ? "Dev" : "Host",
             selectedDate: $selectedDate,
-            lastSyncedAt: lastSyncedAt,
-            isSyncing: isSyncing,
             canCreateReservation: controller.capabilities.canCreateManualReservations,
             canViewFormProblems: controller.capabilities.canViewFailedImports
                 && controller.capabilities.canViewDeveloperDiagnostics,
@@ -776,9 +772,8 @@ private struct HomeAvailabilityIndicator: View {
 private struct HomeServiceHeader: View {
     let title: String
     @Binding var selectedDate: Date
-    let lastSyncedAt: Date?
-    let isSyncing: Bool
     let canCreateReservation: Bool
+    @EnvironmentObject private var controller: ReservationsController
     let canViewFormProblems: Bool
     let failedImportCount: Int
     let onAddReservation: () -> Void
@@ -789,18 +784,20 @@ private struct HomeServiceHeader: View {
         selectedDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
     }
 
+    private var isSyncing: Bool {
+        controller.isSyncing || controller.isAutoRefreshing || controller.isStartupNetworkPassInFlight
+    }
+
     private var syncText: String {
         if isSyncing {
             return "Syncing"
         }
 
-        guard let lastSyncedAt else {
+        guard let lastSyncedAt = controller.lastSyncedAt else {
             return "Cache only"
         }
 
         return "Synced \(lastSyncedAt.formatted(date: .omitted, time: .shortened))"
-        
-        
     }
     
     var body: some View {
@@ -898,14 +895,10 @@ private struct HomeServiceHeader: View {
                 Text(syncText)
                     .lineLimit(1)
 
-                if isSyncing {
-                    ProgressView()
-                        .controlSize(.mini)
-                } else if lastSyncedAt != nil {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 6, height: 6)
-                }
+                TryzubStaffStatusIndicator(
+                    style: controller.staffStatusDotStyle,
+                    showsOfflineIcon: controller.isNetworkDegraded
+                )
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(.secondary)

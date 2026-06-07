@@ -54,6 +54,207 @@ enum TryzubColors {
     static let neutralChip = Color.secondary
 }
 
+// MARK: - Staff Status Dot
+
+/// Small live-status indicator for staff surfaces (Home header, Bookings tab, etc.).
+/// Views pass a style only; sync/network logic lives in the controller layer.
+enum TryzubStaffStatusDotStyle: Equatable {
+    /// Live and healthy — cache is fresh, network is up, nothing in flight.
+    case greenStatic
+    /// Activity — fetch/sync in progress or attention-worthy live event (e.g. new booking).
+    case greenFlashing
+    /// Warning — usable but degraded (e.g. sync older than threshold, partial failure).
+    case yellowStatic
+    /// Offline or hard failure — no reliable network path.
+    case redFlashing
+
+    var color: Color {
+        switch self {
+        case .greenStatic, .greenFlashing:
+            return TryzubColors.success
+        case .yellowStatic:
+            return TryzubColors.warning
+        case .redFlashing:
+            return TryzubColors.danger
+        }
+    }
+
+    var isFlashing: Bool {
+        switch self {
+        case .greenFlashing, .redFlashing:
+            return true
+        case .greenStatic, .yellowStatic:
+            return false
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .greenStatic:
+            return "Live"
+        case .greenFlashing:
+            return "Updating"
+        case .yellowStatic:
+            return "Warning"
+        case .redFlashing:
+            return "Offline"
+        }
+    }
+}
+
+struct TryzubStaffStatusDot: View {
+    var style: TryzubStaffStatusDotStyle
+    var diameter: CGFloat = 6
+
+    private let flashPeriod: TimeInterval = 0.9
+
+    var body: some View {
+        // Paused TimelineView ticks only while flashing — zero ongoing cost for static dots.
+        TimelineView(.animation(minimumInterval: flashPeriod, paused: !style.isFlashing)) { context in
+            Circle()
+                .fill(style.color)
+                .frame(width: diameter, height: diameter)
+                .opacity(opacity(at: context.date))
+        }
+        .accessibilityLabel(style.accessibilityLabel)
+    }
+
+    private func opacity(at date: Date) -> Double {
+        guard style.isFlashing else { return 1 }
+        let phase = sin(date.timeIntervalSinceReferenceDate * (2 * .pi / flashPeriod))
+        let normalized = (phase + 1) / 2
+        return 0.28 + normalized * 0.72
+    }
+}
+
+/// Status dot with an optional offline glyph for staff headers.
+struct TryzubStaffStatusIndicator: View {
+    var style: TryzubStaffStatusDotStyle
+    var showsOfflineIcon = false
+    var dotDiameter: CGFloat = 6
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if showsOfflineIcon {
+                Image(systemName: "wifi.slash")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TryzubColors.danger)
+                    .accessibilityLabel("No internet connection")
+            }
+
+            TryzubStaffStatusDot(style: style, diameter: dotDiameter)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Segmented control that supports a small attention dot on individual segments.
+/// SwiftUI's segmented `Picker` strips custom segment views, so Bookings uses this instead.
+struct TryzubSegmentedControl<Value: Hashable>: View {
+    struct Segment: Identifiable {
+        let value: Value
+        let title: String
+        var attentionDotStyle: TryzubStaffStatusDotStyle?
+
+        var id: Value { value }
+    }
+
+    let segments: [Segment]
+    @Binding var selection: Value
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(segments) { segment in
+                segmentButton(segment, isSelected: selection == segment.value)
+            }
+        }
+        .padding(2)
+        .background(Color(.systemGray5), in: Capsule())
+    }
+
+    private func segmentButton(_ segment: Segment, isSelected: Bool) -> some View {
+        Button {
+            guard selection != segment.value else { return }
+            ReservationHaptics.selection()
+            selection = segment.value
+        } label: {
+            HStack(spacing: 4) {
+                Text(segment.title)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+
+                if let attentionDotStyle = segment.attentionDotStyle {
+                    TryzubStaffStatusDot(style: attentionDotStyle, diameter: 5)
+                }
+            }
+            .font(.subheadline.weight(isSelected ? .semibold : .medium))
+            .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
+            .padding(.horizontal, 6)
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color(.systemBackground))
+                        .shadow(color: Color.black.opacity(0.06), radius: 1, y: 1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Pure resolver for the staff status dot. Controllers map live state into a style.
+enum TryzubStaffStatusResolver {
+    static let staleSyncThreshold: TimeInterval = 120
+
+    static func resolve(
+        isNetworkDegraded: Bool,
+        isNetworkActivityInFlight: Bool,
+        lastSyncedAt: Date?,
+        pendingReviewCount: Int,
+        now: Date = Date()
+    ) -> TryzubStaffStatusDotStyle {
+        if isNetworkDegraded {
+            return .redFlashing
+        }
+        if isNetworkActivityInFlight || pendingReviewCount > 0 {
+            return .greenFlashing
+        }
+        guard let lastSyncedAt else {
+            return .yellowStatic
+        }
+        if now.timeIntervalSince(lastSyncedAt) > staleSyncThreshold {
+            return .yellowStatic
+        }
+        return .greenStatic
+    }
+}
+
+#Preview("Staff Status Dot") {
+    VStack(alignment: .leading, spacing: 16) {
+        HStack(spacing: 10) {
+            TryzubStaffStatusDot(style: .greenStatic)
+            Text("Green static — live")
+        }
+        HStack(spacing: 10) {
+            TryzubStaffStatusDot(style: .greenFlashing)
+            Text("Green flashing — fetching / new activity")
+        }
+        HStack(spacing: 10) {
+            TryzubStaffStatusDot(style: .yellowStatic)
+            Text("Yellow static — warning / stale sync")
+        }
+        HStack(spacing: 10) {
+            TryzubStaffStatusDot(style: .redFlashing)
+            Text("Red flashing — offline")
+        }
+    }
+    .font(.caption)
+    .padding()
+}
+
 // Single source of truth for native tab-safe bottom spacing.
 enum ReservationLayout {
     /// Extra clearance used by pushed bottom action bars; native TabView owns the tab safe area.
