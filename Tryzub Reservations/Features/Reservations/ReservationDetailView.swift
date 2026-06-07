@@ -226,9 +226,9 @@ struct ManualEmailDraftService {
         </tr>
         </table>
         <p style="margin:0 0 18px;text-align:center;">
-        <a href="\(linkURL)" style="display:inline-block;padding:15px 28px;background-color:#1f6b3a;color:#ffffff;text-decoration:none;border-radius:999px;font-size:16px;font-weight:700;letter-spacing:0.01em;">View or Manage Reservation</a>
+        <a href="\(linkURL)" style="display:inline-block;padding:15px 28px;background-color:#1f6b3a;color:#ffffff;text-decoration:none;border-radius:999px;font-size:16px;font-weight:700;letter-spacing:0.01em;">View Reservation</a>
         </p>
-        <p style="margin:0 0 28px;font-size:14px;line-height:1.6;color:#666666;text-align:center;">Use your private link to view reservation details, request changes, or cancel within the allowed time window.</p>
+        <p style="margin:0 0 28px;font-size:14px;line-height:1.6;color:#666666;text-align:center;">Use your private link to view reservation details, or cancel within the allowed time window.</p>
         \(expiresHTML)
         <p style="margin:0;font-size:14px;line-height:1.7;color:#5c574f;text-align:center;">
         \(htmlEscape(ReservationEmailWorkflow.restaurantAddressLine))<br>
@@ -346,6 +346,8 @@ struct ReservationDetailView: View {
     @State private var errorMessage: String?
     @State private var pendingAction: ReservationHostAction?
     @State private var tableAssignmentReservation: ReservationRecord?
+    @State private var seatPromptReservation: ReservationRecord?
+    @State private var seatAfterTableAssignment = false
     @State private var isShowingHideWrongEntryConfirmation = false
     @State private var guestManageLink: ReservationGuestManageLinkDTO?
     @State private var guestManageLinkMessage: String?
@@ -361,7 +363,7 @@ struct ReservationDetailView: View {
                 detailContent(isWide: isWide)
                     .padding(.horizontal, isWide ? 20 : 16)
                     .padding(.vertical, 16)
-                    .padding(.bottom, 92)
+                    .padding(.bottom, ReservationLayout.scrollBottomInset)
                     .cappedContentWidth(isWide ? 1000 : nil)
             }
             .background(Color(.systemGroupedBackground))
@@ -376,8 +378,27 @@ struct ReservationDetailView: View {
                     request: ReservationUpdateRequest(tableName: tableName),
                     context: modelContext
                 )
+                if seatAfterTableAssignment {
+                    seatAfterTableAssignment = false
+                    await controller.updateStatus(
+                        reservation: reservation,
+                        status: .seated,
+                        context: modelContext
+                    )
+                    ReservationHaptics.success()
+                }
             }
         }
+        .reservationSeatTableChoice(
+            seatPromptReservation: $seatPromptReservation,
+            onAssignTable: { reservation in
+                seatAfterTableAssignment = true
+                tableAssignmentReservation = reservation
+            },
+            onSeatWithoutTable: { _ in
+                Task { await perform(.seat) }
+            }
+        )
         .sheet(item: $guestConfirmationMailDraft) { draft in
             GuestConfirmationMailComposer(draft: draft) { result in
                 handleGuestConfirmationMailFinished(result)
@@ -402,25 +423,9 @@ struct ReservationDetailView: View {
             titleVisibility: .visible
         ) {
             if let pendingAction {
-                if pendingAction == .confirmOnly {
-                    Button("Confirm only") {
-                        Task {
-                            await perform(.confirmOnly)
-                        }
-                    }
-
-                    ReservationConfirmDialog.backendEmailButton(
-                        hasUsableEmail: reservation.hasUsableConfirmationEmail
-                    ) {
-                        Task {
-                            await perform(.confirmAndSendEmail)
-                        }
-                    }
-                } else {
-                    Button(pendingAction.fullTitle, role: pendingAction.role) {
-                        Task {
-                            await perform(pendingAction)
-                        }
+                Button(pendingAction.fullTitle, role: pendingAction.role) {
+                    Task {
+                        await perform(pendingAction)
                     }
                 }
             }
@@ -544,6 +549,7 @@ struct ReservationDetailView: View {
             isGeneratingGuestManageLink: isGeneratingGuestManageLink,
             hasGuestManageLink: guestManageLink != nil,
             onAction: handleAction,
+            onSeatRequiresTableChoice: { seatPromptReservation = reservation },
             onEdit: { showEditScreen = true },
             onSendGuestConfirmationEmail: controller.capabilities.canGenerateGuestManageLinks
                 ? { Task { await sendGuestConfirmationEmail() } }
@@ -671,7 +677,11 @@ struct ReservationDetailView: View {
     private func handleAction(_ action: ReservationHostAction) {
         if action == .assignTable {
             tableAssignmentReservation = reservation
-        } else if action == .confirmOnly || action == .confirmAndSendEmail || action == .cancel || action == .noShow {
+        } else if action == .confirmOnly {
+            Task {
+                await perform(.confirmOnly)
+            }
+        } else if action == .cancel || action == .noShow || action == .confirmAndSendEmail {
             pendingAction = action
         } else {
             Task {
@@ -1067,6 +1077,7 @@ private struct DetailActionBar: View {
     let isGeneratingGuestManageLink: Bool
     let hasGuestManageLink: Bool
     let onAction: (ReservationHostAction) -> Void
+    var onSeatRequiresTableChoice: (() -> Void)? = nil
     let onEdit: () -> Void
     let onSendGuestConfirmationEmail: (() -> Void)?
     let onGenerateGuestManageLink: (() -> Void)?
@@ -1092,15 +1103,20 @@ private struct DetailActionBar: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            ReservationActionButtons(
-                reservation: reservation,
-                capabilities: capabilities,
-                compact: false,
-                includeSecondary: false,
-                isBusy: isBusy || isNetworkDegraded,
-                onAction: onAction
-            )
-            .frame(maxWidth: .infinity)
+            if showsPendingConfirmationButtons {
+                pendingConfirmationActions
+            } else {
+                ReservationActionButtons(
+                    reservation: reservation,
+                    capabilities: capabilities,
+                    compact: false,
+                    includeSecondary: false,
+                    actionSurface: .detail,
+                    isBusy: isBusy || isNetworkDegraded,
+                    onAction: onAction,
+                    onSeatRequiresTableChoice: onSeatRequiresTableChoice
+                )
+            }
 
             HStack(spacing: 10) {
                 secondaryButton(title: "Edit", systemImage: "pencil") {
@@ -1114,6 +1130,59 @@ private struct DetailActionBar: View {
                 }
             }
         }
+    }
+
+    private var showsPendingConfirmationButtons: Bool {
+        policy.detailPrimaryAction == .confirmOnly
+    }
+
+    private var pendingConfirmationActions: some View {
+        HStack(spacing: 8) {
+            pendingConfirmationButton(
+                title: ReservationHostAction.confirmOnly.shortTitle,
+                systemImage: ReservationHostAction.confirmOnly.systemImage,
+                isPrimary: true
+            ) {
+                onAction(.confirmOnly)
+            }
+
+            if reservation.hasUsableConfirmationEmail, let onSendGuestConfirmationEmail {
+                pendingConfirmationButton(
+                    title: isGeneratingGuestManageLink ? "Preparing email" : "Confirm + Send Email",
+                    systemImage: "envelope",
+                    isPrimary: false
+                ) {
+                    onSendGuestConfirmationEmail()
+                }
+                .disabled(isGeneratingGuestManageLink)
+            }
+        }
+    }
+
+    private func pendingConfirmationButton(
+        title: String,
+        systemImage: String,
+        isPrimary: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .labelStyle(.titleAndIcon)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(Color.primary.opacity(isPrimary ? 0.22 : 0.14), lineWidth: 1)
+        }
+        .disabled(isBusy || isNetworkDegraded)
     }
 
     private func secondaryButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {

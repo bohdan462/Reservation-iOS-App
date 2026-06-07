@@ -1220,14 +1220,14 @@ struct BlockedTimeSlotsView: View {
             Spacer()
             if settingsStore.blockedSlotsSaving {
                 ProgressView()
-                    .tint(Color(.systemBackground))
+                    .tint(.white)
             } else {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
             }
             Spacer()
         }
-        .foregroundStyle(Color(.systemBackground))
+        .foregroundStyle(.white)
         .frame(minHeight: 42)
         .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
     }
@@ -1659,7 +1659,7 @@ private struct SettingsSaveBar: View {
             Button(action: onSave) {
                 if isSaving {
                     ProgressView()
-                        .tint(Color(.systemBackground))
+                        .tint(.white)
                         .frame(maxWidth: .infinity)
                 } else {
                     Text(title)

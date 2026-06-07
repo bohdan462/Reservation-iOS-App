@@ -199,7 +199,7 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
     // MARK: - Pending Review Sync
 
     // Legacy/private path: refreshes the staff pending queue from new and needs_review rows.
-    // Normal Review tab activation filters the shared active-window cache.
+    // Normal Bookings Needs Review filtering uses the shared active-window cache.
     // Network: GET /managed-reservations?status=needs_review and status=new.
     // SwiftData: Upserts fetched server DTOs without deleting records missing from this status snapshot.
     func syncReviewQueues(reason: ReservationAPIRequestReason) async throws {

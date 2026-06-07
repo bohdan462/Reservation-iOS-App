@@ -50,17 +50,21 @@ struct ManualReservationFormView: View {
             )
         }
         .interactiveDismissDisabled(true)
-        .confirmationDialog(
-            "Add this reservation?",
-            isPresented: $showCreateConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Add Reservation") {
-                Task { await createReservation() }
+        .sheet(isPresented: $showCreateConfirmation) {
+            ReservationFormConfirmationSheet(
+                title: "Add Reservation",
+                subtitle: "Review the call-in details before accepting this reservation.",
+                confirmTitle: "Add Reservation",
+                isProcessing: isSaving,
+                onConfirm: {
+                    Task { await createReservation() }
+                },
+                onCancel: {
+                    showCreateConfirmation = false
+                }
+            ) {
+                ReservationFormChangeReview(createSummary: draft.createSummaryRows())
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(draft.createReviewMessage())
         }
         .task {
             // Lazy form support load: setup provides manual-create defaults only.
@@ -94,6 +98,7 @@ struct ManualReservationFormView: View {
                 )
             )
             ReservationHaptics.success()
+            showCreateConfirmation = false
             dismiss()
         } catch {
             ReservationHaptics.warning()
@@ -136,7 +141,6 @@ struct ReservationEditFormView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showSaveConfirmation = false
-    @State private var pendingChanges: [ReservationFormChange] = []
     @State private var isShowingHideConfirmation = false
 
     init(
@@ -167,20 +171,20 @@ struct ReservationEditFormView: View {
                 ? { isShowingHideConfirmation = true }
                 : nil
         )
-        .confirmationDialog(
-            "Save changes?",
-            isPresented: $showSaveConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Save Changes") {
-                Task { await saveReservation() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            if pendingChanges.isEmpty {
-                Text("No field changes detected.")
-            } else {
-                Text(pendingChanges.map { "\($0.field): \($0.oldValue) → \($0.newValue)" }.joined(separator: "\n"))
+        .sheet(isPresented: $showSaveConfirmation) {
+            ReservationFormConfirmationSheet(
+                title: "Save Changes",
+                subtitle: "Review the reservation updates before saving.",
+                confirmTitle: "Save Changes",
+                isProcessing: isSaving,
+                onConfirm: {
+                    Task { await saveReservation() }
+                },
+                onCancel: {
+                    showSaveConfirmation = false
+                }
+            ) {
+                ReservationFormChangeReview(changes: draft.changes(from: originalDraft))
             }
         }
         .confirmationDialog(
@@ -199,8 +203,7 @@ struct ReservationEditFormView: View {
 
     private func prepareSaveConfirmation() {
         guard validateRequiredFields() else { return }
-        pendingChanges = draft.changes(from: originalDraft)
-        if pendingChanges.isEmpty {
+        if draft.changes(from: originalDraft).isEmpty {
             errorMessage = "No changes to save."
             return
         }
@@ -222,6 +225,7 @@ struct ReservationEditFormView: View {
         do {
             _ = try await onSave(draft.updateRequest())
             ReservationHaptics.success()
+            showSaveConfirmation = false
             dismiss()
         } catch {
             ReservationHaptics.warning()
@@ -605,7 +609,7 @@ private struct ReservationFormContent: View {
                                 ReservationHaptics.selection()
                             }
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color(.systemBackground))
+                            .foregroundStyle(.white)
                             .frame(maxWidth: .infinity, minHeight: 36)
                             .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
                         }
@@ -740,7 +744,7 @@ private struct ReservationFormContent: View {
                 Spacer()
                 if isSaving {
                     ProgressView()
-                        .tint(Color(.systemBackground))
+                        .tint(.white)
                 } else {
                     Text(mode.primaryActionTitle)
                         .font(.headline.weight(.semibold))
@@ -749,7 +753,7 @@ private struct ReservationFormContent: View {
             }
             .frame(maxWidth: 150)
             .frame(maxWidth: .infinity)
-            .foregroundStyle(Color(.systemBackground))
+            .foregroundStyle(.white)
             .padding(.vertical, 14)
             .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
             .frame(maxWidth: 680)
@@ -1411,6 +1415,17 @@ private struct ReservationFormDraft {
 
     private static func displayDate(_ date: Date) -> String {
         date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
+    }
+
+    func createSummaryRows() -> [(String, String)] {
+        [
+            ("Name", guestName.trimmed),
+            ("Phone", phone.trimmed),
+            ("Email", email.trimmed.isEmpty ? "No email" : email.trimmed),
+            ("Date", Self.displayDate(reservationDate)),
+            ("Time", Self.displayTime(reservationTime)),
+            ("Party", "\(partySize)")
+        ]
     }
 
     func createReviewMessage() -> String {

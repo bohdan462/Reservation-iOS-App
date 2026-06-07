@@ -736,7 +736,7 @@ final class ReservationsController: ObservableObject {
         force: Bool
     ) async -> Bool {
         // Legacy/private path retained for diagnostics and fallback only.
-        // Review tab activation should normally filter the shared active-window cache.
+        // Bookings Needs Review should normally filter the shared active-window cache.
         let scope = ReservationSyncScope.reviewQueues
 
         if !force && isScopeFresh(scope, freshnessInterval: reviewFreshnessInterval) {
@@ -2424,8 +2424,11 @@ final class ReservationsController: ObservableObject {
     }
 
     func seatedDurationText(for reservation: ReservationRecord, now: Date = Date()) -> String? {
-        guard reservation.statusValue == .seated,
-              let seatedAt = localSeatedAtByReservationID[reservation.remoteID] else {
+        guard reservation.statusValue == .seated else {
+            return nil
+        }
+
+        guard let seatedAt = localSeatedAtByReservationID[reservation.remoteID] ?? seatedTimestampFallback(for: reservation) else {
             return nil
         }
 
@@ -2440,6 +2443,16 @@ final class ReservationsController: ObservableObject {
         let hours = minutes / 60
         let remainingMinutes = minutes % 60
         return String(format: "Seated %dh %02dm", hours, remainingMinutes)
+    }
+
+    private func seatedTimestampFallback(for reservation: ReservationRecord) -> Date? {
+        guard let value = reservation.apiUpdatedAt?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+
+        return ReservationFormatters.serverDateTime.date(from: value)
+            ?? ReservationFormatters.serverDateMinute.date(from: value)
     }
 
     private func updateLocalSeatedTimestamp(after reservation: ReservationDTO) {

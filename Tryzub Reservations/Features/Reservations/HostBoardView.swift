@@ -122,7 +122,7 @@ struct HostBoardView: View {
             }
             .padding(.horizontal, safeWidth >= 1100 ? 16 : 12)
             .padding(.top, safeWidth >= 1100 ? 8 : 6)
-            .padding(.bottom, 92)
+            .padding(.bottom, ReservationLayout.scrollBottomInset)
             .frame(maxWidth: 1100)
             .frame(width: safeWidth, height: safeHeight, alignment: .top)
             .background(TryzubColors.screenBackground)
@@ -273,6 +273,7 @@ struct HostBoardView: View {
     @ViewBuilder
     private func homeHeaderAndStats(snapshot: HostBoardSnapshot) -> some View {
         HomeServiceHeader(
+            title: environment.role == .developer ? "Dev" : "Host",
             selectedDate: $selectedDate,
             lastSyncedAt: lastSyncedAt,
             isSyncing: isSyncing,
@@ -613,7 +614,7 @@ private struct HostBoardSummaryCard: View {
             }
         }
         .padding(12)
-        .background(TryzubColors.cardBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(TryzubColors.border, lineWidth: 1)
@@ -773,6 +774,7 @@ private struct HomeAvailabilityIndicator: View {
 // MARK: - Home Service Header
 
 private struct HomeServiceHeader: View {
+    let title: String
     @Binding var selectedDate: Date
     let lastSyncedAt: Date?
     let isSyncing: Bool
@@ -826,7 +828,7 @@ private struct HomeServiceHeader: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.primary.opacity(0.07), lineWidth: 1)
@@ -884,7 +886,7 @@ private struct HomeServiceHeader: View {
 
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("Host")
+            Text(title)
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(ReservationUIStyle.serviceTitleColor)
                 .lineLimit(1)
@@ -1027,18 +1029,76 @@ private struct HomeReservationsPanel: View {
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
     let onOpenReservation: (ReservationRecord) -> Void
 
+    private var hourSections: [ReservationHourSection] {
+        ReservationRecord.hourSections(from: snapshot.upcoming)
+    }
+
     var body: some View {
-        HostBoardColumn(
-            title: "Reservations",
-            subtitle: "\(snapshot.upcoming.count) active for selected date",
-            reservations: snapshot.upcoming,
-            emptyTitle: "No active reservations",
-            emptySystemImage: "calendar.badge.checkmark",
-            scrollsInternally: scrollsInternally,
-            environment: environment,
-            onAction: onAction,
-            onOpenReservation: onOpenReservation
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Reservations")
+                        .font(.headline.weight(.medium))
+                    Text("\(snapshot.upcoming.count) active for selected date")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+
+            if scrollsInternally {
+                ScrollView {
+                    reservationsContent
+                        .padding(.bottom, 12)
+                }
+                .scrollIndicators(.hidden)
+                .frame(maxHeight: .infinity, alignment: .top)
+            } else {
+                reservationsContent
+            }
+        }
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: scrollsInternally ? CGFloat.infinity : nil,
+            alignment: .topLeading
         )
+    }
+
+    @ViewBuilder
+    private var reservationsContent: some View {
+        if hourSections.isEmpty {
+            CompactEmptyHostState(
+                title: "No active reservations",
+                systemImage: "calendar.badge.checkmark"
+            )
+        } else {
+            LazyVStack(alignment: .leading, spacing: 16) {
+                ForEach(hourSections) { section in
+                    VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(section.title)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.primary.opacity(0.82))
+                            Text(section.subtitle)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        LazyVStack(spacing: 8) {
+                            ForEach(section.reservations) { reservation in
+                                HostBoardReservationRow(
+                                    reservation: reservation,
+                                    environment: environment,
+                                    onAction: onAction,
+                                    onOpenReservation: onOpenReservation
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1052,6 +1112,8 @@ private struct HostBoardReservationRow: View {
     let onOpenReservation: (ReservationRecord) -> Void
 
     @State private var tableAssignmentReservation: ReservationRecord?
+    @State private var seatPromptReservation: ReservationRecord?
+    @State private var seatAfterTableAssignment = false
 
     var body: some View {
         // Reuses the same compact reservation cell used by Schedule and Review.
@@ -1070,10 +1132,14 @@ private struct HostBoardReservationRow: View {
                 capabilities: controller.capabilities,
                 compact: true,
                 includeSecondary: false,
-                isBusy: controller.isActionInProgress(for: reservation) || controller.isNetworkDegraded
-            ) { action in
-                handle(action)
-            }
+                isBusy: controller.isActionInProgress(for: reservation) || controller.isNetworkDegraded,
+                onAction: { action in
+                    handle(action)
+                },
+                onSeatRequiresTableChoice: {
+                    seatPromptReservation = reservation
+                }
+            )
         }
         .contentShape(Rectangle())
         .onTapGesture {
@@ -1098,6 +1164,16 @@ private struct HostBoardReservationRow: View {
                 }
             }
         }
+        .reservationSeatTableChoice(
+            seatPromptReservation: $seatPromptReservation,
+            onAssignTable: { reservation in
+                seatAfterTableAssignment = true
+                tableAssignmentReservation = reservation
+            },
+            onSeatWithoutTable: { reservation in
+                onAction(.seat, reservation)
+            }
+        )
         .sheet(item: $tableAssignmentReservation) { reservation in
             TableAssignmentSheet(reservation: reservation) { tableName in
                 _ = try await controller.updateReservation(
@@ -1105,6 +1181,15 @@ private struct HostBoardReservationRow: View {
                     request: ReservationUpdateRequest(tableName: tableName),
                     context: modelContext
                 )
+                if seatAfterTableAssignment {
+                    seatAfterTableAssignment = false
+                    await controller.updateStatus(
+                        reservation: reservation,
+                        status: .seated,
+                        context: modelContext
+                    )
+                    ReservationHaptics.success()
+                }
             }
         }
     }

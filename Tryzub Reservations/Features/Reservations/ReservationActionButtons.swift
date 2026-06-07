@@ -110,6 +110,40 @@ enum ReservationHostAction: String, Identifiable {
         }
     }
 
+    func displayRowTitle(for reservation: ReservationRecord, compact: Bool) -> String {
+        switch self {
+        case .seat:
+            if let table = reservation.assignedTableName {
+                return "Seat at \(table)"
+            }
+            return compact ? rowTitle : shortTitle
+        default:
+            return compact ? rowTitle : shortTitle
+        }
+    }
+
+    func displayPendingTitle(for reservation: ReservationRecord) -> String {
+        switch self {
+        case .seat:
+            if let table = reservation.assignedTableName {
+                return "Seat at \(table)?"
+            }
+            return "Seat now?"
+        case .confirmOnly:
+            return "Confirm?"
+        case .confirmAndSendEmail:
+            return "Email?"
+        case .complete:
+            return "Complete?"
+        case .cancel:
+            return "Cancel?"
+        case .noShow:
+            return "No show?"
+        case .assignTable:
+            return rowTitle
+        }
+    }
+
     static var isBackendConfirmEmailEnabled: Bool {
         ReservationEmailWorkflow.isBackendConfirmEmailEnabled
     }
@@ -161,7 +195,7 @@ enum ReservationHostAction: String, Identifiable {
         let status = reservation.statusValue
         var actions: [ReservationHostAction] = []
 
-        let showPastDueComplete = reservation.isPastDueForToday(now: now)
+        let showPastDueComplete = reservation.isPastDueCompleteEligible(now: now)
             && reservation.canMarkPastDueComplete
             && capabilities.canSeatReservations
 
@@ -257,8 +291,8 @@ enum ReservationHostAction: String, Identifiable {
                 ? "\n\nNo guest email on this reservation."
                 : ""
             let manualFlow = Self.isBackendConfirmEmailEnabled
-                ? "Choose Confirm only to update the reservation without email, or Confirm + Email to ask the server to send the confirmation email."
-                : "Confirm only updates the reservation on the server. Backend email is disabled for the pilot — use Detail → More → Send confirmation email for the manual Gmail/Mail flow."
+                ? "Choose Confirm only to update the reservation without email, or Confirm + Send Email to ask the server to send the confirmation email."
+                : "Choose Confirm only to update the reservation, or Confirm + Send Email to open a confirmation email in Mail."
             return "\(manualFlow)\(helper)"
         case .confirmAndSendEmail:
             if Self.isBackendConfirmEmailEnabled {
@@ -296,15 +330,17 @@ struct ReservationHostActionPolicy {
     }
 
     var rowActions: [ReservationHostAction] {
-        ReservationHostAction.availableActions(
-            for: reservation,
-            capabilities: capabilities,
-            includeSecondary: false
+        excludingPendingConfirmationFromRows(
+            ReservationHostAction.availableActions(
+                for: reservation,
+                capabilities: capabilities,
+                includeSecondary: false
+            )
         )
     }
 
     var contextMenuActions: [ReservationHostAction] {
-        allActions
+        excludingPendingConfirmationFromRows(allActions)
     }
 
     var detailPrimaryAction: ReservationHostAction? {
@@ -348,6 +384,17 @@ struct ReservationHostActionPolicy {
             includeSecondary: true
         )
     }
+
+    private func excludingPendingConfirmationFromRows(_ actions: [ReservationHostAction]) -> [ReservationHostAction] {
+        guard surface == .row else { return actions }
+
+        switch reservation.statusValue {
+        case .new, .needsReview:
+            return actions.filter { $0 != .confirmOnly && $0 != .confirmAndSendEmail }
+        default:
+            return actions
+        }
+    }
 }
 
 // MARK: - Action Buttons View
@@ -357,19 +404,27 @@ struct ReservationActionButtons: View {
     let capabilities: AppCapabilities
     var compact = false
     var includeSecondary = true
+    var actionSurface: ReservationActionSurface?
     var isBusy = false
     let onAction: (ReservationHostAction) -> Void
+    var onSeatRequiresTableChoice: (() -> Void)? = nil
 
     // Two-tap safety state for quick service actions in compact rows.
     @State private var pendingInlineAction: ReservationHostAction?
 
-    private var actions: [ReservationHostAction] {
+    private var policy: ReservationHostActionPolicy {
         ReservationHostActionPolicy(
             reservation: reservation,
             capabilities: capabilities,
-            surface: includeSecondary ? .detail : .row
+            surface: actionSurface ?? (includeSecondary ? .detail : .row)
         )
-        .visibleActions
+    }
+
+    private var actions: [ReservationHostAction] {
+        if policy.surface == .detail, !includeSecondary, let primary = policy.detailPrimaryAction {
+            return [primary]
+        }
+        return policy.visibleActions
     }
 
     var body: some View {
@@ -505,29 +560,21 @@ struct ReservationActionButtons: View {
 
     private func title(for action: ReservationHostAction, compact: Bool) -> String {
         if pendingInlineAction == action {
-            switch action {
-            case .confirmOnly:
-                return "Confirm?"
-            case .confirmAndSendEmail:
-                return "Email?"
-            case .seat:
-                return "Seat now?"
-            case .complete:
-                return "Complete?"
-            case .cancel:
-                return "Cancel?"
-            case .noShow:
-                return "No show?"
-            case .assignTable:
-                return action.rowTitle
-            }
+            return action.displayPendingTitle(for: reservation)
         }
 
-        return compact ? action.rowTitle : action.shortTitle
+        return action.displayRowTitle(for: reservation, compact: compact)
     }
 
     // Intent: Requires a second tap for actions that can change service state quickly.
     private func handleTap(_ action: ReservationHostAction) {
+        if action == .seat, !reservation.hasTableAssignment {
+            pendingInlineAction = nil
+            ReservationHaptics.lightImpact()
+            onSeatRequiresTableChoice?()
+            return
+        }
+
         guard action.needsInlineConfirmation(for: reservation) else {
             pendingInlineAction = nil
             ReservationHaptics.lightImpact()
@@ -556,6 +603,11 @@ struct ReservationActionButtons: View {
                 ? "Send confirmation email for \(reservation.guestName)"
                 : "Prepare to send confirmation email for \(reservation.guestName)"
         case .seat:
+            if let table = reservation.assignedTableName {
+                return pendingInlineAction == action
+                    ? "Seat party at \(table)"
+                    : "Prepare to seat party at \(table)"
+            }
             return pendingInlineAction == action
                 ? "Seat party of \(reservation.partySize)"
                 : "Prepare to seat party of \(reservation.partySize)"
@@ -599,7 +651,7 @@ private extension ReservationHostAction {
     func needsInlineConfirmation(for reservation: ReservationRecord, now: Date = Date()) -> Bool {
         switch self {
         case .complete:
-            if reservation.isPastDueForToday(now: now), reservation.canMarkPastDueComplete {
+            if reservation.isPastDueCompleteEligible(now: now), reservation.canMarkPastDueComplete {
                 return false
             }
             return true
@@ -801,6 +853,45 @@ struct TableAssignmentSheet: View {
             dismiss()
         } catch {
             errorMessage = "Could not assign table. Please try again."
+        }
+    }
+}
+
+// MARK: - Seat / Table Workflow
+
+extension View {
+    func reservationSeatTableChoice(
+        seatPromptReservation: Binding<ReservationRecord?>,
+        onAssignTable: @escaping (ReservationRecord) -> Void,
+        onSeatWithoutTable: @escaping (ReservationRecord) -> Void
+    ) -> some View {
+        confirmationDialog(
+            seatPromptReservation.wrappedValue.map { "Seat \($0.guestName)?" } ?? "Seat party?",
+            isPresented: Binding(
+                get: { seatPromptReservation.wrappedValue != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        seatPromptReservation.wrappedValue = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let reservation = seatPromptReservation.wrappedValue {
+                Button("Assign Table") {
+                    onAssignTable(reservation)
+                    seatPromptReservation.wrappedValue = nil
+                }
+                Button("Seat Without Table") {
+                    onSeatWithoutTable(reservation)
+                    seatPromptReservation.wrappedValue = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                seatPromptReservation.wrappedValue = nil
+            }
+        } message: {
+            Text("Assign a table before seating, or seat the party without a table.")
         }
     }
 }

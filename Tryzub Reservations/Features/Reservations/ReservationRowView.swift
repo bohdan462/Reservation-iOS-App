@@ -439,7 +439,8 @@ struct ReservationRowView<Accessory: View>: View {
         return [
             ReservationRowDetailLabelData(
                 text: parts.joined(separator: " • "),
-                systemImage: presentation.status == .needsReview ? "exclamationmark.triangle" : "info.circle"
+                systemImage: presentation.status == .needsReview ? "exclamationmark.triangle" : "info.circle",
+                allowsWrapping: true
             )
         ]
     }
@@ -466,9 +467,10 @@ private struct ReservationRowDetailLabelData: Identifiable {
     let text: String
     let systemImage: String
     var isTable = false
+    var allowsWrapping = false
 
     var id: String {
-        "\(systemImage)-\(text)-\(isTable)"
+        "\(systemImage)-\(text)-\(isTable)-\(allowsWrapping)"
     }
 }
 
@@ -593,8 +595,8 @@ private struct ReservationRowDetailsLine: View {
                 metaView(item)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
-        .clipped()
+        .frame(maxWidth: .infinity, minHeight: items.contains(where: \.allowsWrapping) ? 34 : 18, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
@@ -604,11 +606,11 @@ private struct ReservationRowDetailsLine: View {
                 ReservationHaptics.selection()
                 onTableTap()
             } label: {
-                ReservationRowDetailLabel(text: item.text, systemImage: item.systemImage)
+                ReservationRowDetailLabel(item: item)
             }
             .buttonStyle(.plain)
         } else {
-            ReservationRowDetailLabel(text: item.text, systemImage: item.systemImage)
+            ReservationRowDetailLabel(item: item)
         }
     }
 }
@@ -691,23 +693,22 @@ struct ReservationStatusBadge: View {
 // MARK: - Inline Metadata
 
 private struct ReservationRowDetailLabel: View {
-    let text: String
-    let systemImage: String
+    let item: ReservationRowDetailLabelData
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: systemImage)
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Image(systemName: item.systemImage)
                 .font(.caption2.weight(.medium))
                 .frame(width: 13)
 
-            Text(text)
+            Text(item.text)
                 .font(.caption2.weight(.medium))
                 .monospacedDigit()
-                .lineLimit(1)
+                .lineLimit(item.allowsWrapping ? 2 : 1)
                 .truncationMode(.tail)
         }
         .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: false)
+        .fixedSize(horizontal: false, vertical: item.allowsWrapping)
     }
 }
 

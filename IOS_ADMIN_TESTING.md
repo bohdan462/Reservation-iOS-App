@@ -54,7 +54,7 @@ Implemented as `AdminFetchTest` buttons in `DeveloperDiagnosticsView`. Each post
 
 ### Reservations
 
-These buttons are manual diagnostics probes. They are not the normal startup/tab refresh contract. Normal Home/Schedule/Review refresh uses the shared active-window path documented below.
+These buttons are manual diagnostics probes. They are not the normal startup/tab refresh contract. Normal Host/Bookings refresh uses the shared active-window path documented below.
 
 | Button | Endpoint |
 | --- | --- |
@@ -184,7 +184,7 @@ Shows:
 
 | Step | Expected |
 | --- | --- |
-| Hide a test manual row (Detail or Edit) | PATCH `is_hidden=true`; row disappears from Home/List/Review |
+| Hide a test manual row (Detail or Edit) | PATCH `is_hidden=true`; row disappears from Host/Bookings |
 | Open More → Hidden Reservations | GET `include_hidden=1`; row appears with reason |
 | Restore | PATCH `is_hidden=false`; row returns to normal lists |
 | Hard delete (developer only) | DELETE `force=1`; row gone locally and on server |
@@ -275,10 +275,10 @@ Shows:
 - [ ] Create manual call-in reservation — appears as confirmed, no email sent
 - [ ] Edit reservation time/party — save diff confirmation works
 - [ ] Hide obvious test duplicate — gone from lists
-- [ ] List tab shows upcoming reservations; search in All scope
+- [ ] Bookings tab shows upcoming reservations; search in All scope
 - [ ] Guests tab searches cached guests by name/phone without network calls
 - [ ] Guest result → Book Call-In prefills manual form and requires phone confirmation
-- [ ] Review tab shows pending queue
+- [ ] Bookings → Needs Review shows pending queue
 - [ ] Generate guest manage link — paste into Mail manually
 - [ ] Notices appear and dismiss; app usable during slow network
 

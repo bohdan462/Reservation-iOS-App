@@ -48,6 +48,13 @@ struct AppLaunchLoadingView: View {
                         .animation(.easeInOut(duration: 0.45), value: messageIndex)
                         .padding(.horizontal, 28)
                 }
+                .padding(.horizontal, 30)
+                .padding(.vertical, 28)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                }
 
                 Spacer()
 
@@ -96,8 +103,8 @@ private struct LaunchOrbitalLoader: View {
                         .fill(
                             RadialGradient(
                                 colors: [
-                                    Color(red: 0.20, green: 0.48, blue: 0.30).opacity(0.95 - Double(index) * 0.18),
-                                    Color(red: 0.20, green: 0.48, blue: 0.30).opacity(0.25)
+                                    Color.accentColor.opacity(0.95 - Double(index) * 0.18),
+                                    Color.accentColor.opacity(0.25)
                                 ],
                                 center: .center,
                                 startRadius: 0,
@@ -116,7 +123,7 @@ private struct LaunchOrbitalLoader: View {
                     .frame(width: 74, height: 52)
 
                 Circle()
-                    .fill(Color(red: 0.20, green: 0.48, blue: 0.30).opacity(0.10 + sin(time * 1.6) * 0.04))
+                    .fill(Color.accentColor.opacity(0.10 + sin(time * 1.6) * 0.04))
                     .frame(
                         width: 18 + sin(time * 1.6) * 4,
                         height: 18 + sin(time * 1.6) * 4
@@ -135,7 +142,7 @@ private struct LaunchStepIndicator: View {
         HStack(spacing: 6) {
             ForEach(0..<total, id: \.self) { index in
                 Capsule()
-                    .fill(index <= activeIndex ? Color(red: 0.20, green: 0.48, blue: 0.30).opacity(0.75) : Color.primary.opacity(0.10))
+                    .fill(index <= activeIndex ? Color.accentColor.opacity(0.75) : Color.primary.opacity(0.10))
                     .frame(width: index == activeIndex ? 18 : 6, height: 4)
                     .animation(.easeInOut(duration: 0.35), value: activeIndex)
             }

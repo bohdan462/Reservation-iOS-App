@@ -17,9 +17,9 @@ flowchart TB
         Creds["AppCredentialStore / Keychain"]
         Role["AppRoleStore<br/>manager/developer picker"]
         Env["AppEnvironment<br/>apiClient + selected role + capabilities"]
-        Shell["ReservationsListView<br/>tab shell"]
+        Shell["ReservationsListView<br/>native TabView shell"]
         Ctrl["ReservationsController<br/>workflow coordinator"]
-        Views["Feature views<br/>Home · List · Guests · Review · More"]
+        Views["Feature views<br/>Host · Bookings · Guests · More"]
         GuestLookup["GuestLookup<br/>cache-derived call-in"]
         Guest["GuestInsights<br/>cache-only analytics"]
         Settings["RestaurantSettingsStore<br/>lazy settings/ops UI"]
@@ -114,28 +114,27 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    subgraph Shell["ReservationsListView — all tabs MOUNTED"]
-        H["Home<br/>HomeDashboardView → HostBoardView"]
-        L["List<br/>ReservationScheduleView"]
+    subgraph Shell["ReservationsListView — native TabView"]
+        H["Host<br/>HomeDashboardView → HostBoardView"]
+        L["Bookings<br/>ReservationScheduleView"]
         G["Guests<br/>GuestLookupView"]
-        R["Review<br/>ReservationReviewQueueView"]
         M["More<br/>ReservationMoreView"]
     end
 
-    TabBar["ReservationFloatingTabBar"] --> Shell
-    Shell -->|opacity + hitTesting| Active["visible tab only"]
+    TabView["SwiftUI TabView(selection:)"] --> Shell
+    Shell --> Active["native selected tab"]
 ```
 
 | Tab | Root view | `isActive` gating | Primary data source |
 | --- | --- | --- | --- |
-| Home | `HomeDashboardView` → `HostBoardView` | Yes — auto-refresh, clock, availability | active-window `@Query` filtered to selected date |
-| List | `ReservationScheduleView` | Yes — activation ensure-fresh | active-window `@Query`; All mode paged on demand |
+| Host | `HomeDashboardView` → `HostBoardView` | Yes — auto-refresh, clock, availability | active-window `@Query` filtered to selected date |
+| Bookings | `ReservationScheduleView` | Yes — activation ensure-fresh | active-window `@Query`; Upcoming/Needs Review/Cancelled are cache filters; All mode paged on demand |
 | Guests | `GuestLookupView` | Yes — search/debounce only while active | non-hidden cached reservations grouped into lightweight guest profiles |
-| Review | `ReservationReviewQueueView` | Yes — activation ensure-fresh | active-window pending-review `@Query` |
 | More | `ReservationMoreView` | No | Navigation pushes only |
 
 **What matters**
-- Tabs stay in the tree (opacity/zIndex) to avoid NavigationStack + `@Query` rebuild lag.
+- Native `TabView` owns tab safe areas, selection, and iPad tab behavior.
+- Review is a Bookings filter, not a top-level tab.
 - Inactive tabs do not run auto-refresh loops (`isActive` guards `.task` loops).
 - Guests search is cache-only and does not call Guest Insights / Regular Guests clustering.
 - More sub-screens fetch **only when navigated to** (settings, hidden, cancelled, diagnostics).
@@ -152,7 +151,7 @@ sequenceDiagram
     participant R as ReservationRepository
     participant API as API Client
 
-    Note over V,API: Startup / manual Home/List/Review refresh
+    Note over V,API: Startup / manual Host/Bookings refresh
     V->>C: performStartupNetworkPass / request*Refresh
     C->>S: syncActiveWindowFull(from,to)
     S->>API: GET /managed-reservations?from&to
@@ -172,7 +171,7 @@ sequenceDiagram
     V->>C: scheduleBecameActive
     C->>C: skip if active window fresh/in-flight/cooldown
 
-    Note over V,API: Review tab activation (stale > 120s)
+    Note over V,API: Bookings Needs Review segment (cache filter)
     V->>C: reviewBecameActive
     C->>C: skip if active window fresh/in-flight/cooldown
 ```
@@ -181,10 +180,10 @@ sequenceDiagram
 
 | Scope | Trigger | Endpoint | Write mode | Deletes local orphans? | Cursor (`server_time`) |
 | --- | --- | --- | --- | --- | --- |
-| Active window full | Startup; manual Home/List/Review refresh; stale activation | `GET ?from&to` paged | `replaceDateWindow` | **Yes** in window | Stored |
+| Active window full | Startup; manual Host/Bookings refresh; stale activation | `GET ?from&to` paged | `replaceDateWindow` | **Yes** in window | Stored |
 | Active window delta | Home quiet auto-refresh after cursor | `GET ?from&to&updated_since=` paged | `upsert` | **No** | Stored |
 | Schedule upcoming | Tab active / refresh | Shared active window | cache-first | No separate fetch | Shared |
-| Review pending | Tab active / refresh | Shared active window | cache-first | No separate fetch | Shared |
+| Bookings Needs Review | Segment selection | Shared active window | cache-first | No separate fetch | Shared |
 | Schedule All pages | Search / load more | `GET` paginated | `upsert` | **No** | None |
 | Cancelled | More screen open | `GET ?status=cancelled` | `upsert` | **No** | None |
 | Hidden archive | Hidden screen open | `GET ?include_hidden=1` | `upsert` | **No** | None |
@@ -334,7 +333,7 @@ flowchart TD
 ```
 
 **What matters**
-- Settings loads are **lazy** — do not block Home/List/Review tab switches.
+- Settings loads are **lazy** — do not block Host/Bookings/Guests tab switches.
 - `ensureDateOperations` owns Task lifecycle (prevents stuck spinners on date change).
 - `GET /reservation-slots` is **public** (no auth).
 - Home availability indicator uses controller TTL/in-flight de-dupe, not local `@State` or `RestaurantSettingsStore`.
@@ -486,7 +485,8 @@ flowchart LR
 ### Strong
 
 - Backend remains the source of truth. SwiftData writes happen after successful GET/PATCH/POST/DELETE responses, not as optimistic truth.
-- Home, Schedule upcoming, and Review now share the active operational window cache.
+- Native `TabView` owns Host / Bookings / Guests / More; the custom floating tab bar is deprecated.
+- Home, Bookings upcoming, and Bookings Needs Review now share the active operational window cache.
 - Active-window delta sync is correctly scoped with `from`, `to`, and `updated_since`; delta responses upsert only and never delete missing rows.
 - Startup is cache-first: `ReservationsListView` renders immediately behind a minimum-duration launch overlay while network work runs in the background.
 - Mutations are row/action scoped through `actionInProgressIDs`, `isCreatingReservation`, and reconcile IDs.
@@ -533,7 +533,7 @@ flowchart LR
 
 - Role selection is no longer hardcoded developer; manager/developer are selectable and persisted.
 - Startup is active-window + setup, not today-only.
-- Home/Schedule/Review normal refresh is active-window cache-first, not separate schedule/review fetches.
+- Host/Bookings normal refresh is active-window cache-first, not separate schedule/review fetches.
 - Home availability is controller-cached, not view-local direct API state.
 - Failed Imports is manager-capable in UI as a sheet, not developer-only navigation.
 - Request timeouts are 15s/30s with GET retry capped at one retry.

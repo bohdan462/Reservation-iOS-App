@@ -57,7 +57,9 @@ extension Date {
 
 enum ReservationScheduleScope: String, CaseIterable, Identifiable {
     case upcoming = "Upcoming"
+    case needsReview = "Review"
     case all = "All"
+    case cancelled = "Cancelled"
 
     var id: String { rawValue }
 }
@@ -140,6 +142,13 @@ struct ReservationDateSection: Identifiable {
     let reservations: [ReservationRecord]
 }
 
+struct ReservationHourSection: Identifiable {
+    let id: Int
+    let title: String
+    let subtitle: String
+    let reservations: [ReservationRecord]
+}
+
 extension ReservationRecord {
     var isToday: Bool {
         reservationDate == Date.reservationDateString()
@@ -170,6 +179,30 @@ extension ReservationRecord {
         case .seated, .completed, .cancelled, .noShow:
             return false
         }
+    }
+
+    static let pastDueCompleteGraceMinutes = 30
+
+    func minutesPastDue(now: Date = Date()) -> Int? {
+        guard reservationDate == Date.reservationDateString(),
+              let serviceDate = serviceDateTime else {
+            return nil
+        }
+
+        let secondsPastDue = now.timeIntervalSince(serviceDate)
+        guard secondsPastDue > 0 else {
+            return nil
+        }
+
+        return Int(ceil(secondsPastDue / 60))
+    }
+
+    func isPastDueCompleteEligible(now: Date = Date()) -> Bool {
+        guard let minutesPastDue = minutesPastDue(now: now) else {
+            return false
+        }
+
+        return minutesPastDue >= Self.pastDueCompleteGraceMinutes
     }
 
     var isPastDueForToday: Bool {
@@ -223,6 +256,14 @@ extension ReservationRecord {
 
     var hasTableAssignment: Bool {
         tableName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    var assignedTableName: String? {
+        guard let tableName = tableName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !tableName.isEmpty else {
+            return nil
+        }
+        return tableName
     }
 
     var tableDisplay: String {
@@ -403,6 +444,51 @@ extension ReservationRecord {
 
             return lhsTimingBucket < rhsTimingBucket
         }
+    }
+
+    static func hourSections(
+        from reservations: [ReservationRecord],
+        now: Date = Date()
+    ) -> [ReservationHourSection] {
+        let sorted = sortedForHostBoard(reservations, now: now)
+        let grouped = Dictionary(grouping: sorted) { reservation in
+            serviceHour(from: reservation.reservationTime) ?? -1
+        }
+
+        return grouped.keys
+            .filter { $0 >= 0 }
+            .sorted()
+            .compactMap { hour in
+                guard let rows = grouped[hour], !rows.isEmpty else { return nil }
+                let guestCount = rows.reduce(0) { $0 + $1.partySize }
+                let reservationWord = rows.count == 1 ? "reservation" : "reservations"
+                let guestWord = guestCount == 1 ? "guest" : "guests"
+
+                return ReservationHourSection(
+                    id: hour,
+                    title: hourRangeTitle(for: hour),
+                    subtitle: "\(rows.count) \(reservationWord) · \(guestCount) \(guestWord)",
+                    reservations: rows
+                )
+            }
+    }
+
+    private static func serviceHour(from time: String) -> Int? {
+        guard let hourString = time.split(separator: ":").first,
+              let hour = Int(hourString),
+              (0...23).contains(hour) else {
+            return nil
+        }
+        return hour
+    }
+
+    private static func hourRangeTitle(for hour: Int) -> String {
+        let nextHour = (hour + 1) % 24
+        return "\(hourClockLabel(hour)) – \(hourClockLabel(nextHour))"
+    }
+
+    private static func hourClockLabel(_ hour: Int) -> String {
+        String(format: "%02d:00", hour)
     }
 
     static func sortedNewestFirst(_ reservations: [ReservationRecord]) -> [ReservationRecord] {

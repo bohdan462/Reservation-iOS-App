@@ -110,19 +110,18 @@ Tryzub Reservations/
 
 ---
 
-## 3. Tab shell
+## 3. Native tab shell
 
-Custom `ReservationFloatingTabBar` — **not** `TabView`.
+Root navigation now uses native SwiftUI `TabView(selection:)`. The custom `ReservationFloatingTabBar` is no longer used as the app shell; its file only keeps the tab enum for project stability.
 
 | Tab | Label | Root | Fetches when |
 | --- | --- | --- | --- |
-| `.home` | Home | `HomeDashboardView` → `HostBoardView` | Active-window cache; pull-refresh; 60s active-window delta/full auto-refresh when visible; cached availability summary |
-| `.schedule` | List | `ReservationScheduleView` | Upcoming uses active-window cache; activation only ensures active window freshness; All mode pages history explicitly |
+| `.host` | Host / Dev | `HomeDashboardView` → `HostBoardView` | Active-window cache; pull-refresh; guarded active-window delta/full auto-refresh when visible; cached availability summary |
+| `.bookings` | Bookings | `ReservationScheduleView` | Upcoming/Needs Review/Cancelled filters use active-window cache; All mode pages history explicitly |
 | `.guests` | Guests | `GuestLookupView` | Cache-derived search only; no network while typing |
-| `.review` | Review | `ReservationReviewQueueView` | Filters active-window pending rows; activation only ensures active window freshness |
 | `.more` | More | `ReservationMoreView` | Child screens only on navigation |
 
-**Mount strategy:** All five tabs stay in `ZStack`; visibility via `opacity` / `allowsHitTesting` / `zIndex`. Each main tab has its own `NavigationStack`; More uses a typed destination path to avoid cancelled-detail path mismatch crashes. Desired next navigation cleanup is Host / Bookings / Guests / More; Review remains a separate tab for now.
+**Navigation strategy:** Each visible tab owns a native `NavigationStack`. Review is not a top-level tab; pending and needs-review work now lives in the Bookings segmented filter. More uses a typed destination path to avoid cancelled-detail path mismatch crashes.
 
 **Shared state:** `@EnvironmentObject ReservationsController`, `HiddenReservationsStore`.
 
@@ -151,7 +150,7 @@ Custom `ReservationFloatingTabBar` — **not** `TabView`.
 
 | Screen / feature | Staff | Manager | Developer |
 | --- | :---: | :---: | :---: |
-| Home / List / Review / Detail | ✓ | ✓ | ✓ |
+| Host / Bookings / Detail | ✓ | ✓ | ✓ |
 | Seat, assign table, complete | ✓ | ✓ | ✓ |
 | Confirm, cancel, no-show | ✗ | ✓ | ✓ |
 | Manual create | ✗ | ✓ | ✓ |
@@ -205,17 +204,17 @@ All HTTP; Basic auth; sanitized request logging; one-at-a-time request serialize
 - Staff actions → controller; confirm dialog splits Confirm Only / Confirm + Email
 - Form Problems button: developer-only (both caps)
 
-### List — `ReservationScheduleView`
+### Bookings — `ReservationScheduleView`
 
-- Scopes: Upcoming window (from cache) or All (paginated server search)
+- Scopes: Upcoming, Needs Review, Cancelled (from active-window cache) or All (paginated server search)
 - `scheduleBecameActive` on tab focus only ensures active-window freshness
 - `schedule_all_page` only runs when Schedule is active, scope is `.all`, and the user selects All/searches/refreshes/loads more
 
-### Review — `ReservationReviewQueueView`
+### Review / Needs Review
 
-- Default filter: Pending = `new` + `needs_review`, oldest first
-- Filters active-window cached pending rows
-- `reviewBecameActive` on tab focus only ensures active-window freshness
+- Review is a Bookings filter, not a visible top-level tab.
+- It filters active-window cached pending rows (`new` + `needs_review`).
+- It does not call a separate review queue fetch during tab switching.
 
 ### Guests — `GuestLookupView`
 
@@ -315,8 +314,8 @@ All HTTP; Basic auth; sanitized request logging; one-at-a-time request serialize
 | App launch | Active-window full sync + restaurant setup | Shows cache first behind launch overlay |
 | Home visible, every 60s | Active-window delta if cursor exists, else full | No — background |
 | Home pull-refresh | Active-window full refresh | Refresh indicator |
-| Schedule tab focus (stale) | Active-window full refresh | No |
-| Review tab focus (stale) | Active-window full refresh | No |
+| Bookings tab focus (stale) | Active-window full refresh | No |
+| Bookings → Needs Review | Active-window cache filter | No |
 | Guests search typing | Local cache search only | No |
 | More → Hidden open | `include_hidden=1` upsert | Screen loading state |
 | More → Cancelled open | Cancelled window upsert | Screen loading state |
@@ -425,7 +424,8 @@ All HTTP; Basic auth; sanitized request logging; one-at-a-time request serialize
 
 ### Strong
 
-- Active-window cache now serves Home, Schedule upcoming, and Review.
+- Native `TabView` now owns Host / Bookings / Guests / More navigation.
+- Active-window cache now serves Home, Bookings upcoming, and Bookings needs-review.
 - `updated_since` delta is scoped to the active window and upsert-only.
 - Mutations are server-first and row-scoped; uncertain failures reconcile by ID.
 - Offline/degraded mode keeps cache readable and blocks unsafe mutations.

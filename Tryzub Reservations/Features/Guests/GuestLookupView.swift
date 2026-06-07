@@ -202,7 +202,7 @@ private struct GuestLookupResultCard: View {
                     .frame(maxWidth: .infinity, minHeight: 38)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(Color(.systemBackground))
+            .foregroundStyle(.white)
             .background(ReservationUIStyle.selectedControlColor, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
             .disabled(isBookingDisabled)
             .opacity(isBookingDisabled ? 0.45 : 1)

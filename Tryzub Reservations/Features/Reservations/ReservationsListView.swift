@@ -23,8 +23,7 @@ struct ReservationsListView: View {
     @Query
     private var pendingReviewRows: [ReservationRecord]
 
-    // Source of truth for custom floating navigation; there is no default TabView state.
-    @State private var selectedTab: ReservationsAppTab = .home
+    @State private var selectedTab: ReservationsAppTab = .host
     @State private var isLaunchLoadingPresented = true
 
     let environment: AppEnvironment
@@ -46,48 +45,36 @@ struct ReservationsListView: View {
     }
 
     var body: some View {
-        ZStack {
-            // Keep each tab mounted and toggle visibility so switching does not
-            // rebuild a whole NavigationStack + SwiftData query (which caused lag).
-            // The isActive flags gate each screen's refresh/clock loops.
-            tabContainer(.home) {
-                HomeDashboardView(
-                    environment: environment,
-                    isActive: selectedTab == .home,
-                    deferHomeNetworkLoads: isLaunchLoadingPresented
-                )
-            }
-            tabContainer(.schedule) {
-                ReservationScheduleView(environment: environment, isActive: selectedTab == .schedule)
-            }
-            tabContainer(.guests) {
-                GuestLookupView(environment: environment, isActive: selectedTab == .guests)
-            }
-            tabContainer(.review) {
-                ReservationReviewQueueView(
-                    reservations: pendingReviewRows,
-                    environment: environment,
-                    isActive: selectedTab == .review
-                )
-            }
-            tabContainer(.more) {
-                ReservationMoreView(environment: environment)
-            }
-        }
-        .toolbar(.hidden, for: .navigationBar)
-        .safeAreaInset(edge: .bottom) {
-            // Custom staff navigation stays visible while each screen owns its own NavigationStack.
-            ReservationFloatingTabBar(
-                selection: $selectedTab,
-                reviewAttentionCount: pendingReviewCount
+        TabView(selection: $selectedTab) {
+            HomeDashboardView(
+                environment: environment,
+                isActive: selectedTab == .host,
+                deferHomeNetworkLoads: isLaunchLoadingPresented
             )
-                .padding(.horizontal, 8)
-                .padding(.top, 6)
-                .padding(.bottom, 5)
-                .disabled(isLaunchLoadingPresented)
-                .allowsHitTesting(!isLaunchLoadingPresented)
+            .tabItem {
+                Label(hostTabTitle, systemImage: ReservationsAppTab.host.systemImage)
+            }
+            .tag(ReservationsAppTab.host)
+
+            ReservationScheduleView(environment: environment, isActive: selectedTab == .bookings)
+                .tabItem {
+                    Label(ReservationsAppTab.bookings.title, systemImage: ReservationsAppTab.bookings.systemImage)
+                }
+                .badge(pendingReviewCount)
+                .tag(ReservationsAppTab.bookings)
+
+            GuestLookupView(environment: environment, isActive: selectedTab == .guests)
+                .tabItem {
+                    Label(ReservationsAppTab.guests.title, systemImage: ReservationsAppTab.guests.systemImage)
+                }
+                .tag(ReservationsAppTab.guests)
+
+            ReservationMoreView(environment: environment)
+                .tabItem {
+                    Label(ReservationsAppTab.more.title, systemImage: ReservationsAppTab.more.systemImage)
+                }
+                .tag(ReservationsAppTab.more)
         }
-        
         .fontDesign(.rounded)
         .environmentObject(controller)
         .environmentObject(hiddenReservations)
@@ -135,32 +122,19 @@ struct ReservationsListView: View {
         try? await Task.sleep(for: .milliseconds(200))
     }
 
-    @ViewBuilder
-    private func tabContainer<Content: View>(
-        _ tab: ReservationsAppTab,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        let isSelected = selectedTab == tab
-        content()
-            .opacity(isSelected ? 1 : 0)
-            .allowsHitTesting(isSelected)
-            .accessibilityHidden(!isSelected)
-            .zIndex(isSelected ? 1 : 0)
-    }
-
     private var visibleNotices: [AppNotice] {
         controller.notices.filter { notice in
             switch notice.source {
             case .mutation, .email, .credentials:
                 return true
             case .startup, .manualToday, .autoToday:
-                return selectedTab == .home
+                return selectedTab == .host
             case .schedule:
-                return selectedTab == .schedule
+                return selectedTab == .bookings
             case .review:
-                return selectedTab == .review
+                return selectedTab == .bookings
             case .importFailures, .admin:
-                return selectedTab == .home || selectedTab == .more
+                return selectedTab == .host || selectedTab == .more
             }
         }
     }
@@ -169,11 +143,15 @@ struct ReservationsListView: View {
         pendingReviewRows.count
     }
 
+    private var hostTabTitle: String {
+        environment.role == .developer ? "Dev" : ReservationsAppTab.host.title
+    }
+
     private var noticeTopPadding: CGFloat {
         switch selectedTab {
-        case .schedule, .review:
+        case .bookings:
             return 112
-        case .home, .guests, .more:
+        case .host, .guests, .more:
             return 62
         }
     }
@@ -361,13 +339,25 @@ private struct ReservationScheduleView: View {
         var rows = (scope == .all ? allModeRecords : reservations)
             .filter { !hiddenReservations.isHidden($0) }
 
-        if scope == .upcoming {
+        switch scope {
+        case .upcoming:
             rows = rows.filter {
                 $0.reservationDate >= today
                     && $0.statusValue != .completed
                     && $0.statusValue != .cancelled
                     && $0.statusValue != .noShow
             }
+        case .needsReview:
+            rows = rows.filter {
+                $0.reservationDate >= today
+                    && ($0.statusValue == .new || $0.statusValue == .needsReview)
+            }
+        case .cancelled:
+            rows = rows.filter {
+                $0.statusValue == .cancelled
+            }
+        case .all:
+            break
         }
 
         if scope == .all, let scheduleDateFilter {
@@ -485,18 +475,18 @@ private struct ReservationScheduleView: View {
                     }
                 }
             }
-            .navigationTitle("Schedule")
+            .navigationTitle("Bookings")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: "Name, phone, email, table")
             .listStyle(.plain)
             .contentMargins(.horizontal, 0, for: .scrollContent)
-            .contentMargins(.bottom, 92, for: .scrollContent)
+            .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
             .refreshable {
                 guard isActive else { return }
                 if scope == .all {
                     await loadAllPage(reset: true, caller: "refreshable_all")
                 } else {
-                    // Upcoming manual refresh stays on the shared active-window path.
+                    // Bookings manual refresh stays on the shared active-window path unless All is explicit.
                     await controller.requestScheduleRefresh(context: modelContext)
                 }
             }
@@ -517,7 +507,7 @@ private struct ReservationScheduleView: View {
                             if scope == .all {
                                 await loadAllPage(reset: true, caller: "toolbar_all")
                             } else {
-                                // Upcoming manual refresh stays on the shared active-window path.
+                                // Bookings manual refresh stays on the shared active-window path unless All is explicit.
                                 await controller.requestScheduleRefresh(context: modelContext)
                             }
                         }
@@ -542,7 +532,7 @@ private struct ReservationScheduleView: View {
                 guard isActive else { return }
                 try? await Task.sleep(for: .milliseconds(350))
                 guard !Task.isCancelled else { return }
-                // Schedule tab activation: controller fetches only when cached window is stale.
+                // Bookings tab activation: controller fetches only when cached active window is stale.
                 await controller.scheduleBecameActive(context: modelContext)
             }
             .task(id: searchText) {
@@ -806,7 +796,7 @@ private struct ReservationReviewQueueView: View {
             .searchable(text: $searchText, prompt: "Name, phone, email")
             .listStyle(.plain)
             .contentMargins(.horizontal, 0, for: .scrollContent)
-            .contentMargins(.bottom, 92, for: .scrollContent)
+            .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
             .refreshable {
                 guard isActive else { return }
                 // Staff manual queue refresh: controller fetches new + needs_review.
@@ -835,7 +825,7 @@ private struct ReservationReviewQueueView: View {
                 guard isActive else { return }
                 try? await Task.sleep(for: .milliseconds(350))
                 guard !Task.isCancelled else { return }
-                // Review tab activation: controller refreshes only when queue cache is stale.
+                // Legacy Review screen activation; visible Needs Review now lives in Bookings.
                 await controller.reviewBecameActive(context: modelContext)
             }
             .task(id: searchText) {
@@ -1039,7 +1029,7 @@ private struct ReservationMoreView: View {
                 }
             }
             .navigationTitle("More")
-            .contentMargins(.bottom, 92, for: .scrollContent)
+            .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
             .navigationDestination(for: ReservationMoreDestination.self) { destination in
                 moreDestination(destination)
             }
@@ -1247,7 +1237,7 @@ private struct CancelledReservationsView: View {
         .navigationTitle("Cancelled Reservations")
         .navigationBarTitleDisplayMode(.inline)
         .listStyle(.plain)
-        .contentMargins(.bottom, 92, for: .scrollContent)
+        .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -1441,7 +1431,7 @@ private struct HiddenReservationsView: View {
             }
         }
         .listStyle(.plain)
-        .contentMargins(.bottom, 92, for: .scrollContent)
+        .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
         .navigationTitle("Hidden Reservations")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -1484,7 +1474,7 @@ private struct HiddenReservationsView: View {
         }
         .task {
             // Lazy admin/dev load: hidden rows are fetched only when this screen opens.
-            await loadHiddenReservations(force: false, page: 1)
+            await loadHiddenReservations(force: hiddenRows.isEmpty, page: 1)
         }
         .refreshable {
             await loadHiddenReservations(force: true, page: 1)
@@ -1662,6 +1652,8 @@ private struct ReservationNavigationRow: View {
 
     @State private var pendingAction: ReservationHostAction?
     @State private var tableAssignmentReservation: ReservationRecord?
+    @State private var seatPromptReservation: ReservationRecord?
+    @State private var seatAfterTableAssignment = false
     @State private var hideCandidate: ReservationRecord?
     @State private var hardDeleteCandidate: ReservationRecord?
 
@@ -1680,10 +1672,14 @@ private struct ReservationNavigationRow: View {
                 capabilities: controller.capabilities,
                 compact: true,
                 includeSecondary: false,
-                isBusy: controller.isActionInProgress(for: reservation) || controller.isNetworkDegraded
-            ) { action in
-                handleAction(action)
-            }
+                isBusy: controller.isActionInProgress(for: reservation) || controller.isNetworkDegraded,
+                onAction: { action in
+                    handleAction(action)
+                },
+                onSeatRequiresTableChoice: {
+                    seatPromptReservation = reservation
+                }
+            )
         }
         .contentShape(Rectangle())
         .onTapGesture {
@@ -1730,6 +1726,16 @@ private struct ReservationNavigationRow: View {
                 }
             }
         }
+        .reservationSeatTableChoice(
+            seatPromptReservation: $seatPromptReservation,
+            onAssignTable: { reservation in
+                seatAfterTableAssignment = true
+                tableAssignmentReservation = reservation
+            },
+            onSeatWithoutTable: { _ in
+                Task { await perform(.seat) }
+            }
+        )
         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
@@ -1823,6 +1829,15 @@ private struct ReservationNavigationRow: View {
                     request: ReservationUpdateRequest(tableName: tableName),
                     context: modelContext
                 )
+                if seatAfterTableAssignment {
+                    seatAfterTableAssignment = false
+                    await controller.updateStatus(
+                        reservation: reservation,
+                        status: .seated,
+                        context: modelContext
+                    )
+                    ReservationHaptics.success()
+                }
             }
         }
     }

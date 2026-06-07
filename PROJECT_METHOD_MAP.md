@@ -72,7 +72,7 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 | Field | Value |
 | --- | --- |
 | Who calls | `ReservationScheduleView.task(id: isActive)` |
-| Business action | User opens List tab |
+| Business action | User opens Bookings tab |
 | Network | Yes — only if active-window scope stale (>300s) |
 | SwiftData | `replaceDateWindow(active window)` |
 | Endpoint | `GET /managed-reservations?from&to` paged |
@@ -101,8 +101,8 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 #### `reviewBecameActive(context:)`
 | Field | Value |
 | --- | --- |
-| Who calls | `ReservationReviewQueueView.task(id: isActive)` |
-| Business action | User opens Review tab |
+| Who calls | Legacy `ReservationReviewQueueView.task(id: isActive)` if that unused view is reintroduced |
+| Business action | Legacy Review screen activation; visible Needs Review work now lives in Bookings and filters the active-window cache |
 | Network | Yes — only if active-window scope stale (>120s) |
 | SwiftData | `replaceDateWindow(active window)` if refresh proceeds |
 | Endpoint | `GET /managed-reservations?from&to` paged |
@@ -111,7 +111,7 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 #### `requestReviewRefresh(context:source:)`
 | Field | Value |
 | --- | --- |
-| Who calls | Review pull-refresh, toolbar |
+| Who calls | Legacy Review pull-refresh/toolbar if that unused view is reintroduced |
 | Network | Yes — active-window full refresh |
 | SwiftData | replace active date window |
 | Audience | all |
@@ -348,7 +348,7 @@ All throw `actionAlreadyInProgress` if overlapping load/save flags set.
 | --- | --- | --- | --- | --- |
 | `syncActiveWindowFull` | `GET ?from&to` paged | `replaceDateWindow` | **Yes** in active window | Yes — normal startup/manual/stale activation |
 | `syncActiveWindowChanges` | `GET ?from&to&updated_since=` paged | `upsert` if non-empty | **No** | Yes — auto only |
-| `syncTodayFull` | `GET ?date=today` | `replaceDateScope` | **Yes** (today) | **Legacy/private/diagnostic only. Do not use for normal Home/List/Review activation.** |
+| `syncTodayFull` | `GET ?date=today` | `replaceDateScope` | **Yes** (today) | **Legacy/private/diagnostic only. Do not use for normal Host/Bookings activation.** |
 | `syncTodayChanges(since:)` | `GET ?date=today&updated_since=` | `upsert` if non-empty | **No** | **Legacy/private/diagnostic only. Normal delta is active-window scoped with `from` and `to`.** |
 | `syncScheduleWindowFull` | `GET ?from&to` paged | `replaceDateWindow` | **Yes** in window | Legacy/private path |
 | `syncReviewQueues` | 2× status GET | `replaceReviewQueue` | **No** | Legacy/private path/diagnostic understanding |
@@ -528,7 +528,7 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 | Trigger | Method / effect |
 | --- | --- |
 | `.task` | `performStartupNetworkPass` behind launch overlay |
-| `tabContainer` | Mount all tabs; toggle visibility |
+| Native `TabView(selection:)` | Owns Host / Bookings / Guests / More tab selection |
 | `visibleNotices` | Tab-filter notice sources |
 
 ### HomeDashboardView / HostBoardView
@@ -543,15 +543,15 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 ### ReservationScheduleView
 | Trigger | Effect |
 | --- | --- |
-| `.task(id: isActive)` | `scheduleBecameActive` → active-window freshness check |
-| `.refreshable` | Upcoming: active-window refresh; All: `loadScheduleAllPage` |
+| `.task(id: isActive)` | Bookings activation → `scheduleBecameActive` → active-window freshness check |
+| `.refreshable` | Upcoming/Needs Review/Cancelled: active-window refresh; All: `loadScheduleAllPage` |
 | Load more / search | `loadScheduleAllPage` only when active and scope `.all` |
 
 ### ReservationReviewQueueView
 | Trigger | Effect |
 | --- | --- |
-| `.task(id: isActive)` | `reviewBecameActive` → active-window freshness check |
-| `.refreshable` | active-window refresh |
+| Top-level visibility | No longer visible in the native tab shell |
+| If reintroduced | `reviewBecameActive` / active-window refresh only |
 
 ### GuestLookupView
 | Trigger | Effect |
@@ -630,7 +630,7 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 | `Features/GuestInsights/RegularGuestsView.swift` | Partly mitigated | Broad `@Query` still observes cached reservations, but `RegularGuestsStore` now caches clustered summaries and debounces search display updates. | Later | Move analysis to lightweight snapshots/off-main work if cache grows further. |
 | `Features/GuestInsights/RegularGuestsController.swift` | Confirmed | `exactAndStrongClusters` performs pairwise matching across records; cost grows quickly with cache size. | Later | Pre-index by phone/email/name keys before pairwise fallback. |
 | `Features/GuestInsights/GuestInsightsView.swift` | Partly mitigated | Report is now computed into state keyed by selected reservation/cache freshness instead of as a body computed property. | Later | Avoid passing broad SwiftData arrays by using lightweight snapshots. |
-| `Features/Reservations/ReservationsListView.swift` root `@Query pendingReviewRows` | Mitigated | Narrowed to active window and pending statuses, but still updates while all tabs are mounted. | Later | Keep unless badge count becomes janky; then publish count from controller/cache snapshot. |
+| `Features/Reservations/ReservationsListView.swift` root `@Query pendingReviewRows` | Mitigated | Narrowed to active window and pending statuses; now feeds the Bookings tab badge under native `TabView`. | Later | Keep unless badge count becomes janky; then publish count from controller/cache snapshot. |
 | `HomeDashboardView` active-window `@Query` | Mitigated | Active-window query observes upserts and filters selected date in computed property. | Later | Current scope is acceptable; avoid expanding to all history. |
 | `ReservationScheduleView.displayedReservations` | Mitigated | Filters/sorts active-window cache in body; All mode uses local page IDs and repository lookup. | Later | Keep All mode explicit; consider section snapshots if active window grows beyond pilot scale. |
 | `HostBoardView.runAutoRefreshLoop` / `runClockLoop` | Mitigated | Async loops exist, but `.task(id:)` cancels them as visibility/app-active changes. | Later | Keep `isVisible` guards; never start loops from hidden tabs. |

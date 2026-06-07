@@ -41,10 +41,10 @@ enum TryzubColors {
     static let primaryText = Color.primary.opacity(0.86)
     static let attentionBackground = Color(.systemRed).opacity(0.10)
     static let attentionBorder = Color(.systemRed).opacity(0.30)
-    static let dueSoonBackground = Color(.systemGray5)
+    static let dueSoonBackground = Color(.tertiarySystemGroupedBackground)
     static let successBackground = Color(.systemGreen).opacity(0.10)
-    static let primaryControl = Color(red: 0.02, green: 0.08, blue: 0.18)
-    static let destructiveText = Color(red: 0.55, green: 0.16, blue: 0.13)
+    static let primaryControl = Color.accentColor
+    static let destructiveText = Color(.systemRed)
 
     // Semantic accents used by status/warning chips so labels read consistently.
     static let warning = Color(.systemOrange)
@@ -54,13 +54,12 @@ enum TryzubColors {
     static let neutralChip = Color.secondary
 }
 
-// Single source of truth for clearing the floating tab bar so bottom actions
-// in pushed navigation destinations never hide behind it.
+// Single source of truth for native tab-safe bottom spacing.
 enum ReservationLayout {
-    /// Approximate visual height of the floating tab bar plus its outer padding.
-    static let floatingTabBarClearance: CGFloat = 84
-    /// Bottom inset for scroll content on top-level tab screens.
-    static let scrollBottomInset: CGFloat = 96
+    /// Extra clearance used by pushed bottom action bars; native TabView owns the tab safe area.
+    static let floatingTabBarClearance: CGFloat = 16
+    /// Small bottom inset for scroll content on top-level tab screens.
+    static let scrollBottomInset: CGFloat = 16
 }
 
 /// Consistent spacing for time/table slot chip grids across the app.
@@ -88,11 +87,17 @@ struct ReservationFormChange: Identifiable {
 }
 
 struct ReservationFormChangeReview: View {
-    let changes: [ReservationFormChange]
+    var changes: [ReservationFormChange] = []
     var createSummary: [(String, String)] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if createSummary.isEmpty && changes.isEmpty {
+                Text("No changes to review.")
+                    .font(.subheadline)
+                    .foregroundStyle(TryzubColors.mutedText)
+            }
+
             if !createSummary.isEmpty {
                 ForEach(createSummary, id: \.0) { item in
                     summaryRow(label: item.0, value: item.1)
@@ -132,6 +137,84 @@ struct ReservationFormChangeReview: View {
     }
 }
 
+struct ReservationFormConfirmationSheet<Content: View>: View {
+    let title: String
+    var subtitle: String?
+    let confirmTitle: String
+    var cancelTitle = "Back to Form"
+    let isProcessing: Bool
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        content()
+                    }
+                    .padding(TryzubSpacing.cardPadding)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    }
+                }
+                .padding(TryzubSpacing.screenPadding)
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(cancelTitle) {
+                        onCancel()
+                        dismiss()
+                    }
+                    .disabled(isProcessing)
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                Button {
+                    onConfirm()
+                } label: {
+                    Group {
+                        if isProcessing {
+                            ProgressView()
+                                .tint(Color(.systemBackground))
+                        } else {
+                            Text(confirmTitle)
+                                .font(TryzubTypography.button)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color(.systemBackground))
+                .background(TryzubColors.primaryControl, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                .padding(.horizontal, TryzubSpacing.screenPadding)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
+                .background(.bar)
+                .disabled(isProcessing)
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+}
+
 enum TryzubTypography {
     static let screenTitle = Font.title2.weight(.semibold)
     static let sectionTitle = Font.headline.weight(.semibold)
@@ -156,7 +239,7 @@ enum ReservationUIStyle {
     static let cardCorner = TryzubSpacing.cornerRadius
     static let controlCorner = TryzubSpacing.controlCornerRadius
     static let selectedControlColor = TryzubColors.primaryControl
-    static let serviceTitleColor = Color(red: 0.03, green: 0.10, blue: 0.22)
+    static let serviceTitleColor = Color.primary
     static let cancelColor = TryzubColors.destructiveText
 }
 
@@ -248,7 +331,7 @@ struct TryzubPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(TryzubTypography.button)
-            .foregroundStyle(Color(.systemBackground))
+            .foregroundStyle(.white)
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(TryzubColors.primaryControl, in: RoundedRectangle(cornerRadius: TryzubSpacing.controlCornerRadius, style: .continuous))
             .opacity(configuration.isPressed ? 0.72 : 1)
@@ -398,10 +481,10 @@ struct ReservationChoiceChip: View {
                     .font(.caption2.weight(.medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
-                    .foregroundStyle(isSelected ? Color(.systemBackground).opacity(0.82) : .secondary)
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.82) : .secondary)
             }
         }
-        .foregroundStyle(isSelected ? Color(.systemBackground) : .primary.opacity(0.82))
+        .foregroundStyle(isSelected ? Color.white : .primary.opacity(0.82))
         .frame(maxWidth: fillsWidth ? .infinity : nil, minHeight: minHeight)
         .frame(minWidth: minWidth)
         .padding(.horizontal, 10)
