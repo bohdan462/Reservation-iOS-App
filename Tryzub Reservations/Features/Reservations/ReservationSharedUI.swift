@@ -237,6 +237,7 @@ enum TryzubSeatedDurationResolver {
     static let greenFlashingMinutes = 80
     static let yellowStaticMinutes = 100
     static let redFlashingMinutes = 120
+    static let localSeatedTimestampsKey = "tryzub.localSeatedTimestamps"
 
     static func dotStyle(elapsedMinutes: Int) -> TryzubStaffStatusDotStyle? {
         if elapsedMinutes >= redFlashingMinutes {
@@ -249,6 +250,57 @@ enum TryzubSeatedDurationResolver {
             return .greenFlashing
         }
         return nil
+    }
+
+    static func loadLocalSeatedTimestamps() -> [Int: Date] {
+        guard let raw = UserDefaults.standard.dictionary(forKey: localSeatedTimestampsKey) as? [String: TimeInterval] else {
+            return [:]
+        }
+        return raw.reduce(into: [Int: Date]()) { result, pair in
+            guard let id = Int(pair.key), pair.value.isFinite else { return }
+            result[id] = Date(timeIntervalSince1970: pair.value)
+        }
+    }
+
+    static func seatedAt(
+        for reservation: ReservationRecord,
+        localTimestamps: [Int: Date] = loadLocalSeatedTimestamps()
+    ) -> Date? {
+        guard reservation.statusValue == .seated else { return nil }
+
+        if let seatedAt = localTimestamps[reservation.remoteID] {
+            return seatedAt
+        }
+
+        guard let value = reservation.apiUpdatedAt?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+
+        return ReservationFormatters.serverDateTime.date(from: value)
+            ?? ReservationFormatters.serverDateMinute.date(from: value)
+    }
+
+    static func elapsedSeatedMinutes(
+        for reservation: ReservationRecord,
+        now: Date = Date(),
+        localTimestamps: [Int: Date] = loadLocalSeatedTimestamps()
+    ) -> Int? {
+        guard let seatedAt = seatedAt(for: reservation, localTimestamps: localTimestamps) else {
+            return nil
+        }
+        return max(0, Int(now.timeIntervalSince(seatedAt))) / 60
+    }
+
+    static func hasLongSeatedWarning(
+        for reservation: ReservationRecord,
+        now: Date = Date(),
+        localTimestamps: [Int: Date] = loadLocalSeatedTimestamps()
+    ) -> Bool {
+        guard let minutes = elapsedSeatedMinutes(for: reservation, now: now, localTimestamps: localTimestamps) else {
+            return false
+        }
+        return dotStyle(elapsedMinutes: minutes) != nil
     }
 }
 

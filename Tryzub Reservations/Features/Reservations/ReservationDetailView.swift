@@ -368,8 +368,15 @@ struct ReservationDetailView: View {
             }
             .background(Color(.systemGroupedBackground))
         }
-        .navigationTitle(reservation.guestName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(reservation.guestName)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
         .sheet(item: $tableAssignmentReservation) { reservation in
             TableAssignmentSheet(reservation: reservation) { tableName in
                 // Table assignment is a server PATCH through the controller.
@@ -1069,8 +1076,8 @@ private struct DetailHeroCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(header.guestName)
                     .font(.title3.weight(.semibold))
-                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 DetailHeroMetadataLine(
                     partyText: header.partyText,
@@ -1088,8 +1095,8 @@ private struct DetailHeroCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(header.guestName)
                     .font(.headline.weight(.semibold))
-                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 DetailHeroMetadataLine(
                     partyText: header.partyText,
@@ -1128,15 +1135,12 @@ private struct DetailHeroMetadataLine: View {
     let sourceText: String
 
     var body: some View {
-        HStack(spacing: 10) {
+        FlowLayout(spacing: 8) {
             DetailMetadataItem(systemImage: "person.2", text: partyText)
-            DetailMetadataSeparator()
             DetailMetadataItem(systemImage: "table.furniture", text: tableText)
-            DetailMetadataSeparator()
             DetailMetadataItem(systemImage: "tray.and.arrow.down", text: sourceText)
         }
-        .lineLimit(1)
-        .minimumScaleFactor(0.8)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1149,14 +1153,7 @@ private struct DetailMetadataItem: View {
             .labelStyle(.titleAndIcon)
             .font(.subheadline)
             .foregroundStyle(.secondary)
-    }
-}
-
-private struct DetailMetadataSeparator: View {
-    var body: some View {
-        Text("·")
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.quaternary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -1415,24 +1412,20 @@ private struct DetailSectionCard<Content: View>: View {
 private struct DetailDataRow: View {
     let title: String
     let value: String
-    var allowsWrap = false
+    var allowsWrap = true
 
     var body: some View {
-        HStack(alignment: allowsWrap ? .top : .firstTextBaseline, spacing: 12) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
-                .frame(minWidth: 88, alignment: .leading)
-
-            Spacer(minLength: 8)
 
             Text(value)
+                .font(.body)
                 .foregroundStyle(.primary)
-                .multilineTextAlignment(.trailing)
-                .lineLimit(allowsWrap ? nil : 1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.body)
     }
 }
 
@@ -1442,34 +1435,32 @@ private struct DetailContactRow: View {
     let url: URL?
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
-                .frame(minWidth: 88, alignment: .leading)
-
-            Spacer(minLength: 8)
 
             if let url {
                 Link(destination: url) {
-                    HStack(spacing: 6) {
+                    HStack(alignment: .top, spacing: 6) {
                         Text(value)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
                         Image(systemName: title == "Phone" ? "phone.fill" : "envelope.fill")
                             .font(.footnote)
+                            .padding(.top, 2)
                     }
                     .foregroundStyle(TryzubColors.info)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .trailing)
             } else {
                 Text(value)
+                    .font(.body)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .font(.body)
     }
 }
 
@@ -1484,6 +1475,7 @@ private struct DetailPlainLine: View {
         Text(text)
             .font(.body)
             .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

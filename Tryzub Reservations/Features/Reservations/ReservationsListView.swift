@@ -20,6 +20,7 @@ struct ReservationsListView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var controller: ReservationsController
     @StateObject private var hiddenReservations = HiddenReservationsStore()
+    @StateObject private var privacyCoverSettings = RestaurantPrivacyCoverSettingsStore()
 
     let environment: AppEnvironment
 
@@ -32,6 +33,7 @@ struct ReservationsListView: View {
         ReservationsTabShell(environment: environment)
             .environmentObject(controller)
             .environmentObject(hiddenReservations)
+            .environmentObject(privacyCoverSettings)
             .task {
                 await controller.performStartupNetworkPass(context: modelContext)
             }
@@ -42,6 +44,8 @@ private struct ReservationsTabShell: View {
     @EnvironmentObject private var controller: ReservationsController
     @Query
     private var pendingReviewRows: [ReservationRecord]
+    @Query
+    private var serviceWindowReservations: [ReservationRecord]
 
     @State private var selectedTab: ReservationsAppTab = .host
 
@@ -59,6 +63,17 @@ private struct ReservationsTabShell: View {
                     && reservation.reservationDate <= toDate
                     && (reservation.status == "new" || reservation.status == "needs_review")
             }
+        )
+        _serviceWindowReservations = Query(
+            filter: #Predicate<ReservationRecord> { reservation in
+                !reservation.isHidden
+                    && reservation.reservationDate >= fromDate
+                    && reservation.reservationDate <= toDate
+            },
+            sort: [
+                SortDescriptor(\ReservationRecord.reservationDate),
+                SortDescriptor(\ReservationRecord.reservationTime)
+            ]
         )
     }
 
@@ -107,6 +122,9 @@ private struct ReservationsTabShell: View {
         }
         .onChange(of: pendingReviewCount) { _, count in
             controller.setPendingReviewAttentionCount(count)
+        }
+        .restaurantPrivacyCover {
+            RestaurantPrivacyCoverDataController.snapshot(from: serviceWindowReservations)
         }
     }
 
@@ -903,6 +921,7 @@ private struct ReservationMoreView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var roleStore: AppRoleStore
+    @EnvironmentObject private var privacyCoverSettings: RestaurantPrivacyCoverSettingsStore
 
     @StateObject private var settingsStore: RestaurantSettingsStore
     @State private var showManualCreate = false
@@ -950,6 +969,8 @@ private struct ReservationMoreView: View {
                     .pickerStyle(.segmented)
                     .listRowBackground(Color.clear)
                 }
+
+                RestaurantPrivacyCoverSettingsSection(settings: privacyCoverSettings)
 
                 Section("Restaurant Operations") {
                     NavigationLink(value: ReservationMoreDestination.cancelled) {
