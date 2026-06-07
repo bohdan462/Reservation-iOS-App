@@ -1031,11 +1031,6 @@ private struct ReservationMoreView: View {
                     }
                 }
 
-                Section("Duplicate Resolution") {
-                    Text("Keep the correct reservation active. Open the duplicate, tap Edit, set Superseded By to the keeper ID, change status to Cancelled, and add a staff note.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
 
                 Section("Account") {
                     LabeledContent("Role", value: environment.role.displayName)
