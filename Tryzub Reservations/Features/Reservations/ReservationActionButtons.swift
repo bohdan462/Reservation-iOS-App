@@ -404,6 +404,7 @@ struct ReservationActionButtons: View {
     let capabilities: AppCapabilities
     var compact = false
     var includeSecondary = true
+    var primaryFillsWidth = false
     var actionSurface: ReservationActionSurface?
     var isBusy = false
     let onAction: (ReservationHostAction) -> Void
@@ -481,79 +482,130 @@ struct ReservationActionButtons: View {
     }
 
     private var fullActions: some View {
-        HStack(spacing: 8) {
-            if let primaryAction = actions.first {
-                actionButton(primaryAction, compact: false, isPrimary: true)
-            }
+        Group {
+            if primaryFillsWidth, let primaryAction = actions.first {
+                VStack(spacing: 10) {
+                    actionButton(primaryAction, compact: false, isPrimary: true)
 
-            if actions.count > 1 {
-                Menu {
-                    ForEach(actions.dropFirst()) { action in
-                        if let disabledLabel = action.disabledLabel {
-                            Button(disabledLabel) {}
-                                .disabled(true)
-                        } else {
-                            Button(role: action.role) {
-                                onAction(action)
-                            } label: {
-                                Label(action.fullTitle, systemImage: action.systemImage)
-                            }
-                        }
+                    if actions.count > 1 {
+                        detailSecondaryMenu
                     }
-                } label: {
-                    Label("More", systemImage: "ellipsis")
-                        .labelStyle(.titleAndIcon)
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(1)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
                 }
+            } else {
+                HStack(spacing: 8) {
+                    if let primaryAction = actions.first {
+                        actionButton(primaryAction, compact: false, isPrimary: true)
+                    }
+
+                    if actions.count > 1 {
+                        detailSecondaryMenu
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var detailSecondaryMenu: some View {
+        let menu = Menu {
+            ForEach(actions.dropFirst()) { action in
+                if let disabledLabel = action.disabledLabel {
+                    Button(disabledLabel) {}
+                        .disabled(true)
+                } else {
+                    Button(role: action.role) {
+                        onAction(action)
+                    } label: {
+                        Label(action.fullTitle, systemImage: action.systemImage)
+                    }
+                }
+            }
+        } label: {
+            if primaryFillsWidth {
+                Label("More", systemImage: "ellipsis")
+                    .frame(maxWidth: .infinity)
+            } else {
+                Label("More", systemImage: "ellipsis")
+                    .labelStyle(.titleAndIcon)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+            }
+        }
+        .disabled(isBusy)
+
+        if primaryFillsWidth {
+            menu
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+        } else {
+            menu
                 .buttonStyle(.plain)
                 .foregroundStyle(.primary.opacity(0.74))
                 .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .disabled(isBusy)
-            }
         }
     }
 
     // MARK: - Button Rendering
 
     private func actionButton(_ action: ReservationHostAction, compact: Bool, isPrimary: Bool) -> some View {
-        Button {
-            handleTap(action)
-        } label: {
-            if compact {
-                Text(title(for: action, compact: true))
-                    .font(.caption2.weight(.medium))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
+        Group {
+            if primaryFillsWidth, !compact {
+                let label = Label(title(for: action, compact: false), systemImage: action.systemImage)
+                    .frame(maxWidth: .infinity)
+
+                Group {
+                    if pendingInlineAction == action {
+                        Button(action: { handleTap(action) }) { label }
+                            .buttonStyle(.bordered)
+                    } else {
+                        Button(action: { handleTap(action) }) { label }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+                .controlSize(.large)
+                .disabled(isBusy || !action.isInteractionEnabled)
+                .opacity(action.isInteractionEnabled ? 1 : 0.45)
+                .accessibilityLabel(accessibilityLabel(for: action))
             } else {
-                Label(title(for: action, compact: false), systemImage: action.systemImage)
-                    .labelStyle(.titleAndIcon)
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
+                Button {
+                    handleTap(action)
+                } label: {
+                    if compact {
+                        Text(title(for: action, compact: true))
+                            .font(.caption2.weight(.medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                    } else {
+                        Label(title(for: action, compact: false), systemImage: action.systemImage)
+                            .labelStyle(.titleAndIcon)
+                            .font(.subheadline.weight(.medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(pendingInlineAction == action ? Color(.systemBackground) : .primary)
+                .background(
+                    pendingInlineAction == action ? Color.primary.opacity(0.82) : Color(.systemGray6),
+                    in: RoundedRectangle(cornerRadius: compact ? 8 : 9, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: compact ? 8 : 9, style: .continuous)
+                        .stroke(pendingInlineAction == action ? Color.primary.opacity(0.55) : Color.primary.opacity(isPrimary ? 0.22 : 0.14), lineWidth: 1)
+                )
+                .disabled(isBusy || !action.isInteractionEnabled)
+                .opacity(action.isInteractionEnabled ? 1 : 0.45)
+                .accessibilityLabel(accessibilityLabel(for: action))
             }
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(pendingInlineAction == action ? Color(.systemBackground) : .primary)
-        .background(
-            pendingInlineAction == action ? Color.primary.opacity(0.82) : Color(.systemGray6),
-            in: RoundedRectangle(cornerRadius: compact ? 8 : 9, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: compact ? 8 : 9, style: .continuous)
-                .stroke(pendingInlineAction == action ? Color.primary.opacity(0.55) : Color.primary.opacity(isPrimary ? 0.22 : 0.14), lineWidth: 1)
-        )
-        .disabled(isBusy || !action.isInteractionEnabled)
-        .opacity(action.isInteractionEnabled ? 1 : 0.45)
-        .accessibilityLabel(accessibilityLabel(for: action))
     }
 
     // MARK: - Inline Confirmation

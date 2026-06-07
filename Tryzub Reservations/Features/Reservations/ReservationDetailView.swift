@@ -463,6 +463,18 @@ struct ReservationDetailView: View {
 
     // MARK: - Detail Layout
 
+    private func detailColumnPair<Left: View, Right: View>(
+        @ViewBuilder left: () -> Left,
+        @ViewBuilder right: () -> Right
+    ) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            left()
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            right()
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
     @ViewBuilder
     private func detailContent(isWide: Bool) -> some View {
         let presentation = ReservationDetailPresentation.make(
@@ -474,24 +486,29 @@ struct ReservationDetailView: View {
             banners
 
             if isWide {
-                HStack(alignment: .top, spacing: 16) {
-                    VStack(spacing: 14) {
-                        DetailHeroCard(header: presentation.header)
+                VStack(spacing: 14) {
+                    detailColumnPair {
+                        DetailHeroCard(header: presentation.header, layout: .compact)
+                    } right: {
                         actionBar
-                        contactCard
                     }
-                    .frame(width: 360)
 
-                    VStack(spacing: 14) {
+                    detailColumnPair {
+                        contactCard
+                    } right: {
                         notesCard(presentation)
+                    }
+
+                    detailColumnPair {
                         detailsCard(presentation)
+                    } right: {
                         ReservationServiceLoadCard(
                             reservation: reservation,
                             sameDayReservations: sameDayReservations
                         )
-                        guestInsightsSection
                     }
-                    .frame(maxWidth: .infinity)
+
+                    guestInsightsSection
                 }
             } else {
                 VStack(spacing: 14) {
@@ -1018,52 +1035,128 @@ private struct GuestInsightsPreviewCard: View {
 
 // MARK: - Reservation Hero Card
 
+private enum DetailHeroLayout {
+    case standard
+    case compact
+}
+
 private struct DetailHeroCard: View {
     let header: ReservationDetailPresentation.Header
+    var layout: DetailHeroLayout = .standard
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(header.timeText)
-                        .font(.system(size: 40, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-
-                    Text(header.dateText)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 8)
-
-                ReservationStatusBadge(status: header.status)
-            }
-
-            Divider().opacity(0.4)
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text(header.guestName)
-                    .font(.title2.weight(.semibold))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                FlowLayout(spacing: 7) {
-                    DetailPill(label: header.partyText, systemImage: "person.2", tint: .secondary)
-                    DetailPill(label: header.tableText, systemImage: "table.furniture", tint: .secondary)
-                    DetailPill(label: header.sourceText, systemImage: "tray.and.arrow.down", tint: .secondary)
-                }
+        Group {
+            switch layout {
+            case .standard:
+                standardHero
+            case .compact:
+                compactHero
             }
         }
-        .padding(18)
+        .padding(layout == .compact ? 16 : 18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
+    }
+
+    private var standardHero: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            heroTimeRow(timeFont: .system(.largeTitle, design: .rounded, weight: .semibold))
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(header.guestName)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                DetailHeroMetadataLine(
+                    partyText: header.partyText,
+                    tableText: header.tableText,
+                    sourceText: header.sourceText
+                )
+            }
+        }
+    }
+
+    private var compactHero: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            heroTimeRow(timeFont: .system(.title, design: .rounded, weight: .semibold))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(header.guestName)
+                    .font(.headline.weight(.semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                DetailHeroMetadataLine(
+                    partyText: header.partyText,
+                    tableText: header.tableText,
+                    sourceText: header.sourceText
+                )
+            }
+        }
+    }
+
+    private func heroTimeRow(timeFont: Font) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(header.timeText)
+                    .font(timeFont)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+
+                Text(header.dateText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            ReservationStatusBadge(status: header.status)
+        }
+    }
+}
+
+private struct DetailHeroMetadataLine: View {
+    let partyText: String
+    let tableText: String
+    let sourceText: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            DetailMetadataItem(systemImage: "person.2", text: partyText)
+            DetailMetadataSeparator()
+            DetailMetadataItem(systemImage: "table.furniture", text: tableText)
+            DetailMetadataSeparator()
+            DetailMetadataItem(systemImage: "tray.and.arrow.down", text: sourceText)
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+    }
+}
+
+private struct DetailMetadataItem: View {
+    let systemImage: String
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: systemImage)
+            .labelStyle(.titleAndIcon)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+    }
+}
+
+private struct DetailMetadataSeparator: View {
+    var body: some View {
+        Text("·")
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.quaternary)
     }
 }
 
@@ -1095,38 +1188,41 @@ private struct DetailActionBar: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
-            if isNetworkDegraded {
-                Label("Offline — edits require internet.", systemImage: "wifi.slash")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(TryzubColors.mutedText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            if showsPendingConfirmationButtons {
-                pendingConfirmationActions
-            } else {
-                ReservationActionButtons(
-                    reservation: reservation,
-                    capabilities: capabilities,
-                    compact: false,
-                    includeSecondary: false,
-                    actionSurface: .detail,
-                    isBusy: isBusy || isNetworkDegraded,
-                    onAction: onAction,
-                    onSeatRequiresTableChoice: onSeatRequiresTableChoice
-                )
-            }
-
-            HStack(spacing: 10) {
-                secondaryButton(title: "Edit", systemImage: "pencil") {
-                    onEdit()
+        DetailSectionCard(title: "Actions", systemImage: "hand.tap.fill") {
+            VStack(alignment: .leading, spacing: 12) {
+                if isNetworkDegraded {
+                    Label("Offline — edits require internet.", systemImage: "wifi.slash")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(TryzubColors.mutedText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .disabled(!capabilities.canEditReservationDetails || isNetworkDegraded)
 
-                if showsMoreMenu {
-                    moreMenu
-                        .disabled(isNetworkDegraded)
+                if showsPendingConfirmationButtons {
+                    pendingConfirmationActions
+                } else {
+                    ReservationActionButtons(
+                        reservation: reservation,
+                        capabilities: capabilities,
+                        compact: false,
+                        includeSecondary: false,
+                        primaryFillsWidth: true,
+                        actionSurface: .detail,
+                        isBusy: isBusy || isNetworkDegraded,
+                        onAction: onAction,
+                        onSeatRequiresTableChoice: onSeatRequiresTableChoice
+                    )
+                }
+
+                HStack(spacing: 10) {
+                    secondaryButton(title: "Edit", systemImage: "pencil") {
+                        onEdit()
+                    }
+                    .disabled(!capabilities.canEditReservationDetails || isNetworkDegraded)
+
+                    if showsMoreMenu {
+                        moreMenu
+                            .disabled(isNetworkDegraded)
+                    }
                 }
             }
         }
@@ -1137,7 +1233,7 @@ private struct DetailActionBar: View {
     }
 
     private var pendingConfirmationActions: some View {
-        HStack(spacing: 8) {
+        VStack(spacing: 10) {
             pendingConfirmationButton(
                 title: ReservationHostAction.confirmOnly.shortTitle,
                 systemImage: ReservationHostAction.confirmOnly.systemImage,
@@ -1159,45 +1255,36 @@ private struct DetailActionBar: View {
         }
     }
 
+    @ViewBuilder
     private func pendingConfirmationButton(
         title: String,
         systemImage: String,
         isPrimary: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .labelStyle(.titleAndIcon)
-                .font(.subheadline.weight(.medium))
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+        let label = Label(title, systemImage: systemImage)
+            .frame(maxWidth: .infinity)
+
+        Group {
+            if isPrimary {
+                Button(action: action) { label }
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Button(action: action) { label }
+                    .buttonStyle(.bordered)
+            }
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.primary)
-        .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(Color.primary.opacity(isPrimary ? 0.22 : 0.14), lineWidth: 1)
-        }
+        .controlSize(.large)
         .disabled(isBusy || isNetworkDegraded)
     }
 
     private func secondaryButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary.opacity(0.82))
-                .frame(maxWidth: .infinity, minHeight: 40)
+                .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.plain)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
     }
 
     private var moreMenu: some View {
@@ -1277,16 +1364,10 @@ private struct DetailActionBar: View {
             }
         } label: {
             Label("More", systemImage: "ellipsis")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary.opacity(0.82))
-                .frame(maxWidth: .infinity, minHeight: 40)
+                .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.plain)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
         .disabled(isBusy || isGeneratingGuestManageLink)
     }
 
@@ -1314,8 +1395,9 @@ private struct DetailSectionCard<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary.opacity(0.8))
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
                 .lineLimit(1)
 
             content
@@ -1336,19 +1418,21 @@ private struct DetailDataRow: View {
     var allowsWrap = false
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: allowsWrap ? .top : .firstTextBaseline, spacing: 12) {
             Text(title)
-                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 78, alignment: .leading)
+                .frame(minWidth: 88, alignment: .leading)
+
+            Spacer(minLength: 8)
 
             Text(value)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.primary.opacity(0.84))
-                .lineLimit(allowsWrap ? 2 : 1)
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(allowsWrap ? nil : 1)
                 .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
+        .font(.body)
     }
 }
 
@@ -1358,34 +1442,34 @@ private struct DetailContactRow: View {
     let url: URL?
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(title)
-                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 78, alignment: .leading)
+                .frame(minWidth: 88, alignment: .leading)
+
+            Spacer(minLength: 8)
 
             if let url {
                 Link(destination: url) {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 6) {
                         Text(value)
-                            .font(.caption.weight(.semibold))
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Image(systemName: title == "Phone" ? "phone.fill" : "envelope.fill")
-                            .font(.caption2)
+                            .font(.footnote)
                     }
                     .foregroundStyle(TryzubColors.info)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             } else {
                 Text(value)
-                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
+        .font(.body)
     }
 }
 
@@ -1398,7 +1482,7 @@ private struct DetailPlainLine: View {
 
     var body: some View {
         Text(text)
-            .font(.caption.weight(.medium))
+            .font(.body)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
