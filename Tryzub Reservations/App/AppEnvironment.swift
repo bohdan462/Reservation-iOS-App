@@ -12,14 +12,17 @@ import Foundation
 struct AppEnvironment {
     let apiClient: any ReservationsAPIClientProtocol
     let role: AppUserRole
+    let username: String
     let capabilities: AppCapabilities
 
     init(
         apiClient: any ReservationsAPIClientProtocol,
-        role: AppUserRole
+        role: AppUserRole,
+        username: String = "Preview"
     ) {
         self.apiClient = apiClient
         self.role = role
+        self.username = username
         self.capabilities = AppCapabilities.capabilities(for: role)
     }
 }

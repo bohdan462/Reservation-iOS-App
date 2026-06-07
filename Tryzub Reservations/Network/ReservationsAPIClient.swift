@@ -12,6 +12,7 @@ import OSLog
 
 enum ReservationAPIRequestReason: String {
     case unspecified
+    case login
     case ping
     case startupToday = "startup_today"
     case manualToday = "manual_today"

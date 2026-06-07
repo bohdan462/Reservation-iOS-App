@@ -109,21 +109,28 @@ struct TryzubStaffStatusDot: View {
     private let flashPeriod: TimeInterval = 0.9
 
     var body: some View {
-        // Paused TimelineView ticks only while flashing — zero ongoing cost for static dots.
-        TimelineView(.animation(minimumInterval: flashPeriod, paused: !style.isFlashing)) { context in
-            Circle()
-                .fill(style.color)
-                .frame(width: diameter, height: diameter)
-                .opacity(opacity(at: context.date))
+        Group {
+            if style.isFlashing {
+                TimelineView(.animation(minimumInterval: flashPeriod / 2)) { context in
+                    let opacity = flashingOpacity(at: context.date)
+                    Circle()
+                        .fill(style.color)
+                        .frame(width: diameter, height: diameter)
+                        .opacity(opacity)
+                        .animation(.easeInOut(duration: flashPeriod / 2), value: opacity)
+                }
+            } else {
+                Circle()
+                    .fill(style.color)
+                    .frame(width: diameter, height: diameter)
+            }
         }
         .accessibilityLabel(style.accessibilityLabel)
     }
 
-    private func opacity(at date: Date) -> Double {
-        guard style.isFlashing else { return 1 }
-        let phase = sin(date.timeIntervalSinceReferenceDate * (2 * .pi / flashPeriod))
-        let normalized = (phase + 1) / 2
-        return 0.28 + normalized * 0.72
+    private func flashingOpacity(at date: Date) -> Double {
+        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: flashPeriod)
+        return phase < flashPeriod / 2 ? 1.0 : 0.24
     }
 }
 

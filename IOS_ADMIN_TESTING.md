@@ -33,7 +33,7 @@ Controlled pilot testing and developer troubleshooting:
 | Guest Lookup / Book Call-In | Guests tab | `canCreateManualReservations` for create | Manager + Developer |
 | Guest manage link | Detail → More menu | `canGenerateGuestManageLinks` | Manager + Developer |
 
-**Role note:** `Tryzub_ReservationsApp` uses `AppRoleStore` and `RoleSelectionView`. The selectable pilot roles are **Manager** and **Developer**; `staff` still exists in the capability model but is not selectable today. Switching role in More recreates the root reservation shell with the selected capability set. Backend roles are simpler: operational endpoints require `manage_tryzub_reservations` or `manage_options`; hard delete requires backend `manage_options`.
+**Login note:** The app signs in through `AppLoginView` with a WordPress username, Application Password, and Manager/Developer role choice. Logout lives in More → Account and clears the saved Keychain credentials plus selected role. To test another role, log out and sign back in with that role’s account. Backend roles are simpler: operational endpoints require `manage_tryzub_reservations` or `manage_options`; hard delete requires backend `manage_options`.
 
 ---
 
@@ -374,7 +374,7 @@ Developer diagnostics can show extra request reason / error code / developer det
 - No fake-reservation generator
 - No automatic Mail send test
 - Cursors not persisted across app restart
-- Staff role exists in code but is not selectable in the current pilot role picker
+- Staff role exists in code but is not selectable in the current pilot login
 - Guest Memory / Regulars may be expensive on large caches and should be refactored before broad historical usage
 - Add/Edit forms share validation/normalization but still need final visual polish
 

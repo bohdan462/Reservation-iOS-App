@@ -28,7 +28,8 @@ final class AppCredentialStore: ObservableObject {
         credentials = Self.environmentCredentials() ?? keychain.load()
     }
 
-    func save(username: String, applicationPassword: String) {
+    @discardableResult
+    func save(username: String, applicationPassword: String) -> Bool {
         let credentials = AppCredentials(
             username: username.trimmingCharacters(in: .whitespacesAndNewlines),
             applicationPassword: applicationPassword.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -36,21 +37,23 @@ final class AppCredentialStore: ObservableObject {
 
         guard credentials.isComplete else {
             errorMessage = "WordPress username and application password are required."
-            return
+            return false
         }
 
         do {
             try keychain.save(credentials)
             self.credentials = credentials
             errorMessage = nil
+            return true
         } catch {
             errorMessage = "Could not save credentials to Keychain."
+            return false
         }
     }
 
     func reset() {
         keychain.delete()
-        credentials = Self.environmentCredentials()
+        credentials = nil
     }
 
     private static func environmentCredentials() -> AppCredentials? {

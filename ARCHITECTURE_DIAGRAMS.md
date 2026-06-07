@@ -4,7 +4,7 @@
 **Local cache:** SwiftData `ReservationRecord` only — never authoritative  
 **Hard rule:** iOS must **not** call `POST /managed-reservations/import` during normal workflow (not implemented in client; diagnostics tracks accidental use)
 
-**Role note:** `Tryzub_ReservationsApp` uses `AppRoleStore` and `RoleSelectionView`. The selectable pilot roles are `.manager` and `.developer`; `.staff` still exists in the capability model but is not currently offered in the role picker.
+**Login note:** `Tryzub_ReservationsApp` uses `AppLoginView`, `AppCredentialStore`, and `AppRoleStore` to sign in as Manager or Developer with a WordPress Application Password. `.staff` still exists in the capability model, but it is not offered in the current pilot login.
 
 ---
 
@@ -15,7 +15,8 @@ flowchart TB
     subgraph iOS["Tryzub Reservations iOS"]
         App["Tryzub_ReservationsApp"]
         Creds["AppCredentialStore / Keychain"]
-        Role["AppRoleStore<br/>manager/developer picker"]
+        Login["AppLoginView<br/>manager/developer sign in"]
+        Role["AppRoleStore<br/>selected pilot role"]
         Env["AppEnvironment<br/>apiClient + selected role + capabilities"]
         Shell["ReservationsListView<br/>native TabView shell"]
         Ctrl["ReservationsController<br/>workflow coordinator"]
@@ -41,7 +42,9 @@ flowchart TB
     WP["WordPress Tryzub plugin REST"]
 
     App --> Creds
-    Creds --> Role
+    App --> Login
+    Login --> Creds
+    Login --> Role
     Role --> Env
     App --> Role
     Env --> Shell
@@ -85,13 +88,14 @@ flowchart TD
     C -->|no| E["Keychain load"]
     D --> F{credentials complete?}
     E --> F
-    F -->|no| G["CredentialsSetupView"]
-    G --> H["save → Keychain"]
-    H --> F
-    F -->|yes| Role{Role selected?}
-    Role -->|no| R["RoleSelectionView"]
-    R --> Role
-    Role -->|yes| I["ReservationsListView"]
+    F -->|no| G["AppLoginView"]
+    Role0{Saved role selected?}
+    F -->|yes| Role0
+    Role0 -->|no| G
+    G --> V["validate via GET /restaurant-setup"]
+    V --> H["save credentials → Keychain<br/>save role → UserDefaults"]
+    H --> Role0
+    Role0 -->|yes| I["ReservationsListView"]
     I --> J["ReservationsController(environment)"]
     I --> K["HiddenReservationsStore()"]
     I --> L[".modelContainer(ReservationRecord)"]
@@ -102,8 +106,9 @@ flowchart TD
 ```
 
 **What matters**
-- Credentials: env vars override Keychain on launch (simulator/dev); device uses Keychain after first save.
-- Role: manager/developer selection is persisted in `UserDefaults`; changing role recreates `ReservationsListView` with a new `AppEnvironment`.
+- Credentials: env vars override Keychain on launch (simulator/dev); device uses Keychain after first sign in.
+- Login: Manager/Developer sign-in validates with lightweight protected `GET /restaurant-setup`; logout clears Keychain credentials and selected role.
+- Role: manager/developer selection is persisted in `UserDefaults`; changing role requires logging out and signing in again, which recreates `ReservationsListView` with a new `AppEnvironment`.
 - SwiftData container is scene-level; all tabs share one cache.
 - Startup network: active reservation window (full replace) + restaurant setup (in-memory `@Published` on controller), launched behind a splash overlay without blocking cached SwiftData rendering.
 - No reservation fetch happens before credentials gate passes.

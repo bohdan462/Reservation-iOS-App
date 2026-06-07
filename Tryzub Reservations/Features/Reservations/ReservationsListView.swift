@@ -23,14 +23,16 @@ struct ReservationsListView: View {
     @StateObject private var privacyCoverSettings = RestaurantPrivacyCoverSettingsStore()
 
     let environment: AppEnvironment
+    let onLogout: () -> Void
 
-    init(environment: AppEnvironment) {
+    init(environment: AppEnvironment, onLogout: @escaping () -> Void = {}) {
         self.environment = environment
+        self.onLogout = onLogout
         _controller = StateObject(wrappedValue: ReservationsController(environment: environment))
     }
 
     var body: some View {
-        ReservationsTabShell(environment: environment)
+        ReservationsTabShell(environment: environment, onLogout: onLogout)
             .environmentObject(controller)
             .environmentObject(hiddenReservations)
             .environmentObject(privacyCoverSettings)
@@ -50,9 +52,11 @@ private struct ReservationsTabShell: View {
     @State private var selectedTab: ReservationsAppTab = .host
 
     let environment: AppEnvironment
+    let onLogout: () -> Void
 
-    init(environment: AppEnvironment) {
+    init(environment: AppEnvironment, onLogout: @escaping () -> Void = {}) {
         self.environment = environment
+        self.onLogout = onLogout
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
         let toDate = bounds.to
@@ -101,7 +105,7 @@ private struct ReservationsTabShell: View {
                 }
                 .tag(ReservationsAppTab.guests)
 
-            ReservationMoreView(environment: environment)
+            ReservationMoreView(environment: environment, onLogout: onLogout)
                 .tabItem {
                     Label(ReservationsAppTab.more.title, systemImage: ReservationsAppTab.more.systemImage)
                 }
@@ -920,18 +924,20 @@ private struct ReservationReviewQueueView: View {
 private struct ReservationMoreView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
-    @EnvironmentObject private var roleStore: AppRoleStore
     @EnvironmentObject private var privacyCoverSettings: RestaurantPrivacyCoverSettingsStore
 
     @StateObject private var settingsStore: RestaurantSettingsStore
     @State private var showManualCreate = false
     @State private var showFailedImports = false
+    @State private var showLogoutConfirmation = false
     @State private var path: [ReservationMoreDestination] = []
 
     let environment: AppEnvironment
+    let onLogout: () -> Void
 
-    init(environment: AppEnvironment) {
+    init(environment: AppEnvironment, onLogout: @escaping () -> Void = {}) {
         self.environment = environment
+        self.onLogout = onLogout
         _settingsStore = StateObject(
             wrappedValue: RestaurantSettingsStore(apiClient: environment.apiClient)
         )
@@ -952,22 +958,6 @@ private struct ReservationMoreView: View {
                             }
                         }
                     }
-                }
-
-                Section("App Mode") {
-                    Picker(
-                        "Role",
-                        selection: Binding(
-                            get: { roleStore.selectedRole ?? controller.environment.role },
-                            set: { roleStore.select($0) }
-                        )
-                    ) {
-                        ForEach(AppRoleStore.selectableRoles, id: \.self) { role in
-                            Text(role.displayName).tag(role)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .listRowBackground(Color.clear)
                 }
 
                 RestaurantPrivacyCoverSettingsSection(settings: privacyCoverSettings)
@@ -1046,11 +1036,30 @@ private struct ReservationMoreView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+
+                Section("Account") {
+                    LabeledContent("Role", value: environment.role.displayName)
+                    LabeledContent("User", value: environment.username)
+
+                    Button(role: .destructive) {
+                        showLogoutConfirmation = true
+                    } label: {
+                        Label("Log Out", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                }
             }
             .navigationTitle("More")
             .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
             .navigationDestination(for: ReservationMoreDestination.self) { destination in
                 moreDestination(destination)
+            }
+            .alert("Log out?", isPresented: $showLogoutConfirmation) {
+                Button("Log Out", role: .destructive) {
+                    logout()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("You’ll need your WordPress app password to sign in again.")
             }
             .fullScreenCover(isPresented: $showManualCreate) {
                 ManualReservationFormView { request in
@@ -1069,6 +1078,14 @@ private struct ReservationMoreView: View {
                 .environmentObject(controller)
             }
         }
+    }
+
+    private func logout() {
+        showManualCreate = false
+        showFailedImports = false
+        path.removeAll()
+        controller.prepareForLogout()
+        onLogout()
     }
 
     @ViewBuilder

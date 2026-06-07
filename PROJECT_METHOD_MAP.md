@@ -13,7 +13,9 @@ Method-level map of current behavior. **Source of truth: Swift code.**
 - `ManualEmailDraftService.confirmationDraft` → local text only; activity can be logged with POST `/manual-email-log`
 - `recordManualConfirmationSent` → POST `/manual-email-log` with `manual_sent` — staff-reported manual send, no backend sending, no status change
 
-**Backend vs iOS roles:** WordPress enforces `manage_tryzub_reservations` / `manage_options` for operational routes and `manage_options` for hard delete. Host/manager/developer separation is an iOS capability layer for the pilot.
+**Login/session:** `AppLoginView` validates Manager/Developer sign-in with lightweight protected `GET /restaurant-setup`, then saves the WordPress Application Password in Keychain and the selected role in `AppRoleStore`. More → Account → Log Out clears both.
+
+**Backend vs iOS roles:** WordPress enforces `manage_tryzub_reservations` / `manage_options` for operational routes and `manage_options` for hard delete. Manager/developer separation is an iOS capability layer for the pilot; backend still rejects hard delete unless the account has `manage_options`.
 
 ---
 

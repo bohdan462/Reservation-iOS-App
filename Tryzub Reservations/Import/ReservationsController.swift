@@ -165,6 +165,26 @@ final class ReservationsController: ObservableObject {
         networkPathMonitor.stop()
     }
 
+    func prepareForLogout() {
+        cancelOwnedTasksForSessionEnd()
+        notices.removeAll()
+        errorMessage = nil
+        noticeMessage = nil
+    }
+
+    private func cancelOwnedTasksForSessionEnd() {
+        dayAvailabilityTasksByDate.values.forEach { $0.cancel() }
+        dayAvailabilityTasksByDate.removeAll()
+        reservationSlotsTasksByDate.values.forEach { $0.cancel() }
+        reservationSlotsTasksByDate.removeAll()
+        blockedSlotsTasksByDate.values.forEach { $0.cancel() }
+        blockedSlotsTasksByDate.removeAll()
+        availabilitySummaryTasksByDate.values.forEach { $0.cancel() }
+        availabilitySummaryTasksByDate.removeAll()
+        staffStatusBoundaryTask?.cancel()
+        staffStatusBoundaryTask = nil
+    }
+
     private func applyNetworkPathStatus(_ isSatisfied: Bool) {
         guard isNetworkPathSatisfied != isSatisfied else { return }
         isNetworkPathSatisfied = isSatisfied

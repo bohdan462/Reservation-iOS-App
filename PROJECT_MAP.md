@@ -30,20 +30,21 @@ One-restaurant internal iOS app. **WordPress REST API is source of truth.** **Sw
 | Operational guest lookup | `Features/Guests/*` |
 | Guest memory | `Features/GuestInsights/*` |
 | Dev diagnostics | `Features/Reservations/DeveloperDiagnosticsView.swift` |
-| Roles + role picker | `Core/Roles/AppUserRole.swift`, `App/AppRoleStore.swift` |
+| Login role + capabilities | `Core/Roles/AppUserRole.swift`, `App/AppRoleStore.swift`, `Tryzub_ReservationsApp.swift` |
 | Credentials | `App/AppCredentials.swift` |
 | App entry | `Tryzub_ReservationsApp.swift` |
 
 ---
 
-## 1. Source tree (46 Swift files)
+## 1. Source tree (47 Swift files)
 
 ```
 Tryzub Reservations/
-├── Tryzub_ReservationsApp.swift          # @main, credentials gate, SwiftData container
+├── Tryzub_ReservationsApp.swift          # @main, login gate, SwiftData container
 ├── App/
 │   ├── AppCredentials.swift            # AppCredentialStore, Keychain
 │   ├── AppEnvironment.swift            # apiClient + role + capabilities
+│   ├── AppRoleStore.swift              # selected Manager/Developer role
 │   └── AppNotice.swift                 # Notice model (severity, source)
 ├── Core/Roles/AppUserRole.swift        # staff | manager | developer + AppCapabilities
 ├── Features/
@@ -67,8 +68,11 @@ Tryzub Reservations/
 │       ├── ReservationRowView.swift
 │       ├── ReservationSharedUI.swift
 │       ├── ReservationActionButtons.swift
+│       ├── ReservationEmailWorkflow.swift
+│       ├── GuestConfirmationMail.swift
 │       ├── ReservationPresentation.swift
 │       ├── ReservationFloatingTabBar.swift
+│       ├── RestaurantPrivacyCover.swift
 │       ├── RestaurantSettingsStore.swift     # Store + embedded settings views
 │       ├── DeveloperDiagnosticsView.swift
 │       ├── ImportFailuresView.swift
@@ -99,14 +103,15 @@ Tryzub Reservations/
 | Step | What happens |
 | --- | --- |
 | 1 | `AppCredentialStore` loads env vars (`TRYZUB_API_USERNAME`, `TRYZUB_API_PASSWORD`) or Keychain |
-| 2 | No credentials → `CredentialsSetupView` (save to Keychain) |
-| 3 | Credentials OK but no role → `RoleSelectionView` (manager/developer) |
-| 4 | Role selected → `ReservationsListView(environment:)` with one shared `ReservationsAPIClient` and selected capabilities |
-| 5 | `.modelContainer(for: ReservationRecord.self)` at scene level |
-| 6 | Root `.task` shows launch overlay and starts `performStartupNetworkPass` in background |
-| 7 | Startup network pass serializes active-window full sync first, then `GET /restaurant-setup` |
+| 2 | No complete saved session → `AppLoginView` |
+| 3 | Login validates Manager/Developer credentials with lightweight `GET /restaurant-setup` |
+| 4 | Successful login saves WordPress Application Password credentials to Keychain and selected role to `AppRoleStore` |
+| 5 | Saved session → `ReservationsListView(environment:onLogout:)` with one shared `ReservationsAPIClient` and selected capabilities |
+| 6 | `.modelContainer(for: ReservationRecord.self)` at scene level |
+| 7 | Root `.task` shows launch overlay and starts `performStartupNetworkPass` in background |
+| 8 | Startup network pass serializes active-window full sync first, then `GET /restaurant-setup` |
 
-**Audience:** All roles see credentials gate once per device. Current selectable roles are manager and developer; staff capability code exists but staff is not selectable in `AppRoleStore.selectableRoles`.
+**Audience:** Manager and Developer sign in with their own WordPress username and Application Password. Staff capability code exists, but staff is not selectable for the current pilot. Logout is in More → Account and clears the saved Keychain session plus selected role.
 
 ---
 
@@ -244,7 +249,7 @@ All HTTP; Basic auth; sanitized request logging; one-at-a-time request serialize
 
 ### More — `ReservationMoreView`
 
-- Notices screen, role picker, Cancelled, Hidden, settings links, manual create, analytics, guest memory
+- Notices screen, Account/logout, Cancelled, Hidden, settings links, manual create, analytics, guest memory
 - Developer / Support section: Failed Imports sheet for roles with `canViewFailedImports`, API Diagnostics for developer
 - Duplicate resolution instructions (manual supersede workflow)
 
