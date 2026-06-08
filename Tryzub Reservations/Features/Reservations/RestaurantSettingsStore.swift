@@ -1942,7 +1942,7 @@ private struct AnalyticsPipelineSection: View {
             if let pipeline {
                 AnalyticsBreakdownLine(title: "Flamingo inbound total", value: "\(pipeline.flamingoInboundTotal)")
                 AnalyticsBreakdownLine(title: "Managed linked rows", value: "\(pipeline.managedRowsWithSourceSubmissionId)")
-                AnalyticsBreakdownLine(title: "Missing non-spam Flamingo", value: "\(pipeline.missingNonSpamFlamingo)")
+                AnalyticsBreakdownLine(title: "Missing non spam- Flamingo", value: "\(pipeline.missingNonSpamFlamingo)")
 
                 if pipeline.missingNonSpamFlamingo > 0 {
                     SettingsNoticeCard(message: "\(pipeline.missingNonSpamFlamingo) inbound submission needs import attention.", tint: .orange)

@@ -279,7 +279,7 @@ private struct HomeDashboardView: View {
             ContentUnavailableView(
                 "Reservation Not Found",
                 systemImage: "calendar.badge.exclamationmark",
-                description: Text("Refresh reservations and try again.")
+                description: Text("Refresh and try again.")
             )
         }
     }
@@ -407,7 +407,7 @@ private struct ReservationScheduleView: View {
                     Section {
                         HStack {
                             Spacer()
-                            ProgressView("Loading reservations...")
+                            ProgressView("Loading bookings...")
                             Spacer()
                         }
                         .padding(.vertical, 24)
