@@ -1,0 +1,199 @@
+//
+//  HostIntelligenceDiagnosticsView.swift
+//  Tryzub Reservations
+//
+//  Read-only developer diagnostics for Host Intelligence output.
+//
+
+import SwiftUI
+
+struct HostIntelligenceDiagnosticsView: View {
+  let reservations: [ReservationRecord]
+  let selectedDate: Date
+  let availabilitySummary: ReservationAvailabilitySummary?
+  let analyticsSummary: ReservationAnalyticsSummaryDTO?
+  let restaurantSetup: RestaurantSetup?
+  let localSeatedAtByReservationID: [Int: Date]
+  let settings: HostIntelligenceSettings
+
+  private var snapshot: HostDecisionSnapshot {
+    let input = HostEngineInput(
+      now: Date(),
+      selectedDate: selectedDate,
+      reservations: reservations,
+      availabilitySummary: availabilitySummary,
+      analyticsSummary: analyticsSummary,
+      restaurantSetup: restaurantSetup,
+      localSeatedAtByReservationID: localSeatedAtByReservationID,
+      settings: settings
+    )
+    return HostIntelligenceEngine().evaluateHostDecisionSnapshot(input: input)
+  }
+
+  var body: some View {
+    let decision = snapshot
+
+    Group {
+      hostIntelligenceSection(decision)
+      topFactsSection(decision)
+      suggestedActionsSection(decision)
+      slotPressureSection(decision)
+      signalsSection(decision)
+    }
+  }
+
+  // MARK: - Sections
+
+  @ViewBuilder
+  private func hostIntelligenceSection(_ decision: HostDecisionSnapshot) -> some View {
+    Section("Host Intelligence") {
+      Text(decision.templateBriefingText)
+        .font(.subheadline)
+
+      LabeledContent("State") {
+        Text(decision.serviceState.rawValue.capitalized)
+      }
+      LabeledContent("Pressure score") {
+        Text(String(format: "%.0f", decision.pressureScore))
+      }
+      LabeledContent("Generated at") {
+        Text(decision.generatedAt.formatted(date: .omitted, time: .standard))
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func topFactsSection(_ decision: HostDecisionSnapshot) -> some View {
+    Section("Top Facts") {
+      if decision.briefingFacts.isEmpty {
+        Text("No briefing facts.")
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(decision.briefingFacts.prefix(5)) { fact in
+          VStack(alignment: .leading, spacing: 4) {
+            Text("\(fact.severity.rawValue.capitalized) · \(fact.title)")
+              .font(.subheadline.weight(.semibold))
+            Text(fact.detail)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 2)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func suggestedActionsSection(_ decision: HostDecisionSnapshot) -> some View {
+    Section("Suggested Actions") {
+      if decision.suggestedActions.isEmpty {
+        Text("No suggested actions.")
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(decision.suggestedActions.prefix(5)) { action in
+          VStack(alignment: .leading, spacing: 4) {
+            Text("\(action.severity.rawValue.capitalized) · \(action.title)")
+              .font(.subheadline.weight(.semibold))
+            Text(action.reason)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 2)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func slotPressureSection(_ decision: HostDecisionSnapshot) -> some View {
+    Section("Slot Pressure") {
+      if decision.slotPressures.isEmpty {
+        Text("No slot pressure data.")
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(topSlotPressures(decision.slotPressures)) { pressure in
+          VStack(alignment: .leading, spacing: 4) {
+            Text("\(pressure.slotTime) · \(pressure.severity.rawValue.capitalized)")
+              .font(.subheadline.weight(.semibold))
+            Text(slotPressureSummary(pressure))
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 2)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func signalsSection(_ decision: HostDecisionSnapshot) -> some View {
+    Section("Signals") {
+      LabeledContent("Guest signals") {
+        Text("\(decision.guestSignals.count)")
+      }
+      LabeledContent("Allergy signals") {
+        Text("\(decision.guestSignals.filter { $0.kind == .allergy }.count)")
+      }
+      LabeledContent("Table signals") {
+        Text("\(decision.tableSignals.count)")
+      }
+      LabeledContent("Seated timing signals") {
+        Text("\(decision.seatedTimingSignals.count)")
+      }
+    }
+  }
+
+  // MARK: - Helpers
+
+  private func topSlotPressures(_ pressures: [HostSlotPressure]) -> [HostSlotPressure] {
+    Array(
+      pressures
+        .sorted { lhs, rhs in
+          if lhs.severity != rhs.severity {
+            return severityRank(lhs.severity) < severityRank(rhs.severity)
+          }
+          return (lhs.capacityRatio ?? 0) > (rhs.capacityRatio ?? 0)
+        }
+        .prefix(5)
+    )
+  }
+
+  private func severityRank(_ severity: HostPressureSeverity) -> Int {
+    switch severity {
+    case .critical: return 0
+    case .busy: return 1
+    case .watch: return 2
+    case .calm: return 3
+    }
+  }
+
+  private func slotPressureSummary(_ pressure: HostSlotPressure) -> String {
+    var parts = [
+      "reservations=\(pressure.reservationCount)",
+      "guests=\(pressure.guestCount)",
+      "largeParties=\(pressure.largePartyCount)",
+      "noTable=\(pressure.noTableCount)"
+    ]
+    if let ratio = pressure.capacityRatio {
+      parts.append(String(format: "capacityRatio=%.0f%%", ratio * 100))
+    }
+    if pressure.isBlocked {
+      parts.append("blocked")
+    }
+    return parts.joined(separator: " · ")
+  }
+}
+
+#Preview {
+  List {
+    HostIntelligenceDiagnosticsView(
+      reservations: [],
+      selectedDate: Date(),
+      availabilitySummary: nil,
+      analyticsSummary: nil,
+      restaurantSetup: nil,
+      localSeatedAtByReservationID: [:],
+      settings: HostIntelligenceSettings()
+    )
+  }
+}

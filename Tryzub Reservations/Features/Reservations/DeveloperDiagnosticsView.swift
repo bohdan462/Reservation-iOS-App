@@ -17,6 +17,8 @@ struct DeveloperDiagnosticsView: View {
     @State private var isRunningTest = false
     @State private var testResults: [AdminFetchTestResult] = []
 
+    @StateObject private var hostIntelligenceSettings = HostIntelligenceSettingsStore()
+
     let environment: AppEnvironment
 
     private var todayRows: [ReservationRecord] {
@@ -35,6 +37,7 @@ struct DeveloperDiagnosticsView: View {
             safeFetchTestsSection
             requestLogSection
             cacheSection
+            hostIntelligenceDiagnosticsSection
             noticeSection
             endpointChecklistSection
             safetySection
@@ -204,6 +207,18 @@ struct DeveloperDiagnosticsView: View {
             row("Without table", "\(stats.withoutTable)")
             row("Latest local sync", stats.latestLocalSyncText)
         }
+    }
+
+    private var hostIntelligenceDiagnosticsSection: some View {
+        HostIntelligenceDiagnosticsView(
+            reservations: todayRows,
+            selectedDate: Date(),
+            availabilitySummary: controller.availabilitySummary(for: Date.reservationDateString()),
+            analyticsSummary: nil,
+            restaurantSetup: controller.hasLoadedRestaurantSetup ? controller.restaurantSetup : nil,
+            localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
+            settings: hostIntelligenceSettings.settings
+        )
     }
 
     private var noticeSection: some View {
