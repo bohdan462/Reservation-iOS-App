@@ -129,7 +129,7 @@ Mail / Messages presenters
 1. **Template fallback** — always available
 2. **Local model unavailable** — template draft (`source: template`)
 3. **Parse / validation failure** — template draft; optional `safetyNote`
-4. **Unsafe output** — template fallback; staff-safe `lastErrorMessage`
+4. **Unsafe output** — template fallback; optional review `safetyNote` in the sheet
 
 ## Code map
 

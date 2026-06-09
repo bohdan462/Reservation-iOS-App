@@ -6,7 +6,7 @@
 import Foundation
 
 enum GuestMessageDraftPacketBuilder {
-    /// Matches common large-party handling in staff workflows (see also Host `largePartyThreshold` default 8).
+    /// Matches common large-party handling in staff workflows (see also Host `largePartyThreshold` default 7).
     static let largePartyMinimumPartySize = 7
 
     static let excludedFieldMarkers = [

@@ -29,10 +29,12 @@ struct HostBoardView: View {
     @EnvironmentObject private var hostIntentStore: HostReservationOpenIntentStore
     @EnvironmentObject private var restaurantSettingsStore: RestaurantSettingsStore
     @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
+    @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
+    @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
+    @EnvironmentObject private var hostIntelligenceController: HostIntelligenceController
 
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
-    @StateObject private var hostIntelligenceController = HostIntelligenceController()
     @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var isShowingHostIntelligenceReview = false
 
@@ -140,13 +142,11 @@ struct HostBoardView: View {
             .sorted { $0.key < $1.key }
             .map { "\($0.key)=\($0.value.timeIntervalSince1970)" }
             .joined(separator: ",")
-        let tableCount = hostIntelligenceController.tableStore.tables.count
-        let tableStamp = hostIntelligenceController.tableStore.totalActiveCapacity
+        let settingsStamp = hostIntelligenceSettingsStore.settings.hostDecisionFingerprint
+        let tableStamp = hostTableConfigStore.tableConfigFingerprint
         let analyticsStamp = analyticsSummaryIdentity
-        let briefingStamp =
-          "\(hostIntelligenceController.settings.useEnhancedBriefing)-\(hostIntelligenceController.settings.enhancedBriefingProvider.rawValue)-\(hostIntelligenceController.settings.useLocalModelOnHostBoard)"
         let guestIntelStamp = guestIntelligenceStore.cacheStamp(for: selectedDateKey)
-        return "\(selectedDateKey)-\(reservationStamp)-\(historyStamp)-\(availabilityStamp)-\(seatedStamp)-\(tableCount)-\(tableStamp)-\(analyticsStamp)-\(briefingStamp)-\(guestIntelStamp)"
+        return "\(selectedDateKey)-\(reservationStamp)-\(historyStamp)-\(availabilityStamp)-\(seatedStamp)-\(settingsStamp)-\(tableStamp)-\(analyticsStamp)-\(guestIntelStamp)"
     }
 
     private var analyticsSummaryIdentity: String {
@@ -305,8 +305,6 @@ struct HostBoardView: View {
                 hostIntelligenceController.reset()
                 return
             }
-            hostIntelligenceController.tableStore.reload()
-            hostIntelligenceController.settingsStore.reload()
             hostIntelligenceController.evaluate(input: makeHostEngineInput(now: clockTick))
             await hostIntelligenceController.refreshBriefing(
                 hostBoardContext: HostBriefingHostBoardContext(
@@ -634,8 +632,8 @@ struct HostBoardView: View {
             analyticsSummary: cachedAnalyticsSummary,
             restaurantSetup: controller.hasLoadedRestaurantSetup ? controller.restaurantSetup : nil,
             localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
-            settings: hostIntelligenceController.settings,
-            tableConfigs: hostIntelligenceController.tableStore.tables,
+            settings: hostIntelligenceSettingsStore.settings,
+            tableConfigs: hostTableConfigStore.tables,
             allKnownReservations: allKnownReservations.isEmpty
                 ? reservations
                 : allKnownReservations,

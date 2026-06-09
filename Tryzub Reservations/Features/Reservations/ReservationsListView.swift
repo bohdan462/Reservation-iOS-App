@@ -157,7 +157,8 @@ private struct ReservationsTabShell: View {
 
     @StateObject private var restaurantSettingsStore: RestaurantSettingsStore
     @StateObject private var hostTableConfigStore: HostTableConfigStore
-    @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
+    @StateObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
+    @StateObject private var hostIntelligenceController: HostIntelligenceController
     @StateObject private var guestIntelligenceStore: GuestIntelligenceStore
     @StateObject private var businessIntelligenceStore: BusinessIntelligenceStore
     @StateObject private var intelligenceSystemStatusStore: IntelligenceSystemStatusStore
@@ -172,7 +173,16 @@ private struct ReservationsTabShell: View {
         _restaurantSettingsStore = StateObject(
             wrappedValue: RestaurantSettingsStore(apiClient: environment.apiClient)
         )
-        _hostTableConfigStore = StateObject(wrappedValue: HostTableConfigStore())
+        let hostTableConfigStore = HostTableConfigStore()
+        let hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
+        _hostTableConfigStore = StateObject(wrappedValue: hostTableConfigStore)
+        _hostIntelligenceSettingsStore = StateObject(wrappedValue: hostIntelligenceSettingsStore)
+        _hostIntelligenceController = StateObject(
+            wrappedValue: HostIntelligenceController(
+                settingsStore: hostIntelligenceSettingsStore,
+                tableStore: hostTableConfigStore
+            )
+        )
         _guestIntelligenceStore = StateObject(
             wrappedValue: GuestIntelligenceStore(apiClient: environment.apiClient)
         )
@@ -258,6 +268,7 @@ private struct ReservationsTabShell: View {
         .environmentObject(restaurantSettingsStore)
         .environmentObject(hostTableConfigStore)
         .environmentObject(hostIntelligenceSettingsStore)
+        .environmentObject(hostIntelligenceController)
         .environmentObject(guestIntelligenceStore)
         .environmentObject(businessIntelligenceStore)
         .environmentObject(intelligenceSystemStatusStore)

@@ -469,6 +469,38 @@ struct HostIntelligenceSettings: Codable, Equatable {
             useSeparatedBriefingPrompts: try container.decodeIfPresent(Bool.self, forKey: .useSeparatedBriefingPrompts) ?? false
         )
     }
+
+    /// Stable stamp for Host pulse refresh — excludes guest-draft-only toggles.
+    var hostDecisionFingerprint: String {
+        [
+            isEnabled ? "1" : "0",
+            "\(slotIntervalMinutes)",
+            "\(lookaheadMinutes)",
+            "\(restaurantCapacity)",
+            "\(largePartyThreshold)",
+            "\(criticalPartyThreshold)",
+            "\(maxReservationsPerSlot)",
+            "\(maxLargePartiesPerSlot)",
+            String(format: "%.3f", comfortableCapacityRatio),
+            String(format: "%.3f", criticalCapacityRatio),
+            "\(dueSoonMinutes)",
+            "\(noTableDueSoonMinutes)",
+            "\(longSeatedWarningMinutes)",
+            includeGuestSignals ? "1" : "0",
+            includeAnalyticsSignals ? "1" : "0",
+            includeLLMPacket ? "1" : "0",
+            enableBookingDecisioning ? "1" : "0",
+            autoConfirmRecommendationsEnabled ? "1" : "0",
+            suggestAlternateTimesEnabled ? "1" : "0",
+            autoConfirmWeekdaysOnly ? "1" : "0",
+            String(format: "%.2f", minimumConfidenceForAutoConfirm),
+            "\(maxPartySizeForAutoConfirm)",
+            useEnhancedBriefing ? "1" : "0",
+            enhancedBriefingProvider.rawValue,
+            useLocalModelOnHostBoard ? "1" : "0",
+            useSeparatedBriefingPrompts ? "1" : "0",
+        ].joined(separator: "|")
+    }
 }
 
 struct RestaurantTableConfig: Identifiable, Codable, Equatable {

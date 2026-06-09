@@ -77,6 +77,25 @@ final class HostTableConfigStore: ObservableObject {
     }
   }
 
+  /// Stable stamp for Host pulse refresh when table inventory changes.
+  var tableConfigFingerprint: String {
+    sortedTables.map { table in
+      let combos = table.combinableTableIDs.map(\.uuidString).sorted().joined(separator: "+")
+      return [
+        table.id.uuidString,
+        table.name,
+        "\(table.capacity)",
+        table.section,
+        table.isActive ? "1" : "0",
+        combos,
+        "\(table.sortOrder)",
+        table.preferredForLargeParties ? "1" : "0",
+        table.preferredForWheelchair ? "1" : "0",
+        table.preferredForQuietSeating ? "1" : "0",
+      ].joined(separator: ":")
+    }.joined(separator: "|")
+  }
+
   private func load() {
     guard let data = UserDefaults.standard.data(forKey: defaultsKey) else {
       tables = []
