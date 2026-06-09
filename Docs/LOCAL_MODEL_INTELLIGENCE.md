@@ -40,7 +40,8 @@ The local model **must not**:
 - **No internal staff notes** in model input
 - **No raw guest notes** in model input
 - **No raw backend JSON** or evidence arrays in model input
-- **No guest email or phone** in the prompt packet (future product decision required to change this)
+- **No guest email or phone** in the prompt packet or model output (future product decision required to change this)
+- **Restaurant phone, address, and manage URL** are allowlisted business contact details in the packet
 
 ### Allowed draft kinds
 
@@ -57,13 +58,15 @@ The local model **must not**:
 |---------|-------------|
 | Guest **first name** (optional) | Full name (avoid when possible) |
 | Reservation date / time display | Raw email |
-| Party size, table name | Raw phone |
+| Party size, table name | Guest email / phone |
 | Restaurant name, phone, address | Guest notes |
 | Manage URL (when staff already uses it) | Staff notes |
 | Boolean flags (large party, needs review, etc.) | Guest history blobs |
 | Policy hint strings (high level) | Backend evidence / JSON |
 
 Guest history may appear later only as **safe summarized flags**, never raw records.
+
+**Output safety:** guest phone-like strings in model output are blocked unless they match the allowlisted restaurant phone (normalized digits).
 
 ### Output contract
 
@@ -76,6 +79,22 @@ blockedReason   (optional)
 ```
 
 Sources: `template`, `localModel`, `blocked`.
+
+### `tableReady` kind
+
+- Staff-triggered when seating is ready — draft may say the table is ready
+- Must **not invent a table number** when `tableName` is missing
+- Non-`tableReady` drafts must not say the table is ready
+
+### UI integration boundary
+
+`GuestMessageDraftService` is the entry point for Phase 4B+ UI:
+
+- Builds the allowlisted packet
+- Invokes template or local model writer
+- Re-validates the final draft
+- Never sends, never mutates reservations
+- Falls back to template on any failure (`lastErrorMessage` is staff-safe)
 
 ### Failure behavior
 
@@ -95,6 +114,7 @@ Sources: `template`, `localModel`, `blocked`.
 | Template drafts | `Features/GuestMessaging/GuestMessageDraftTemplateWriter.swift` |
 | Prompt builder | `Features/GuestMessaging/GuestMessageDraftPromptBuilder.swift` |
 | Local writer | `Features/GuestMessaging/GuestMessageDraftWriter.swift` |
+| UI service | `Features/GuestMessaging/GuestMessageDraftService.swift` |
 | Validator / parser | `Features/GuestMessaging/GuestMessageDraftValidator.swift`, `GuestMessageDraftOutputParser.swift` |
 
 ## Staff workflow (target — Phase 4B+)

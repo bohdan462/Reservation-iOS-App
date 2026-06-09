@@ -28,8 +28,9 @@ enum GuestMessageDraftPromptBuilder {
         - Do not mention internal notes, staff notes, backend systems, or evidence.
         - Do not say the message was sent or that the reservation status changed.
         - Do not say the reservation is confirmed unless kind is "confirmation".
-        - Do not guarantee a table unless tableName is present and kind is "tableReady".
-        - Do not include guest email or phone numbers.
+        - Do not include guest email or guest phone numbers. Restaurant contact details provided in the packet (phone, address, manage URL) may be included when useful. Do not invent any contact details.
+        - For kind "tableReady" (staff-triggered): you may say the table is ready; do not invent a table number if tableName is missing.
+        - For other kinds: do not say the table is ready.
         - Do not include raw guest notes.
         - Write in \(packet.language.rawValue) with a \(packet.tone.rawValue) tone.
         - shortMessageBody must be at most \(GuestMessageDraftValidator.maximumShortMessageLength) characters.

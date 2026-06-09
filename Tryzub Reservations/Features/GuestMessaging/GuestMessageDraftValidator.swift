@@ -72,6 +72,14 @@ enum GuestMessageDraftValidator {
             return .blocked("Draft may include a guest email address.")
         }
 
+        if containsUnsupportedPhoneNumber(corpus, allowedPhone: packet.restaurantPhone) {
+            return .blocked("Draft may include an unsupported phone number.")
+        }
+
+        if packet.kind == .tableReady, packet.tableName == nil, containsInventedTableNumber(corpus) {
+            return .blocked("Draft invents a table number without a table name.")
+        }
+
         return .valid
     }
 
@@ -138,5 +146,95 @@ enum GuestMessageDraftValidator {
     private static func containsLikelyGuestEmail(_ corpus: String) -> Bool {
         let pattern = #"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#
         return corpus.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    private static let formattedPhonePatterns = [
+        #"(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b"#,
+        #"\b\+1[-.\s]\d{3}[-.\s]\d{3}[-.\s]\d{4}\b"#,
+        #"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b"#,
+        #"\b\d{3}\.\d{3}\.\d{4}\b"#,
+        #"\b\d{3}\s\d{3}\s\d{4}\b"#,
+    ]
+
+    private static func containsUnsupportedPhoneNumber(_ corpus: String, allowedPhone: String?) -> Bool {
+        let candidates = phoneDigitCandidates(in: corpus)
+        guard !candidates.isEmpty else { return false }
+
+        let allowedDigits = normalizedDigits(from: allowedPhone ?? "")
+        if allowedDigits.isEmpty {
+            return true
+        }
+
+        return candidates.contains { !isAllowedPhoneDigits($0, allowed: allowedDigits) }
+    }
+
+    private static func phoneDigitCandidates(in text: String) -> Set<String> {
+        var candidates = Set<String>()
+
+        for pattern in formattedPhonePatterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { continue }
+            let range = NSRange(text.startIndex..., in: text)
+
+            for match in regex.matches(in: text, options: [], range: range) {
+                guard let swiftRange = Range(match.range, in: text) else { continue }
+                let substring = String(text[swiftRange])
+                let digits = normalizedDigits(from: substring)
+                if isUSPhoneDigitCount(digits.count) {
+                    candidates.insert(digits)
+                }
+            }
+        }
+
+        for run in digitRuns(ofMinimumLength: 10, in: text) where isUSPhoneDigitCount(run.count) {
+            candidates.insert(run)
+        }
+
+        return candidates
+    }
+
+    private static func isUSPhoneDigitCount(_ count: Int) -> Bool {
+        count == 10 || count == 11
+    }
+
+    private static func containsInventedTableNumber(_ corpus: String) -> Bool {
+        let pattern = #"\btable\s*#?\s*\d+\b"#
+        return corpus.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    private static func digitRuns(ofMinimumLength minimumLength: Int, in text: String) -> [String] {
+        var runs: [String] = []
+        var current = ""
+
+        for character in text {
+            if character.isNumber {
+                current.append(character)
+            } else if !current.isEmpty {
+                if current.count >= minimumLength {
+                    runs.append(current)
+                }
+                current = ""
+            }
+        }
+
+        if current.count >= minimumLength {
+            runs.append(current)
+        }
+
+        return runs
+    }
+
+    private static func normalizedDigits(from text: String) -> String {
+        text.filter(\.isNumber)
+    }
+
+    private static func canonicalUSPhoneDigits(_ digits: String) -> String {
+        if digits.count == 11, digits.hasPrefix("1") {
+            return String(digits.dropFirst())
+        }
+        return digits
+    }
+
+    private static func isAllowedPhoneDigits(_ run: String, allowed: String) -> Bool {
+        canonicalUSPhoneDigits(run) == canonicalUSPhoneDigits(allowed)
     }
 }

@@ -91,3 +91,18 @@ enum GuestMessageDraftSource: String, Codable, Equatable {
     case localModel
     case blocked
 }
+
+// MARK: - Display helpers
+
+extension GuestMessageDraft {
+    var hasSafetyNote: Bool {
+        let trimmed = safetyNote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !trimmed.isEmpty
+    }
+
+    var isBlocked: Bool {
+        if source == .blocked { return true }
+        let trimmed = blockedReason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !trimmed.isEmpty
+    }
+}
