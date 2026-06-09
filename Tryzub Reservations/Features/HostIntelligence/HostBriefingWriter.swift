@@ -17,6 +17,48 @@ struct HostBriefingWriterResult: Equatable {
   let failedReason: String?
 }
 
+/// In-memory diagnostics for developer tools only. Not persisted.
+enum HostBriefingWriterDiagnostics {
+  nonisolated(unsafe) static var lastGeneratedCandidate: String?
+  nonisolated(unsafe) static var lastValidationFailureReason: String?
+  nonisolated(unsafe) static var inferenceSkippedBecauseNoFacts = false
+
+  private static let maxCandidateLength = 500
+
+  static func storeCandidate(_ text: String) {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    lastGeneratedCandidate = trimmed.count <= maxCandidateLength
+      ? trimmed
+      : String(trimmed.prefix(maxCandidateLength))
+  }
+
+  static func recordEmptyPacketSkip() {
+    lastGeneratedCandidate = nil
+    lastValidationFailureReason = nil
+    inferenceSkippedBecauseNoFacts = true
+    HostLlamaBriefingRuntimeDiagnostics.lastRun = HostLlamaRunDiagnostics()
+  }
+
+  static func prepareForInference() {
+    inferenceSkippedBecauseNoFacts = false
+  }
+
+  static func recordValidationSuccess(generated: String) {
+    storeCandidate(generated)
+    lastValidationFailureReason = nil
+  }
+
+  static func recordValidationFailure(generated: String, reason: String?) {
+    storeCandidate(generated)
+    lastValidationFailureReason = reason
+  }
+
+  static func recordRuntimeFailure() {
+    lastGeneratedCandidate = nil
+    lastValidationFailureReason = nil
+  }
+}
+
 enum HostBriefingWriterSource: String, Equatable {
   case template
   case localPlaceholder
@@ -136,6 +178,17 @@ struct LocalModelHostBriefingWriter: HostBriefingWriter {
     packet: HostLLMPacket,
     fallbackText: String
   ) async -> HostBriefingWriterResult {
+    // Empty packet uses deterministic template; local model inference would add no value.
+    if packet.topFacts.isEmpty {
+      HostBriefingWriterDiagnostics.recordEmptyPacketSkip()
+      return HostBriefingWriterResult(
+        text: fallbackText,
+        source: .template,
+        failedReason: nil
+      )
+    }
+
+    HostBriefingWriterDiagnostics.prepareForInference()
     let readiness = HostLocalModelReadinessProvider.currentReadiness()
 
     switch readiness.status {
@@ -172,6 +225,7 @@ struct LocalModelHostBriefingWriter: HostBriefingWriter {
       )
 
       if validation.isValid {
+        HostBriefingWriterDiagnostics.recordValidationSuccess(generated: generated)
         return HostBriefingWriterResult(
           text: generated,
           source: .localModel,
@@ -179,16 +233,22 @@ struct LocalModelHostBriefingWriter: HostBriefingWriter {
         )
       }
 
+      HostBriefingWriterDiagnostics.recordValidationFailure(
+        generated: generated,
+        reason: validation.reason
+      )
       return Self.fallbackResult(
         fallbackText: fallbackText,
         reason: validation.reason ?? "Briefing validation failed."
       )
     } catch let error as HostLocalModelRuntimeError {
+      HostBriefingWriterDiagnostics.recordRuntimeFailure()
       return Self.fallbackResult(
         fallbackText: fallbackText,
         reason: error.errorDescription ?? "Local model failed."
       )
     } catch {
+      HostBriefingWriterDiagnostics.recordRuntimeFailure()
       return Self.fallbackResult(
         fallbackText: fallbackText,
         reason: error.localizedDescription

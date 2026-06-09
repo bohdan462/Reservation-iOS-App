@@ -26,6 +26,7 @@ struct HostLlamaRunDiagnostics: Equatable {
   var promptExceedsBatchCapacity: Bool = false
   var initialDecodeCode: Int32?
   var generationDecodeCode: Int32?
+  var generationRan: Bool = false
   var lastError: String?
 }
 
@@ -299,8 +300,10 @@ private final class LlamaLoadedSession: @unchecked Sendable {
 
     var generated = ""
     let eosToken = llama_vocab_eos(vocab)
+    diagnostics.generationRan = false
 
     for _ in 0..<maxTokens {
+      diagnostics.generationRan = true
       let nextToken: llama_token
       if let sampler {
         nextToken = llama_sampler_sample(sampler, context, batch.n_tokens - 1)
@@ -345,8 +348,8 @@ private final class LlamaLoadedSession: @unchecked Sendable {
       }
 
       let decodeCode = llama_decode(context, batch)
+      diagnostics.generationDecodeCode = decodeCode
       if decodeCode != 0 {
-        diagnostics.generationDecodeCode = decodeCode
         throw HostLocalModelRuntimeError.generationFailed(
           "Token llama_decode failed with code \(decodeCode)."
         )

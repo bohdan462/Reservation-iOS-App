@@ -864,6 +864,11 @@ private struct LocalModelBriefingDiagnosticTest: View {
       }
 
       if let result {
+        if result.inferenceSkippedBecauseNoFacts {
+          Text("Local model skipped: no packet facts.")
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
         LabeledContent("Readiness") {
           Text(result.readinessStatus.rawValue)
         }
@@ -903,9 +908,34 @@ private struct LocalModelBriefingDiagnosticTest: View {
             Text("\(decodeCode)")
           }
         }
-        if let decodeCode = result.runtimeDiagnostics?.generationDecodeCode {
-          LabeledContent("Generation decode code") {
-            Text("\(decodeCode)")
+        if let runtimeDiagnostics = result.runtimeDiagnostics {
+          if runtimeDiagnostics.generationRan {
+            if let decodeCode = runtimeDiagnostics.generationDecodeCode {
+              LabeledContent("Generation decode code") {
+                Text("\(decodeCode)")
+              }
+            }
+          } else if !result.inferenceSkippedBecauseNoFacts {
+            LabeledContent("Token generation") {
+              Text("No token generation ran")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            }
+          }
+        }
+        if let candidate = result.generatedCandidate, !candidate.isEmpty {
+          LabeledContent("Model candidate preview") {
+            Text(candidate)
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+              .textSelection(.enabled)
+          }
+        }
+        if let reason = result.candidateValidationFailureReason, !reason.isEmpty {
+          LabeledContent("Candidate validation failure") {
+            Text(reason)
+              .font(.caption2)
+              .foregroundStyle(.tertiary)
           }
         }
         if let runtimeError = result.runtimeDiagnostics?.lastError, !runtimeError.isEmpty {
@@ -982,6 +1012,7 @@ private struct LocalModelBriefingDiagnosticTest: View {
       let runtimeDiagnostics = HostLlamaBriefingRuntimeDiagnostics.lastRun
       let fallbackOccurred = coldWriterResult.source == .failedFallback
         || writerResult.source == .failedFallback
+      let writerDiagnostics = HostBriefingWriterDiagnostics.self
 
       await MainActor.run {
         result = LocalModelBriefingDiagnosticResult(
@@ -995,7 +1026,10 @@ private struct LocalModelBriefingDiagnosticTest: View {
           readinessStatus: readinessStatus,
           fallbackText: fallbackText,
           fallbackOccurred: fallbackOccurred,
-          runtimeDiagnostics: runtimeDiagnostics
+          runtimeDiagnostics: runtimeDiagnostics,
+          inferenceSkippedBecauseNoFacts: writerDiagnostics.inferenceSkippedBecauseNoFacts,
+          generatedCandidate: writerDiagnostics.lastGeneratedCandidate,
+          candidateValidationFailureReason: writerDiagnostics.lastValidationFailureReason
         )
         isRunning = false
       }
@@ -1015,6 +1049,9 @@ private struct LocalModelBriefingDiagnosticResult {
   let fallbackText: String
   let fallbackOccurred: Bool
   let runtimeDiagnostics: HostLlamaRunDiagnostics?
+  let inferenceSkippedBecauseNoFacts: Bool
+  let generatedCandidate: String?
+  let candidateValidationFailureReason: String?
 }
 
 private enum LocalModelDiagnosticDuration {
