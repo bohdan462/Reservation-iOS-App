@@ -561,6 +561,7 @@ struct HostBoardView: View {
         HostIntelligenceCard(
             snapshot: snapshot,
             briefingTextOverride: hostIntelligenceController.briefingText,
+            managerNarrative: hostIntelligenceController.managerNarrative,
             briefingSource: hostIntelligenceController.briefingSource,
             compactOperationalPrompts: compactPrompts,
             showOperationalReview: useSeparatedPrompts,

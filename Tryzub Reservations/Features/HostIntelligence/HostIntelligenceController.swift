@@ -14,6 +14,7 @@ final class HostIntelligenceController: ObservableObject {
   @Published private(set) var briefingText: String = HostDecisionSnapshot.empty.templateBriefingText
   @Published private(set) var briefingSource: HostBriefingWriterSource = .template
   @Published private(set) var briefingFailureReason: String?
+  @Published private(set) var managerNarrative: ManagerNarrative = .empty
 
   let settingsStore: HostIntelligenceSettingsStore
   let tableStore: HostTableConfigStore
@@ -25,6 +26,7 @@ final class HostIntelligenceController: ObservableObject {
   private var lastBriefingText: String?
   private var lastBriefingSource: HostBriefingWriterSource?
   private var lastBriefingFailureReason: String?
+  private var lastManagerNarrative: ManagerNarrative?
 
   init(
     settingsStore: HostIntelligenceSettingsStore? = nil,
@@ -69,12 +71,14 @@ final class HostIntelligenceController: ObservableObject {
     let packet = decisionSnapshot.llmPacket
     let fingerprint = packet.briefingFingerprint
     let settingsStamp = briefingSettingsStamp(settings)
+    let actionStamp = narrativeActionStamp(from: decisionSnapshot)
     let cacheKey = briefingCacheKey(
       fingerprint: fingerprint,
       settingsStamp: settingsStamp,
       hostBoardContext: hostBoardContext,
       settings: settings,
-      packet: packet
+      packet: packet,
+      actionStamp: actionStamp
     )
 
     guard settings.isEnabled else {
@@ -83,11 +87,14 @@ final class HostIntelligenceController: ObservableObject {
       return
     }
 
+    let templateNarrative = ManagerNarrativeTemplateBuilder.build(from: decisionSnapshot)
+
     if cacheKey == lastBriefingCacheKey,
        let cachedText = lastBriefingText {
       briefingText = cachedText
       briefingSource = lastBriefingSource ?? .template
       briefingFailureReason = lastBriefingFailureReason
+      managerNarrative = lastManagerNarrative ?? templateNarrative
       HostIntelligenceDiagnostics.skipBriefing(reason: "same_packet")
       return
     }
@@ -98,7 +105,8 @@ final class HostIntelligenceController: ObservableObject {
         fingerprint: fingerprint,
         text: fallback,
         source: .template,
-        failureReason: nil
+        failureReason: nil,
+        narrative: templateNarrative
       )
       return
     }
@@ -111,7 +119,8 @@ final class HostIntelligenceController: ObservableObject {
         fingerprint: fingerprint,
         text: fallback,
         source: .template,
-        failureReason: nil
+        failureReason: nil,
+        narrative: templateNarrative
       )
       return
     }
@@ -128,7 +137,26 @@ final class HostIntelligenceController: ObservableObject {
         fingerprint: fingerprint,
         text: fallback,
         source: .template,
-        failureReason: nil
+        failureReason: nil,
+        narrative: templateNarrative
+      )
+      return
+    }
+
+    if hostBoardContext != nil, provider == .localModel {
+      let narrativePacket = ManagerNarrativePacketBuilder.buildHostHome(from: decisionSnapshot)
+      let narrativeResult = await ManagerNarrativeWriter().write(
+        narrativePacket: narrativePacket,
+        hostPacket: packet,
+        fallback: templateNarrative
+      )
+      storeBriefingResult(
+        cacheKey: cacheKey,
+        fingerprint: fingerprint,
+        text: narrativeResult.compactBriefingText,
+        source: mapBriefingSource(narrativeResult.source),
+        failureReason: narrativeResult.failedReason,
+        narrative: narrativeResult
       )
       return
     }
@@ -146,12 +174,20 @@ final class HostIntelligenceController: ObservableObject {
     )
 
     if validation.isValid {
+      let narrative = ManagerNarrative(
+        headline: result.text,
+        whyItMatters: templateNarrative.whyItMatters,
+        checkNext: templateNarrative.checkNext,
+        source: mapNarrativeSource(result.source),
+        failedReason: result.failedReason
+      )
       storeBriefingResult(
         cacheKey: cacheKey,
         fingerprint: fingerprint,
         text: result.text,
         source: result.source,
-        failureReason: result.failedReason
+        failureReason: result.failedReason,
+        narrative: narrative
       )
       return
     }
@@ -163,7 +199,8 @@ final class HostIntelligenceController: ObservableObject {
       source: .failedFallback,
       failureReason: validation.reason
         ?? result.failedReason
-        ?? "Briefing validation failed."
+        ?? "Briefing validation failed.",
+      narrative: templateNarrative
     )
   }
 
@@ -174,9 +211,11 @@ final class HostIntelligenceController: ObservableObject {
   }
 
   private func applyTemplateBriefing(from snapshot: HostDecisionSnapshot) {
+    let narrative = ManagerNarrativeTemplateBuilder.build(from: snapshot)
     briefingText = snapshot.templateBriefingText
     briefingSource = .template
     briefingFailureReason = nil
+    managerNarrative = narrative
   }
 
   private func resolvedBriefingProvider(
@@ -224,7 +263,8 @@ final class HostIntelligenceController: ObservableObject {
     settingsStamp: String,
     hostBoardContext: HostBriefingHostBoardContext?,
     settings: HostIntelligenceSettings,
-    packet: HostLLMPacket
+    packet: HostLLMPacket,
+    actionStamp: String
   ) -> String {
     if let hostBoardContext {
       let localModelAllowed = HostBriefingHostBoardGate.shouldUseLocalModelOnHostBoard(
@@ -232,9 +272,16 @@ final class HostIntelligenceController: ObservableObject {
         context: hostBoardContext,
         packet: packet
       )
-      return "\(fingerprint)|\(settingsStamp)|host|\(localModelAllowed)"
+      return "\(fingerprint)|\(settingsStamp)|host|\(localModelAllowed)|\(actionStamp)"
     }
-    return "\(fingerprint)|\(settingsStamp)|manual"
+    return "\(fingerprint)|\(settingsStamp)|manual|\(actionStamp)"
+  }
+
+  private func narrativeActionStamp(from snapshot: HostDecisionSnapshot) -> String {
+    snapshot.suggestedActions
+      .prefix(3)
+      .map { "\($0.kind.rawValue):\($0.title)" }
+      .joined(separator: ";")
   }
 
   private func storeBriefingResult(
@@ -242,17 +289,20 @@ final class HostIntelligenceController: ObservableObject {
     fingerprint: String,
     text: String,
     source: HostBriefingWriterSource,
-    failureReason: String?
+    failureReason: String?,
+    narrative: ManagerNarrative
   ) {
     briefingText = text
     briefingSource = source
     briefingFailureReason = failureReason
+    managerNarrative = narrative
     lastBriefingCacheKey = cacheKey
     lastBriefingPacketFingerprint = fingerprint
     lastBriefingGeneratedAt = Date()
     lastBriefingText = text
     lastBriefingSource = source
     lastBriefingFailureReason = failureReason
+    lastManagerNarrative = narrative
   }
 
   private func clearBriefingCache() {
@@ -262,6 +312,25 @@ final class HostIntelligenceController: ObservableObject {
     lastBriefingText = nil
     lastBriefingSource = nil
     lastBriefingFailureReason = nil
+    lastManagerNarrative = nil
+    managerNarrative = .empty
+  }
+
+  private func mapBriefingSource(_ source: ManagerNarrative.Source) -> HostBriefingWriterSource {
+    switch source {
+    case .template: return .template
+    case .localModel: return .localModel
+    case .failedFallback: return .failedFallback
+    }
+  }
+
+  private func mapNarrativeSource(_ source: HostBriefingWriterSource) -> ManagerNarrative.Source {
+    switch source {
+    case .template: return .template
+    case .localPlaceholder: return .template
+    case .localModel: return .localModel
+    case .failedFallback: return .failedFallback
+    }
   }
 
   var settings: HostIntelligenceSettings {

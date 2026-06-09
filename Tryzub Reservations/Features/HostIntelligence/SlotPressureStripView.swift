@@ -50,7 +50,7 @@ struct SlotPressureStripView: View {
       }
 
       if pressure.noTableCount > 0 {
-        Text("\(pressure.noTableCount) no table")
+        Text("\(pressure.noTableCount) need tables")
           .font(.caption2)
           .foregroundStyle(.secondary)
       }
@@ -84,7 +84,12 @@ struct SlotPressureStripView: View {
   }
 
   private func severityLabel(_ severity: HostPressureSeverity) -> String {
-    severity.rawValue.capitalized
+    switch severity {
+    case .critical: return "Very busy"
+    case .busy: return "Busy"
+    case .watch: return "Watch"
+    case .calm: return "Quiet"
+    }
   }
 
   private func severityColor(_ severity: HostPressureSeverity) -> Color {

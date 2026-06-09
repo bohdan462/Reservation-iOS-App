@@ -86,7 +86,7 @@ struct BusinessIntelligenceOverviewSection: View {
             )
             BusinessIntelligenceHeadlineMetric(title: "Peak window", value: peak)
             BusinessIntelligenceHeadlineMetric(
-                title: "Needs review",
+                title: "Need attention",
                 value: BusinessIntelligenceFormatting.integer(risk.needsReviewCount)
             )
         }
@@ -218,10 +218,10 @@ struct BusinessIntelligenceOverviewSection: View {
     private func operationalRiskSection(_ summary: BusinessIntelligenceSummaryDTO) -> some View {
         let risk = summary.risk
 
-        TryzubSectionCard(title: "Operational risk", systemImage: "exclamationmark.triangle", spacing: 10) {
+        TryzubSectionCard(title: "Service watch", systemImage: "exclamationmark.triangle", spacing: 10) {
             BusinessIntelligenceMetricGrid {
                 BusinessIntelligenceMetricCard(
-                    title: "Needs review",
+                    title: "Need attention",
                     value: BusinessIntelligenceFormatting.integer(risk.needsReviewCount),
                     systemImage: "tray"
                 )
@@ -257,7 +257,7 @@ struct BusinessIntelligenceOverviewSection: View {
             systemStatus.warnings
         )
 
-        TryzubSectionCard(title: "System health", systemImage: "heart.text.square", spacing: 8) {
+        TryzubSectionCard(title: "Booking health", systemImage: "heart.text.square", spacing: 8) {
             HStack {
                 Text("Status")
                     .font(.subheadline.weight(.medium))
@@ -269,24 +269,24 @@ struct BusinessIntelligenceOverviewSection: View {
             .padding(.vertical, 2)
 
             BusinessIntelligenceCompactRow(
-                title: "Needs review",
+                title: "Need attention",
                 value: BusinessIntelligenceFormatting.integer(manager.itemsNeedingReview)
             )
             BusinessIntelligenceCompactRow(
-                title: "Possible duplicates",
+                title: "May need review",
                 value: BusinessIntelligenceFormatting.integer(manager.possibleDuplicatesCount)
             )
 
             if let importFailures = developer.importFailureCount, importFailures > 0 {
                 BusinessIntelligenceCompactRow(
-                    title: "Import failures",
+                    title: "Form problems",
                     value: BusinessIntelligenceFormatting.integer(importFailures)
                 )
             }
 
             if let rejected = developer.spamOrRejectedSubmissionCount, rejected > 0 {
                 BusinessIntelligenceCompactRow(
-                    title: "Rejected submissions",
+                    title: "Rejected forms",
                     value: BusinessIntelligenceFormatting.integer(rejected)
                 )
             }

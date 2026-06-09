@@ -80,14 +80,14 @@ struct HostIntelligenceIntentBanner: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(alignment: .top, spacing: 12) {
-        Image(systemName: "sparkles")
+        Image(systemName: "bell.badge")
           .font(.headline)
           .foregroundStyle(.secondary)
           .frame(width: 32, height: 32)
           .background(Color(.tertiarySystemGroupedBackground), in: Circle())
 
         VStack(alignment: .leading, spacing: 4) {
-          Text("Host pulse")
+          Text("Check this")
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
 

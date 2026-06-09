@@ -17,13 +17,13 @@ struct NewBookingRowInsight: Equatable {
 
   var displayLines: [String] {
     var lines: [String] = []
-    if let guestLine = guestLine?.nilIfBlank {
-      lines.append(guestLine)
+    if let noteLine = noteLine?.nilIfBlank {
+      lines.append(noteLine)
     }
     if let tableLine = tableLine?.nilIfBlank {
       lines.append(tableLine)
-    } else if let noteLine = noteLine?.nilIfBlank {
-      lines.append(noteLine)
+    } else if let guestLine = guestLine?.nilIfBlank, lines.count < 2 {
+      lines.append(guestLine)
     }
     return Array(lines.prefix(2))
   }
@@ -48,7 +48,10 @@ enum NewBookingRowInsightBuilder {
       tableConfigs: tableConfigs,
       largePartyThreshold: largePartyThreshold
     )
-    let noteLine = noteInsightLine(for: reservation)
+    let noteLine = noteInsightLine(
+      for: reservation,
+      report: report
+    )
 
     let insight = NewBookingRowInsight(
       reservationID: reservation.remoteID,
@@ -74,6 +77,36 @@ enum NewBookingRowInsightBuilder {
         largePartyThreshold: largePartyThreshold
       ) != nil
     }.count
+  }
+
+  static func countAllergyNotes(pending: [ReservationRecord]) -> Int {
+    pending.filter { reservation in
+      let notes = combinedNotes(for: reservation)
+      return HostGuestNoteSnippetExtractor.allergySnippet(from: notes) != nil
+    }.count
+  }
+
+  static func countPossibleDuplicates(
+    pending: [ReservationRecord],
+    historyPool: [ReservationRecord]
+  ) -> Int {
+    let analyzer = GuestInsightsController()
+    return pending.filter { reservation in
+      let report = analyzer.analyze(selected: reservation, allReservations: historyPool)
+      return possibleDuplicateLine(report: report, reservation: reservation) != nil
+    }.count
+  }
+
+  static func isLargePartyNeedingTablePlan(
+    reservation: ReservationRecord,
+    tableConfigs: [RestaurantTableConfig],
+    largePartyThreshold: Int = HostIntelligenceSettings().largePartyThreshold
+  ) -> Bool {
+    tableInsightLine(
+      reservation: reservation,
+      tableConfigs: tableConfigs,
+      largePartyThreshold: largePartyThreshold
+    ) == "Large party — check joined tables"
   }
 
   // MARK: - Guest
@@ -139,19 +172,42 @@ enum NewBookingRowInsightBuilder {
 
   // MARK: - Notes
 
-  private static func noteInsightLine(for reservation: ReservationRecord) -> String? {
+  private static func noteInsightLine(
+    for reservation: ReservationRecord,
+    report: GuestInsightReport
+  ) -> String? {
+    if let duplicateLine = possibleDuplicateLine(report: report, reservation: reservation) {
+      return duplicateLine
+    }
+
     let notes = combinedNotes(for: reservation)
     guard !notes.isEmpty else { return nil }
 
-    if let snippet = HostGuestNoteSnippetExtractor.allergySnippet(from: notes) {
-      return "Allergy note: \(snippet)"
+    if HostGuestNoteSnippetExtractor.allergySnippet(from: notes) != nil {
+      return "Allergy note — tell server"
     }
     if let snippet = HostGuestNoteSnippetExtractor.seatingPreferenceSnippet(from: notes) {
-      return "Prefers \(snippet)"
+      return "Accessibility — \(snippet)"
     }
     if HostGuestNoteSnippetExtractor.specialOccasionSnippet(from: notes) != nil {
-      return "Occasion note present"
+      return "Occasion note — share with server"
     }
+    return nil
+  }
+
+  private static func possibleDuplicateLine(
+    report: GuestInsightReport,
+    reservation: ReservationRecord
+  ) -> String? {
+    if report.collapsedDuplicateReservationCount > 0 {
+      return "Possible duplicate — compare details"
+    }
+
+    let staffNotes = (reservation.staffNotes ?? "").lowercased()
+    if staffNotes.contains("possible duplicate") || staffNotes.contains("correction") {
+      return "Possible duplicate — compare details"
+    }
+
     return nil
   }
 

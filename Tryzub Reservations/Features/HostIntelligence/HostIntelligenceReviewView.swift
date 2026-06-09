@@ -45,10 +45,7 @@ struct HostIntelligenceReviewView: View {
     VStack(alignment: .leading, spacing: 6) {
       Text(serviceStateTitle)
         .font(.title3.weight(.semibold))
-      Text("Pressure \(Int(snapshot.pressureScore.rounded()))/100")
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-      Text(generatedAtText)
+      Text("Updated \(generatedAtText)")
         .font(.caption)
         .foregroundStyle(.tertiary)
     }
@@ -57,7 +54,7 @@ struct HostIntelligenceReviewView: View {
 
   private var mainBriefingSection: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Text("Main briefing")
+      Text("Right now")
         .font(.headline)
 
       Text(displayBriefingText)
@@ -76,11 +73,11 @@ struct HostIntelligenceReviewView: View {
   @ViewBuilder
   private var operationalPromptsSection: some View {
     VStack(alignment: .leading, spacing: 10) {
-      Text("Operational prompts")
+      Text("What to check")
         .font(.headline)
 
       if operationalPrompts.isEmpty {
-        Text("No grouped operational prompts for this snapshot.")
+        Text("Nothing else grouped for this moment.")
           .font(.subheadline)
           .foregroundStyle(.secondary)
       } else {
@@ -113,11 +110,11 @@ struct HostIntelligenceReviewView: View {
   @ViewBuilder
   private var topFactsSection: some View {
     VStack(alignment: .leading, spacing: 10) {
-      Text("Top facts")
+      Text("Key details")
         .font(.headline)
 
       if snapshot.briefingFacts.isEmpty {
-        Text("No ranked briefing facts.")
+        Text("No extra details right now.")
           .font(.subheadline)
           .foregroundStyle(.secondary)
       } else {
@@ -138,11 +135,11 @@ struct HostIntelligenceReviewView: View {
   @ViewBuilder
   private var suggestedActionsSection: some View {
     VStack(alignment: .leading, spacing: 10) {
-      Text("Suggested actions")
+      Text("Check next")
         .font(.headline)
 
       if snapshot.suggestedActions.isEmpty {
-        Text("No suggested actions.")
+        Text("No checks suggested right now.")
           .font(.subheadline)
           .foregroundStyle(.secondary)
       } else {
@@ -163,25 +160,21 @@ struct HostIntelligenceReviewView: View {
     }
   }
 
+  @ViewBuilder
   private var signalsSummarySection: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text("Signals summary")
-        .font(.headline)
+    let flaggedCount = snapshot.briefingFacts.count
+      + snapshot.suggestedActions.count
+    if flaggedCount > 0 {
+      VStack(alignment: .leading, spacing: 8) {
+        Text("Summary")
+          .font(.headline)
 
-      LabeledContent("Guest signals") {
-        Text("\(snapshot.guestSignals.count)")
+        Text("\(flaggedCount) item\(flaggedCount == 1 ? "" : "s") flagged for staff review.")
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
       }
-      LabeledContent("Table signals") {
-        Text("\(snapshot.tableSignals.count)")
-      }
-      LabeledContent("Booking decisions") {
-        Text("\(snapshot.bookingDecisions.count)")
-      }
-      LabeledContent("Slot pressures") {
-        Text("\(snapshot.slotPressures.count)")
-      }
+      .reviewCardStyle()
     }
-    .reviewCardStyle()
   }
 
   // MARK: - Rows
@@ -197,7 +190,7 @@ struct HostIntelligenceReviewView: View {
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.leading)
         if isTappable {
-          Text("Tap to review reservation")
+          Text(ManagerAttentionItemBuilder.tapLabel(for: action))
             .font(.caption2)
             .foregroundStyle(.tertiary)
         }

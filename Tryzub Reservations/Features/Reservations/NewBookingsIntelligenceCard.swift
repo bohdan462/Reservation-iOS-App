@@ -11,6 +11,7 @@ struct NewBookingsIntelligenceSummary: Equatable {
   let totalPendingCount: Int
   let noTableCount: Int
   let summaryLine: String
+  let priorityLines: [String]
   let returningGuestLine: String?
   let tableFitLine: String?
 
@@ -28,12 +29,24 @@ struct NewBookingsIntelligenceSummary: Equatable {
       pending: pending,
       tableConfigs: tableConfigs
     )
+    let allergyCount = NewBookingRowInsightBuilder.countAllergyNotes(pending: pending)
+    let duplicateCount = NewBookingRowInsightBuilder.countPossibleDuplicates(
+      pending: pending,
+      historyPool: historyPool
+    )
+    let largePartyCount = pending.filter {
+      NewBookingRowInsightBuilder.isLargePartyNeedingTablePlan(
+        reservation: $0,
+        tableConfigs: tableConfigs
+      )
+    }.count
 
     guard !pending.isEmpty else {
       return NewBookingsIntelligenceSummary(
         totalPendingCount: 0,
         noTableCount: 0,
         summaryLine: "No new reservations waiting right now.",
+        priorityLines: [],
         returningGuestLine: nil,
         tableFitLine: nil
       )
@@ -52,10 +65,28 @@ struct NewBookingsIntelligenceSummary: Equatable {
     }
     let summaryLine = summaryParts.joined(separator: " · ")
 
+    var priorityLines: [String] = []
+    if allergyCount == 1 {
+      priorityLines.append("1 allergy note — tell server first")
+    } else if allergyCount > 1 {
+      priorityLines.append("\(allergyCount) allergy notes — tell server first")
+    }
+    if duplicateCount == 1 {
+      priorityLines.append("1 possible duplicate — compare details")
+    } else if duplicateCount > 1 {
+      priorityLines.append("\(duplicateCount) possible duplicates — compare details")
+    }
+    if largePartyCount == 1 {
+      priorityLines.append("1 large party — check joined tables")
+    } else if largePartyCount > 1 {
+      priorityLines.append("\(largePartyCount) large parties — check joined tables")
+    }
+
     return NewBookingsIntelligenceSummary(
       totalPendingCount: pending.count,
       noTableCount: noTableCount,
       summaryLine: summaryLine,
+      priorityLines: Array(priorityLines.prefix(3)),
       returningGuestLine: returningGuestLine(count: returningCount),
       tableFitLine: tableFitLine(count: tableFitCount)
     )
@@ -93,13 +124,31 @@ struct NewBookingsIntelligenceCard: View {
   let summary: NewBookingsIntelligenceSummary
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Text("New booking review")
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Needs attention")
         .font(.subheadline.weight(.semibold))
 
       Text(summary.summaryLine)
         .font(.caption)
         .foregroundStyle(.secondary)
+
+      if !summary.priorityLines.isEmpty {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Check first")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+
+          ForEach(Array(summary.priorityLines.enumerated()), id: \.offset) { _, line in
+            HStack(alignment: .top, spacing: 6) {
+              Text("•")
+                .font(.caption.weight(.bold))
+              Text(line)
+                .font(.caption.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+            }
+          }
+        }
+      }
 
       if let returningGuestLine = summary.returningGuestLine {
         Text(returningGuestLine)
@@ -107,7 +156,7 @@ struct NewBookingsIntelligenceCard: View {
           .foregroundStyle(.secondary)
       }
 
-      if let tableFitLine = summary.tableFitLine {
+      if let tableFitLine = summary.tableFitLine, summary.priorityLines.isEmpty {
         Text(tableFitLine)
           .font(.caption)
           .foregroundStyle(.secondary)

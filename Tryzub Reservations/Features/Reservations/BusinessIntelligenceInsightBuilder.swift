@@ -17,15 +17,15 @@ enum BusinessIntelligenceInsightBuilder {
         let estimatedRelationships = usesEstimatedGuestRelationships(summary)
 
         if let peakLabel = BusinessIntelligenceFormatting.peakWindowLabel(summary: summary) {
-            lines.append("\(peakLabel) is the strongest demand window.")
+            lines.append("\(peakLabel) is the busiest time.")
         }
 
         if let repeatRate = summary.guestRelationships.repeatGuestRate, repeatRate > 0 {
             let rateText = BusinessIntelligenceFormatting.percent(repeatRate)
             if estimatedRelationships {
-                lines.append("\(rateText) estimated repeat guests in this range.")
+                lines.append("Repeat guests look strong at about \(rateText).")
             } else {
-                lines.append("\(rateText) repeat guests in this range.")
+                lines.append("Repeat guests are strong at \(rateText).")
             }
         }
 
@@ -52,20 +52,20 @@ enum BusinessIntelligenceInsightBuilder {
 
     static func dataQualityNote(for summary: BusinessIntelligenceSummaryDTO) -> String? {
         guard usesEstimatedGuestRelationships(summary) else { return nil }
-        return "Guest relationship metrics are estimated from email/phone matches."
+        return "Some guest history is estimated."
     }
 
     static func managerSafeSystemWarnings(_ warnings: [String]) -> [String] {
         warnings.compactMap { warning in
             let lowered = warning.lowercased()
             if lowered.contains("import") {
-                return "Import pipeline may need attention."
+                return "Some form imports may need staff review."
             }
             if lowered.contains("duplicate") {
-                return "Possible duplicates detected."
+                return "Some records may need staff review."
             }
             if lowered.contains("hidden") || lowered.contains("superseded") {
-                return "Hidden or superseded records are excluded."
+                return "Hidden bookings are left out of these totals."
             }
             return nil
         }

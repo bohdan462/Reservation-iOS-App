@@ -1,7 +1,7 @@
 # Local Model Intelligence
 
 **Branch:** `intelligence`  
-**Status:** Host briefing (optional) + guest message drafts (template default, local model opt-in)
+**Status:** Host/Home manager narrative (optional) + guest message drafts (template default, local model opt-in)
 
 ## Runtime
 
@@ -11,18 +11,29 @@
 | Model file | `host-briefing-qwen2_5-0_5b-instruct-q4_k_m.gguf` (Application Support) |
 | Ollama | **Not used** — no Ollama client or endpoint in this app |
 | Cloud LLM | **Not used** — no OpenAI/Anthropic or other remote inference |
-| Host briefing | Optional, staff-gated (`useEnhancedBriefing`, `useLocalModelOnHostBoard`) |
+| Host/Home manager narrative | Optional, staff-gated (`useEnhancedBriefing`, `enhancedBriefingProvider = localModel`, `useLocalModelOnHostBoard`) |
 | Guest message drafts | **Reservation Detail UI** shipped; **template drafts default** |
-| Guest draft local model | **Opt-in** via Host Intelligence → `useLocalModelForGuestMessageDrafts` (default **off**) |
+| Guest draft local model | **Opt-in** via Host Intelligence → `useLocalModelForGuestMessageDrafts` (default **off**, independent of Host board) |
+| Business analytics narrative | **Not wired** — prototype packet only; remains deterministic |
+| New Bookings narrative | **Not wired** — stays deterministic (row-level model adds PII risk, little value) |
 
 ## Intelligence boundaries
 
 ```
 Backend intelligence  →  deterministic evidence (API)
 Host engine           →  deterministic signals, decisions, HostLLMPacket
-Local model           →  wording assistant only (briefing or message drafts)
+Local model           →  wording assistant only (manager narrative or message drafts)
 Staff                 →  final sender; all Mail / Messages actions are manual
 ```
+
+## Host/Home manager narrative
+
+- **Wording only** — Host engine produces facts and actions; `ManagerNarrativePacket` is a minimal safe input; model rewrites headline / why / check-next
+- **Settings** — uses existing Host local model toggles (`useEnhancedBriefing`, `useLocalModelOnHostBoard`); **not** the guest draft toggle
+- **Input** — sanitized fact titles/details and existing action titles only; no raw reservations, notes, email, phone, evidence, or backend JSON
+- **Output** — validator blocks technical terms, completion claims, unsupported check-next actions, and PII-like strings
+- **Fallback** — deterministic `ManagerNarrativeTemplateBuilder` when model is off, unavailable, or output is unsafe
+- **Diagnostics** — raw model output and prompt preview are developer-only (in-memory, not persisted)
 
 The local model **must not**:
 
@@ -139,6 +150,7 @@ Mail / Messages presenters
 | Draft service | `Features/GuestMessaging/GuestMessageDraftService.swift` |
 | Review UI | `Features/GuestMessaging/GuestMessageDraftReviewView.swift` |
 | Host briefing writer | `Features/HostIntelligence/HostBriefingWriter.swift` |
+| Manager narrative | `Features/HostIntelligence/ManagerNarrativeWriter.swift`, `ManagerNarrativePacketSanitizer.swift` |
 | Host LLM packet | `Features/HostIntelligence/HostIntelligenceModels.swift` |
 | Guest message models | `Features/GuestMessaging/GuestMessageDraftModels.swift` |
 | Packet builder | `Features/GuestMessaging/GuestMessageDraftPacketBuilder.swift` |

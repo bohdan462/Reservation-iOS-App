@@ -418,7 +418,7 @@ struct LocalModelHostBriefingWriter: HostBriefingWriter {
     )
   }
 
-  private static func shouldUseTemplateForLowRiskSingleFact(_ packet: HostLLMPacket) -> Bool {
+  static func shouldUseTemplateForLowRiskSingleFact(_ packet: HostLLMPacket) -> Bool {
     guard packet.topFacts.count == 1, let fact = packet.topFacts.first else {
       return false
     }

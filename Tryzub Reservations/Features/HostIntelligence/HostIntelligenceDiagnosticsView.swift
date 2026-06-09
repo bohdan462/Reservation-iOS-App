@@ -607,6 +607,45 @@ struct HostIntelligenceDiagnosticsView: View {
         .foregroundStyle(.secondary)
         .textSelection(.enabled)
 
+      Text("Manager narrative (Host/Home)")
+        .font(.subheadline.weight(.semibold))
+      let templateNarrative = ManagerNarrativeTemplateBuilder.build(from: decision)
+      let narrativePacket = ManagerNarrativePacketBuilder.buildHostHome(from: decision)
+      LabeledContent("Template headline") {
+        Text(templateNarrative.headline)
+      }
+      if let why = templateNarrative.whyItMatters {
+        LabeledContent("Template why") {
+          Text(why)
+        }
+      }
+      if let check = templateNarrative.checkNext {
+        LabeledContent("Template check") {
+          Text(check)
+        }
+      }
+      if let lastNarrativeOutput = ManagerNarrativeWriterDiagnostics.lastRawOutput {
+        LabeledContent("Last narrative output (developer only)") {
+          Text(lastNarrativeOutput)
+            .font(.caption2)
+            .textSelection(.enabled)
+        }
+      }
+      if let narrativeFailure = ManagerNarrativeWriterDiagnostics.lastValidationFailureReason {
+        LabeledContent("Narrative fallback reason") {
+          Text(narrativeFailure)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
+      }
+      #if DEBUG
+      LabeledContent("Narrative prompt preview") {
+        Text(ManagerNarrativePromptBuilder.buildDebugPromptPreview(from: narrativePacket))
+          .font(.caption2)
+          .textSelection(.enabled)
+      }
+      #endif
+
       Text("Validator")
         .font(.subheadline.weight(.semibold))
       LabeledContent("Template briefing") {

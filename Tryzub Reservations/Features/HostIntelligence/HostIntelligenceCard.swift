@@ -10,6 +10,7 @@ import SwiftUI
 struct HostIntelligenceCard: View {
   let snapshot: HostDecisionSnapshot
   var briefingTextOverride: String? = nil
+  var managerNarrative: ManagerNarrative? = nil
   var briefingSource: HostBriefingWriterSource? = nil
   var compactOperationalPrompts: [HostOperationalBriefingPrompt] = []
   var showOperationalReview: Bool = false
@@ -34,9 +35,7 @@ struct HostIntelligenceCard: View {
     VStack(alignment: .leading, spacing: 8) {
       cardTitleRow
 
-      Text(displayBriefingText)
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
+      narrativeBody
 
       compactPromptLines
 
@@ -52,22 +51,28 @@ struct HostIntelligenceCard: View {
 
         Spacer(minLength: 8)
 
-        Text(stateTitle)
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(.secondary)
+        if staffFacingPresentation {
+          Text(stateTitle)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+        } else {
+          Text(stateTitle)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
 
-        Text("\(Int(snapshot.pressureScore.rounded()))")
-          .font(.caption.monospacedDigit())
+          Text("\(Int(snapshot.pressureScore.rounded()))")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+      }
+
+      if !staffFacingPresentation {
+        Text(stateLine)
+          .font(.caption)
           .foregroundStyle(.secondary)
       }
 
-      Text(stateLine)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-
-      Text(displayBriefingText)
-        .font(.subheadline)
-        .fixedSize(horizontal: false, vertical: true)
+      narrativeBody
 
       if let briefingSourceCaption {
         Text(briefingSourceCaption)
@@ -79,19 +84,23 @@ struct HostIntelligenceCard: View {
 
       reviewIntelligenceButton
 
-      if !topActions.isEmpty {
+      if !attentionItems.isEmpty {
         VStack(alignment: .leading, spacing: 6) {
-          ForEach(topActions) { action in
-            actionRow(action)
+          if staffFacingPresentation {
+            Text("Check next")
+              .font(.caption.weight(.semibold))
+              .foregroundStyle(.secondary)
+          }
+
+          ForEach(attentionItems) { item in
+            if let action = item.sourceAction {
+              attentionRow(item, action: action)
+            }
           }
         }
       }
 
-      if staffFacingPresentation, signalCount > 0 {
-        Text("\(signalCount) live signal\(signalCount == 1 ? "" : "s")")
-          .font(.caption2)
-          .foregroundStyle(.tertiary)
-      } else if !staffFacingPresentation, signalCount > 0 {
+      if !staffFacingPresentation, signalCount > 0 {
         Text("Based on \(signalCount) live signal\(signalCount == 1 ? "" : "s")")
           .font(.caption2)
           .foregroundStyle(.secondary)
@@ -113,38 +122,35 @@ struct HostIntelligenceCard: View {
   }
 
   @ViewBuilder
-  private func actionRow(_ action: HostSuggestedAction) -> some View {
+  private func attentionRow(_ item: ManagerAttentionItem, action: HostSuggestedAction) -> some View {
     if let onActionTapped {
       Button {
         onActionTapped(action)
       } label: {
-        actionRowContent(action, isTappable: true)
+        attentionRowContent(item, isTappable: true)
       }
       .buttonStyle(.plain)
-      .accessibilityHint("Opens reservation for staff review.")
+      .accessibilityHint("Opens reservation for staff to check.")
     } else {
-      actionRowContent(action, isTappable: false)
+      attentionRowContent(item, isTappable: false)
     }
   }
 
-  private func actionRowContent(_ action: HostSuggestedAction, isTappable: Bool) -> some View {
+  private func attentionRowContent(_ item: ManagerAttentionItem, isTappable: Bool) -> some View {
     HStack(alignment: .top, spacing: 8) {
-      Text(action.severity.rawValue.capitalized)
-        .font(.caption2.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .frame(width: 54, alignment: .leading)
-
       VStack(alignment: .leading, spacing: 2) {
-        Text(action.title)
+        Text(item.title)
           .font(.caption.weight(.semibold))
           .lineLimit(2)
-        Text(action.reason)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          .lineLimit(2)
-        if isTappable {
-          Text("Tap to review")
+        if let detail = item.detail {
+          Text(detail)
             .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+        }
+        if isTappable {
+          Text(item.actionTitle)
+            .font(.caption2.weight(.semibold))
             .foregroundStyle(.tertiary)
         }
       }
@@ -172,10 +178,10 @@ struct HostIntelligenceCard: View {
 
   private var stateTitle: String {
     switch snapshot.serviceState {
-    case .calm: return "Calm"
-    case .building: return "Building"
+    case .calm: return "Quiet"
+    case .building: return "Picking up"
     case .busy: return "Busy"
-    case .critical: return "Critical"
+    case .critical: return "Very busy"
     }
   }
 
@@ -183,7 +189,50 @@ struct HostIntelligenceCard: View {
     "Service state · pressure \(Int(snapshot.pressureScore.rounded()))/100"
   }
 
+  @ViewBuilder
+  private var narrativeBody: some View {
+    if let narrative = staffFacingNarrative {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(narrative.headline)
+          .font(.subheadline.weight(.semibold))
+          .fixedSize(horizontal: false, vertical: true)
+
+        if let why = narrative.whyItMatters?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !why.isEmpty {
+          Text(why)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+
+        if attentionItems.isEmpty,
+           let check = narrative.checkNext?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !check.isEmpty {
+          Text(check)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+    } else {
+      Text(displayBriefingText)
+        .font(.subheadline)
+        .foregroundStyle(isCalmPresentation ? .secondary : .primary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+
+  private var staffFacingNarrative: ManagerNarrative? {
+    guard staffFacingPresentation, let managerNarrative else { return nil }
+    let headline = managerNarrative.headline.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !headline.isEmpty else { return nil }
+    return managerNarrative
+  }
+
   private var displayBriefingText: String {
+    if let narrative = staffFacingNarrative {
+      return narrative.headline
+    }
     let override = briefingTextOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     if !override.isEmpty {
       return override
@@ -214,8 +263,16 @@ struct HostIntelligenceCard: View {
     }
   }
 
-  private var topActions: [HostSuggestedAction] {
-    Array(snapshot.suggestedActions.prefix(3))
+  private var attentionItems: [ManagerAttentionItem] {
+    ManagerAttentionItemBuilder.build(from: snapshot, maxItems: 3)
+  }
+
+  private var visibleCompactPrompts: [HostOperationalBriefingPrompt] {
+    guard attentionItems.isEmpty else { return [] }
+    return ManagerAttentionItemBuilder.nonRedundantPrompts(
+      briefingText: displayBriefingText,
+      prompts: compactOperationalPrompts
+    )
   }
 
   private var signalCount: Int {
@@ -227,9 +284,9 @@ struct HostIntelligenceCard: View {
 
   @ViewBuilder
   private var compactPromptLines: some View {
-    if showOperationalReview, !compactOperationalPrompts.isEmpty {
+    if showOperationalReview, !visibleCompactPrompts.isEmpty {
       VStack(alignment: .leading, spacing: 4) {
-        ForEach(compactOperationalPrompts) { prompt in
+        ForEach(visibleCompactPrompts) { prompt in
           Text(prompt.body)
             .font(.caption)
             .foregroundStyle(.secondary)
