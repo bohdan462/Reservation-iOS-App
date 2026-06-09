@@ -2,7 +2,7 @@
 //  HostTableConfigStore.swift
 //  Tryzub Reservations
 //
-//  UserDefaults-backed local restaurant table inventory.
+//  Canonical local iOS table inventory (UserDefaults). See Docs/TABLE_CONFIGURATION.md.
 //
 
 import Foundation

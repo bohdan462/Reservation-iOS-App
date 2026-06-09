@@ -579,7 +579,49 @@ flowchart LR
 
 ---
 
-## 15. Known weak spots (document, do not fix in this pass)
+## 15. Intelligence & messaging flows (current)
+
+### Guest message draft (staff-controlled)
+
+```text
+ReservationDetailView
+  → GuestCommunicationCoordinator
+  → GuestMessageDraftService
+  → Template writer (default) / local model writer (opt-in later)
+  → GuestMessageDraftReviewView
+  → Mail composer / Messages composer / copy
+```
+
+- Draft only — staff sends manually
+- No reservation mutation from draft path
+- Legacy Confirm + Email (`POST /confirm`) remains separate
+
+### Table source of truth (local)
+
+```text
+HostTableConfigStore (structured inventory)
+  → TableAssignmentOptionsBuilder → assignment chips
+  → HostTableIntelligenceSupport → advisory fit / capacity signals
+  → Host engine slot pressure (advisory)
+```
+
+- `ReservationTableOptionsStore` — legacy chip fallback when inventory empty
+- `HostTableCapacityTextParser` — import/export into store, not a competing source
+- Staff manual table override always allowed
+
+### Deterministic intelligence
+
+```text
+Backend intelligence APIs
+  → iOS stores (BusinessIntelligenceStore, GuestIntelligenceStore, IntelligenceSystemStatusStore)
+  → Host board / Business Analytics views
+  → HostIntelligenceEngine (deterministic signals)
+  → Local on-device llama.cpp wording only where staff explicitly enabled (briefing; guest drafts planned opt-in)
+```
+
+---
+
+## 16. Known weak spots (document, do not fix in this pass)
 
 | Area | Issue |
 | --- | --- |

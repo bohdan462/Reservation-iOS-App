@@ -27,6 +27,12 @@ One-restaurant internal iOS app. **WordPress REST API is source of truth.** **Sw
 | SwiftData model | `Persistence/ReservationRecord.swift` |
 | DTOs | `Network/ReservationDTO.swift` |
 | Settings UI + store | `Features/Reservations/RestaurantSettingsStore.swift` |
+| Table inventory (local) | `Features/HostIntelligence/HostTableConfigStore.swift`, `Docs/TABLE_CONFIGURATION.md` |
+| Backend intelligence stores | `BusinessIntelligenceStore`, `GuestIntelligenceStore`, `IntelligenceSystemStatusStore` |
+| Business analytics UI | `Features/Reservations/BusinessAnalyticsView.swift`, `BusinessIntelligenceOverviewSection.swift` |
+| Host intelligence | `Features/HostIntelligence/*`, `HostIntelligenceController.swift` |
+| Guest messaging drafts | `Features/GuestMessaging/*`, `Docs/LOCAL_MODEL_INTELLIGENCE.md` |
+| Local model docs | `Docs/LOCAL_MODEL_INTELLIGENCE.md`, `Docs/HOST_INTELLIGENCE_LOCAL_MODEL_RUNTIME_PROPOSAL.md` (historical) |
 | Operational guest lookup | `Features/Guests/*` |
 | Guest memory | `Features/GuestInsights/*` |
 | Dev diagnostics | `Features/Reservations/DeveloperDiagnosticsView.swift` |
@@ -196,6 +202,53 @@ SwiftData upsert/replace/delete. Match key: `remoteID`.
 ### ReservationsAPIClient
 
 All HTTP; Basic auth; sanitized request logging; one-at-a-time request serializer; 15s request timeout / 30s resource timeout; GET retry capped at one retry; non-GET no blind retry.
+
+---
+
+## 5b. Intelligence, analytics, messaging
+
+### Backend intelligence (deterministic evidence)
+
+API endpoints consumed by iOS stores (no raw guest notes / PII blobs in UI):
+
+| Endpoint area | Store | UI |
+| --- | --- | --- |
+| `GET /business-intelligence/summary` | `BusinessIntelligenceStore` | Business Analytics overview cards |
+| Guest intelligence summaries | `GuestIntelligenceStore` | Host pulse / guest signals (backend-first) |
+| `GET /intelligence/system-status` | `IntelligenceSystemStatusStore` | System health strip in Business Analytics |
+
+DTOs: `BusinessIntelligenceDTO.swift`, `GuestIntelligenceDTO.swift`, `IntelligenceSystemStatusDTO.swift`.
+
+### Business Analytics (`BusinessAnalyticsView`)
+
+- **Business intelligence overview** — demand, guest relationships, operational risk, system health (rolling window)
+- **Meaningful charts** — arrival, weekday, new vs repeat (extracted helpers)
+- **Legacy analytics** — original `ReservationAnalyticsSummaryDTO` charts preserved below BI section
+- Loads in parallel; BI failure does not remove legacy charts
+
+### Host Intelligence
+
+- **Deterministic engine** — `HostIntelligenceEngine` remains authoritative for signals and `HostLLMPacket`
+- **Backend guest summaries first** — `GuestIntelligenceStore` keyed by reservation/date; local SwiftData guest memory as fallback
+- **On-device briefing** — optional local model wording via `HostBriefingWriter` (staff-gated)
+- Host board UI: `HostBoardView`, `HostIntelligenceController`
+
+### Guest messaging (staff-controlled drafts)
+
+- **Reservation Detail** — “Draft guest message” actions + review sheet
+- **`GuestCommunicationCoordinator`** — draft prep, Mail/Text conversion, copy, staff-safe errors
+- **`GuestMessageDraftService`** — packet → template/local writer → validation
+- **Template drafts default**; local model guest draft mode planned opt-in later
+- **Separate from** legacy Confirm + Email (`POST /confirm`) and confirmation-link email with guest notes (`ManualEmailDraftService`)
+- See `Docs/LOCAL_MODEL_INTELLIGENCE.md`
+
+### Table configuration (local)
+
+- **`HostTableConfigStore`** — canonical on-device table inventory (capacity, section, combinable)
+- **`TableAssignmentOptionsBuilder`** — assignment chips from structured inventory; legacy chip fallback when empty
+- **`HostTableCapacityTextParser`** — import/export into structured inventory (not a competing source)
+- **Advisory only** — fit/mismatch/suggestions warn; staff manual override always allowed
+- See `Docs/TABLE_CONFIGURATION.md`
 
 ---
 

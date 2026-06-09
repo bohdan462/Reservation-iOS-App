@@ -367,8 +367,8 @@ private struct ReservationFormContent: View {
     )
     private var guestLookupRecords: [ReservationRecord]
     @StateObject private var guestPhoneLookupStore = GuestLookupStore()
+    @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
-    @StateObject private var hostTableConfigStore = HostTableConfigStore()
     @State private var suppressedGuestPhoneSuggestionID: String?
     @State private var slotContext: HostReservationSlotContext?
     @State private var isCustomTimePresented = false
@@ -2117,6 +2117,7 @@ private extension String {
         ReservationPreviewData.sampleDTOs[0]
     }
     .environmentObject(ReservationsController(environment: environment))
+    .environmentObject(HostTableConfigStore())
 }
 
 #Preview("Edit Reservation") {

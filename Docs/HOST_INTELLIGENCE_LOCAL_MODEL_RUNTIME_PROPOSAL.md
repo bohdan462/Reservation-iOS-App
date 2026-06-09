@@ -2,7 +2,12 @@
 
 **Branch:** `intelligence`  
 **Date:** 2026-05-29  
-**Status:** Phase 8A research; **llama.cpp runtime implemented** for Host briefing. Guest message drafting uses a **separate writer path** (see `Docs/LOCAL_MODEL_INTELLIGENCE.md`).
+**Status:** **Historical architecture research (Phase 8A).** For current implementation state, see **`Docs/LOCAL_MODEL_INTELLIGENCE.md`**.
+
+**Implemented today:**
+- On-device **llama.cpp** via **LlamaSwift** — **not Ollama**
+- **Host briefing rewrite** — optional / staff-gated; template fallback always available
+- **Guest message drafting** — separate packet, writer, validator, and template path; Reservation Detail UI shipped; local model for guest drafts **not default**
 
 ## Executive summary
 

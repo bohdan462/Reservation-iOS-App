@@ -350,7 +350,8 @@ struct HostIntelligenceSettings: Codable, Equatable {
     var slotIntervalMinutes: Int = 20
     var lookaheadMinutes: Int = 180
     var restaurantCapacity: Int = 100
-    var largePartyThreshold: Int = 8
+    /// Host advisory threshold for slot/table pressure (aligns with backend `largePartyReviewThreshold` default of 7).
+    var largePartyThreshold: Int = 7
     var criticalPartyThreshold: Int = 12
     var maxReservationsPerSlot: Int = 4
     var maxLargePartiesPerSlot: Int = 1

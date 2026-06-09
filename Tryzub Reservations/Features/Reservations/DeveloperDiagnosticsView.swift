@@ -18,8 +18,8 @@ struct DeveloperDiagnosticsView: View {
     @State private var isRunningTest = false
     @State private var testResults: [AdminFetchTestResult] = []
 
+    @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @StateObject private var hostIntelligenceSettings = HostIntelligenceSettingsStore()
-    @StateObject private var hostTableConfigStore = HostTableConfigStore()
 
     let environment: AppEnvironment
 

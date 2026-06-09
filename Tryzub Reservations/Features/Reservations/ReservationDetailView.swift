@@ -1805,5 +1805,6 @@ private extension String {
     )
     .environmentObject(HiddenReservationsStore())
     .environmentObject(HostReservationOpenIntentStore())
+    .environmentObject(HostTableConfigStore())
 }
 #endif

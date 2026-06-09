@@ -1,7 +1,7 @@
 # Local Model Intelligence
 
 **Branch:** `intelligence`  
-**Status:** Host briefing + guest message draft foundation
+**Status:** Host briefing (optional) + guest message drafts (template default, UI shipped)
 
 ## Runtime
 
@@ -11,13 +11,14 @@
 | Model file | `host-briefing-qwen2_5-0_5b-instruct-q4_k_m.gguf` (Application Support) |
 | Ollama | **Not used** — no Ollama client or endpoint in this app |
 | Cloud LLM | **Not used** — no OpenAI/Anthropic or other remote inference |
-| Current production use | **Host briefing rewrite** (optional, staff settings) |
-| In progress | **Guest message drafts** (packet + template + local writer shell; UI in a later phase) |
+| Host briefing | Optional, staff-gated (`useEnhancedBriefing`, `useLocalModelOnHostBoard`) |
+| Guest message drafts | Foundation + **Reservation Detail UI** shipped; **template drafts default** |
+| Guest draft local model | Shell exists; **not enabled by default** — opt-in planned (Phase 4C) |
 
 ## Intelligence boundaries
 
 ```
-Backend intelligence  →  facts / evidence (API)
+Backend intelligence  →  deterministic evidence (API)
 Host engine           →  deterministic signals, decisions, HostLLMPacket
 Local model           →  wording assistant only (briefing or message drafts)
 Staff                 →  final sender; all Mail / Messages actions are manual
@@ -32,24 +33,36 @@ The local model **must not**:
 
 ## Guest communication drafts
 
-### Rules
+### Reservation Detail UI (shipped)
+
+- **Draft guest message** section: confirmation, reminder, clarification, large party, table ready
+- Staff **reviews** subject, email body, and text in a sheet before sending
+- **Send Email** → existing Mail composer (`GuestConfirmationMailPresenter.manualDraft`)
+- **Send Text** → existing Messages composer (`GuestTextMessagePresenter`)
+- **Copy Email / Copy Text** fallback on pasteboard
+- **No auto-send**, **no reservation mutation** from draft generation or draft send prep
+- **Template drafts** are the current default (`GuestMessageDraftService(writer: .template)`)
+- **Local model draft mode** is planned as staff opt-in later — not default today
+
+### Legacy vs new messaging
+
+| Path | Notes in draft? | Sends? |
+|------|-----------------|--------|
+| Legacy confirmation-link email (`ManualEmailDraftService` + manage URL) | May include **guest notes** | Staff manual; optional manual-email log |
+| Confirm + Email (`POST /confirm`) | Backend/provider path | Separate from draft UI |
+| New AI-safe guest message drafts | **Exclude** raw guest notes, staff notes, email, phone, backend JSON, evidence | Staff manual after review |
+
+### Rules (packet + output)
 
 - **Drafts only** — staff review before sending
-- **No automatic send**
-- **No automatic reservation mutation**
-- **No internal staff notes** in model input
-- **No raw guest notes** in model input
-- **No raw backend JSON** or evidence arrays in model input
-- **No guest email or phone** in the prompt packet or model output (future product decision required to change this)
-- **Restaurant phone, address, and manage URL** are allowlisted business contact details in the packet
+- **No automatic send** or reservation mutation
+- **No internal staff notes** or raw guest notes in model input
+- **No guest email or phone** in prompt packet or model output (restaurant contact allowlisted)
+- Party size, table name, and boolean flags (large party, needs review) may appear when safe
 
 ### Allowed draft kinds
 
-- `confirmation`
-- `reminder`
-- `clarificationRequest`
-- `largePartyConfirmation`
-- `tableReady`
+- `confirmation`, `reminder`, `clarificationRequest`, `largePartyConfirmation`, `tableReady`
 - Custom follow-up (later)
 
 ### PII policy (prompt packet)
@@ -64,9 +77,13 @@ The local model **must not**:
 | Boolean flags (large party, needs review, etc.) | Guest history blobs |
 | Policy hint strings (high level) | Backend evidence / JSON |
 
-Guest history may appear later only as **safe summarized flags**, never raw records.
-
 **Output safety:** guest phone-like strings in model output are blocked unless they match the allowlisted restaurant phone (normalized digits).
+
+### Table / capacity context
+
+- Drafts may use **party size** and **table name** flags from the allowlisted packet
+- Table configuration comes from **`HostTableConfigStore`** (see `Docs/TABLE_CONFIGURATION.md`)
+- Table fit and capacity signals are **advisory** — staff remains final operator and sender
 
 ### Output contract
 
@@ -86,44 +103,54 @@ Sources: `template`, `localModel`, `blocked`.
 - Must **not invent a table number** when `tableName` is missing
 - Non-`tableReady` drafts must not say the table is ready
 
-### UI integration boundary
+### Guest messaging architecture
 
-`GuestMessageDraftService` is the entry point for Phase 4B+ UI:
+```
+ReservationDetailView
+  → sheet state, action routing
+GuestCommunicationCoordinator
+  → draft prep, Mail/Text conversion, copy, staff-safe errors
+GuestMessageDraftService
+  → packet build → writer → validation
+Template / local writer
+  → GuestMessageDraft
+GuestMessageDraftReviewView
+  → staff review
+Mail / Messages presenters
+  → platform composers (staff sends)
+```
 
-- Builds the allowlisted packet
-- Invokes template or local model writer
-- Re-validates the final draft
-- Never sends, never mutates reservations
-- Falls back to template on any failure (`lastErrorMessage` is staff-safe)
+- Coordinator **never sends** and **never mutates** reservations
+- **Confirm + Email** (`POST /confirm`) remains a separate legacy/backend path
 
 ### Failure behavior
 
-1. **Template fallback** — always available; existing manual templates are never blocked
-2. **Local model unavailable** — return template draft (`source: template`)
-3. **Parse / validation failure** — return template draft; optional `safetyNote`
-4. **Unsafe packet** — do not call model; template or `source: blocked` with `blockedReason`
+1. **Template fallback** — always available
+2. **Local model unavailable** — template draft (`source: template`)
+3. **Parse / validation failure** — template draft; optional `safetyNote`
+4. **Unsafe output** — template fallback; staff-safe `lastErrorMessage`
 
 ## Code map
 
 | Area | Location |
 |------|----------|
+| Communication facade | `Features/GuestMessaging/GuestCommunicationCoordinator.swift` |
+| Draft service | `Features/GuestMessaging/GuestMessageDraftService.swift` |
+| Review UI | `Features/GuestMessaging/GuestMessageDraftReviewView.swift` |
 | Host briefing writer | `Features/HostIntelligence/HostBriefingWriter.swift` |
 | Host LLM packet | `Features/HostIntelligence/HostIntelligenceModels.swift` |
-| Guest message packet | `Features/GuestMessaging/GuestMessageDraftModels.swift` |
+| Guest message models | `Features/GuestMessaging/GuestMessageDraftModels.swift` |
 | Packet builder | `Features/GuestMessaging/GuestMessageDraftPacketBuilder.swift` |
 | Template drafts | `Features/GuestMessaging/GuestMessageDraftTemplateWriter.swift` |
-| Prompt builder | `Features/GuestMessaging/GuestMessageDraftPromptBuilder.swift` |
-| Local writer | `Features/GuestMessaging/GuestMessageDraftWriter.swift` |
-| UI service | `Features/GuestMessaging/GuestMessageDraftService.swift` |
-| Validator / parser | `Features/GuestMessaging/GuestMessageDraftValidator.swift`, `GuestMessageDraftOutputParser.swift` |
+| Local writer / validator | `Features/GuestMessaging/GuestMessageDraftWriter.swift`, `GuestMessageDraftValidator.swift` |
 
-## Staff workflow (target — Phase 4B+)
+## Staff workflow (current)
 
 1. Staff opens reservation detail
 2. Taps **Draft confirmation** (or reminder, etc.)
-3. App builds `GuestMessageDraftPacket` → template or local model → `GuestMessageDraft`
-4. Staff reviews subject/body/SMS
-5. Staff sends via existing **Mail** or **Messages** composer
-6. Staff records sent status manually if needed
+3. `GuestCommunicationCoordinator` → template draft → review sheet
+4. Staff reviews subject / body / SMS
+5. Staff sends via **Mail** or **Messages**, or copies to pasteboard
+6. Staff records sent status manually if needed (legacy manual-email log path unchanged)
 
 No step auto-sends or mutates the reservation.

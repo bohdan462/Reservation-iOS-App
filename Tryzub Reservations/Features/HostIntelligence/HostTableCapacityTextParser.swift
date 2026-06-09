@@ -79,6 +79,23 @@ enum HostTableCapacityTextParser {
     "A1: 4\nA2: 4\nA3: 2\nPatio: 6"
   }
 
+  /// Canonical text form for the structured table inventory (import round-trip).
+  static func exportText(from tables: [RestaurantTableConfig]) -> String {
+    tables
+      .sorted { lhs, rhs in
+        if lhs.sortOrder != rhs.sortOrder {
+          return lhs.sortOrder < rhs.sortOrder
+        }
+        return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+      }
+      .compactMap { table -> String? in
+        let name = table.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, table.capacity > 0 else { return nil }
+        return "\(name): \(table.capacity)"
+      }
+      .joined(separator: "\n")
+  }
+
   static func configurationSummary(
     for tables: [RestaurantTableConfig]
   ) -> HostTableCapacityConfigurationSummary? {

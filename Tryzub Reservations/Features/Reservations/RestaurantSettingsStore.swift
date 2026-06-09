@@ -686,23 +686,23 @@ struct RestaurantSettingsView: View {
                     SettingsHelperText("Booking window is how far ahead guests can book. Large party threshold marks reservations for review. Minimum lead time controls how soon before service online bookings are allowed.")
                 }
 
-                SettingsCard(title: "Table Names", systemImage: "table.furniture") {
+                SettingsCard(title: "Legacy table chip names", systemImage: "table.furniture") {
                     SettingsTextEditor(
-                        title: "Assign Table button names",
+                        title: "Fallback Assign Table names",
                         text: $tableOptionsRawValue,
                         minHeight: 92
                     )
-                    SettingsHelperText("Used for Assign Table buttons. The reservation saves only the table name (for example, A1 or Patio). One name per line or comma-separated.")
+                    SettingsHelperText("Used only when structured table inventory is empty. When tables are configured below or in Host Intelligence settings, chips come from that inventory instead.")
                 }
 
-                SettingsCard(title: "Table Capacity (Host Intelligence)", systemImage: "person.2.badge.gearshape") {
+                SettingsCard(title: "Import table capacity text", systemImage: "person.2.badge.gearshape") {
                     SettingsTextEditor(
-                        title: "Names with seats",
+                        title: "Quick table setup",
                         text: $tableCapacityRawValue,
                         placeholder: HostTableCapacityTextParser.formattedExample(),
                         minHeight: 92
                     )
-                    SettingsHelperText("Local only. Used for Host Intelligence table-planning advice. Assign Table still saves only the table name. Example: A1:4, A2: 4, Patio: 6.")
+                    SettingsHelperText("Imports into the structured table inventory (canonical local source). Host Intelligence and Assign Table chips use that inventory. Example: A1:4, A2: 4, Patio: 6. Edit details in Host Intelligence → Manage Table Inventory.")
                     if let tableCapacityValidationMessage {
                         Text(tableCapacityValidationMessage)
                             .font(.caption.weight(.medium))
@@ -776,14 +776,31 @@ struct RestaurantSettingsView: View {
             await load(forceDraftUpdate: !didLoadInitialDraft)
         }
         .onAppear {
+            syncImportTextFromStructuredInventoryIfNeeded()
             applyTableCapacityConfiguration()
         }
         .onChange(of: tableCapacityRawValue) { _, _ in
             applyTableCapacityConfiguration()
         }
+        .onChange(of: hostTableConfigStore.tables) { _, _ in
+            syncImportTextFromStructuredInventoryIfNeeded()
+        }
+    }
+
+    private func syncImportTextFromStructuredInventoryIfNeeded() {
+        let exported = HostTableCapacityTextParser.exportText(from: hostTableConfigStore.sortedTables)
+        guard !exported.isEmpty else { return }
+
+        let trimmedImport = tableCapacityRawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedImport.isEmpty {
+            tableCapacityRawValue = exported
+        }
     }
 
     private func applyTableCapacityConfiguration() {
+        let trimmedImport = tableCapacityRawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedImport.isEmpty else { return }
+
         let result = HostTableCapacityTextParser.parse(tableCapacityRawValue)
         hostTableConfigStore.save(result.tables)
 
@@ -797,13 +814,12 @@ struct RestaurantSettingsView: View {
         } else {
             tableCapacityValidationMessage = nil
             tableCapacitySummaryLines = result.configurationSummary?.lines ?? []
-        }
 
-        guard !result.tableNames.isEmpty else { return }
-        let chipNames = ReservationTableOptionsStore.options(from: tableOptionsRawValue)
-        let merged = (chipNames + result.tableNames).uniquedPreservingOrder()
-        guard merged != chipNames else { return }
-        tableOptionsRawValue = merged.joined(separator: "\n")
+            let normalized = HostTableCapacityTextParser.exportText(from: result.tables)
+            if !normalized.isEmpty, normalized != tableCapacityRawValue {
+                tableCapacityRawValue = normalized
+            }
+        }
     }
 
     private func load(forceDraftUpdate: Bool) async {

@@ -759,8 +759,8 @@ struct TableAssignmentSheet: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @AppStorage(ReservationTableOptionsStore.storageKey) private var tableOptionsRawValue = ReservationTableOptionsStore.defaultRawValue
+    @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
-    @StateObject private var hostTableConfigStore = HostTableConfigStore()
     @State private var assignmentContext: HostTableAssignmentContext?
     @State private var tableName: String
     @State private var isSaving = false
@@ -898,7 +898,9 @@ struct TableAssignmentSheet: View {
     }
 
     private var tableSuggestions: [String] {
-        ReservationTableOptionsStore.options(from: tableOptionsRawValue)
+        hostTableConfigStore.assignmentTableNames(
+            legacyFallback: ReservationTableOptionsStore.options(from: tableOptionsRawValue)
+        )
     }
 
     private func refreshAssignmentContext() {

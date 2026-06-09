@@ -617,6 +617,101 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 
 ---
 
+## Backend intelligence stores
+
+### BusinessIntelligenceStore
+| Field | Value |
+| --- | --- |
+| File | `Features/Reservations/BusinessIntelligenceStore.swift` |
+| Network | `GET /business-intelligence/summary` (range-keyed) |
+| UI | `BusinessIntelligenceOverviewSection`, `BusinessAnalyticsView` |
+| Notes | Deterministic DTO display; legacy analytics preserved on same screen |
+
+### GuestIntelligenceStore
+| Field | Value |
+| --- | --- |
+| File | `Features/HostIntelligence/GuestIntelligenceStore.swift` |
+| Network | Guest intelligence API (service-date keyed) |
+| UI | Host pulse / guest signals — backend summaries first |
+| Fallback | Local SwiftData guest memory when backend unavailable |
+
+### IntelligenceSystemStatusStore
+| Field | Value |
+| --- | --- |
+| File | `Features/Reservations/IntelligenceSystemStatusStore.swift` |
+| Network | `GET /intelligence/system-status` |
+| UI | Business Analytics system health card |
+
+---
+
+## Guest messaging (staff-controlled drafts)
+
+### GuestCommunicationCoordinator
+| Field | Value |
+| --- | --- |
+| File | `Features/GuestMessaging/GuestCommunicationCoordinator.swift` |
+| Role | Facade: `draftGuestMessage`, Mail/Text composer draft prep, pasteboard copy, staff-safe errors |
+| Does not | Send mail/text, mutate reservations, call confirm/reminder endpoints |
+
+### GuestMessageDraftService
+| Field | Value |
+| --- | --- |
+| File | `Features/GuestMessaging/GuestMessageDraftService.swift` |
+| Role | Packet build → writer → re-validate; template fallback on failure |
+| Default | `writer: .template` (local model not default for guest drafts) |
+
+### GuestMessageDraftPacketBuilder
+| Field | Value |
+| --- | --- |
+| File | `Features/GuestMessaging/GuestMessageDraftPacketBuilder.swift` |
+| Role | Allowlisted packet from `ReservationRecord`; excludes raw notes/email/phone |
+
+### GuestMessageDraftTemplateWriter
+| Field | Value |
+| --- | --- |
+| File | `Features/GuestMessaging/GuestMessageDraftTemplateWriter.swift` |
+| Role | Deterministic draft text for all draft kinds |
+
+### GuestMessageDraftValidator
+| Field | Value |
+| --- | --- |
+| File | `Features/GuestMessaging/GuestMessageDraftValidator.swift` |
+| Role | Blocks auto-send language, unsupported phones, unsafe confirmation wording |
+
+**UI entry:** `ReservationDetailView` → review sheet → Mail/Messages composer or copy.
+
+---
+
+## Table configuration (local advisory)
+
+### HostTableConfigStore
+| Field | Value |
+| --- | --- |
+| File | `Features/HostIntelligence/HostTableConfigStore.swift` |
+| Persistence | UserDefaults `tryzub.hostIntelligence.tableConfig.v1` |
+| Injection | Single shared instance from `ReservationsTabShell` |
+
+### TableAssignmentOptionsBuilder
+| Field | Value |
+| --- | --- |
+| File | `Features/HostIntelligence/TableAssignmentOptionsBuilder.swift` |
+| Role | Assignment chip names from active `RestaurantTableConfig`; legacy fallback when empty |
+
+### HostTableCapacityTextParser
+| Field | Value |
+| --- | --- |
+| File | `Features/HostIntelligence/HostTableCapacityTextParser.swift` |
+| Import | `parse(_:)` → structured tables |
+| Export | `exportText(from:)` — round-trip for settings import UI |
+
+### HostTableIntelligenceSupport
+| Field | Value |
+| --- | --- |
+| File | `Features/HostIntelligence/HostTableIntelligenceSupport.swift` |
+| Role | Table fit, combination capacity, assigned mismatch — **advisory**; used by Host engine and assignment proposals |
+
+---
+
 ## Misleading names — rename candidates (do not rename now)
 
 | Current name | Suggested | Why |
