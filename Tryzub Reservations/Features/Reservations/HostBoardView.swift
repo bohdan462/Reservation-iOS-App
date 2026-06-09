@@ -280,26 +280,22 @@ struct HostBoardView: View {
                 controller.cancelAvailabilitySummary(date: selectedDateKey)
                 return
             }
-            // Brief pause after launch sync so the next batch does not race QUIC setup.
-            try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled,
                   !deferNetworkLoads,
                   !shouldDeferStartupOptionalLoads,
                   isVisible else { return }
-            controller.ensureAvailabilitySummary(date: selectedDateKey)
+            controller.scheduleAvailabilitySummary(date: selectedDateKey)
         }
         .task(id: "\(isVisible)-\(selectedDateKey)-guest-intelligence-\(deferNetworkLoads)-\(shouldDeferStartupOptionalLoads)") {
             // Non-blocking guest intelligence: first Host pulse uses local fallback.
             // Defer flags stay in the task id so load runs once startup optional loads release.
             guard !isRunningForPreviews else { return }
-            guard isVisible else { return }
+            guard isVisible else {
+                guestIntelligenceStore.cancelScheduledLoad()
+                return
+            }
             guard !deferNetworkLoads, !shouldDeferStartupOptionalLoads else { return }
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled,
-                  isVisible,
-                  !deferNetworkLoads,
-                  !shouldDeferStartupOptionalLoads else { return }
-            await guestIntelligenceStore.load(dateKey: selectedDateKey)
+            guestIntelligenceStore.scheduleLoad(dateKey: selectedDateKey)
         }
         .task(id: hostIntelligenceRefreshKey) {
             guard isVisible else {
@@ -312,6 +308,9 @@ struct HostBoardView: View {
                     isStartupNetworkPassInFlight: controller.isStartupNetworkPassInFlight,
                     isHistoryPrefetching: controller.isHistoryPrefetching,
                     isLocalModelInferenceActive: HostLocalModelInferenceTracker.isActive,
+                    isReservationRefreshInFlight: controller.isReservationNetworkRefreshInFlight,
+                    isAvailabilitySummaryLoading: controller.isAvailabilitySummaryLoading(date: selectedDateKey),
+                    hostBoardDateNavigationAt: controller.hostBoardDateNavigationAt,
                     startupUIReleasedAt: controller.startupUIReleasedAt,
                     now: clockTick
                 )

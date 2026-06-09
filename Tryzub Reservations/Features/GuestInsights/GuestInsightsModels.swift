@@ -121,6 +121,8 @@ struct GuestInsightReport {
     let bookingBehavior: GuestBookingBehavior
     let collapsedDuplicateReservationCount: Int
 
+    let priorReliableVisitCount: Int
+    let lastPriorVisitDisplayDate: String?
     let summary: GuestInsightSummary
     let matchedReservations: [GuestMatchedReservation]
     let possibleMatches: [GuestMatchedReservation]
@@ -136,18 +138,31 @@ struct GuestInsightReport {
 
     let warnings: [GuestInsightWarning]
 
+    var visitOrdinal: Int {
+        GuestHistorySemantics.visitOrdinal(priorReliableVisitCount: priorReliableVisitCount)
+    }
+
     var isRepeatGuest: Bool {
-        summary.totalMatchedReservations > 1
+        hasReliableRepeatGuestHistory
     }
 
     var hasReliableContactIdentity: Bool {
         primaryPhone != nil || primaryEmail != nil
     }
 
-    /// True when Guest Insights has at least one prior exact/strong identity match.
-    /// `matchedReservations` excludes weak name-only possible matches.
+    /// True when Guest Insights has at least one prior exact/strong identity match
+    /// before this reservation. The current booking never counts as a prior visit.
     var hasReliableRepeatGuestHistory: Bool {
-        summary.totalMatchedReservations >= 2
+        GuestHistorySemantics.hasReliableRepeatHistory(
+            priorReliableVisitCount: priorReliableVisitCount
+        )
+    }
+
+    var guestHistoryLine: (title: String, detail: String) {
+        GuestHistorySemantics.compactHistoryLine(
+            priorReliableVisitCount: priorReliableVisitCount,
+            lastPriorVisitDisplayDate: lastPriorVisitDisplayDate
+        )
     }
 }
 

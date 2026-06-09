@@ -143,13 +143,15 @@ final class HostIntelligenceController: ObservableObject {
       return
     }
 
-    if hostBoardContext != nil, provider == .localModel {
+    if let hostBoardContext, provider == .localModel {
       HostIntelligenceDiagnostics.localModelAttempted(surface: "host_home")
       let narrativePacket = ManagerNarrativePacketBuilder.buildHostHome(from: decisionSnapshot)
       let narrativeResult = await ManagerNarrativeWriter().write(
         narrativePacket: narrativePacket,
         hostPacket: packet,
-        fallback: templateNarrative
+        fallback: templateNarrative,
+        hostBoardContext: hostBoardContext,
+        settings: settings
       )
       storeBriefingResult(
         cacheKey: cacheKey,
@@ -157,7 +159,8 @@ final class HostIntelligenceController: ObservableObject {
         text: narrativeResult.compactBriefingText,
         source: mapBriefingSource(narrativeResult.source),
         failureReason: narrativeResult.failedReason,
-        narrative: narrativeResult
+        narrative: narrativeResult,
+        templateFallback: templateNarrative
       )
       return
     }
@@ -291,8 +294,24 @@ final class HostIntelligenceController: ObservableObject {
     text: String,
     source: HostBriefingWriterSource,
     failureReason: String?,
-    narrative: ManagerNarrative
+    narrative: ManagerNarrative,
+    templateFallback: ManagerNarrative? = nil
   ) {
+    if narrative.source == .localModel,
+       ManagerNarrativeValidator.containsLeakedModelLabels(in: narrative)
+        || ManagerNarrativeValidator.containsLeakedModelLabels(in: text) {
+      HostIntelligenceDiagnostics.localModelFallback(
+        reason: "rejected labeled or unnatural staff output"
+      )
+      if let templateFallback {
+        briefingText = templateFallback.compactBriefingText
+        briefingSource = .template
+        briefingFailureReason = nil
+        managerNarrative = templateFallback
+      }
+      return
+    }
+
     briefingText = text
     briefingSource = source
     briefingFailureReason = failureReason

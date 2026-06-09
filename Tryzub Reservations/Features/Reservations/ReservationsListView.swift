@@ -10,7 +10,7 @@ import SwiftData
 
 struct ReservationsListView: View {
     @Environment(\.modelContext) private var modelContext
-    @StateObject private var controller: ReservationsController
+    @ObservedObject private var controller: ReservationsController
     @StateObject private var hiddenReservations = HiddenReservationsStore()
     @StateObject private var privacyCoverSettings = RestaurantPrivacyCoverSettingsStore()
     @StateObject private var hostIntentStore = HostReservationOpenIntentStore()
@@ -20,14 +20,20 @@ struct ReservationsListView: View {
 
     init(
         environment: AppEnvironment,
-        controller: ReservationsController? = nil,
+        controller: ReservationsController,
         onLogout: @escaping () -> Void = {}
     ) {
         self.environment = environment
         self.onLogout = onLogout
-        _controller = StateObject(
-            wrappedValue: controller ?? ReservationsController(environment: environment)
+        _controller = ObservedObject(wrappedValue: controller)
+        #if DEBUG
+        // Production ReservationsListView must be initialized with a session-owned controller.
+        assert(
+            controller.creationTraceSource != "ReservationsListView_fallback",
+            "ReservationsListView must not create or receive a fallback controller"
         )
+        StartupTrace.productionShellAttached(controllerID: controller.startupTraceControllerID)
+        #endif
     }
 
     var body: some View {
@@ -639,6 +645,7 @@ private struct ReservationScheduleView: View {
                                     reservation: reservation,
                                     environment: environment,
                                     context: .schedule,
+                                    showsSubmittedTime: scope == .needsReview,
                                     newBookingInsight: newBookingRowInsight(for: reservation),
                                     onOpenDetails: { navigationPath.append($0.remoteID) }
                                 )
@@ -1939,6 +1946,7 @@ private struct ReservationNavigationRow: View {
     let environment: AppEnvironment
     var context: ReservationRowContext = .schedule
     var contextNote: String?
+    var showsSubmittedTime = false
     var newBookingInsight: NewBookingRowInsight?
     let onOpenDetails: (ReservationRecord) -> Void
 
@@ -1954,6 +1962,7 @@ private struct ReservationNavigationRow: View {
             reservation: reservation,
             context: context,
             contextNote: contextNote ?? seatedDurationText,
+            showsSubmittedTime: showsSubmittedTime,
             newBookingInsight: newBookingInsight,
             seatedDurationDotStyle: seatedDurationDotStyle,
             capabilities: controller.capabilities,
@@ -2267,7 +2276,11 @@ private struct ReservationNavigationRow: View {
     let roleStore = AppRoleStore()
     roleStore.select(.developer)
 
-    return ReservationsListView(environment: AppEnvironment(apiClient: ReservationsAPIClient.preview, role: .developer))
+    let environment = AppEnvironment(apiClient: ReservationsAPIClient.preview, role: .developer)
+    return ReservationsListView(
+        environment: environment,
+        controller: .preview(environment: environment)
+    )
         .environmentObject(roleStore)
         .modelContainer(ReservationPreviewData.previewContainer)
 }

@@ -35,7 +35,7 @@ final class ReservationsController: ObservableObject {
 
     /// Selected service date on the Host board; used to defer history prefetch during date setup.
     @Published private(set) var hostBoardSelectedDateKey: String?
-    private var hostBoardDateNavigationAt: Date?
+    private(set) var hostBoardDateNavigationAt: Date?
 
     // Tracks the quiet host-board loop that keeps today's cache warm.
     @Published private(set) var isAutoRefreshing = false {
@@ -111,8 +111,17 @@ final class ReservationsController: ObservableObject {
         didSet { publishOperationState() }
     }
     private var availabilitySummaryTasksByDate: [String: Task<Void, Never>] = [:]
+    private var availabilitySummaryDebounceTask: Task<Void, Never>?
+    private var availabilitySummaryPendingDate: String?
+    private let availabilitySummaryDebounceInterval: TimeInterval = 0.4
     private var activeWindowRefreshTask: Task<Bool, Never>?
     private var activeWindowRefreshScope: ReservationSyncScope?
+    private var currentStartupPassID: String?
+    private var currentActiveWindowRefreshID: String?
+    private let controllerInstanceID = StartupTrace.makeInstanceID()
+    #if DEBUG
+    private(set) var creationTraceSource: String
+    #endif
     private var lastOfflineNoticeAt: Date?
     private var pendingReviewAttentionCount = 0
     private var staffStatusBoundaryTask: Task<Void, Never>?
@@ -152,6 +161,10 @@ final class ReservationsController: ObservableObject {
         isSyncing || isAutoRefreshing || activeWindowRefreshTask != nil
     }
 
+    var isReservationNetworkRefreshInFlight: Bool {
+        hasActiveReservationRefresh
+    }
+
     var isNetworkDegraded: Bool {
         if !isNetworkPathSatisfied {
             return true
@@ -180,12 +193,20 @@ final class ReservationsController: ObservableObject {
 
     // MARK: - Initialization
 
-    init(environment: AppEnvironment) {
+    init(environment: AppEnvironment, traceSource: String = "init") {
         self.environment = environment
         self.localSeatedAtByReservationID = Self.loadLocalSeatedTimestamps()
+        #if DEBUG
+        self.creationTraceSource = traceSource
+        #endif
+        StartupTrace.controllerCreated(id: controllerInstanceID, source: traceSource)
         networkPathMonitor.start { [weak self] isSatisfied in
             self?.applyNetworkPathStatus(isSatisfied)
         }
+    }
+
+    var startupTraceControllerID: String {
+        controllerInstanceID
     }
 
     deinit {
@@ -193,6 +214,7 @@ final class ReservationsController: ObservableObject {
     }
 
     func prepareForLogout() {
+        HostLocalModelWarmthTracker.reset()
         cancelOwnedTasksForSessionEnd()
         notices.removeAll()
         errorMessage = nil
@@ -249,6 +271,9 @@ final class ReservationsController: ObservableObject {
         blockedSlotsTasksByDate.removeAll()
         availabilitySummaryTasksByDate.values.forEach { $0.cancel() }
         availabilitySummaryTasksByDate.removeAll()
+        availabilitySummaryDebounceTask?.cancel()
+        availabilitySummaryDebounceTask = nil
+        availabilitySummaryPendingDate = nil
         staffStatusBoundaryTask?.cancel()
         staffStatusBoundaryTask = nil
         startupNetworkPassTask?.cancel()
@@ -286,8 +311,23 @@ final class ReservationsController: ObservableObject {
     // Network: GET /managed-reservations?from=...&to=... when refresh proceeds.
     @discardableResult
     func loadIfNeeded(context: ModelContext) async -> Bool {
-        guard !hasAttemptedInitialLoad else { return true }
+        guard !hasAttemptedInitialLoad else {
+            StartupTrace.lifecycle(
+                controllerID: controllerInstanceID,
+                event: "loadIfNeeded_skipped",
+                uiReleased: hasReleasedStartupUI,
+                startupPassActive: isStartupNetworkPassInFlight
+            )
+            return true
+        }
         hasAttemptedInitialLoad = true
+        StartupTrace.lifecycle(
+            controllerID: controllerInstanceID,
+            event: "loadIfNeeded",
+            cacheHit: Self.hasUsableCachedReservations(in: context),
+            uiReleased: hasReleasedStartupUI,
+            startupPassActive: isStartupNetworkPassInFlight
+        )
 
         do {
             // Created per operation so the repository uses the current ModelContext.
@@ -310,8 +350,16 @@ final class ReservationsController: ObservableObject {
     // Intent: Non-blocking reservation sync for intro/login chrome.
     // Never gates UI on network; hands off to ReservationsListView when it appears.
     func beginBackgroundReservationWarmup(context: ModelContext) {
+        StartupTrace.lifecycle(
+            controllerID: controllerInstanceID,
+            event: "beginBackgroundReservationWarmup",
+            cacheHit: Self.hasUsableCachedReservations(in: context),
+            uiReleased: hasReleasedStartupUI,
+            startupPassActive: isStartupNetworkPassInFlight,
+            presentationState: String(describing: startupPresentationState)
+        )
         guard !hasStartedStartupPresentation else {
-            startStartupNetworkPassInBackgroundIfNeeded(context: context)
+            startStartupNetworkPassInBackgroundIfNeeded(context: context, trigger: "backgroundWarmup_reentry")
             return
         }
         hasStartedStartupPresentation = true
@@ -326,12 +374,20 @@ final class ReservationsController: ObservableObject {
             markStartupUIReleased()
         }
 
-        startStartupNetworkPassInBackgroundIfNeeded(context: context)
+        startStartupNetworkPassInBackgroundIfNeeded(context: context, trigger: "backgroundWarmup")
         startDeferredRestaurantSetupIfNeeded()
     }
 
     // Intent: Cache-first entrance. Shows tabs immediately when SwiftData has reservations.
     func beginStartupPresentation(context: ModelContext) async {
+        StartupTrace.lifecycle(
+            controllerID: controllerInstanceID,
+            event: "beginStartupPresentation",
+            cacheHit: Self.hasUsableCachedReservations(in: context),
+            uiReleased: hasReleasedStartupUI,
+            startupPassActive: isStartupNetworkPassInFlight,
+            presentationState: String(describing: startupPresentationState)
+        )
         if case .failedNoCache = startupPresentationState {
             hasAttemptedInitialLoad = false
             hasStartedStartupPresentation = false
@@ -341,7 +397,7 @@ final class ReservationsController: ObservableObject {
 
         guard !hasStartedStartupPresentation else {
             if hasReleasedStartupUI {
-                startStartupNetworkPassInBackgroundIfNeeded(context: context)
+                startStartupNetworkPassInBackgroundIfNeeded(context: context, trigger: "beginStartupPresentation_reentry")
             }
             return
         }
@@ -350,7 +406,7 @@ final class ReservationsController: ObservableObject {
 
         if Self.hasUsableCachedReservations(in: context) {
             _ = releaseStartupUIFromLocalCacheIfAvailable(context: context)
-            startStartupNetworkPassInBackgroundIfNeeded(context: context)
+            startStartupNetworkPassInBackgroundIfNeeded(context: context, trigger: "beginStartupPresentation_cacheHit")
             return
         }
 
@@ -383,12 +439,42 @@ final class ReservationsController: ObservableObject {
         )
     }
 
-    func startStartupNetworkPassInBackgroundIfNeeded(context: ModelContext) {
-        guard startupNetworkPassTask == nil else { return }
-        guard !isStartupNetworkPassInFlight else { return }
+    func startStartupNetworkPassInBackgroundIfNeeded(
+        context: ModelContext,
+        trigger: String = "unspecified"
+    ) {
+        guard startupNetworkPassTask == nil else {
+            StartupTrace.lifecycle(
+                controllerID: controllerInstanceID,
+                event: "startup_pass_skipped",
+                uiReleased: hasReleasedStartupUI,
+                startupPassActive: isStartupNetworkPassInFlight,
+                presentationState: "task_exists trigger=\(trigger)"
+            )
+            return
+        }
+        guard !isStartupNetworkPassInFlight else {
+            StartupTrace.lifecycle(
+                controllerID: controllerInstanceID,
+                event: "startup_pass_skipped",
+                uiReleased: hasReleasedStartupUI,
+                startupPassActive: true,
+                presentationState: "in_flight trigger=\(trigger)"
+            )
+            return
+        }
+
+        let passID = StartupTrace.makePassID()
+        currentStartupPassID = passID
+        StartupTrace.startupPass(
+            controllerID: controllerInstanceID,
+            passID: passID,
+            phase: "background_start trigger=\(trigger)",
+            uiReleased: hasReleasedStartupUI
+        )
 
         startupNetworkPassTask = Task(priority: .utility) { @MainActor in
-            _ = await self.performStartupNetworkPass(context: context)
+            _ = await self.performStartupNetworkPass(context: context, passID: passID)
             self.startDeferredRestaurantSetupIfNeeded()
             self.scheduleHistoryPrefetchWhenReady(context: context)
             self.startupNetworkPassTask = nil
@@ -508,11 +594,39 @@ final class ReservationsController: ObservableObject {
     // On cache-hit launch this is background-only; `isSyncing` stays false after UI release.
     // Network: GET active window (may take 15s+); restaurant setup is deferred separately.
     @discardableResult
-    func performStartupNetworkPass(context: ModelContext) async -> Bool {
-        guard !isStartupNetworkPassInFlight else { return false }
+    func performStartupNetworkPass(
+        context: ModelContext,
+        passID: String? = nil
+    ) async -> Bool {
+        let resolvedPassID = passID ?? currentStartupPassID ?? StartupTrace.makePassID()
+        currentStartupPassID = resolvedPassID
+        guard !isStartupNetworkPassInFlight else {
+            StartupTrace.startupPass(
+                controllerID: controllerInstanceID,
+                passID: resolvedPassID,
+                phase: "skipped_already_in_flight",
+                uiReleased: hasReleasedStartupUI
+            )
+            return false
+        }
         isStartupNetworkPassInFlight = true
+        StartupTrace.startupPass(
+            controllerID: controllerInstanceID,
+            passID: resolvedPassID,
+            phase: "in_flight",
+            uiReleased: hasReleasedStartupUI
+        )
         defer {
             isStartupNetworkPassInFlight = false
+            if currentStartupPassID == resolvedPassID {
+                currentStartupPassID = nil
+            }
+            StartupTrace.startupPass(
+                controllerID: controllerInstanceID,
+                passID: resolvedPassID,
+                phase: "finished",
+                uiReleased: hasReleasedStartupUI
+            )
             if startupPresentationState == .showingCachedDataRefreshing {
                 startupPresentationState = .ready
             }
@@ -884,9 +998,23 @@ final class ReservationsController: ObservableObject {
         let window = activeWindow()
         let scope = ReservationSyncScope.activeWindow(from: window.from, to: window.to)
 
+        let trigger = activeWindowTriggerName(for: mode)
+
         if let existing = activeWindowRefreshTask {
             if activeWindowRefreshScope == scope {
                 recordRefreshDecision(scope: scope, mode: mode, outcome: "coalesced_in_flight")
+                StartupTrace.activeWindow(
+                    controllerID: controllerInstanceID,
+                    trigger: trigger,
+                    scope: scope.description,
+                    action: "coalesced_same_scope",
+                    refreshID: currentActiveWindowRefreshID,
+                    startupPassID: currentStartupPassID,
+                    uiReleased: hasReleasedStartupUI,
+                    startupPassActive: isStartupNetworkPassInFlight,
+                    force: force,
+                    mode: String(describing: mode)
+                )
                 ReservationAPILogger.skip(
                     reason: .scopeSkipInFlight,
                     message: "\(scope.description) same active-window scope coalesced with in-flight refresh"
@@ -895,20 +1023,48 @@ final class ReservationsController: ObservableObject {
             }
 
             recordRefreshDecision(scope: scope, mode: mode, outcome: "scope_changed_not_coalesced")
+            StartupTrace.activeWindow(
+                controllerID: controllerInstanceID,
+                trigger: trigger,
+                scope: scope.description,
+                action: "scope_changed_not_coalesced",
+                refreshID: currentActiveWindowRefreshID,
+                startupPassID: currentStartupPassID,
+                uiReleased: hasReleasedStartupUI,
+                startupPassActive: isStartupNetworkPassInFlight,
+                force: force,
+                mode: String(describing: mode)
+            )
             ReservationAPILogger.skip(
                 reason: .scopeSkipInFlight,
                 message: "\(scope.description) different active-window scope not coalesced (in-flight: \(activeWindowRefreshScope?.description ?? "unknown"))"
             )
         }
 
+        let refreshID = StartupTrace.makePassID()
+        currentActiveWindowRefreshID = refreshID
         let capturedScope = scope
+        StartupTrace.activeWindow(
+            controllerID: controllerInstanceID,
+            trigger: trigger,
+            scope: scope.description,
+            action: "start",
+            refreshID: refreshID,
+            startupPassID: currentStartupPassID,
+            uiReleased: hasReleasedStartupUI,
+            startupPassActive: isStartupNetworkPassInFlight,
+            force: force,
+            mode: String(describing: mode)
+        )
         let task = Task { @MainActor in
             await self.performActiveWindowRefreshBody(
                 context: context,
                 mode: mode,
                 force: force,
                 window: window,
-                scope: capturedScope
+                scope: capturedScope,
+                refreshID: refreshID,
+                trigger: trigger
             )
         }
         activeWindowRefreshTask = task
@@ -917,8 +1073,21 @@ final class ReservationsController: ObservableObject {
         if activeWindowRefreshScope == capturedScope {
             activeWindowRefreshTask = nil
             activeWindowRefreshScope = nil
+            if currentActiveWindowRefreshID == refreshID {
+                currentActiveWindowRefreshID = nil
+            }
         }
         return result
+    }
+
+    private func activeWindowTriggerName(for mode: ReservationRefreshMode) -> String {
+        switch mode {
+        case .startup: return "loadIfNeeded"
+        case .manual: return "manualRefresh"
+        case .schedule: return "scheduleBecameActive"
+        case .review: return "reviewBecameActive"
+        case .automatic: return "autoRefreshDashboard"
+        }
     }
 
     @discardableResult
@@ -927,18 +1096,44 @@ final class ReservationsController: ObservableObject {
         mode: ReservationRefreshMode,
         force: Bool,
         window: (from: String, to: String),
-        scope: ReservationSyncScope
+        scope: ReservationSyncScope,
+        refreshID: String,
+        trigger: String
     ) async -> Bool {
         if !force,
            mode != .automatic,
            isScopeFresh(scope, freshnessInterval: mode == .review ? reviewFreshnessInterval : scheduleFreshnessInterval) {
             recordRefreshDecision(scope: scope, mode: mode, outcome: "skipped_fresh")
+            StartupTrace.activeWindow(
+                controllerID: controllerInstanceID,
+                trigger: trigger,
+                scope: scope.description,
+                action: "skipped_fresh",
+                refreshID: refreshID,
+                startupPassID: currentStartupPassID,
+                uiReleased: hasReleasedStartupUI,
+                startupPassActive: isStartupNetworkPassInFlight,
+                force: force,
+                mode: String(describing: mode)
+            )
             ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "\(scope.description) skipped because cache is fresh")
             return true
         }
 
         guard beginScope(scope, intent: mode.syncIntent) else {
             recordRefreshDecision(scope: scope, mode: mode, outcome: "skipped_in_flight")
+            StartupTrace.activeWindow(
+                controllerID: controllerInstanceID,
+                trigger: trigger,
+                scope: scope.description,
+                action: "skipped_scope_in_flight",
+                refreshID: refreshID,
+                startupPassID: currentStartupPassID,
+                uiReleased: hasReleasedStartupUI,
+                startupPassActive: isStartupNetworkPassInFlight,
+                force: force,
+                mode: String(describing: mode)
+            )
             ReservationAPILogger.skip(reason: .scopeSkipInFlight, message: "\(scope.description) skipped because this scope is already in flight")
             return mode == .automatic
         }
@@ -953,10 +1148,26 @@ final class ReservationsController: ObservableObject {
 
         do {
             let repository = ReservationRepository(context: context)
-            let service = ReservationSyncService(client: environment.apiClient, repository: repository)
+            let service = ReservationSyncService(
+                client: environment.apiClient,
+                repository: repository,
+                controllerTraceID: controllerInstanceID
+            )
             let result: ReservationSyncResult
             if mode == .automatic, let cursor = serverCursor(for: scope) {
                 recordRefreshDecision(scope: scope, mode: mode, outcome: "delta")
+                StartupTrace.activeWindow(
+                    controllerID: controllerInstanceID,
+                    trigger: trigger,
+                    scope: scope.description,
+                    action: "network_delta",
+                    refreshID: refreshID,
+                    startupPassID: currentStartupPassID,
+                    uiReleased: hasReleasedStartupUI,
+                    startupPassActive: isStartupNetworkPassInFlight,
+                    force: force,
+                    mode: String(describing: mode)
+                )
                 result = try await service.syncActiveWindowChanges(
                     from: window.from,
                     to: window.to,
@@ -965,6 +1176,18 @@ final class ReservationsController: ObservableObject {
                 )
             } else {
                 recordRefreshDecision(scope: scope, mode: mode, outcome: "full")
+                StartupTrace.activeWindow(
+                    controllerID: controllerInstanceID,
+                    trigger: trigger,
+                    scope: scope.description,
+                    action: "network_full",
+                    refreshID: refreshID,
+                    startupPassID: currentStartupPassID,
+                    uiReleased: hasReleasedStartupUI,
+                    startupPassActive: isStartupNetworkPassInFlight,
+                    force: force,
+                    mode: String(describing: mode)
+                )
                 result = try await service.syncActiveWindowFull(
                     from: window.from,
                     to: window.to,
@@ -974,6 +1197,18 @@ final class ReservationsController: ObservableObject {
             updateServerCursor(for: scope, with: result.serverTime)
             lastSyncedAt = Date()
             markScopeSuccess(scope)
+            StartupTrace.activeWindow(
+                controllerID: controllerInstanceID,
+                trigger: trigger,
+                scope: scope.description,
+                action: "completed",
+                refreshID: refreshID,
+                startupPassID: currentStartupPassID,
+                uiReleased: hasReleasedStartupUI,
+                startupPassActive: isStartupNetworkPassInFlight,
+                force: force,
+                mode: String(describing: mode)
+            )
         } catch {
             if error.isCancellationLike {
                 markScopeCancelled(scope)
@@ -1254,6 +1489,11 @@ final class ReservationsController: ObservableObject {
         defer { isLoadingRestaurantSetup = false }
 
         do {
+            StartupTrace.directAPI(
+                caller: "ReservationsController.loadRestaurantSetup",
+                reason: "restaurant_setup",
+                controllerID: controllerInstanceID
+            )
             let dto = try await environment.apiClient.fetchRestaurantSetup(reason: .restaurantSetup)
             let setup = RestaurantSetup(dto: dto)
             restaurantSetup = setup
@@ -1552,6 +1792,25 @@ final class ReservationsController: ObservableObject {
         )
     }
 
+    func scheduleAvailabilitySummary(date: String, force: Bool = false) {
+        if !force,
+           let summary = availabilitySummaryByDate[date],
+           Date().timeIntervalSince(summary.loadedAt) < availabilitySummaryFreshnessInterval {
+            return
+        }
+
+        availabilitySummaryPendingDate = date
+        availabilitySummaryDebounceTask?.cancel()
+        availabilitySummaryDebounceTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(self.availabilitySummaryDebounceInterval))
+            guard !Task.isCancelled else { return }
+            guard self.availabilitySummaryPendingDate == date else { return }
+            self.ensureAvailabilitySummary(date: date, force: force)
+            self.availabilitySummaryDebounceTask = nil
+        }
+    }
+
     func ensureAvailabilitySummary(date: String, force: Bool = false) {
         if !force,
            let summary = availabilitySummaryByDate[date],
@@ -1575,8 +1834,16 @@ final class ReservationsController: ObservableObject {
     }
 
     func cancelAvailabilitySummary(date: String) {
+        if availabilitySummaryPendingDate == date {
+            availabilitySummaryPendingDate = nil
+        }
+        availabilitySummaryDebounceTask?.cancel()
+        availabilitySummaryDebounceTask = nil
+
         guard let task = availabilitySummaryTasksByDate[date] else { return }
         task.cancel()
+        availabilitySummaryLoadingDates.remove(date)
+        availabilitySummaryTasksByDate[date] = nil
         ReservationAPILogger.skip(
             reason: .scopeSkipInFlight,
             message: "availability_summary(\(date)) cancelled because Home is no longer active"
@@ -3227,6 +3494,14 @@ final class ReservationsController: ObservableObject {
         return nil
     }
 }
+
+#if DEBUG
+extension ReservationsController {
+    static func preview(environment: AppEnvironment) -> ReservationsController {
+        ReservationsController(environment: environment, traceSource: "preview")
+    }
+}
+#endif
 
 // MARK: - Controller Support Types
 

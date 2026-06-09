@@ -28,11 +28,11 @@ enum ManagerNarrativeOutputParser {
       let value = line.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !value.isEmpty else { continue }
 
-      if let parsed = labeledValue(prefix: "HEADLINE:", in: value) {
+      if let parsed = labeledValue(label: "HEADLINE", in: value) {
         headline = parsed
-      } else if let parsed = labeledValue(prefix: "WHY:", in: value) {
+      } else if let parsed = labeledValue(label: "WHY", in: value) {
         why = parsed
-      } else if let parsed = labeledValue(prefix: "CHECK:", in: value) {
+      } else if let parsed = labeledValue(label: "CHECK", in: value) {
         check = parsed
       }
     }
@@ -82,13 +82,13 @@ enum ManagerNarrativeOutputParser {
     }
   }
 
-  private static func labeledValue(prefix: String, in line: String) -> String? {
+  private static func labeledValue(label: String, in line: String) -> String? {
     let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
     let upperLine = trimmedLine.uppercased()
-    let upperPrefix = prefix.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    guard upperLine.hasPrefix(upperPrefix) else { return nil }
+    let upperLabel = label.uppercased()
+    guard upperLine.hasPrefix(upperLabel) else { return nil }
 
-    var remainder = String(trimmedLine.dropFirst(upperPrefix.count))
+    var remainder = String(trimmedLine.dropFirst(upperLabel.count))
       .trimmingCharacters(in: .whitespacesAndNewlines)
     if remainder.first == ":" || remainder.first == "=" {
       remainder = String(remainder.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -131,12 +131,58 @@ enum ManagerNarrativeValidator {
     "already reviewed", "has been reviewed", "auto-confirmed", "automatically"
   ]
 
+  private static let leakedLabelTokens = [
+    "HEADLINE", "WHY", "CHECK"
+  ]
+
+  private static let unnaturalStaffPhrases = [
+    "lighter than usual window",
+    "lightness of the window",
+    "safer alternate window",
+    "impact on the service",
+    "usual peak"
+  ]
+
   private static let unsupportedCheckPhrases = [
     "call the guest", "call guest", "text the guest", "message the guest",
     "email the guest", "assign the table", "assign table", "table assigned",
     "confirm automatically", "confirm the reservation", "cancel the reservation",
     "seat the guest", "auto-send", "auto send"
   ]
+
+  static func containsLeakedModelLabels(in narrative: ManagerNarrative) -> Bool {
+    for field in [narrative.headline, narrative.whyItMatters, narrative.checkNext].compactMap({ $0 }) {
+      if containsLeakedModelLabels(in: field) {
+        return true
+      }
+    }
+    return false
+  }
+
+  static func containsLeakedModelLabels(in text: String) -> Bool {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+
+    let upper = trimmed.uppercased()
+    for token in leakedLabelTokens {
+      if upper.contains("\(token) =") || upper.contains("\(token)=") {
+        return true
+      }
+      if upper.hasPrefix("\(token):") || upper.hasPrefix("\(token) :") {
+        return true
+      }
+      if upper == token {
+        return true
+      }
+    }
+
+    let lower = trimmed.lowercased()
+    if unnaturalStaffPhrases.contains(where: { lower.contains($0) }) {
+      return true
+    }
+
+    return false
+  }
 
   static func validationResult(
     _ narrative: ManagerNarrative,
@@ -147,6 +193,13 @@ enum ManagerNarrativeValidator {
     let headline = narrative.headline.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !headline.isEmpty else {
       return ManagerNarrativeValidationResult(isValid: false, reason: "Headline is empty.")
+    }
+
+    if containsLeakedModelLabels(in: narrative) {
+      return ManagerNarrativeValidationResult(
+        isValid: false,
+        reason: "Narrative contains labeled or unnatural staff output."
+      )
     }
 
     for field in [headline, narrative.whyItMatters, narrative.checkNext].compactMap({ $0 }) {
@@ -163,13 +216,15 @@ enum ManagerNarrativeValidator {
       )
     }
 
-    if headline.uppercased().hasPrefix("HEADLINE")
-        || headline.contains("WHY =")
-        || headline.contains("CHECK =") {
-      return ManagerNarrativeValidationResult(
-        isValid: false,
-        reason: "Narrative contains unparsed model labels."
-      )
+    if let check = narrative.checkNext?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !check.isEmpty {
+      if HostStaffLanguage.areSameStaffMeaning(headline, check)
+          || (narrative.whyItMatters.map { HostStaffLanguage.areSameStaffMeaning($0, check) } == true) {
+        return ManagerNarrativeValidationResult(
+          isValid: false,
+          reason: "Narrative repeats the same meaning across lines."
+        )
+      }
     }
 
     let combined = narrative.compactBriefingText

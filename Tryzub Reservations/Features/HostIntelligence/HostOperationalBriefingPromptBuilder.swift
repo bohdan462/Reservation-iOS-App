@@ -232,15 +232,15 @@ enum HostOperationalBriefingPromptBuilder {
     }
     allergies.forEach { reservationIDs.insert($0.reservationID) }
 
-    let specialOccasions = snapshot.guestSignals.filter { $0.kind == .specialOccasion }
+    let guestNotes = snapshot.guestSignals.filter { $0.kind == .specialOccasion }
     if mode == .expanded {
-      if specialOccasions.count == 1 {
-        lines.append("One guest has a special occasion note. Review it before seating.")
-      } else if specialOccasions.count > 1 {
-        lines.append("\(specialOccasions.count) guests have special occasion notes. Review them before seating.")
+      if guestNotes.count == 1 {
+        lines.append("One guest note should be reviewed before seating.")
+      } else if guestNotes.count > 1 {
+        lines.append("\(guestNotes.count) guest notes should be reviewed before seating.")
       }
     }
-    specialOccasions.forEach { reservationIDs.insert($0.reservationID) }
+    guestNotes.forEach { reservationIDs.insert($0.reservationID) }
 
     let preferences = snapshot.guestSignals.filter {
       $0.kind == .seatingPreference || $0.kind == .accessibility
@@ -276,7 +276,7 @@ enum HostOperationalBriefingPromptBuilder {
       severity: maxSeverity(
         allergies.map(\.severity)
           + serviceIssues.map(\.severity)
-          + specialOccasions.map(\.severity)
+          + guestNotes.map(\.severity)
           + preferences.map(\.severity)
           + returningGuests.map(\.severity)
       ),

@@ -48,10 +48,13 @@ enum ManagerNarrativeWriterDiagnostics {
 
 struct ManagerNarrativeWriter {
 
+  @MainActor
   func write(
     narrativePacket: ManagerNarrativePacket,
     hostPacket: HostLLMPacket,
-    fallback: ManagerNarrative
+    fallback: ManagerNarrative,
+    hostBoardContext: HostBriefingHostBoardContext? = nil,
+    settings: HostIntelligenceSettings? = nil
   ) async -> ManagerNarrative {
     if hostPacket.topFacts.isEmpty {
       ManagerNarrativeWriterDiagnostics.recordSuccess(raw: fallback.compactBriefingText)
@@ -62,6 +65,20 @@ struct ManagerNarrativeWriter {
       || LocalModelHostBriefingWriter.shouldUseTemplateForLowRiskSingleFact(hostPacket) {
       ManagerNarrativeWriterDiagnostics.recordSuccess(raw: fallback.compactBriefingText)
       return fallback
+    }
+
+    if let hostBoardContext, let settings,
+       let skipReason = HostBriefingHostBoardGate.localModelSkipReason(
+        settings: settings,
+        context: hostBoardContext,
+        packet: hostPacket
+       ) {
+      HostIntelligenceDiagnostics.skipLocalModel(reason: skipReason.rawValue)
+      ManagerNarrativeWriterDiagnostics.recordFailure(
+        raw: nil,
+        reason: skipReason.rawValue
+      )
+      return fallbackWithReason(fallback, reason: skipReason.rawValue)
     }
 
     HostBriefingWriterDiagnostics.prepareForInference()
@@ -85,6 +102,20 @@ struct ManagerNarrativeWriter {
 
     do {
       let generated = try await runtime.generateBriefing(prompt: prompt)
+      if ManagerNarrativeValidator.containsLeakedModelLabels(in: generated) {
+        HostIntelligenceDiagnostics.localModelFallback(
+          reason: "rejected labeled or unnatural staff output"
+        )
+        ManagerNarrativeWriterDiagnostics.recordFailure(
+          raw: generated,
+          reason: "Narrative contains labeled or unnatural staff output."
+        )
+        return fallbackWithReason(
+          fallback,
+          reason: "rejected labeled or unnatural staff output"
+        )
+      }
+
       ManagerNarrativeWriterDiagnostics.recordSuccess(raw: generated)
 
       var parsed = ManagerNarrativeOutputParser.parse(generated)

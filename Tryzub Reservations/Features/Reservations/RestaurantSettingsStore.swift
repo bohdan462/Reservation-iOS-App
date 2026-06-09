@@ -90,6 +90,7 @@ final class RestaurantSettingsStore: ObservableObject {
         defer { setupLoading = false }
 
         do {
+            StartupTrace.directAPI(caller: "RestaurantSettingsStore.loadRestaurantSetup", reason: "restaurant_setup")
             let dto = try await apiClient.fetchRestaurantSetup(reason: .restaurantSetup)
             let loadedSetup = RestaurantSetup(dto: dto)
             setup = loadedSetup

@@ -14,8 +14,11 @@ final class GuestIntelligenceStore: ObservableObject {
     @Published private(set) var errorByDateKey: [String: String] = [:]
 
     private var loadingDateKeys: Set<String> = []
+    private var loadDebounceTask: Task<Void, Never>?
+    private var pendingDateKey: String?
     private let apiClient: any ReservationsAPIClientProtocol
     private let freshnessInterval: TimeInterval = 180
+    private let loadDebounceInterval: TimeInterval = 1.0
 
     init(apiClient: any ReservationsAPIClientProtocol) {
         self.apiClient = apiClient
@@ -57,6 +60,32 @@ final class GuestIntelligenceStore: ObservableObject {
         return "\(key)-\(loadedStamp)-\(generatedAt)-\(itemCount)"
     }
 
+    func scheduleLoad(dateKey: String, force: Bool = false) {
+        let key = normalizedDateKey(dateKey)
+        guard !key.isEmpty else { return }
+
+        if !force, isFresh(key), responsesByDateKey[key] != nil {
+            return
+        }
+
+        pendingDateKey = key
+        loadDebounceTask?.cancel()
+        loadDebounceTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(self.loadDebounceInterval))
+            guard !Task.isCancelled else { return }
+            guard self.pendingDateKey == key else { return }
+            await self.load(dateKey: key, force: force)
+            self.loadDebounceTask = nil
+        }
+    }
+
+    func cancelScheduledLoad() {
+        pendingDateKey = nil
+        loadDebounceTask?.cancel()
+        loadDebounceTask = nil
+    }
+
     func load(dateKey: String, force: Bool = false) async {
         let key = normalizedDateKey(dateKey)
         guard !key.isEmpty else { return }
@@ -84,6 +113,7 @@ final class GuestIntelligenceStore: ObservableObject {
     }
 
     func reset() {
+        cancelScheduledLoad()
         responsesByDateKey = [:]
         loadedAtByDateKey = [:]
         errorByDateKey = [:]

@@ -60,15 +60,18 @@ private struct AppRootView: View {
                         }
                     }
                     .transition(.opacity)
-                } else {
+                } else if let controller = reservationSession.reservationsController {
                     ReservationsListView(
                         environment: environment,
-                        controller: reservationSession.reservationsController,
+                        controller: controller,
                         onLogout: logout
                     )
                     .id("\(role.rawValue)-\(credentials.username)")
                     .environmentObject(roleStore)
                     .transition(.opacity)
+                } else {
+                    ReservationsSessionPreparingView()
+                        .transition(.opacity)
                 }
             } else {
                 AppLoginView(
@@ -118,6 +121,23 @@ private struct AppRootView: View {
         reservationSession.reset()
         roleStore.clear()
         credentialStore.reset()
+    }
+}
+
+private struct ReservationsSessionPreparingView: View {
+    var body: some View {
+        ZStack {
+            Color(.systemGroupedBackground)
+                .ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                ProgressView()
+                Text("Preparing today's service")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

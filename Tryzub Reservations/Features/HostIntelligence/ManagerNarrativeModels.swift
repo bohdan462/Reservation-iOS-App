@@ -78,6 +78,12 @@ enum ManagerNarrativePacketBuilder {
 
   static func buildHostHome(from snapshot: HostDecisionSnapshot) -> ManagerNarrativePacket {
     let facts = snapshot.llmPacket.topFacts.compactMap { fact -> ManagerNarrativeFact? in
+      guard !GuestHistorySemantics.containsInventedOccasionNoteLanguage(
+        title: fact.title,
+        detail: fact.detail
+      ) else {
+        return nil
+      }
       guard let title = ManagerNarrativePacketSanitizer.staffSafeLine(fact.title) else {
         return nil
       }

@@ -41,8 +41,14 @@ enum HostGuestIntelligenceSupport {
     var reportCache: [Int: GuestInsightReport] = [:]
 
     for reservation in activeReservations {
-      // Backend-first: one summary per reservation skips local GuestInsightsController.analyze
-      // for that row. Weak identity still gets backend note/risk flags but no returning claims.
+      let report = cachedGuestInsightReport(
+        for: reservation,
+        historyPool: historyPool,
+        cache: &reportCache
+      )
+
+      // Backend note/risk flags use API summaries; returning-guest copy always follows
+      // the same local phone/email history rules as Guest Insights and Detail.
       if let summary = guestIntelligenceSummariesByReservationID[reservation.remoteID] {
         appendUnique(
           &signals,
@@ -53,19 +59,19 @@ enum HostGuestIntelligenceSupport {
             settings: settings
           )
         )
+        appendUnique(&signals, &seenKeys, regularGuestSignal(for: reservation, report: report))
+        appendUnique(&signals, &seenKeys, importantGuestSignal(for: reservation, report: report))
+        if !report.hasReliableContactIdentity {
+          appendUnique(
+            &signals,
+            &seenKeys,
+            contentsOf: backendReturningFallbackSignals(
+              for: reservation,
+              summary: summary
+            )
+          )
+        }
         continue
-      }
-
-      let report: GuestInsightReport
-      if let cached = reportCache[reservation.remoteID] {
-        report = cached
-      } else {
-        let analyzed = insightsController.analyze(
-          selected: reservation,
-          allReservations: historyPool
-        )
-        reportCache[reservation.remoteID] = analyzed
-        report = analyzed
       }
 
       appendUnique(&signals, &seenKeys, allergySignal(for: reservation))
@@ -191,7 +197,7 @@ enum HostGuestIntelligenceSupport {
           id: "guest-action-occasion-\(signal.reservationID)",
           signal: signal,
           kind: .alertServer,
-          title: "Occasion note",
+          title: "Check guest note",
           reason: signal.message
         )
       case .regularGuest, .importantGuest:
@@ -199,7 +205,7 @@ enum HostGuestIntelligenceSupport {
           id: "guest-action-returning-\(signal.reservationID)",
           signal: signal,
           kind: .reviewReservation,
-          title: "Returning guest",
+          title: "Seen before",
           reason: signal.message
         )
       case .vip, .noteReminder, .unknown:
@@ -241,7 +247,17 @@ enum HostGuestIntelligenceSupport {
   ) -> [HostGuestSignal] {
     var signals: [HostGuestSignal] = []
 
-    if summary.hasAllergyNote {
+    if GuestHistorySemantics.backendNoteFlagIsActionable(
+      summary.hasAllergyNote,
+      reservation: reservation
+    ) {
+      let rawNotes = GuestHistorySemantics.combinedNoteText(for: reservation)
+      let message: String
+      if let snippet = HostGuestNoteSnippetExtractor.allergySnippet(from: rawNotes) {
+        message = "\(reservation.guestName) has \(snippet) noted."
+      } else {
+        message = "\(reservation.guestName) has allergy-related notes."
+      }
       signals.append(
         HostGuestSignal(
           id: "guest-allergy-\(reservation.remoteID)",
@@ -249,28 +265,23 @@ enum HostGuestIntelligenceSupport {
           guestName: reservation.guestName,
           kind: .allergy,
           severity: .critical,
-          message: "\(reservation.guestName) has allergy-related notes.",
+          message: message,
           evidence: backendEvidence(summary: summary, extra: ["allergyFlag"])
         )
       )
     }
 
-    if hasReliableReturningIdentity(summary.identityConfidence) {
-      switch summary.classification {
-      case .returning, .regular:
-        if let signal = backendRegularGuestSignal(for: reservation, summary: summary) {
-          signals.append(signal)
-        }
-      case .frequentRegular:
-        if let signal = backendImportantGuestSignal(for: reservation, summary: summary) {
-          signals.append(signal)
-        }
-      case .new, .unknown, .needsReview:
-        break
+    if GuestHistorySemantics.backendNoteFlagIsActionable(
+      summary.hasSeatingPreference,
+      reservation: reservation
+    ) {
+      let rawNotes = GuestHistorySemantics.combinedNoteText(for: reservation)
+      let message: String
+      if let snippet = HostGuestNoteSnippetExtractor.seatingPreferenceSnippet(from: rawNotes) {
+        message = "\(reservation.guestName) noted \(snippet)."
+      } else {
+        message = "\(reservation.guestName) has a seating preference noted."
       }
-    }
-
-    if summary.hasSeatingPreference {
       signals.append(
         HostGuestSignal(
           id: "guest-seatingPreference-\(reservation.remoteID)",
@@ -278,13 +289,16 @@ enum HostGuestIntelligenceSupport {
           guestName: reservation.guestName,
           kind: .seatingPreference,
           severity: .watch,
-          message: "\(reservation.guestName) has a seating preference noted.",
+          message: message,
           evidence: backendEvidence(summary: summary, extra: ["seatingPreferenceFlag"])
         )
       )
     }
 
-    if summary.hasAccessibilityNote {
+    if GuestHistorySemantics.backendNoteFlagIsActionable(
+      summary.hasAccessibilityNote,
+      reservation: reservation
+    ) {
       signals.append(
         HostGuestSignal(
           id: "guest-accessibility-\(reservation.remoteID)",
@@ -298,7 +312,11 @@ enum HostGuestIntelligenceSupport {
       )
     }
 
-    if summary.hasSpecialOccasionNote {
+    if GuestHistorySemantics.backendNoteFlagIsActionable(
+      summary.hasSpecialOccasionNote,
+      reservation: reservation,
+      requiresOccasionKeywords: true
+    ) {
       signals.append(
         HostGuestSignal(
           id: "guest-specialOccasion-\(reservation.remoteID)",
@@ -306,7 +324,7 @@ enum HostGuestIntelligenceSupport {
           guestName: reservation.guestName,
           kind: .specialOccasion,
           severity: .watch,
-          message: "\(reservation.guestName) has a special occasion note.",
+          message: GuestHistorySemantics.guestNoteAlertReason(for: reservation),
           evidence: backendEvidence(summary: summary, extra: ["specialOccasionFlag"])
         )
       )
@@ -383,19 +401,58 @@ enum HostGuestIntelligenceSupport {
     return signals
   }
 
+  private static func cachedGuestInsightReport(
+    for reservation: ReservationRecord,
+    historyPool: [ReservationRecord],
+    cache: inout [Int: GuestInsightReport]
+  ) -> GuestInsightReport {
+    if let cached = cache[reservation.remoteID] {
+      return cached
+    }
+    let analyzed = insightsController.analyze(
+      selected: reservation,
+      allReservations: historyPool
+    )
+    cache[reservation.remoteID] = analyzed
+    return analyzed
+  }
+
+  /// Used only when the reservation has no phone/email for local identity matching.
+  private static func backendReturningFallbackSignals(
+    for reservation: ReservationRecord,
+    summary: GuestIntelligenceSummaryDTO
+  ) -> [HostGuestSignal] {
+    guard hasReliableReturningIdentity(summary.identityConfidence) else { return [] }
+
+    switch summary.classification {
+    case .returning, .regular:
+      if let signal = backendRegularGuestSignal(for: reservation, summary: summary) {
+        return [signal]
+      }
+    case .frequentRegular:
+      if let signal = backendImportantGuestSignal(for: reservation, summary: summary) {
+        return [signal]
+      }
+    case .new, .unknown, .needsReview:
+      break
+    }
+
+    return []
+  }
+
   private static func backendRegularGuestSignal(
     for reservation: ReservationRecord,
     summary: GuestIntelligenceSummaryDTO
   ) -> HostGuestSignal? {
-    let upcomingVisitCount = summary.cleanVisitCount + 1
-    guard upcomingVisitCount >= 2 else { return nil }
+    guard summary.cleanVisitCount >= 1 else { return nil }
 
+    let visitOrdinal = summary.cleanVisitCount + 1
     let lastVisit = summary.lastVisitDate?.trimmingCharacters(in: .whitespacesAndNewlines)
     let lastVisitDisplay = (lastVisit?.isEmpty == false) ? lastVisit : nil
-    let message = returningGuestMessage(
+    let message = GuestHistorySemantics.returningGuestMessage(
       guestName: reservation.guestName,
-      visitCount: upcomingVisitCount,
-      lastVisitDisplayDate: lastVisitDisplay,
+      visitOrdinal: visitOrdinal,
+      lastPriorVisitDisplayDate: lastVisitDisplay,
       frequent: false
     )
 
@@ -411,7 +468,7 @@ enum HostGuestIntelligenceSupport {
       message: message,
       evidence: backendEvidence(
         summary: summary,
-        extra: ["upcomingVisitCount=\(upcomingVisitCount)", "returningGuest"]
+        extra: ["visitOrdinal=\(visitOrdinal)", "returningGuest"]
       )
     )
   }
@@ -420,15 +477,15 @@ enum HostGuestIntelligenceSupport {
     for reservation: ReservationRecord,
     summary: GuestIntelligenceSummaryDTO
   ) -> HostGuestSignal? {
-    let upcomingVisitCount = summary.cleanVisitCount + 1
-    guard upcomingVisitCount >= 2 else { return nil }
+    guard summary.cleanVisitCount >= 1 else { return nil }
 
+    let visitOrdinal = summary.cleanVisitCount + 1
     let lastVisit = summary.lastVisitDate?.trimmingCharacters(in: .whitespacesAndNewlines)
     let lastVisitDisplay = (lastVisit?.isEmpty == false) ? lastVisit : nil
-    let message = returningGuestMessage(
+    let message = GuestHistorySemantics.returningGuestMessage(
       guestName: reservation.guestName,
-      visitCount: upcomingVisitCount,
-      lastVisitDisplayDate: lastVisitDisplay,
+      visitOrdinal: visitOrdinal,
+      lastPriorVisitDisplayDate: lastVisitDisplay,
       frequent: true
     )
 
@@ -441,7 +498,7 @@ enum HostGuestIntelligenceSupport {
       message: message,
       evidence: backendEvidence(
         summary: summary,
-        extra: ["upcomingVisitCount=\(upcomingVisitCount)", "frequentRegular"]
+        extra: ["visitOrdinal=\(visitOrdinal)", "frequentRegular"]
       )
     )
   }
@@ -547,30 +604,26 @@ enum HostGuestIntelligenceSupport {
   ) -> HostGuestSignal? {
     guard report.hasReliableRepeatGuestHistory else { return nil }
     guard report.regularityLevel != .frequentRegular else { return nil }
+    guard report.hasReliableContactIdentity else { return nil }
 
-    let visitCount = report.summary.totalMatchedReservations
-    let lastVisit = lastPriorVisitDisplayDate(
-      report: report,
-      excludingReservationID: reservation.remoteID
-    )
+    let visitOrdinal = report.visitOrdinal
+    let lastVisit = report.lastPriorVisitDisplayDate
 
     var evidence = [
       "returningGuest",
-      "visitCount=\(visitCount)",
+      "visitOrdinal=\(visitOrdinal)",
       "regularity=\(report.regularityLevel.displayName)"
     ]
-    if report.hasReliableContactIdentity {
-      evidence.append(report.primaryPhone != nil ? "matchedByPhone" : "matchedByEmail")
-    }
+    evidence.append(report.primaryPhone != nil ? "matchedByPhone" : "matchedByEmail")
 
     if let lastVisit {
       evidence.append("lastVisit=\(lastVisit)")
     }
 
-    let message = returningGuestMessage(
+    let message = GuestHistorySemantics.returningGuestMessage(
       guestName: reservation.guestName,
-      visitCount: visitCount,
-      lastVisitDisplayDate: lastVisit,
+      visitOrdinal: visitOrdinal,
+      lastPriorVisitDisplayDate: lastVisit,
       frequent: false
     )
 
@@ -594,24 +647,23 @@ enum HostGuestIntelligenceSupport {
   ) -> HostGuestSignal? {
     guard report.regularityLevel == .frequentRegular else { return nil }
 
+    guard report.hasReliableContactIdentity else { return nil }
+
+    let visitOrdinal = report.visitOrdinal
+    let lastVisit = report.lastPriorVisitDisplayDate
+
     var evidence = [
       "frequentRegular",
-      "visitCount=\(report.summary.totalMatchedReservations)"
+      "visitOrdinal=\(visitOrdinal)"
     ]
-    if let lastVisit = lastPriorVisitDisplayDate(
-      report: report,
-      excludingReservationID: reservation.remoteID
-    ) {
+    if let lastVisit {
       evidence.append("lastVisit=\(lastVisit)")
     }
 
-    let message = returningGuestMessage(
+    let message = GuestHistorySemantics.returningGuestMessage(
       guestName: reservation.guestName,
-      visitCount: report.summary.totalMatchedReservations,
-      lastVisitDisplayDate: lastPriorVisitDisplayDate(
-        report: report,
-        excludingReservationID: reservation.remoteID
-      ),
+      visitOrdinal: visitOrdinal,
+      lastPriorVisitDisplayDate: lastVisit,
       frequent: true
     )
 
@@ -690,11 +742,10 @@ enum HostGuestIntelligenceSupport {
   private static func specialOccasionSignals(
     for reservation: ReservationRecord
   ) -> [HostGuestSignal] {
-    let combined = combinedNotes(for: reservation)
-    guard !combined.isEmpty else { return [] }
+    guard GuestHistorySemantics.hasOccasionNoteText(for: reservation) else { return [] }
 
+    let combined = combinedNotes(for: reservation)
     let matched = matchedKeywords(in: combined, keywords: specialOccasionKeywords, negations: [])
-    guard !matched.isEmpty else { return [] }
 
     return [
       HostGuestSignal(
@@ -703,7 +754,7 @@ enum HostGuestIntelligenceSupport {
         guestName: reservation.guestName,
         kind: .specialOccasion,
         severity: .watch,
-        message: "\(reservation.guestName) has a special occasion note.",
+        message: GuestHistorySemantics.guestNoteAlertReason(for: reservation),
         evidence: matched
       )
     ]
@@ -856,7 +907,7 @@ enum HostGuestIntelligenceSupport {
   static func compactReturningGuestPromptLine(for signal: HostGuestSignal) -> String? {
     guard signal.kind == .regularGuest || signal.kind == .importantGuest else { return nil }
 
-    var parts = ["Returning guest: \(signal.guestName)"]
+    var parts = ["Seen before: \(signal.guestName)"]
     if let visitCount = visitCount(from: signal.evidence),
        let ordinal = ordinalVisitText(for: visitCount) {
       parts.append(ordinal)
@@ -948,9 +999,9 @@ enum HostGuestIntelligenceSupport {
   private static func title(for kind: HostGuestSignalKind, signal: HostGuestSignal? = nil) -> String {
     switch kind {
     case .allergy: return "Allergy note"
-    case .regularGuest, .importantGuest: return "Returning guest"
-    case .vip: return "Returning guest"
-    case .specialOccasion: return "Special occasion note"
+    case .regularGuest, .importantGuest: return "Seen before"
+    case .vip: return "Seen before"
+    case .specialOccasion: return "Guest note"
     case .seatingPreference: return "Seating preference"
     case .accessibility: return "Accessibility need"
     case .cancellationRisk: return "Cancellation risk"
@@ -983,7 +1034,7 @@ enum HostGuestIntelligenceSupport {
     case .manualCallIn:
       return "Confirm contact details manually."
     case .specialOccasion:
-      return "Review the occasion note before seating."
+      return "Check guest note before seating."
     default:
       return nil
     }

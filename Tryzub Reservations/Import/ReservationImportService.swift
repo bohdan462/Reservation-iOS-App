@@ -42,13 +42,18 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
 
     private let client: any ReservationsAPIClientProtocol
     private let repository: any ReservationRepositoryProtocol
+    private let syncServiceInstanceID = StartupTrace.makeInstanceID()
+    private let controllerTraceID: String?
 
     init(
         client: any ReservationsAPIClientProtocol,
-        repository: any ReservationRepositoryProtocol
+        repository: any ReservationRepositoryProtocol,
+        controllerTraceID: String? = nil
     ) {
         self.client = client
         self.repository = repository
+        self.controllerTraceID = controllerTraceID
+        StartupTrace.syncServiceCreated(id: syncServiceInstanceID, controllerID: controllerTraceID)
     }
 
     // MARK: - Full Cache Sync

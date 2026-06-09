@@ -26,6 +26,9 @@ enum ManagerNarrativePacketSanitizer {
     guard !containsEmail(trimmed) else { return nil }
     guard !containsPhone(trimmed) else { return nil }
     guard !looksLikeEvidence(trimmed) else { return nil }
+    guard !GuestHistorySemantics.containsInventedOccasionNoteLanguage(title: trimmed, detail: nil) else {
+      return nil
+    }
 
     let rewritten = HostStaffLanguage.rewrite(trimmed)
     guard !rewritten.isEmpty else { return nil }

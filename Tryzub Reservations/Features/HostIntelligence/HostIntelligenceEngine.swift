@@ -1397,7 +1397,7 @@ struct HostIntelligenceEngine {
       return .empty
     }
 
-    let topFacts = briefingService.rankHostFacts(facts).prefix(5).map {
+    let topFacts = briefingService.rankHostFacts(facts).prefix(5).compactMap {
       briefingService.makeLLMFact(from: $0)
     }
     let empty = HostLLMPacket.empty

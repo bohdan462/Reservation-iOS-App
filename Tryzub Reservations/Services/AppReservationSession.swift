@@ -10,7 +10,7 @@ import SwiftUI
 
 @MainActor
 final class AppReservationSession: ObservableObject {
-    private(set) var reservationsController: ReservationsController?
+    @Published private(set) var reservationsController: ReservationsController?
     private var environmentKey: String?
 
     func sync(environment: AppEnvironment, context: ModelContext) {
@@ -18,8 +18,15 @@ final class AppReservationSession: ObservableObject {
         if environmentKey != key {
             reservationsController?.prepareForLogout()
             environmentKey = key
-            reservationsController = ReservationsController(environment: environment)
+            reservationsController = ReservationsController(
+                environment: environment,
+                traceSource: "AppReservationSession"
+            )
         }
+        StartupTrace.sessionSync(
+            controllerID: reservationsController?.startupTraceControllerID,
+            warmup: true
+        )
         reservationsController?.beginBackgroundReservationWarmup(context: context)
     }
 

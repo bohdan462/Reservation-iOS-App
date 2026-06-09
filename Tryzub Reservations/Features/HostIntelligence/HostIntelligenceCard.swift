@@ -224,6 +224,10 @@ struct HostIntelligenceCard: View {
 
   private var staffFacingNarrative: ManagerNarrative? {
     guard staffFacingPresentation, let managerNarrative else { return nil }
+    guard managerNarrative.source != .localModel
+        || !ManagerNarrativeValidator.containsLeakedModelLabels(in: managerNarrative) else {
+      return nil
+    }
     let headline = managerNarrative.headline.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !headline.isEmpty else { return nil }
     return managerNarrative

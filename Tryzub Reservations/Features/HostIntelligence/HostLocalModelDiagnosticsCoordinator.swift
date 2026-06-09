@@ -107,6 +107,7 @@ final class HostLocalModelDiagnosticsCoordinator: ObservableObject {
 
   func completeManualInference(succeeded: Bool, failureMessage: String? = nil) {
     if succeeded {
+      HostLocalModelWarmthTracker.markWarm()
       setPhase(.completed)
     } else if let failureMessage, !failureMessage.isEmpty {
       setPhase(.failed(failureMessage))

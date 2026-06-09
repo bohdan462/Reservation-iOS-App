@@ -837,8 +837,24 @@ struct HostBriefingHostBoardContext: Equatable {
   var isStartupNetworkPassInFlight: Bool
   var isHistoryPrefetching: Bool
   var isLocalModelInferenceActive: Bool
+  var isReservationRefreshInFlight: Bool
+  var isAvailabilitySummaryLoading: Bool
+  var hostBoardDateNavigationAt: Date?
   var startupUIReleasedAt: Date?
   var now: Date
+}
+
+@MainActor
+enum HostLocalModelWarmthTracker {
+  private(set) static var isWarm = false
+
+  static func markWarm() {
+    isWarm = true
+  }
+
+  static func reset() {
+    isWarm = false
+  }
 }
 
 enum HostBriefingHostBoardGate {
@@ -847,12 +863,18 @@ enum HostBriefingHostBoardGate {
   enum SkipReason: String {
     case host_board_gate_off
     case host_board_template_only
+    case model_cold
     case startup_in_flight
     case history_prefetch_in_flight
+    case reservation_refresh_in_flight
+    case availability_loading
+    case date_navigation
     case local_model_in_flight
     case stabilization_delay
     case no_meaningful_facts
   }
+
+  static let dateNavigationCooldown: TimeInterval = 4
 
   static func shouldUseTemplateOnlyOnHostBoard(packet: HostLLMPacket) -> Bool {
     packet.isHostBoardTemplateOnlyPacket
@@ -866,6 +888,7 @@ enum HostBriefingHostBoardGate {
     return categories.count < 2
   }
 
+  @MainActor
   static func shouldUseLocalModelOnHostBoard(
     settings: HostIntelligenceSettings,
     context: HostBriefingHostBoardContext,
@@ -874,6 +897,7 @@ enum HostBriefingHostBoardGate {
     localModelSkipReason(settings: settings, context: context, packet: packet) == nil
   }
 
+  @MainActor
   static func localModelSkipReason(
     settings: HostIntelligenceSettings,
     context: HostBriefingHostBoardContext,
@@ -884,8 +908,15 @@ enum HostBriefingHostBoardGate {
     guard settings.useLocalModelOnHostBoard else { return .host_board_gate_off }
     guard packet.hasMeaningfulBriefingFacts else { return .no_meaningful_facts }
     if shouldUseTemplateOnlyOnHostBoard(packet: packet) { return .host_board_template_only }
+    if !HostLocalModelWarmthTracker.isWarm { return .model_cold }
     if context.isStartupNetworkPassInFlight { return .startup_in_flight }
+    if context.isReservationRefreshInFlight { return .reservation_refresh_in_flight }
     if context.isHistoryPrefetching { return .history_prefetch_in_flight }
+    if context.isAvailabilitySummaryLoading { return .availability_loading }
+    if let navigationAt = context.hostBoardDateNavigationAt,
+       context.now.timeIntervalSince(navigationAt) < dateNavigationCooldown {
+      return .date_navigation
+    }
     if context.isLocalModelInferenceActive { return .local_model_in_flight }
     guard let releasedAt = context.startupUIReleasedAt else { return .stabilization_delay }
     if context.now.timeIntervalSince(releasedAt) < stabilizationDelay {
@@ -926,8 +957,16 @@ enum HostIntelligenceDiagnostics {
       return "enhanced briefing off, provider not local model, or Host board local model disabled"
     case "host_board_template_only":
       return "host board template-only because simple operational facts are clearer as deterministic copy"
+    case "model_cold":
+      return "local model is not warm yet"
     case "startup_in_flight":
       return "startup reservation refresh still in flight"
+    case "reservation_refresh_in_flight":
+      return "reservation refresh still in flight"
+    case "availability_loading":
+      return "availability summary still loading"
+    case "date_navigation":
+      return "host date navigation still settling"
     case "history_prefetch_in_flight":
       return "history prefetch still in flight"
     case "local_model_in_flight":

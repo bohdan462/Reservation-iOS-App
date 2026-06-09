@@ -37,10 +37,12 @@ struct GuestInsightsView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
+            .padding(.bottom, ReservationLayout.scrollBottomInset)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Guest Insights")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .fontDesign(.rounded)
         .task(id: cacheKey) {
             // Read-only analysis from cached ReservationRecord rows; no network or mutation.
@@ -147,7 +149,7 @@ private struct GuestInsightSnapshotGrid: View {
         LazyVGrid(columns: columns, spacing: 10) {
             GuestInsightMetricCard(
                 title: "Clean visits",
-                value: "\(report.summary.totalMatchedReservations)",
+                value: "\(report.visitOrdinal)",
                 caption: report.regularityLevel.displayName
             )
 

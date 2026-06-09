@@ -115,59 +115,12 @@ enum NewBookingRowInsightBuilder {
     report: GuestInsightReport,
     reservationID: Int
   ) -> String? {
+    _ = reservationID
     guard report.hasReliableRepeatGuestHistory else { return nil }
-
-    var parts = ["Seen before"]
-
-    let visitCount = report.summary.totalMatchedReservations
-    if visitCount >= 2, let ordinal = ordinalVisitText(for: visitCount) {
-      parts.append(ordinal)
-    }
-
-    if let lastVisit = lastPriorCompletedVisitDisplayDate(
-      report: report,
-      excludingReservationID: reservationID
-    ) {
-      parts.append("last \(lastVisit)")
-    }
-
-    return parts.joined(separator: " · ")
-  }
-
-  private static func lastPriorCompletedVisitDisplayDate(
-    report: GuestInsightReport,
-    excludingReservationID: Int
-  ) -> String? {
-    priorCompletedOrSeatedReservations(
-      report: report,
-      excludingReservationID: excludingReservationID
+    return GuestHistorySemantics.seenBeforeRowLine(
+      priorReliableVisitCount: report.priorReliableVisitCount,
+      lastPriorVisitDisplayDate: report.lastPriorVisitDisplayDate
     )
-    .sorted { lhs, rhs in
-      if lhs.date == rhs.date {
-        return lhs.time > rhs.time
-      }
-      return lhs.date > rhs.date
-    }
-    .first?
-    .displayDate
-  }
-
-  private static func priorCompletedOrSeatedReservations(
-    report: GuestInsightReport,
-    excludingReservationID: Int
-  ) -> [GuestMatchedReservation] {
-    report.matchedReservations
-      .filter { $0.reservationID != excludingReservationID }
-      .filter { $0.status == .completed || $0.status == .seated }
-  }
-
-  private static func ordinalVisitText(for visitCount: Int) -> String? {
-    guard visitCount >= 2 else { return nil }
-    switch visitCount {
-    case 2: return "2nd visit"
-    case 3: return "3rd visit"
-    default: return "\(visitCount)th visit"
-    }
   }
 
   // MARK: - Notes
@@ -189,8 +142,8 @@ enum NewBookingRowInsightBuilder {
     if let snippet = HostGuestNoteSnippetExtractor.seatingPreferenceSnippet(from: notes) {
       return "Accessibility — \(snippet)"
     }
-    if HostGuestNoteSnippetExtractor.specialOccasionSnippet(from: notes) != nil {
-      return "Occasion note — share with server"
+    if GuestHistorySemantics.hasOccasionNoteText(for: reservation) {
+      return "Guest note — check before seating"
     }
     return nil
   }

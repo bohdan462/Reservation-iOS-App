@@ -2127,7 +2127,7 @@ private extension String {
     ManualReservationFormView { _ in
         ReservationPreviewData.sampleDTOs[0]
     }
-    .environmentObject(ReservationsController(environment: environment))
+    .environmentObject(ReservationsController.preview(environment: environment))
     .environmentObject(HostTableConfigStore())
 }
 
@@ -2136,6 +2136,6 @@ private extension String {
     ReservationEditFormView(reservation: ReservationPreviewData.sampleRecord) { _ in
         ReservationPreviewData.sampleDTOs[0]
     }
-    .environmentObject(ReservationsController(environment: environment))
+    .environmentObject(ReservationsController.preview(environment: environment))
 }
 #endif

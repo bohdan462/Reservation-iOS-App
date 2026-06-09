@@ -49,7 +49,7 @@ extension HostReservationOpenIntent {
     case .completeReservation:
       return "Use Complete only if the table is actually done."
     case .alertServer:
-      return "Share this note with the server before seating."
+      return "Check guest note before seating."
     case .reviewReservation, .reviewCancellationOpportunity:
       return "Review the reservation details before taking action."
     case .seatReservation:

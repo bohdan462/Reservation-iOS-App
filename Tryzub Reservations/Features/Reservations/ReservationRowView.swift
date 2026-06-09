@@ -74,6 +74,7 @@ struct ReservationRowPresentation: Identifiable {
     let statusText: String
     let status: ReservationStatus
     let sourceText: String?
+    let submittedInsight: ReservationRowInsight?
     let insight: ReservationRowInsight?
     let isMuted: Bool
     let rowStyle: ReservationRowStyle
@@ -87,14 +88,21 @@ enum ReservationRowPresenter {
         context: ReservationRowContext,
         contextNote: String?,
         showsDate: Bool,
+        showsSubmittedTime: Bool = false,
         now: Date = Date(),
         capabilities: AppCapabilities? = nil
     ) -> ReservationRowPresentation {
+        let shouldShowSubmitted = showsSubmittedTime
+            || (context == .review && reservation.isInReviewQueue)
+        let submittedInsight = shouldShowSubmitted && reservation.isInReviewQueue
+            ? submittedInsight(for: reservation)
+            : nil
         let insight = primaryInsight(
             reservation: reservation,
             context: context,
             contextNote: contextNote,
-            now: now
+            now: now,
+            showsSubmittedTime: shouldShowSubmitted
         )
         let policy = capabilities.map {
             ReservationHostActionPolicy(reservation: reservation, capabilities: $0, surface: .row)
@@ -116,6 +124,7 @@ enum ReservationRowPresenter {
             statusText: reservation.statusValue.shortDisplayName,
             status: reservation.statusValue,
             sourceText: reservation.sourceDisplayName,
+            submittedInsight: submittedInsight,
             insight: insight,
             isMuted: isMuted(reservation),
             rowStyle: rowStyle(for: insight),
@@ -144,16 +153,62 @@ enum ReservationRowPresenter {
         reservation: ReservationRecord,
         context: ReservationRowContext,
         contextNote: String?,
-        now: Date
+        now: Date,
+        showsSubmittedTime: Bool
     ) -> ReservationRowInsight? {
         switch context {
         case .review:
-            // Review is a triage queue: emphasize the review reason and how long a
-            // new request has waited. Operational urgency (late/conflict) lives in Detail.
+            if showsSubmittedTime {
+                return contextNoteInsight(contextNote)
+            }
             return reviewInsight(reservation: reservation, contextNote: contextNote)
         case .todayUpcoming, .todaySeated, .schedule:
-            return operationalInsight(reservation: reservation, contextNote: contextNote, now: now)
+            if showsSubmittedTime, reservation.isInReviewQueue {
+                return contextNoteInsight(contextNote)
+            }
+            return operationalInsight(
+                reservation: reservation,
+                context: context,
+                contextNote: contextNote,
+                now: now
+            )
         }
+    }
+
+    private static func shouldShowOperationalTimingInsight(
+        reservation: ReservationRecord,
+        context: ReservationRowContext
+    ) -> Bool {
+        guard reservation.reservationDate == Date.reservationDateString() else {
+            return false
+        }
+
+        switch context {
+        case .todayUpcoming, .todaySeated:
+            return true
+        case .schedule, .review:
+            return false
+        }
+    }
+
+    private static func submittedInsight(for reservation: ReservationRecord) -> ReservationRowInsight? {
+        guard let timeText = reservation.submittedStaffTimeText else { return nil }
+        return ReservationRowInsight(
+            text: "Submitted \(timeText)",
+            systemImage: "arrow.up.circle",
+            tint: .secondary,
+            prominence: .normal
+        )
+    }
+
+    private static func contextNoteInsight(_ contextNote: String?) -> ReservationRowInsight? {
+        guard let contextNote = contextNote?.nilIfBlank else { return nil }
+        return ReservationRowInsight(
+            text: contextNote,
+            systemImage: "info.circle",
+            tint: .secondary,
+            prominence: .normal
+        )
     }
 
     private static func reviewInsight(
@@ -161,78 +216,60 @@ enum ReservationRowPresenter {
         contextNote: String?
     ) -> ReservationRowInsight? {
         if reservation.statusValue == .needsReview {
-            guard let contextNote = contextNote?.nilIfBlank else { return nil }
-            return ReservationRowInsight(
-                text: contextNote,
-                systemImage: "info.circle",
-                tint: .secondary,
-                prominence: .normal
-            )
+            return contextNoteInsight(contextNote)
         }
 
-        if let submittedAgoText = reservation.submittedAgoText {
+        if let submittedAgoText = reservation.submittedStaffTimeText {
             return ReservationRowInsight(
                 text: "Submitted \(submittedAgoText)",
-                systemImage: "clock",
+                systemImage: "arrow.up.circle",
                 tint: .secondary,
                 prominence: .normal
             )
         }
 
-        if let contextNote = contextNote?.nilIfBlank {
-            return ReservationRowInsight(
-                text: contextNote,
-                systemImage: "info.circle",
-                tint: .secondary,
-                prominence: .normal
-            )
+        return contextNoteInsight(contextNote)
+    }
+
+    private static func operationalTimingInsight(
+        reservation: ReservationRecord,
+        context: ReservationRowContext,
+        now: Date
+    ) -> ReservationRowInsight? {
+        guard shouldShowOperationalTimingInsight(reservation: reservation, context: context) else {
+            return nil
         }
 
-        return nil
+        let timingState = reservation.operationalTimingState(now: now)
+        guard let timingText = timingState.insightText else { return nil }
+        return ReservationRowInsight(
+            text: timingText,
+            systemImage: timingState.isAttention ? "exclamationmark.triangle" : "clock",
+            tint: timingState.isAttention ? .red : .orange,
+            prominence: timingState.isAttention ? .attention : .dueSoon
+        )
     }
 
     private static func operationalInsight(
         reservation: ReservationRecord,
+        context: ReservationRowContext,
         contextNote: String?,
         now: Date
     ) -> ReservationRowInsight? {
         if reservation.statusValue == .needsReview {
-            return contextNote?.nilIfBlank.map {
-                ReservationRowInsight(
-                    text: $0,
-                    systemImage: "info.circle",
-                    tint: .secondary,
-                    prominence: .normal
-                )
-            }
+            return contextNoteInsight(contextNote)
         }
 
-        let timingState = reservation.operationalTimingState(now: now)
-        if let timingText = timingState.insightText {
-            return ReservationRowInsight(
-                text: timingText,
-                systemImage: timingState.isAttention ? "exclamationmark.triangle" : "clock",
-                tint: timingState.isAttention ? .red : .orange,
-                prominence: timingState.isAttention ? .attention : .dueSoon
-            )
+        if let timingInsight = operationalTimingInsight(
+            reservation: reservation,
+            context: context,
+            now: now
+        ) {
+            return timingInsight
         }
 
-        if let contextNote = contextNote?.nilIfBlank {
-            return ReservationRowInsight(
-                text: contextNote,
-                systemImage: "exclamationmark.circle",
-                tint: .secondary,
-                prominence: .normal
-            )
-        }
-
-        if let submittedAgoText = reservation.submittedAgoText {
-            return ReservationRowInsight(
-                text: "Submitted \(submittedAgoText)",
-                systemImage: "exclamationmark",
-                tint: .secondary,
-                prominence: .normal
-            )
+        if let contextNoteInsight = contextNoteInsight(contextNote) {
+            return contextNoteInsight
         }
 
         return nil
@@ -279,6 +316,7 @@ struct ReservationRowView<Accessory: View>: View {
     var showsDate = true
     var context: ReservationRowContext = .schedule
     var contextNote: String?
+    var showsSubmittedTime = false
     var newBookingInsight: NewBookingRowInsight?
     var seatedDurationDotStyle: TryzubStaffStatusDotStyle?
     var capabilities: AppCapabilities?
@@ -294,6 +332,7 @@ struct ReservationRowView<Accessory: View>: View {
         showsDate: Bool = true,
         context: ReservationRowContext = .schedule,
         contextNote: String? = nil,
+        showsSubmittedTime: Bool = false,
         newBookingInsight: NewBookingRowInsight? = nil,
         seatedDurationDotStyle: TryzubStaffStatusDotStyle? = nil,
         capabilities: AppCapabilities? = nil,
@@ -304,6 +343,7 @@ struct ReservationRowView<Accessory: View>: View {
         self.showsDate = showsDate
         self.context = context
         self.contextNote = contextNote
+        self.showsSubmittedTime = showsSubmittedTime
         self.newBookingInsight = newBookingInsight
         self.seatedDurationDotStyle = seatedDurationDotStyle
         self.capabilities = capabilities
@@ -317,6 +357,7 @@ struct ReservationRowView<Accessory: View>: View {
             context: context,
             contextNote: contextNote,
             showsDate: showsDate,
+            showsSubmittedTime: showsSubmittedTime,
             capabilities: capabilities
         )
 
@@ -349,6 +390,7 @@ struct ReservationRowView<Accessory: View>: View {
                 guestName: presentation.guestName,
                 status: nil,
                 metaItems: wideMetaItems(for: presentation),
+                submittedInsight: presentation.submittedInsight,
                 insight: presentation.insight,
                 newBookingInsight: newBookingInsight,
                 seatedDurationDotStyle: seatedDurationDotStyle,
@@ -389,6 +431,7 @@ struct ReservationRowView<Accessory: View>: View {
                 guestName: presentation.guestName,
                 status: nil,
                 metaItems: compactMetaItems(for: presentation),
+                submittedInsight: presentation.submittedInsight,
                 insight: presentation.insight,
                 newBookingInsight: newBookingInsight,
                 seatedDurationDotStyle: seatedDurationDotStyle,
@@ -534,6 +577,7 @@ private struct ReservationRowGuestSection: View {
     let guestName: String
     let status: ReservationStatus?
     let metaItems: [ReservationRowDetailLabelData]
+    let submittedInsight: ReservationRowInsight?
     let insight: ReservationRowInsight?
     let newBookingInsight: NewBookingRowInsight?
     var seatedDurationDotStyle: TryzubStaffStatusDotStyle?
@@ -557,6 +601,10 @@ private struct ReservationRowGuestSection: View {
             .frame(minHeight: 22, alignment: .center)
 
             ReservationRowDetailsLine(items: metaItems, onTableTap: onTableTap)
+
+            if let submittedInsight {
+                ReservationRowInsightLine(insight: submittedInsight)
+            }
 
             if let insight {
                 ReservationRowInsightLine(

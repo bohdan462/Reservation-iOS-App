@@ -385,6 +385,7 @@ struct ReservationDetailView: View {
             .background(Color(.systemGroupedBackground))
         }
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .onAppear {
             guestCommunicationCoordinator.useLocalModelProvider = {
                 hostIntelligenceSettingsStore.settings.useLocalModelForGuestMessageDrafts
@@ -744,7 +745,7 @@ struct ReservationDetailView: View {
             return ("Running late", "\(text). The reservation time has passed and it is not seated yet.", "exclamationmark.triangle", .red)
         }
 
-        if reservation.statusValue == .new, let ago = reservation.submittedAgoText {
+        if reservation.isInReviewQueue, let ago = reservation.submittedStaffTimeText {
             return ("Awaiting confirmation", "Submitted \(ago). Confirm to notify the guest and lock the table.", "clock.badge.exclamationmark", TryzubColors.info)
         }
 
@@ -1224,12 +1225,8 @@ private struct ReservationServiceLoadCard: View {
 private struct GuestInsightsPreviewCard: View {
     let report: GuestInsightReport
 
-    private var previousReservationText: String {
-        let previousCount = max(report.summary.totalMatchedReservations - 1, 0)
-        if previousCount == 0 {
-            return "No previous reservations found"
-        }
-        return "\(previousCount) previous \(previousCount == 1 ? "reservation" : "reservations")"
+    private var historyLine: (title: String, detail: String) {
+        report.guestHistoryLine
     }
 
     var body: some View {
@@ -1242,7 +1239,7 @@ private struct GuestInsightsPreviewCard: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Text("Guest Insights")
+                    Text("Guest history")
                         .font(.headline.weight(.medium))
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right")
@@ -1250,10 +1247,13 @@ private struct GuestInsightsPreviewCard: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text(previousReservationText)
+                Text(historyLine.title)
+                    .font(.subheadline.weight(.semibold))
+
+                Text(historyLine.detail)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
 
                 FlowLayout(spacing: 7) {
                     GuestRegularityBadge(level: report.regularityLevel)
@@ -1807,7 +1807,7 @@ private extension String {
     }
     .modelContainer(ReservationPreviewData.previewContainer)
     .environmentObject(
-        ReservationsController(
+        ReservationsController.preview(
             environment: AppEnvironment(apiClient: ReservationsAPIClient.preview, role: .developer)
         )
     )

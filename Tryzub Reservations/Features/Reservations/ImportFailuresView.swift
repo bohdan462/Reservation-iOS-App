@@ -238,6 +238,6 @@ private extension String {
         onCreateReservation: { _ in ReservationPreviewData.sampleDTOs[0] },
         onCreated: { _ in }
     )
-    .environmentObject(ReservationsController(environment: environment))
+    .environmentObject(ReservationsController.preview(environment: environment))
 }
 #endif

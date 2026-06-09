@@ -96,15 +96,31 @@ struct HostBriefingService {
     return briefing.isEmpty ? stableMessage(for: serviceState) : briefing
   }
 
-  func makeLLMFact(from fact: HostBriefingFact) -> HostLLMFact {
-    HostLLMFact(
+  func makeLLMFact(from fact: HostBriefingFact) -> HostLLMFact? {
+    guard !GuestHistorySemantics.containsInventedOccasionNoteLanguage(
+      title: fact.title,
+      detail: fact.detail
+    ) else {
+      return nil
+    }
+
+    let category = sanitizedCategory(for: fact)
+    return HostLLMFact(
       severity: fact.severity,
-      category: fact.category,
+      category: category,
       title: fact.title,
       detail: fact.detail,
       evidence: fact.evidence,
       suggestedAction: fact.suggestedActionTitle
     )
+  }
+
+  private func sanitizedCategory(for fact: HostBriefingFact) -> HostFactCategory {
+    if fact.category == .note,
+       isReturningGuestFact(fact) || fact.title == "Seen before" {
+      return .guest
+    }
+    return fact.category
   }
 
   // MARK: - Template Selection
@@ -262,7 +278,7 @@ struct HostBriefingService {
 
   private func isReturningGuestFact(_ fact: HostBriefingFact) -> Bool {
     guard fact.category == .guest else { return false }
-    if fact.title == "Returning guest" || fact.title == "Regular guest" {
+    if fact.title == "Seen before" || fact.title == "Returning guest" || fact.title == "Regular guest" {
       return true
     }
     return fact.evidence.contains { $0 == "returningGuest" || $0.hasPrefix("returningGuest") }
@@ -272,6 +288,9 @@ struct HostBriefingService {
     let detail = fact.detail.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !detail.isEmpty else { return nil }
     if let range = detail.range(of: " is returning") {
+      return String(detail[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    if let range = detail.range(of: " has been seen before") {
       return String(detail[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
     if let range = detail.range(of: " is a frequent returning guest") {

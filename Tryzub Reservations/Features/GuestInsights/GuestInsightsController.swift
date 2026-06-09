@@ -73,6 +73,18 @@ struct GuestInsightsController {
         let preferredWeekdays = weekdayPreferences(from: matchedRecords)
         let partySizeStats = partyStats(from: matchedRecords)
         let statusStats = statusStats(from: matchedRecords)
+        let priorReliableVisitCount = GuestHistorySemantics.priorReliableVisitCount(
+            selected: reservation,
+            matchedRecords: matchedRecords
+        )
+        let lastPriorVisitDisplayDate = GuestHistorySemantics.lastPriorVisitDisplayDate(
+            selected: reservation,
+            matchedReservations: matchedItems
+        )
+        let visitOrdinal = GuestHistorySemantics.visitOrdinal(
+            priorReliableVisitCount: priorReliableVisitCount
+        )
+
         let summary = summary(
             from: matchedRecords,
             noteHistory: noteHistory,
@@ -105,10 +117,12 @@ struct GuestInsightsController {
             primaryPhone: primaryPhone,
             primaryEmail: primaryEmail,
             isLikelyManualGuest: isLikelyManualGuest,
-            regularityLevel: GuestRegularityLevel.level(for: matchedRecords.count),
+            regularityLevel: GuestRegularityLevel.level(for: visitOrdinal),
             hospitalitySnapshot: hospitalitySnapshot,
             bookingBehavior: bookingBehavior,
             collapsedDuplicateReservationCount: dedupedMatchedRecords.collapsedDuplicateCount,
+            priorReliableVisitCount: priorReliableVisitCount,
+            lastPriorVisitDisplayDate: lastPriorVisitDisplayDate,
             summary: summary,
             matchedReservations: matchedItems,
             possibleMatches: possibleItems,

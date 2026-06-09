@@ -382,30 +382,52 @@ extension ReservationRecord {
         Self.displayTime(from: reservationTime)
     }
 
-    var submittedAgoText: String? {
-        guard statusValue == .new,
-              let createdDate = ReservationFormatters.serverDateTime.date(from: createdAt) else {
-            return nil
+    var isInReviewQueue: Bool {
+        statusValue == .new || statusValue == .needsReview
+    }
+
+    var submittedAtDate: Date? {
+        if let date = ReservationFormatters.serverDateTime.date(from: createdAt) {
+            return date
         }
+        return ReservationFormatters.serverDateMinute.date(from: createdAt)
+    }
+
+    /// Staff-facing submitted timestamp without the "Submitted" prefix.
+    var submittedStaffTimeText: String? {
+        guard let createdDate = submittedAtDate else { return nil }
 
         let elapsed = max(0, Date().timeIntervalSince(createdDate))
-        if elapsed < 60 {
-            return "Just submitted"
+        if elapsed < 24 * 3600 {
+            let minutes = Int(elapsed / 60)
+            if minutes < 1 { return "just now" }
+            if minutes < 60 { return "\(minutes)m ago" }
+            let hours = Int(elapsed / 3600)
+            return "\(hours)h ago"
         }
 
-        let minutes = Int(elapsed / 60)
-        if minutes < 60 {
-            return "\(minutes) min ago"
+        let timeText = ReservationFormatters.shortTime.string(from: createdDate)
+        let calendar = Calendar.current
+        if calendar.isDateInToday(createdDate) {
+            return "today, \(timeText)"
+        }
+        if calendar.isDateInYesterday(createdDate) {
+            return "yesterday, \(timeText)"
         }
 
-        let hours = Int(elapsed / 3600)
-        if hours < 24 {
-            return "\(hours) hr ago"
-        }
-
-        let days = Int(elapsed / 86400)
-        return "\(days) day\(days == 1 ? "" : "s") ago"
+        let monthDay = Self.submittedMonthDay.string(from: createdDate)
+        return "\(monthDay), \(timeText)"
     }
+
+    var submittedAgoText: String? {
+        submittedStaffTimeText
+    }
+
+    private static let submittedMonthDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMM d")
+        return formatter
+    }()
 
     var shortContactLine: String {
         [formattedPhone, email]
