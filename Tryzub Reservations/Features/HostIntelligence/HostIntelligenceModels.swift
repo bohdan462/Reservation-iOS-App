@@ -298,11 +298,13 @@ struct HostDecisionSnapshot: Codable, Equatable {
 enum HostBriefingProviderKind: String, Codable, CaseIterable {
     case template
     case localPlaceholder
+    case localModel
 
     var displayName: String {
         switch self {
         case .template: return "Template"
         case .localPlaceholder: return "Local placeholder"
+        case .localModel: return "Local model"
         }
     }
 }

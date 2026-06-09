@@ -123,6 +123,34 @@ struct LocalPlaceholderHostBriefingWriter: HostBriefingWriter {
   }
 }
 
+// MARK: - Local Model Writer Shell
+
+/// Intentional shell for a future on-device provider. No model runtime is bundled yet.
+/// A real implementation must consume `HostLLMPacket` only, validate output, and fall back
+/// to the template briefing. It must never receive raw reservation records or unsanitized notes.
+struct LocalModelHostBriefingWriter: HostBriefingWriter {
+  static let runtimeMissingReason = "Local model runtime is not installed."
+
+  func writeBriefing(
+    packet: HostLLMPacket,
+    fallbackText: String
+  ) async -> HostBriefingWriterResult {
+    Self.shellResult(fallbackText: fallbackText, packet: packet)
+  }
+
+  static func shellResult(
+    fallbackText: String,
+    packet: HostLLMPacket
+  ) -> HostBriefingWriterResult {
+    _ = packet
+    return HostBriefingWriterResult(
+      text: fallbackText,
+      source: .failedFallback,
+      failedReason: runtimeMissingReason
+    )
+  }
+}
+
 // MARK: - Validation
 
 struct HostBriefingValidationResult: Equatable {
@@ -297,6 +325,8 @@ enum HostBriefingWriterFactory {
       return TemplateHostBriefingWriter()
     case .localPlaceholder:
       return LocalPlaceholderHostBriefingWriter()
+    case .localModel:
+      return LocalModelHostBriefingWriter()
     }
   }
 }

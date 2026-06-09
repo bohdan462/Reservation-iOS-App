@@ -419,6 +419,16 @@ struct HostIntelligenceDiagnosticsView: View {
       packet: packet,
       fallbackText: fallback
     )
+    let localModelReadiness = HostLocalModelReadinessProvider.currentReadiness()
+    let localModelShellResult = LocalModelHostBriefingWriter.shellResult(
+      fallbackText: fallback,
+      packet: packet
+    )
+    let localModelValidation = HostBriefingWriterValidator.validationResult(
+      localModelShellResult.text,
+      packet: packet,
+      fallbackText: fallback
+    )
 
     Section("Briefing Writer") {
       LabeledContent("Enhanced briefing") {
@@ -436,6 +446,41 @@ struct HostIntelligenceDiagnosticsView: View {
         LabeledContent("Failure reason") {
           Text(briefingFailureReason)
         }
+      }
+
+      Text("Local model readiness")
+        .font(.subheadline.weight(.semibold))
+      LabeledContent("Status") {
+        Text(localModelReadiness.status.rawValue)
+      }
+      LabeledContent("Title") {
+        Text(localModelReadiness.title)
+      }
+      Text(localModelReadiness.detail)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      if let runtimeName = localModelReadiness.runtimeName {
+        LabeledContent("Runtime") {
+          Text(runtimeName)
+        }
+      } else {
+        LabeledContent("Runtime") {
+          Text("Not installed")
+        }
+      }
+      if let modelName = localModelReadiness.modelName {
+        LabeledContent("Model") {
+          Text(modelName)
+        }
+      } else {
+        LabeledContent("Model") {
+          Text("Not installed")
+        }
+      }
+      if settings.enhancedBriefingProvider == .localModel {
+        Text("Expected fallback: \(LocalModelHostBriefingWriter.runtimeMissingReason)")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
       }
 
       Text("Template briefing")
@@ -515,6 +560,28 @@ struct HostIntelligenceDiagnosticsView: View {
         Text(placeholderValidation.isValid ? "Valid" : "Invalid")
       }
       if let reason = placeholderValidation.reason {
+        Text(reason)
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+
+      Text("Local model shell")
+        .font(.subheadline.weight(.semibold))
+      Text(localModelShellResult.text)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      LabeledContent("Shell source") {
+        Text(localModelShellResult.source.displayName)
+      }
+      if let reason = localModelShellResult.failedReason {
+        Text(reason)
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+      LabeledContent("Shell validation") {
+        Text(localModelValidation.isValid ? "Valid" : "Invalid")
+      }
+      if let reason = localModelValidation.reason {
         Text(reason)
           .font(.caption2)
           .foregroundStyle(.tertiary)

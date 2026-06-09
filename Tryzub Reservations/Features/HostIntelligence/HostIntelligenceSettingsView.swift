@@ -57,10 +57,32 @@ struct HostIntelligenceSettingsView: View {
       }
       .disabled(!settingsStore.settings.useEnhancedBriefing)
 
+      if settingsStore.settings.useEnhancedBriefing,
+         settingsStore.settings.enhancedBriefingProvider == .localModel {
+        localModelReadinessNotice
+      }
+
       Text("The engine still makes all decisions. The writer only rewrites approved facts.")
         .font(.caption)
         .foregroundStyle(.secondary)
     }
+  }
+
+  @ViewBuilder
+  private var localModelReadinessNotice: some View {
+    let readiness = HostLocalModelReadinessProvider.currentReadiness()
+
+    VStack(alignment: .leading, spacing: 6) {
+      Text(readiness.title)
+        .font(.subheadline.weight(.semibold))
+      Text(readiness.detail)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      Text("Local model is not installed in this build. The app will use template fallback.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+    .padding(.vertical, 4)
   }
 
   private var providerBinding: Binding<HostBriefingProviderKind> {
