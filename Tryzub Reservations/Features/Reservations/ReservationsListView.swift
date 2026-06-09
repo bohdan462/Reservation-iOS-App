@@ -21,6 +21,7 @@ struct ReservationsListView: View {
     @StateObject private var controller: ReservationsController
     @StateObject private var hiddenReservations = HiddenReservationsStore()
     @StateObject private var privacyCoverSettings = RestaurantPrivacyCoverSettingsStore()
+    @StateObject private var hostIntentStore = HostReservationOpenIntentStore()
 
     let environment: AppEnvironment
     let onLogout: () -> Void
@@ -36,6 +37,7 @@ struct ReservationsListView: View {
             .environmentObject(controller)
             .environmentObject(hiddenReservations)
             .environmentObject(privacyCoverSettings)
+            .environmentObject(hostIntentStore)
             .task {
                 await controller.performStartupNetworkPass(context: modelContext)
             }

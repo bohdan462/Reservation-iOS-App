@@ -130,6 +130,21 @@ struct HostIntelligenceEngine {
     suggestedActions.append(contentsOf: cancellationIntelligence.actions)
     tableSignals.append(contentsOf: cancellationIntelligence.tableSignals)
 
+    let bookingIntelligence = HostBookingDecisionSupport.analyze(
+      activeReservations: activeReservations,
+      allDayReservations: context.reservations,
+      slotPressures: slotPressures,
+      guestSignals: guestSignals,
+      tableConfigs: context.tableConfigs,
+      availabilitySummary: context.availabilitySummary,
+      restaurantSetup: context.restaurantSetup,
+      now: context.now,
+      selectedDate: context.selectedDate,
+      settings: context.settings
+    )
+    briefingFacts.append(contentsOf: bookingIntelligence.facts)
+    suggestedActions.append(contentsOf: bookingIntelligence.actions)
+
     let rankedFacts = briefingService.rankHostFacts(briefingFacts)
     let pressureScore = calculatePressureScore(
       slotPressures: slotPressures,
@@ -149,7 +164,11 @@ struct HostIntelligenceEngine {
       overdueWarningOrCriticalCount: cancellationIntelligence.overdueFactCount,
       lateLargePartyCount: cancellationIntelligence.lateLargePartyCount,
       cancellationOpportunityCount: cancellationIntelligence.cancellationOpportunityCount,
-      pastDueCompleteCount: cancellationIntelligence.pastDueCompleteCount
+      pastDueCompleteCount: cancellationIntelligence.pastDueCompleteCount,
+      bookingManualReviewCriticalCount: bookingIntelligence.manualReviewCriticalCount,
+      bookingSuggestAlternateCount: bookingIntelligence.suggestAlternateCount,
+      bookingAutoConfirmCount: bookingIntelligence.autoConfirmCount,
+      bookingRejectCount: bookingIntelligence.rejectCount
     )
     let serviceState = classifyServiceState(pressureScore: pressureScore)
     let templateBriefingText = briefingService.buildTemplateBriefingFallback(
@@ -174,7 +193,7 @@ struct HostIntelligenceEngine {
       guestSignals: guestSignals,
       tableSignals: tableSignals,
       seatedTimingSignals: seatedTimingSignals,
-      bookingDecisions: [],
+      bookingDecisions: bookingIntelligence.decisions,
       templateBriefingText: templateBriefingText,
       llmPacket: llmPacket
     )
@@ -1234,7 +1253,11 @@ struct HostIntelligenceEngine {
     overdueWarningOrCriticalCount: Int,
     lateLargePartyCount: Int,
     cancellationOpportunityCount: Int,
-    pastDueCompleteCount: Int
+    pastDueCompleteCount: Int,
+    bookingManualReviewCriticalCount: Int,
+    bookingSuggestAlternateCount: Int,
+    bookingAutoConfirmCount: Int,
+    bookingRejectCount: Int
   ) -> Double {
     let maxRatio = slotPressures.compactMap(\.capacityRatio).max() ?? 0
     let criticalSlotCount = slotPressures.filter { $0.severity == .critical }.count
@@ -1260,6 +1283,10 @@ struct HostIntelligenceEngine {
       + Double(lateLargePartyCount) * 8
       + Double(cancellationOpportunityCount) * 1
       + Double(pastDueCompleteCount) * 2
+      + Double(bookingManualReviewCriticalCount) * 6
+      + Double(bookingSuggestAlternateCount) * 4
+      + Double(bookingAutoConfirmCount) * 1
+      + Double(bookingRejectCount) * 8
 
     return min(max(raw, 0), 100)
   }

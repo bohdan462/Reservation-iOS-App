@@ -341,6 +341,7 @@ struct ReservationDetailView: View {
 
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var hostIntentStore: HostReservationOpenIntentStore
     // Guest Insights reads cached reservations only; no network or mutation is involved.
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate),
@@ -545,6 +546,12 @@ struct ReservationDetailView: View {
 
     @ViewBuilder
     private var banners: some View {
+        if let intent = hostIntentStore.consume(for: reservation.remoteID) {
+            HostIntelligenceIntentBanner(intent: intent) {
+                hostIntentStore.clearIfMatches(intent.id)
+            }
+        }
+
         if let message = errorMessage ?? controller.errorMessage {
             DetailWarningCard(
                 title: "Action did not finish",
@@ -1651,5 +1658,6 @@ private extension String {
         )
     )
     .environmentObject(HiddenReservationsStore())
+    .environmentObject(HostReservationOpenIntentStore())
 }
 #endif

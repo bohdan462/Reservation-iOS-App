@@ -26,6 +26,7 @@ struct HostBoardView: View {
 
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var hostIntentStore: HostReservationOpenIntentStore
 
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
@@ -350,17 +351,24 @@ struct HostBoardView: View {
 
         switch route.destination {
         case .reservation(let remoteID), .reservationIntent(let remoteID, _):
+            let resolvedRemoteID = HostSuggestedActionRouter.resolvedRemoteID(
+                for: action,
+                dayReservations: reservations,
+                knownReservations: allKnownReservations
+            ) ?? remoteID
             guard let reservation = HostSuggestedActionRouter.findReservation(
-                remoteID: HostSuggestedActionRouter.resolvedRemoteID(
-                    for: action,
-                    dayReservations: reservations,
-                    knownReservations: allKnownReservations
-                ) ?? remoteID,
+                remoteID: resolvedRemoteID,
                 dayReservations: reservations,
                 knownReservations: allKnownReservations
             ) else {
                 return
             }
+            hostIntentStore.set(
+                HostReservationOpenIntent.from(
+                    action: action,
+                    resolvedRemoteID: resolvedRemoteID
+                )
+            )
             onOpenReservation(reservation)
 
         case .slot, .none:

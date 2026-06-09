@@ -312,6 +312,13 @@ struct HostIntelligenceSettings: Codable, Equatable {
     var includeGuestSignals: Bool = true
     var includeAnalyticsSignals: Bool = false
     var includeLLMPacket: Bool = true
+    var enableBookingDecisioning: Bool = true
+    /// Recommend as confirm candidate only — never auto-confirms.
+    var autoConfirmRecommendationsEnabled: Bool = false
+    var suggestAlternateTimesEnabled: Bool = true
+    var autoConfirmWeekdaysOnly: Bool = true
+    var minimumConfidenceForAutoConfirm: Double = 0.8
+    var maxPartySizeForAutoConfirm: Int = 6
 }
 
 struct RestaurantTableConfig: Identifiable, Codable, Equatable {

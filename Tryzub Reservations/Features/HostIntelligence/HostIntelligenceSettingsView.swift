@@ -17,6 +17,7 @@ struct HostIntelligenceSettingsView: View {
   var body: some View {
     Form {
       featureSection
+      bookingDecisionsSection
       capacitySection
       timingSection
       partyThresholdsSection
@@ -37,6 +38,49 @@ struct HostIntelligenceSettingsView: View {
       Toggle("Include analytics signals", isOn: binding(\.includeAnalyticsSignals))
         .disabled(true)
       Text("Analytics-based pressure signals are planned for a later phase.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  private var bookingDecisionsSection: some View {
+    Section("Booking Decisions") {
+      Toggle("Enable booking decisioning", isOn: binding(\.enableBookingDecisioning))
+      Toggle("Suggest alternate times", isOn: binding(\.suggestAlternateTimesEnabled))
+      Toggle("Show auto-confirm candidates", isOn: binding(\.autoConfirmRecommendationsEnabled))
+      Toggle("Auto-confirm weekdays only", isOn: binding(\.autoConfirmWeekdaysOnly))
+        .disabled(!settingsStore.settings.autoConfirmRecommendationsEnabled)
+
+      Stepper(
+        value: intBinding(\.maxPartySizeForAutoConfirm, minimum: 1, maximum: 20),
+        in: 1...20
+      ) {
+        LabeledContent(
+          "Max party size for auto-confirm",
+          value: "\(settingsStore.settings.maxPartySizeForAutoConfirm)"
+        )
+      }
+      .disabled(!settingsStore.settings.autoConfirmRecommendationsEnabled)
+
+      Stepper(
+        value: Binding(
+          get: { Int((settingsStore.settings.minimumConfidenceForAutoConfirm * 100).rounded()) },
+          set: { newValue in
+            settingsStore.update {
+              $0.minimumConfidenceForAutoConfirm = Double(min(max(newValue, 50), 100)) / 100.0
+            }
+          }
+        ),
+        in: 50...100
+      ) {
+        LabeledContent(
+          "Minimum confidence",
+          value: "\(Int((settingsStore.settings.minimumConfidenceForAutoConfirm * 100).rounded()))%"
+        )
+      }
+      .disabled(!settingsStore.settings.autoConfirmRecommendationsEnabled)
+
+      Text("Recommendations only. Staff must still confirm in reservation detail.")
         .font(.caption)
         .foregroundStyle(.secondary)
     }

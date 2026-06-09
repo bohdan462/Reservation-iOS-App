@@ -45,6 +45,7 @@ struct HostIntelligenceDiagnosticsView: View {
       tableInventorySection
       guestSignalsSection(decision)
       cancellationOverdueSection(decision)
+      bookingDecisionsSection(decision)
       signalsSection(decision)
     }
   }
@@ -258,6 +259,55 @@ struct HostIntelligenceDiagnosticsView: View {
             Text(action.reason)
               .font(.caption)
               .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 2)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func bookingDecisionsSection(_ decision: HostDecisionSnapshot) -> some View {
+    Section("Booking Decisions") {
+      LabeledContent("Total decisions") {
+        Text("\(decision.bookingDecisions.count)")
+      }
+      LabeledContent("Auto-confirm candidates") {
+        Text("\(decision.bookingDecisions.filter { $0.decision == .autoConfirm }.count)")
+      }
+      LabeledContent("Suggest alternate") {
+        Text("\(decision.bookingDecisions.filter { $0.decision == .suggestAlternateTime }.count)")
+      }
+      LabeledContent("Manual review") {
+        Text("\(decision.bookingDecisions.filter { $0.decision == .manualReview }.count)")
+      }
+      LabeledContent("Reject / no safe option") {
+        Text("\(decision.bookingDecisions.filter { $0.decision == .reject }.count)")
+      }
+
+      if decision.bookingDecisions.isEmpty {
+        Text("No booking decisions.")
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(Array(decision.bookingDecisions.prefix(5))) { result in
+          VStack(alignment: .leading, spacing: 4) {
+            Text("\(result.decision.rawValue) · \(result.reason)")
+              .font(.subheadline.weight(.semibold))
+            if let requested = result.requestedTime {
+              Text("Requested \(requested)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            if let suggested = result.suggestedTime {
+              Text("Suggested \(suggested)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            if !result.evidence.isEmpty {
+              Text(result.evidence.joined(separator: " · "))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            }
           }
           .padding(.vertical, 2)
         }

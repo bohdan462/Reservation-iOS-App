@@ -60,8 +60,10 @@ enum HostSuggestedActionRouter {
          .generateGuestManageLink:
       return reservationRoute(for: action, intentKind: nil)
 
-    case .suggestAlternateTime,
-         .holdTable,
+    case .suggestAlternateTime:
+      return reservationRoute(for: action, intentKind: .suggestAlternateTime)
+
+    case .holdTable,
          .releaseTable:
       return reservationRoute(for: action, intentKind: nil)
     }
