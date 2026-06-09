@@ -39,9 +39,16 @@ struct NewBookingsIntelligenceSummary: Equatable {
       )
     }
 
-    var summaryParts = ["\(pending.count) waiting"]
-    if noTableCount > 0 {
-      summaryParts.append("\(noTableCount) need tables")
+    var summaryParts: [String] = []
+    if pending.count == 1 {
+      summaryParts.append("1 reservation needs review")
+    } else {
+      summaryParts.append("\(pending.count) reservations need review")
+    }
+    if noTableCount == 1 {
+      summaryParts.append("1 has no table")
+    } else if noTableCount > 1 {
+      summaryParts.append("\(noTableCount) have no table")
     }
     let summaryLine = summaryParts.joined(separator: " · ")
 
@@ -76,9 +83,9 @@ struct NewBookingsIntelligenceSummary: Equatable {
   private static func tableFitLine(count: Int) -> String? {
     guard count > 0 else { return nil }
     if count == 1 {
-      return "1 party needs table planning"
+      return "1 party may need table fit review"
     }
-    return "\(count) parties need table planning"
+    return "\(count) parties may need table fit review"
   }
 }
 

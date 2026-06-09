@@ -18,24 +18,23 @@ enum HostLLMPacketPromptBuilder {
       You are rewriting an approved restaurant host briefing for staff display.
       Use only the facts below. Do not invent guests, tables, allergies, times, or counts.
       Do not say any action was completed. Do not make booking decisions.
-      Do not mention internal IDs or reservation numbers.
-      Write in a calm host voice.
-      Write 1-3 short sentences. Never write more than 4 sentences.
-      Output at most 4 short sentences and at most 500 characters.
-      If there are no urgent facts, keep it short.
+      Do not mention internal IDs, reservation numbers, AI, models, packets, backend, system, or debug details.
+      Write in a calm restaurant host voice.
+      Write 1-2 short sentences for the Host board. Never write more than 2 sentences.
+      Output at most 500 characters.
+      Prioritize, in order: critical/warning facts, no-table pressure, large-party table fit, arrival waves, new or needs-review bookings, allergy or accessibility notes.
+      If urgent facts exist, do not restate low-value calm or service-state filler.
+      Do not repeat the same fact, reservation, or idea twice.
+      Use concrete numbers only when provided in approved facts.
       Never say something has been reviewed, assigned, confirmed, seated, completed, handled, or resolved.
       Do not say no changes are needed unless there are no facts.
       Use review/check language, not completed-action language.
-      Write as a reminder, not as a report of completed work.
+      End with one manual staff review action only when a suggested review action is provided and it adds value.
       Special occasion notes should be reviewed or shared with the server.
       Do not instruct staff to mention the occasion directly unless the approved fact explicitly says to do so.
       Do not invent visit counts, last-visit dates, or guest history.
-      Use returning-guest context only when provided in approved facts or evidence.
-      Use table capacity only if it is provided in the approved facts.
-      Do not invent table numbers, table capacities, or table assignments.
       Say review or check table options; never say a table was assigned.
-      Do not recommend assigning a specific table for small parties.
-      Table suggestions are review-only and should focus on large parties, capacity mismatches, or combined-table needs.
+      Table suggestions are review-only for large parties, capacity mismatches, or combined-table needs.
       Return only the final briefing text.
       Do not repeat instructions.
       Do not label the answer.
@@ -56,7 +55,7 @@ enum HostLLMPacketPromptBuilder {
     if packet.topFacts.isEmpty {
       sections.append("Approved facts: none")
       sections.append(
-        "When no facts are provided, respond with a single calm sentence that service looks stable."
+        "When no facts are provided, respond with one calm sentence that there are no urgent Host alerts."
       )
     } else {
       sections.append("Approved facts:")

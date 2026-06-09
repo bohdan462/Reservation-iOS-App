@@ -152,13 +152,23 @@ enum HostLLMPacketSampleFactory {
   }
 
   static func fallbackText(for sample: Sample) -> String {
-    switch sample {
-    case .calm:
-      return "Service looks stable right now."
-    case .busy:
-      return "Service is busy. Review the top alerts before seating the next party."
-    case .critical:
-      return "Service is under heavy pressure. Address critical alerts first."
+    let packet = packet(for: sample)
+    let service = HostBriefingService()
+    let facts = packet.topFacts.map { fact in
+      HostBriefingFact(
+        id: "sample-\(sample.rawValue)-\(fact.category.rawValue)-\(fact.title)",
+        severity: fact.severity,
+        category: fact.category,
+        title: fact.title,
+        detail: fact.detail,
+        evidence: fact.evidence,
+        relatedReservationIDs: [],
+        suggestedActionTitle: fact.suggestedAction
+      )
     }
+    return service.buildTemplateBriefingFallback(
+      from: facts,
+      serviceState: packet.serviceState
+    )
   }
 }

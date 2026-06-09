@@ -230,43 +230,23 @@ struct LocalPlaceholderHostBriefingWriter: HostBriefingWriter {
       return fallbackText
     }
 
-    var sentences: [String] = [serviceStateSentence(packet.serviceState)]
-
-    for fact in packet.topFacts {
-      guard sentences.count < 4 else { break }
-
-      let detail = fact.detail.trimmingCharacters(in: .whitespacesAndNewlines)
-      if !detail.isEmpty {
-        sentences.append(detail.hasSuffix(".") ? detail : "\(detail).")
-      } else {
-        let title = fact.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !title.isEmpty {
-          sentences.append(title.hasSuffix(".") ? title : "\(title).")
-        }
-      }
-
-      if sentences.count < 4,
-         let action = fact.suggestedAction?.trimmingCharacters(in: .whitespacesAndNewlines),
-         !action.isEmpty {
-        sentences.append(action.hasSuffix(".") ? action : "\(action).")
-      }
+    let service = HostBriefingService()
+    let facts = packet.topFacts.map { fact in
+      HostBriefingFact(
+        id: "placeholder-\(fact.category.rawValue)-\(fact.title)",
+        severity: fact.severity,
+        category: fact.category,
+        title: fact.title,
+        detail: fact.detail,
+        evidence: fact.evidence,
+        relatedReservationIDs: [],
+        suggestedActionTitle: fact.suggestedAction
+      )
     }
-
-    let text = Array(sentences.prefix(4)).joined(separator: " ")
-    return text.isEmpty ? fallbackText : text
-  }
-
-  private static func serviceStateSentence(_ state: HostServiceState) -> String {
-    switch state {
-    case .calm:
-      return "Service looks stable."
-    case .building:
-      return "Service is building."
-    case .busy:
-      return "Service is busy."
-    case .critical:
-      return "Service is under heavy pressure."
-    }
+    return service.buildTemplateBriefingFallback(
+      from: facts,
+      serviceState: packet.serviceState
+    )
   }
 }
 
@@ -538,7 +518,25 @@ enum HostBriefingWriterValidator {
     "Briefing claims an action was already completed.",
     "Briefing says no action is needed despite packet facts.",
     "Briefing suggests unsupported guest contact.",
-    "Briefing gives unsafe special-occasion instruction."
+    "Briefing gives unsafe special-occasion instruction.",
+    "Briefing exposes internal system or model language."
+  ]
+
+  private static let metaPhrases = [
+    "language model",
+    "llm packet",
+    "ai model",
+    "the model",
+    "our model",
+    "backend intelligence",
+    "backend json",
+    "evidence array",
+    "debug output",
+    "as an ai",
+    "as a model",
+    "approved facts",
+    "writing rules",
+    "forbidden behavior"
   ]
 
   private static let unsafeSpecialOccasionPhrases = [
@@ -552,7 +550,7 @@ enum HostBriefingWriterValidator {
     "announce the occasion"
   ]
 
-  static let maxAllowedSentences = 4
+  static let maxAllowedSentences = 2
   private static let maxLength = 500
   private static let maxSentences = maxAllowedSentences
   private static let maxExclamationMarks = 2
@@ -686,6 +684,13 @@ enum HostBriefingWriterValidator {
       return HostBriefingValidationResult(
         isValid: false,
         reason: "Briefing text contains unsupported automatic action language."
+      )
+    }
+
+    for phrase in metaPhrases where lower.contains(phrase) {
+      return HostBriefingValidationResult(
+        isValid: false,
+        reason: "Briefing exposes internal system or model language."
       )
     }
 

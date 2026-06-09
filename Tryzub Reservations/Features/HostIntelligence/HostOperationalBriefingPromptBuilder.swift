@@ -294,7 +294,7 @@ enum HostOperationalBriefingPromptBuilder {
     if noTableSignals.count == 1 {
       lines.append(sanitizeLine(noTableSignals[0].detail))
     } else if noTableSignals.count > 1 {
-      lines.append("\(noTableSignals.count) reservations have no table assigned.")
+      lines.append("\(noTableSignals.count) reservations still need a table.")
     }
     noTableSignals.forEach { reservationIDs.formUnion($0.relatedReservationIDs) }
 
@@ -362,7 +362,7 @@ enum HostOperationalBriefingPromptBuilder {
       }
 
     if lines.isEmpty, let peak = pressuredSlots.first {
-      lines.append("Peak pressure near \(peak.slotTime) should be reviewed.")
+      lines.append("Peak pressure near \(peak.slotTime) — review arrivals before seating.")
     }
 
     snapshot.seatedTimingSignals

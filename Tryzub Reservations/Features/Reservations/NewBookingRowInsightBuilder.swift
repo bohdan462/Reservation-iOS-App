@@ -196,10 +196,10 @@ enum NewBookingRowInsightBuilder {
     )
 
     if singles.isEmpty, !combinations.isEmpty {
-      return "May need combined table plan"
+      return "Large party — check combined tables"
     }
 
-    return "Needs table planning"
+    return "No table yet — review table fit"
   }
 }
 

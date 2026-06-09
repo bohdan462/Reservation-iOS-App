@@ -10,7 +10,8 @@ import Foundation
 
 struct HostBriefingService {
 
-  private let maxTemplateFacts = 3
+  private let maxTemplateFacts = 2
+  private let maxTemplateSentences = 2
 
   // MARK: - Public
 
@@ -38,13 +39,22 @@ struct HostBriefingService {
       return stableMessage(for: serviceState)
     }
 
-    let sentences = selected.compactMap { fact -> String? in
-      let detail = fact.detail.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !detail.isEmpty else { return nil }
-      return detail.hasSuffix(".") ? detail : "\(detail)."
+    var sentences: [String] = []
+    for fact in selected {
+      guard sentences.count < maxTemplateSentences else { break }
+      guard let sentence = templateSentence(for: fact) else { continue }
+      if !sentences.contains(where: { isNearDuplicateSentence($0, sentence) }) {
+        sentences.append(sentence)
+      }
     }
 
-    let briefing = sentences.joined(separator: " ")
+    if sentences.count < maxTemplateSentences,
+       let actionSentence = templateActionSentence(for: selected.first),
+       !sentences.contains(where: { isNearDuplicateSentence($0, actionSentence) }) {
+      sentences.append(actionSentence)
+    }
+
+    let briefing = sentences.prefix(maxTemplateSentences).joined(separator: " ")
     return briefing.isEmpty ? stableMessage(for: serviceState) : briefing
   }
 
@@ -132,14 +142,62 @@ struct HostBriefingService {
   private func stableMessage(for serviceState: HostServiceState) -> String {
     switch serviceState {
     case .calm:
-      return "Service looks stable right now."
+      return "No urgent Host alerts right now."
     case .building:
-      return "Service is building. No urgent issues right now."
+      return "Arrivals are picking up. Watch the next seating window."
     case .busy:
-      return "Service is busy. Review the top alerts before seating the next party."
+      return "Floor pressure is elevated. Check no-table rows and upcoming arrivals."
     case .critical:
-      return "Service is under heavy pressure. Address critical alerts first."
+      return "Heavy service pressure. Address critical alerts first."
     }
+  }
+
+  private func templateSentence(for fact: HostBriefingFact) -> String? {
+    let detail = fact.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !detail.isEmpty {
+      return punctuate(detail)
+    }
+    let title = fact.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !title.isEmpty else { return nil }
+    return punctuate(title)
+  }
+
+  private func templateActionSentence(for fact: HostBriefingFact?) -> String? {
+    guard let fact else { return nil }
+    guard let action = fact.suggestedActionTitle?
+      .trimmingCharacters(in: .whitespacesAndNewlines),
+      !action.isEmpty else {
+      return nil
+    }
+
+    let detailCorpus = [
+      fact.detail,
+      fact.title,
+    ].joined(separator: " ").lowercased()
+    let actionLower = action.lowercased()
+    if detailCorpus.contains(actionLower) {
+      return nil
+    }
+
+    return punctuate(action)
+  }
+
+  private func punctuate(_ text: String) -> String {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "" }
+    return trimmed.hasSuffix(".") ? trimmed : "\(trimmed)."
+  }
+
+  private func isNearDuplicateSentence(_ lhs: String, _ rhs: String) -> Bool {
+    normalizeSentence(lhs) == normalizeSentence(rhs)
+  }
+
+  private func normalizeSentence(_ text: String) -> String {
+    text
+      .lowercased()
+      .replacingOccurrences(of: #"[^\w\s]"#, with: "", options: .regularExpression)
+      .split(whereSeparator: \.isWhitespace)
+      .joined(separator: " ")
   }
 
   private func isReturningGuestFact(_ fact: HostBriefingFact) -> Bool {

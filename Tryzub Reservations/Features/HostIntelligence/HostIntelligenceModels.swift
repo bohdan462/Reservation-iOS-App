@@ -285,9 +285,10 @@ struct HostLLMPacket: Codable, Equatable {
             writingRules: [
                 "Use only provided facts.",
                 "Write like a calm restaurant host.",
-                "Mention only urgent or useful items.",
-                "Maximum 4 short sentences.",
-                "Use review/check table-plan language; never say Assign {table}."
+                "Maximum 2 short sentences.",
+                "Lead with the highest-severity operational issue.",
+                "Use review/check table-plan language; never say a table was assigned.",
+                "One manual review action at most, only when suggested review adds value."
             ]
         )
     }
@@ -321,7 +322,7 @@ struct HostDecisionSnapshot: Codable, Equatable {
             tableSignals: [],
             seatedTimingSignals: [],
             bookingDecisions: [],
-            templateBriefingText: "Service looks stable right now.",
+            templateBriefingText: "No urgent Host alerts right now.",
             llmPacket: .empty
         )
     }
