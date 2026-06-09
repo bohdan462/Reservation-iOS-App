@@ -41,28 +41,35 @@ struct Tryzub_ReservationsApp: App {
 }
 
 private struct AppRootView: View {
+    @Environment(\.modelContext) private var modelContext
     @ObservedObject var credentialStore: AppCredentialStore
     @ObservedObject var roleStore: AppRoleStore
     @StateObject private var productIntroStore = TryzubProductIntroStore()
+    @StateObject private var reservationSession = AppReservationSession()
 
     var body: some View {
         Group {
-            if !productIntroStore.hasCompletedIntro {
-                TryzubProductIntroView {
-                    withAnimation(.easeOut(duration: 0.45)) {
-                        productIntroStore.complete()
+            if let credentials = credentialStore.credentials,
+               let role = roleStore.selectedRole {
+                let environment = makeEnvironment(credentials: credentials, role: role)
+
+                if !productIntroStore.hasCompletedIntro {
+                    TryzubProductIntroView {
+                        withAnimation(.easeOut(duration: 0.45)) {
+                            productIntroStore.complete()
+                        }
                     }
+                    .transition(.opacity)
+                } else {
+                    ReservationsListView(
+                        environment: environment,
+                        controller: reservationSession.reservationsController,
+                        onLogout: logout
+                    )
+                    .id("\(role.rawValue)-\(credentials.username)")
+                    .environmentObject(roleStore)
+                    .transition(.opacity)
                 }
-                .transition(.opacity)
-            } else if let credentials = credentialStore.credentials,
-                      let role = roleStore.selectedRole {
-                ReservationsListView(
-                    environment: makeEnvironment(credentials: credentials, role: role),
-                    onLogout: logout
-                )
-                .id("\(role.rawValue)-\(credentials.username)")
-                .environmentObject(roleStore)
-                .transition(.opacity)
             } else {
                 AppLoginView(
                     credentialStore: credentialStore,
@@ -72,11 +79,27 @@ private struct AppRootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.45), value: productIntroStore.hasCompletedIntro)
+        .task {
+            syncReservationSessionIfPossible()
+        }
         .onChange(of: credentialStore.credentials) { _, credentials in
             if credentials == nil {
                 roleStore.clear()
+                reservationSession.reset()
+            } else {
+                syncReservationSessionIfPossible()
             }
         }
+        .onChange(of: roleStore.selectedRole) { _, _ in
+            syncReservationSessionIfPossible()
+        }
+    }
+
+    private func syncReservationSessionIfPossible() {
+        guard let credentials = credentialStore.credentials,
+              let role = roleStore.selectedRole else { return }
+        let environment = makeEnvironment(credentials: credentials, role: role)
+        reservationSession.sync(environment: environment, context: modelContext)
     }
 
     private func makeEnvironment(credentials: AppCredentials, role: AppUserRole) -> AppEnvironment {
@@ -92,6 +115,7 @@ private struct AppRootView: View {
     }
 
     private func logout() {
+        reservationSession.reset()
         roleStore.clear()
         credentialStore.reset()
     }

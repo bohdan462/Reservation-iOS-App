@@ -629,6 +629,15 @@ struct ReservationDetailView: View {
                     value: reservation.hasUsableConfirmationEmail ? reservation.email : "No email",
                     url: reservation.mailtoURL
                 )
+
+                if reservation.callURL != nil {
+                    Divider().opacity(0.4)
+                    GuestTextMessageActionButtons(
+                        phone: reservation.phone,
+                        confirmationBody: ManualTextMessageService.confirmationBody(reservation: reservation),
+                        tableDueBody: ManualTextMessageService.tableDueBody(reservation: reservation)
+                    )
+                }
             }
         }
     }

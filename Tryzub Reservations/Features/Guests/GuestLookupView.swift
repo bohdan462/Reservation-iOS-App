@@ -160,7 +160,7 @@ private struct GuestLookupResultCard: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 if let phoneDigits = result.phoneDigits {
-                    Label(GuestLookupPhoneFormatter.display(phoneDigits), systemImage: "phone")
+                    Label(GuestLookupFormatting.phoneDisplay(phoneDigits), systemImage: "phone")
                 }
 
                 if let email = result.email {
@@ -212,22 +212,6 @@ private struct GuestLookupResultCard: View {
 private struct GuestLookupSheet: Identifiable {
     let id = UUID()
     let prefill: ManualReservationPrefill
-}
-
-private enum GuestLookupPhoneFormatter {
-    static func display(_ digits: String) -> String {
-        let cleaned = digits.filter(\.isNumber)
-        let local = cleaned.count == 11 && cleaned.first == "1"
-            ? String(cleaned.dropFirst())
-            : cleaned
-
-        guard local.count == 10 else { return cleaned }
-
-        let area = local.prefix(3)
-        let middle = local.dropFirst(3).prefix(3)
-        let last = local.suffix(4)
-        return "(\(area)) \(middle)-\(last)"
-    }
 }
 
 private enum GuestLookupDateFormatter {

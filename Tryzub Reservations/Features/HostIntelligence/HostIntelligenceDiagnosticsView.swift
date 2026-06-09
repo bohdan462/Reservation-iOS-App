@@ -529,7 +529,7 @@ struct HostIntelligenceDiagnosticsView: View {
           .foregroundStyle(.tertiary)
       }
 
-      LocalModelGGUFImportControls(
+      HostLocalModelGGUFImportControls(
         isShowingModelImporter: $isShowingModelImporter,
         modelImportMessage: $modelImportMessage,
         modelImportError: $modelImportError,
@@ -766,11 +766,7 @@ private struct LocalModelDiagnosticsControls: View {
   @State private var testResult: LocalModelBriefingDiagnosticResult?
 
   private var canRunTest: Bool {
-    settings.enhancedBriefingProvider == .localModel
-      && readiness.status == .ready
-      && coordinator.isInferenceModelInstalled
-      && !isRunningTest
-      && !coordinator.loadingState.isBusy
+    !isRunningTest && !coordinator.loadingState.isBusy
   }
 
   var body: some View {
@@ -831,12 +827,8 @@ private struct LocalModelDiagnosticsControls: View {
       }
       .disabled(!canRunTest)
 
-      if settings.enhancedBriefingProvider != .localModel {
-        Text("Select Local model provider to enable manual tests.")
-          .font(.caption2)
-          .foregroundStyle(.tertiary)
-      } else if !coordinator.isInferenceModelInstalled {
-        Text("Prepare or import the GGUF into Application Support before testing.")
+      if readiness.status != .ready {
+        Text("Model not ready yet — tests still run and will report the failure reason.")
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
@@ -925,94 +917,9 @@ private struct LocalModelDiagnosticsControls: View {
   }
 }
 
-// MARK: - Local Model GGUF Import (developer diagnostics only)
-
-private extension UTType {
-  static let hostBriefingGGUF = UTType(filenameExtension: "gguf") ?? .data
-}
-
-private struct LocalModelGGUFImportControls: View {
-  @Binding var isShowingModelImporter: Bool
-  @Binding var modelImportMessage: String?
-  @Binding var modelImportError: String?
-  let onImportSuccess: () -> Void
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text("Local model import")
-        .font(.subheadline.weight(.semibold))
-
-      Text("Developer only. Copies a .gguf from Files into Application Support. No network.")
-        .font(.caption2)
-        .foregroundStyle(.tertiary)
-
-      Button("Import GGUF from Files") {
-        modelImportMessage = nil
-        modelImportError = nil
-        isShowingModelImporter = true
-      }
-
-      if let modelImportMessage, !modelImportMessage.isEmpty {
-        Text(modelImportMessage)
-          .font(.caption)
-          .foregroundStyle(.green)
-          .textSelection(.enabled)
-      }
-
-      if let modelImportError, !modelImportError.isEmpty {
-        Text(modelImportError)
-          .font(.caption)
-          .foregroundStyle(.red)
-      }
-    }
-    .padding(.vertical, 4)
-    .fileImporter(
-      isPresented: $isShowingModelImporter,
-      allowedContentTypes: [.hostBriefingGGUF],
-      allowsMultipleSelection: false
-    ) { result in
-      handleImport(result)
-    }
-  }
-
-  private func handleImport(_ result: Result<[URL], Error>) {
-    switch result {
-    case .failure(let error):
-      modelImportError = error.localizedDescription
-      modelImportMessage = nil
-    case .success(let urls):
-      guard let sourceURL = urls.first else {
-        modelImportError = "No file was selected."
-        modelImportMessage = nil
-        return
-      }
-      importModel(from: sourceURL)
-    }
-  }
-
-  private func importModel(from sourceURL: URL) {
-    let didAccess = sourceURL.startAccessingSecurityScopedResource()
-    defer {
-      if didAccess {
-        sourceURL.stopAccessingSecurityScopedResource()
-      }
-    }
-
-    do {
-      let destination = try HostLocalModelInstaller.installModel(from: sourceURL)
-      modelImportMessage = "Model installed at \(destination.path)"
-      modelImportError = nil
-      onImportSuccess()
-    } catch {
-      modelImportError = error.localizedDescription
-      modelImportMessage = nil
-    }
-  }
-}
-
 // MARK: - Local Model Manual Test (developer diagnostics only)
 
-private enum LocalModelBriefingDiagnosticRunner {
+enum LocalModelBriefingDiagnosticRunner {
   static func run(
     packet: HostLLMPacket,
     fallbackText: String,
@@ -1083,9 +990,7 @@ private struct LocalModelBriefingDiagnosticTest: View {
   @State private var result: LocalModelBriefingDiagnosticResult?
 
   private var canRunTest: Bool {
-    settings.enhancedBriefingProvider == .localModel
-      && readiness.status == .ready
-      && !isRunning
+    !isRunning
   }
 
   var body: some View {
@@ -1102,12 +1007,8 @@ private struct LocalModelBriefingDiagnosticTest: View {
       }
       .disabled(!canRunTest)
 
-      if !canRunTest, settings.enhancedBriefingProvider != .localModel {
-        Text("Select Local model provider to enable this test.")
-          .font(.caption2)
-          .foregroundStyle(.tertiary)
-      } else if !canRunTest, readiness.status != .ready {
-        Text("Prepare or import the GGUF into Application Support to enable this test.")
+      if readiness.status != .ready {
+        Text("Model not ready — test still runs and reports the failure reason.")
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
@@ -1157,9 +1058,7 @@ private struct LocalModelSamplePacketTests: View {
   @State private var evaluationProgress: String?
 
   private var canRunTests: Bool {
-    settings.enhancedBriefingProvider == .localModel
-      && readiness.status == .ready
-      && !isRunning
+    !isRunning
   }
 
   var body: some View {
@@ -1178,12 +1077,8 @@ private struct LocalModelSamplePacketTests: View {
         .disabled(!canRunTests)
       }
 
-      if !canRunTests, settings.enhancedBriefingProvider != .localModel {
-        Text("Select Local model provider to enable sample tests.")
-          .font(.caption2)
-          .foregroundStyle(.tertiary)
-      } else if !canRunTests, readiness.status != .ready {
-        Text("Prepare or import the GGUF into Application Support to enable sample tests.")
+      if readiness.status != .ready {
+        Text("Model not ready — sample tests still run and report the failure reason.")
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
@@ -1322,7 +1217,7 @@ private struct LocalModelSamplePacketTests: View {
   }
 }
 
-private struct LocalModelBriefingDiagnosticResultView: View {
+struct LocalModelBriefingDiagnosticResultView: View {
   let result: LocalModelBriefingDiagnosticResult
 
   var body: some View {
@@ -1577,7 +1472,7 @@ private struct OperationalPromptPreviewSection: View {
   }
 }
 
-private struct LocalModelBriefingDiagnosticResult {
+struct LocalModelBriefingDiagnosticResult {
   let testLabel: String
   let coldWriterResult: HostBriefingWriterResult
   let writerResult: HostBriefingWriterResult

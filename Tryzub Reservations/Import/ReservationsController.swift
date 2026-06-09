@@ -302,6 +302,29 @@ final class ReservationsController: ObservableObject {
         return await performActiveWindowRefresh(context: context, mode: .startup, force: true)
     }
 
+    // Intent: Non-blocking reservation sync for intro/login chrome.
+    // Never gates UI on network; hands off to ReservationsListView when it appears.
+    func beginBackgroundReservationWarmup(context: ModelContext) {
+        guard !hasStartedStartupPresentation else {
+            startStartupNetworkPassInBackgroundIfNeeded(context: context)
+            return
+        }
+        hasStartedStartupPresentation = true
+        startupNetworkPassError = nil
+
+        if Self.hasUsableCachedReservations(in: context) {
+            _ = releaseStartupUIFromLocalCacheIfAvailable(context: context)
+        } else {
+            localCacheStoreHasReservations = false
+            hydrateCacheMetadataSync(context: context)
+            startupPresentationState = .showingCachedDataRefreshing
+            markStartupUIReleased()
+        }
+
+        startStartupNetworkPassInBackgroundIfNeeded(context: context)
+        startDeferredRestaurantSetupIfNeeded()
+    }
+
     // Intent: Cache-first entrance. Shows tabs immediately when SwiftData has reservations.
     func beginStartupPresentation(context: ModelContext) async {
         if case .failedNoCache = startupPresentationState {

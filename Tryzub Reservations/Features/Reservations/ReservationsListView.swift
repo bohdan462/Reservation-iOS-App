@@ -18,10 +18,16 @@ struct ReservationsListView: View {
     let environment: AppEnvironment
     let onLogout: () -> Void
 
-    init(environment: AppEnvironment, onLogout: @escaping () -> Void = {}) {
+    init(
+        environment: AppEnvironment,
+        controller: ReservationsController? = nil,
+        onLogout: @escaping () -> Void = {}
+    ) {
         self.environment = environment
         self.onLogout = onLogout
-        _controller = StateObject(wrappedValue: ReservationsController(environment: environment))
+        _controller = StateObject(
+            wrappedValue: controller ?? ReservationsController(environment: environment)
+        )
     }
 
     var body: some View {

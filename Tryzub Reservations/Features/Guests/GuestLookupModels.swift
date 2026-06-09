@@ -45,3 +45,19 @@ enum ManualReservationPrefillSource: String, Equatable {
     case blankCallIn
     case callInGuestLookup
 }
+
+enum GuestLookupFormatting {
+    static func phoneDisplay(_ digits: String) -> String {
+        let cleaned = digits.filter(\.isNumber)
+        let local = cleaned.count == 11 && cleaned.first == "1"
+            ? String(cleaned.dropFirst())
+            : cleaned
+
+        guard local.count == 10 else { return cleaned }
+
+        let area = local.prefix(3)
+        let middle = local.dropFirst(3).prefix(3)
+        let last = local.suffix(4)
+        return "(\(area)) \(middle)-\(last)"
+    }
+}

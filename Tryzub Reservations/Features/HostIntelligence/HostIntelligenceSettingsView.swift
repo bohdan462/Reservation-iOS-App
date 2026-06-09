@@ -23,6 +23,9 @@ struct HostIntelligenceSettingsView: View {
       timingSection
       partyThresholdsSection
       tableInventorySection
+      if settingsStore.settings.useEnhancedBriefing {
+        HostLocalModelSettingsSection(settingsStore: settingsStore)
+      }
       resetSection
     }
     .navigationTitle("Host Intelligence")
@@ -59,12 +62,10 @@ struct HostIntelligenceSettingsView: View {
 
       if settingsStore.settings.useEnhancedBriefing,
          settingsStore.settings.enhancedBriefingProvider == .localModel {
-        localModelReadinessNotice
-
         Toggle("Use local model on Host board", isOn: binding(\.useLocalModelOnHostBoard))
           .disabled(!settingsStore.settings.useEnhancedBriefing)
 
-        Text("Prepare and test the model in Developer Diagnostics only. Host board use should remain off until output quality is verified.")
+        Text("Host board use should stay off until smoke tests pass consistently.")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
@@ -79,51 +80,6 @@ struct HostIntelligenceSettingsView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
     }
-  }
-
-  @ViewBuilder
-  private var localModelReadinessNotice: some View {
-    let readiness = HostLocalModelReadinessProvider.currentReadiness()
-    let modelPresence = HostLocalModelFileLocator.modelPresenceDescription()
-    let modelLookup = HostLocalModelFileLocator.modelLookupPathDescription()
-
-    VStack(alignment: .leading, spacing: 6) {
-      LabeledContent("Current readiness") {
-        Text(readiness.status.rawValue)
-      }
-      LabeledContent("Adapter shell present") {
-        Text(HostLocalModelRuntimeFactory.isAdapterShellPresent ? "Yes" : "No")
-      }
-      LabeledContent("Inference runtime linked") {
-        Text(HostLocalModelRuntimeFactory.isRuntimeIntegrated ? "Yes" : "No")
-      }
-      Text(readiness.title)
-        .font(.subheadline.weight(.semibold))
-      Text(readiness.detail)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      Text(modelPresence)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      Text("Model lookup path: \(modelLookup)")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-
-      if readiness.status == .runtimeMissing {
-        Text("Local model runtime is not installed. The app will use template fallback.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      } else if readiness.status == .modelMissing {
-        Text("No model file is bundled in this build yet. The app will use template fallback.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      Text("The model rewrites approved Host Intelligence facts only. It does not make decisions.")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    }
-    .padding(.vertical, 4)
   }
 
   private var providerBinding: Binding<HostBriefingProviderKind> {

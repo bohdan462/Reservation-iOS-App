@@ -356,8 +356,20 @@ private struct ReservationFormContent: View {
     @EnvironmentObject private var controller: ReservationsController
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Query(
+        filter: #Predicate<ReservationRecord> { record in
+            !record.isHidden
+        },
+        sort: [
+            SortDescriptor(\ReservationRecord.reservationDate, order: .reverse),
+            SortDescriptor(\ReservationRecord.reservationTime, order: .reverse)
+        ]
+    )
+    private var guestLookupRecords: [ReservationRecord]
+    @StateObject private var guestPhoneLookupStore = GuestLookupStore()
     @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
     @StateObject private var hostTableConfigStore = HostTableConfigStore()
+    @State private var suppressedGuestPhoneSuggestionID: String?
     @State private var slotContext: HostReservationSlotContext?
     @State private var isCustomTimePresented = false
     @State private var didApplyInitialSettings = false
@@ -396,6 +408,23 @@ private struct ReservationFormContent: View {
             applyInitialSettingsIfNeeded()
             ensureSlotLoad()
             refreshSlotContext()
+            refreshGuestPhoneLookup()
+        }
+        .task(id: guestLookupCacheKey) {
+            guestPhoneLookupStore.updateCache(
+                records: guestLookupRecords,
+                cacheKey: guestLookupCacheKey
+            )
+            guestPhoneLookupStore.schedulePhoneLookup(draft.phone)
+        }
+        .onChange(of: draft.phone) { _, _ in
+            suppressedGuestPhoneSuggestionID = nil
+            guestPhoneLookupStore.schedulePhoneLookup(draft.phone)
+        }
+        .onChange(of: guestPhoneLookupStore.phoneMatch?.id) { _, _ in
+            guard let match = guestPhoneLookupStore.phoneMatch else { return }
+            guard shouldAutoApplyGuestPhoneSuggestion(match) else { return }
+            applyGuestPhoneSuggestion(match)
         }
         .onChange(of: draft.reservationDate.reservationDateString()) { _, _ in
             ensureSlotLoad()
@@ -515,6 +544,27 @@ private struct ReservationFormContent: View {
                     }
                     guestEmailField
                 }
+
+                if let suggestion = visibleGuestPhoneSuggestion {
+                    GuestPhoneLookupSuggestionRow(
+                        result: suggestion,
+                        onUse: {
+                            applyGuestPhoneSuggestion(suggestion)
+                        },
+                        onDismiss: {
+                            suppressedGuestPhoneSuggestionID = suggestion.id
+                        }
+                    )
+                }
+
+                if mode.usesManualGuestInput {
+                    GuestTextMessageActionButtons(
+                        phone: draft.phone,
+                        confirmationBody: manualTextConfirmationBody,
+                        tableDueBody: manualTextTableDueBody,
+                        isCompact: !isWideForm
+                    )
+                }
             }
         }
         .onAppear {
@@ -525,7 +575,91 @@ private struct ReservationFormContent: View {
             if draft.phone.allSatisfy(\.isNumber), !draft.phone.isEmpty {
                 draft.phone = ReservationInputNormalizer.sanitizedUSPhoneInput(draft.phone)
             }
+            refreshGuestPhoneLookup()
         }
+    }
+
+    private var guestLookupCacheKey: GuestLookupCacheKey {
+        GuestLookupCacheKey(records: guestLookupRecords)
+    }
+
+    private var visibleGuestPhoneSuggestion: GuestLookupResult? {
+        guard mode.usesManualGuestInput else { return nil }
+        guard let match = guestPhoneLookupStore.phoneMatch else { return nil }
+        guard suppressedGuestPhoneSuggestionID != match.id else { return nil }
+        guard !draftAlreadyMatchesGuest(match) else { return nil }
+        return match
+    }
+
+    private func refreshGuestPhoneLookup() {
+        guard mode.usesManualGuestInput else { return }
+        guestPhoneLookupStore.updateCache(
+            records: guestLookupRecords,
+            cacheKey: guestLookupCacheKey
+        )
+        guestPhoneLookupStore.schedulePhoneLookup(draft.phone)
+    }
+
+    private func shouldAutoApplyGuestPhoneSuggestion(_ result: GuestLookupResult) -> Bool {
+        let draftDigits = draft.phone.filter(\.isNumber)
+        guard draftDigits.count >= 10,
+              let phoneDigits = result.phoneDigits else {
+            return false
+        }
+        guard phoneDigits == draftDigits || phoneDigits.hasSuffix(draftDigits) else {
+            return false
+        }
+        return draft.guestName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func draftAlreadyMatchesGuest(_ result: GuestLookupResult) -> Bool {
+        let trimmedName = draft.guestName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nameMatches = !trimmedName.isEmpty
+            && trimmedName.localizedCaseInsensitiveCompare(result.displayName) == .orderedSame
+
+        let draftDigits = draft.phone.filter(\.isNumber)
+        guard let resultDigits = result.phoneDigits, !draftDigits.isEmpty else {
+            return nameMatches
+        }
+
+        let phoneMatches = draftDigits == resultDigits
+            || (draftDigits.count >= 10 && resultDigits.hasSuffix(String(draftDigits.suffix(10))))
+
+        if let email = result.email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
+            let draftEmail = draft.email.trimmingCharacters(in: .whitespacesAndNewlines)
+            return nameMatches && phoneMatches && draftEmail.localizedCaseInsensitiveCompare(email) == .orderedSame
+        }
+
+        return nameMatches && phoneMatches
+    }
+
+    private func applyGuestPhoneSuggestion(_ result: GuestLookupResult) {
+        draft.guestName = result.displayName
+        if let phoneDigits = result.phoneDigits {
+            draft.phone = ReservationInputNormalizer.sanitizedUSPhoneInput(phoneDigits)
+        }
+        if let email = result.email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
+            draft.email = email
+        }
+        suppressedGuestPhoneSuggestionID = nil
+        ReservationHaptics.selection()
+    }
+
+    private var manualTextConfirmationBody: String {
+        ManualTextMessageService.confirmationBody(
+            guestName: draft.guestName,
+            reservationDate: draft.reservationDate,
+            reservationTime: draft.reservationTime,
+            partySize: draft.partySize,
+            tableName: draft.tableName.nilIfBlank
+        )
+    }
+
+    private var manualTextTableDueBody: String {
+        ManualTextMessageService.tableDueBody(
+            guestName: draft.guestName,
+            tableName: draft.tableName.nilIfBlank
+        )
     }
 
     @ViewBuilder
@@ -1866,6 +2000,66 @@ private struct ReservationFormWarningCard: View {
                 RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
                     .stroke(Color.red.opacity(0.18), lineWidth: 1)
             }
+    }
+}
+
+private struct GuestPhoneLookupSuggestionRow: View {
+    let result: GuestLookupResult
+    let onUse: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "person.crop.circle.badge.checkmark")
+                .font(.title3)
+                .foregroundStyle(ReservationUIStyle.selectedControlColor)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(result.displayName)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+
+                HStack(spacing: 8) {
+                    if let phoneDigits = result.phoneDigits {
+                        Text(GuestLookupFormatting.phoneDisplay(phoneDigits))
+                    }
+                    if let email = result.email {
+                        Text(email)
+                    }
+                    if result.totalReservations > 0 {
+                        Text("\(result.totalReservations) visits")
+                    }
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+
+            Spacer(minLength: 4)
+
+            Button("Use", action: onUse)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(ReservationUIStyle.selectedControlColor)
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(6)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss guest suggestion")
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                .stroke(ReservationUIStyle.selectedControlColor.opacity(0.22), lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Known guest \(result.displayName)")
+        .accessibilityHint("Double tap Use to fill guest details")
     }
 }
 

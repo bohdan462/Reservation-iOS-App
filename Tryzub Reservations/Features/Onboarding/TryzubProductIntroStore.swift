@@ -22,4 +22,11 @@ final class TryzubProductIntroStore: ObservableObject {
     hasCompletedIntro = true
     UserDefaults.standard.set(true, forKey: defaultsKey)
   }
+
+  #if DEBUG
+  func resetForPreview() {
+    hasCompletedIntro = false
+    UserDefaults.standard.removeObject(forKey: defaultsKey)
+  }
+  #endif
 }

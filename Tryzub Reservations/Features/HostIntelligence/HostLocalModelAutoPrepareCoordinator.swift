@@ -90,6 +90,11 @@ final class HostLocalModelAutoPrepareCoordinator: ObservableObject {
       if phase != .ready {
         phase = .idle
       }
+      return
+    }
+
+    if hasCompletedAutoPrepare {
+      UserDefaults.standard.removeObject(forKey: completedDefaultsKey)
     }
   }
 
