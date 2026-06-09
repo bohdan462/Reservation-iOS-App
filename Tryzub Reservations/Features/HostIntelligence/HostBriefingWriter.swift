@@ -456,7 +456,19 @@ enum HostBriefingWriterValidator {
   private static let semanticFailureReasons = [
     "Briefing claims an action was already completed.",
     "Briefing says no action is needed despite packet facts.",
-    "Briefing suggests unsupported guest contact."
+    "Briefing suggests unsupported guest contact.",
+    "Briefing gives unsafe special-occasion instruction."
+  ]
+
+  private static let unsafeSpecialOccasionPhrases = [
+    "mention the occasion at arrival",
+    "mention the occasion",
+    "celebrate the occasion",
+    "celebrate with the guest",
+    "tell the guest happy",
+    "wish the guest happy",
+    "wish them happy",
+    "announce the occasion"
   ]
 
   static let maxAllowedSentences = 4
@@ -686,7 +698,21 @@ enum HostBriefingWriterValidator {
       }
     }
 
+    if unsafeSpecialOccasionPhrases.contains(where: { lower.contains($0) }) {
+      if !packetSupportsDirectOccasionInstruction(packet) {
+        return HostBriefingValidationResult(
+          isValid: false,
+          reason: "Briefing gives unsafe special-occasion instruction."
+        )
+      }
+    }
+
     return nil
+  }
+
+  private static func packetSupportsDirectOccasionInstruction(_ packet: HostLLMPacket) -> Bool {
+    let corpus = packetActionCorpus(packet)
+    return unsafeSpecialOccasionPhrases.contains(where: { corpus.contains($0) })
   }
 }
 

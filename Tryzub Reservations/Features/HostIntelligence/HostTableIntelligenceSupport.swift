@@ -172,6 +172,35 @@ enum HostTableIntelligenceSupport {
     names.joined(separator: " + ")
   }
 
+  // MARK: - Operational Advice Policy
+
+  /// Table-capacity advice is review-only and reserved for parties that need real planning.
+  static func shouldSurfaceNoTableFitAdvice(
+    partySize: Int,
+    largePartyThreshold: Int
+  ) -> Bool {
+    partySize >= largePartyThreshold
+  }
+
+  static func assignedTableCapacityMismatch(
+    for reservation: ReservationRecord,
+    tableConfigs: [RestaurantTableConfig]
+  ) -> (tables: [RestaurantTableConfig], totalCapacity: Int)? {
+    guard reservation.hasTableAssignment,
+          let assignedName = reservation.assignedTableName else {
+      return nil
+    }
+
+    let parsedNames = parseAssignedTableNames(assignedName)
+    guard let matchedTables = matchingTables(for: parsedNames, in: tableConfigs) else {
+      return nil
+    }
+
+    let totalCapacity = matchedTables.reduce(0) { $0 + $1.capacity }
+    guard reservation.partySize > totalCapacity else { return nil }
+    return (matchedTables, totalCapacity)
+  }
+
   // MARK: - Private
 
   private static func largestCombinationCapacity(in tables: [RestaurantTableConfig]) -> Int {

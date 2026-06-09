@@ -50,6 +50,7 @@ enum HostCancellationIntelligenceSupport {
       cancellations: relevantCancellations,
       noTableReservations: noTableActive,
       tableConfigs: tableConfigs,
+      settings: settings,
       now: now,
       actions: &actions,
       tableSignals: &tableSignals
@@ -165,6 +166,7 @@ enum HostCancellationIntelligenceSupport {
     cancellations: [ReservationRecord],
     noTableReservations: [ReservationRecord],
     tableConfigs: [RestaurantTableConfig],
+    settings: HostIntelligenceSettings,
     now: Date,
     actions: inout [HostSuggestedAction],
     tableSignals: inout [HostTableSignal]
@@ -183,14 +185,20 @@ enum HostCancellationIntelligenceSupport {
       }
 
       if let match = nearbyNoTable.first(where: { reservation in
-        canFreedTableFitReservation(
+        guard HostTableIntelligenceSupport.shouldSurfaceNoTableFitAdvice(
+          partySize: reservation.partySize,
+          largePartyThreshold: settings.largePartyThreshold
+        ) else {
+          return false
+        }
+        return canFreedTableFitReservation(
           tableName: tableName,
           reservation: reservation,
           tableConfigs: tableConfigs
         )
       }) {
         let detail =
-          "\(tableName) opened after \(cancellation.guestName) canceled; it may help \(match.guestName), party of \(match.partySize)."
+          "\(tableName) opened after \(cancellation.guestName) canceled; \(match.guestName), party of \(match.partySize), may need table planning."
         facts.append(
           HostBriefingFact(
             id: "cancellation-freed-table-\(cancellation.remoteID)-\(match.remoteID)",
@@ -203,7 +211,7 @@ enum HostCancellationIntelligenceSupport {
               "cancelledPartySize=\(cancellation.partySize)"
             ],
             relatedReservationIDs: [cancellation.remoteID, match.remoteID],
-            suggestedActionTitle: "Review \(tableName) for \(match.guestName)."
+            suggestedActionTitle: "Review table plan for \(match.guestName)."
           )
         )
 
@@ -212,11 +220,11 @@ enum HostCancellationIntelligenceSupport {
             id: "cancellation-opportunity-action-\(cancellation.remoteID)-\(match.remoteID)",
             severity: .watch,
             kind: .reviewCancellationOpportunity,
-            title: "Review \(tableName) for \(match.guestName)",
+            title: "Review table plan for \(match.guestName)",
             reason: detail,
             relatedReservationIDs: [cancellation.remoteID, match.remoteID],
             targetSlotTime: match.reservationTime,
-            targetTableName: tableName,
+            targetTableName: nil,
             requiresStaffConfirmation: true
           )
         )
@@ -515,7 +523,7 @@ enum HostCancellationIntelligenceSupport {
           detail: detail,
           evidence: ["minutesLate=\(minutesLate)", "noTable=true"],
           relatedReservationIDs: [reservation.remoteID],
-          suggestedActionTitle: "Assign a table or review the reservation now."
+          suggestedActionTitle: "Review table plan for \(reservation.guestName) now."
         )
       )
 
@@ -523,8 +531,8 @@ enum HostCancellationIntelligenceSupport {
         HostSuggestedAction(
           id: "overdue-no-table-action-\(reservation.remoteID)",
           severity: severity,
-          kind: .assignTable,
-          title: "Assign table for late \(reservation.guestName)",
+          kind: .reviewReservation,
+          title: "Review table plan for late \(reservation.guestName)",
           reason: detail,
           relatedReservationIDs: [reservation.remoteID],
           targetSlotTime: reservation.reservationTime,

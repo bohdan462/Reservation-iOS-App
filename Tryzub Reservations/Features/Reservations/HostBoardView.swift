@@ -32,10 +32,20 @@ struct HostBoardView: View {
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
     @StateObject private var hostIntelligenceController = HostIntelligenceController()
+    @State private var isShowingHostIntelligenceReview = false
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
             || pendingAction != nil
+    }
+
+    private var shouldDeferStartupOptionalLoads: Bool {
+        switch controller.startupPresentationState {
+        case .checkingCache, .emptyCacheLoadingNetwork:
+            return !controller.hasReleasedStartupUI
+        case .loadingSavedReservations, .showingCachedDataRefreshing, .ready, .failedNoCache:
+            return false
+        }
     }
 
     // Open→close service window for the busy-by-time chart x-axis. Prefers the
@@ -131,19 +141,30 @@ struct HostBoardView: View {
                 serviceWindow: serviceWindow
             )
 
+            let closedPresentation = closedDayPresentation(for: snapshot)
+
             Group {
                 if safeWidth >= 1100 {
                     VStack(alignment: .leading, spacing: 8) {
-                        homeHeaderAndStats(snapshot: snapshot)
+                        homeServiceHeader
 
-                        wideBoard(snapshot: snapshot)
-                            .layoutPriority(1)
+                        closedOrOperationalBody(
+                            snapshot: snapshot,
+                            closedPresentation: closedPresentation,
+                            isWideLayout: true
+                        )
+                        .layoutPriority(1)
                     }
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
-                            homeHeaderAndStats(snapshot: snapshot)
-                            phoneLists(snapshot: snapshot)
+                            homeServiceHeader
+
+                            closedOrOperationalBody(
+                                snapshot: snapshot,
+                                closedPresentation: closedPresentation,
+                                isWideLayout: false
+                            )
                         }
                         .padding(.bottom, 12)
                     }
@@ -205,24 +226,20 @@ struct HostBoardView: View {
             guard !isRunningForPreviews else { return }
             await runClockLoop()
         }
-        .task(id: "\(isVisible)-\(deferNetworkLoads)-\(controller.isStartupNetworkPassInFlight)-\(selectedDate.reservationDateString())") {
+        .task(id: "\(isVisible)-\(deferNetworkLoads)-\(controller.startupPresentationState)-\(selectedDate.reservationDateString())") {
             // Lazy Home indicator load: availability/slots/blocked are screen-specific
             // and cached by the controller so tab switching does not refetch them.
             guard !isRunningForPreviews else { return }
-            guard !deferNetworkLoads, !controller.isStartupNetworkPassInFlight else { return }
+            guard !deferNetworkLoads, !shouldDeferStartupOptionalLoads else { return }
             guard isVisible else {
                 controller.cancelAvailabilitySummary(date: selectedDateKey)
-                return
-            }
-            guard isVisible,
-                  selectedDate.reservationDateString() == Date.reservationDateString() else {
                 return
             }
             // Brief pause after launch sync so the next batch does not race QUIC setup.
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled,
                   !deferNetworkLoads,
-                  !controller.isStartupNetworkPassInFlight,
+                  !shouldDeferStartupOptionalLoads,
                   isVisible else { return }
             controller.ensureAvailabilitySummary(date: selectedDateKey)
         }
@@ -311,11 +328,45 @@ struct HostBoardView: View {
         return String(value.prefix(5))
     }
 
-    @ViewBuilder
-    private func homeHeaderAndStats(snapshot: HostBoardSnapshot) -> some View {
+    private enum ClosedDayPresentation {
+        case open
+        case closedEmpty
+        case closedWithReservations
+    }
+
+    private var hasKnownAvailabilityForSelectedDate: Bool {
+        todayAvailability != nil || todaySlots != nil
+    }
+
+    private var isSelectedDateClosed: Bool {
+        if let availability = todayAvailability, !availability.isOpen {
+            return true
+        }
+        if let slots = todaySlots, !slots.isOpen {
+            return true
+        }
+        return false
+    }
+
+    private func closedDayPresentation(for snapshot: HostBoardSnapshot) -> ClosedDayPresentation {
+        guard hasKnownAvailabilityForSelectedDate, isSelectedDateClosed else {
+            return .open
+        }
+
+        let activeReservationCount = snapshot.upcoming.count + snapshot.seated.count
+        if activeReservationCount > 0 {
+            return .closedWithReservations
+        }
+        return .closedEmpty
+    }
+
+    private var homeServiceHeader: some View {
         HomeServiceHeader(
             title: environment.role == .developer ? "Dev" : "Host",
             selectedDate: $selectedDate,
+            hasVisibleCachedData: controller.hasReleasedStartupUI
+                || !allKnownReservations.isEmpty
+                || controller.localCacheStoreHasReservations,
             canCreateReservation: controller.capabilities.canCreateManualReservations,
             canViewFormProblems: controller.capabilities.canViewFailedImports
                 && controller.capabilities.canViewDeveloperDiagnostics,
@@ -324,7 +375,84 @@ struct HostBoardView: View {
             onManualRefresh: onManualRefresh,
             onShowFormProblems: onShowFormProblems
         )
+    }
 
+    @ViewBuilder
+    private func closedOrOperationalBody(
+        snapshot: HostBoardSnapshot,
+        closedPresentation: ClosedDayPresentation,
+        isWideLayout: Bool
+    ) -> some View {
+        switch closedPresentation {
+        case .closedEmpty:
+            ClosedServiceDayView()
+                .frame(maxHeight: isWideLayout ? .infinity : nil)
+
+        case .closedWithReservations:
+            VStack(alignment: .leading, spacing: 10) {
+                ClosedDayReservationsNoticeView(
+                    reservationCount: snapshot.upcoming.count + snapshot.seated.count,
+                    newCount: snapshot.newReservations.count,
+                    reviewCount: snapshot.needsReview.count
+                )
+
+                if snapshot.newReservations.count + snapshot.needsReview.count > 0 {
+                    closedDayBookingAttentionCard(snapshot: snapshot)
+                }
+
+                if isWideLayout {
+                    HomeReservationsPanel(
+                        snapshot: snapshot,
+                        referenceNow: snapshot.now,
+                        environment: environment,
+                        onAction: handleAction,
+                        onOpenReservation: onOpenReservation
+                    )
+                } else {
+                    HomeReservationsPanel(
+                        snapshot: snapshot,
+                        referenceNow: snapshot.now,
+                        scrollsInternally: false,
+                        environment: environment,
+                        onAction: handleAction,
+                        onOpenReservation: onOpenReservation
+                    )
+                }
+            }
+
+        case .open:
+            homeOperationalHeader(snapshot: snapshot)
+
+            if isWideLayout {
+                wideBoard(snapshot: snapshot)
+            } else {
+                phoneLists(snapshot: snapshot)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func closedDayBookingAttentionCard(snapshot: HostBoardSnapshot) -> some View {
+        let intelligenceSnapshot = hostIntelligenceController.decisionSnapshot
+
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Booking attention")
+                .font(.subheadline.weight(.semibold))
+
+            Text(hostIntelligenceController.briefingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? intelligenceSnapshot.templateBriefingText
+                : hostIntelligenceController.briefingText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func homeOperationalHeader(snapshot: HostBoardSnapshot) -> some View {
         HostBoardSummaryCard(
             reservationCount: snapshot.upcoming.count + snapshot.seated.count,
             guestCount: snapshot.expectedGuestCount,
@@ -349,13 +477,35 @@ struct HostBoardView: View {
     @ViewBuilder
     private var hostIntelligenceSection: some View {
         let snapshot = hostIntelligenceController.decisionSnapshot
+        let useSeparatedPrompts = hostIntelligenceController.settings.useSeparatedBriefingPrompts
+        let compactPrompts = useSeparatedPrompts
+            ? HostOperationalBriefingPromptBuilder.buildCompactPrompts(from: snapshot)
+            : []
+        let expandedPrompts = useSeparatedPrompts
+            ? HostOperationalBriefingPromptBuilder.buildExpandedPrompts(from: snapshot)
+            : []
 
         HostIntelligenceCard(
             snapshot: snapshot,
             briefingTextOverride: hostIntelligenceController.briefingText,
-            briefingSource: hostIntelligenceController.briefingSource
+            briefingSource: hostIntelligenceController.briefingSource,
+            compactOperationalPrompts: compactPrompts,
+            showOperationalReview: useSeparatedPrompts,
+            onReviewTapped: useSeparatedPrompts ? { isShowingHostIntelligenceReview = true } : nil
         ) { action in
             handleHostIntelligenceAction(action)
+        }
+        .sheet(isPresented: $isShowingHostIntelligenceReview) {
+            NavigationStack {
+                HostIntelligenceReviewView(
+                    snapshot: snapshot,
+                    operationalPrompts: expandedPrompts,
+                    briefingText: hostIntelligenceController.briefingText,
+                    briefingSource: hostIntelligenceController.briefingSource
+                ) { action in
+                    handleHostIntelligenceAction(action)
+                }
+            }
         }
 
         if hasMeaningfulSlotPressure(snapshot) {
@@ -889,6 +1039,7 @@ private struct HomeAvailabilityIndicator: View {
 private struct HomeServiceHeader: View {
     let title: String
     @Binding var selectedDate: Date
+    let hasVisibleCachedData: Bool
     let canCreateReservation: Bool
     @EnvironmentObject private var controller: ReservationsController
     let canViewFormProblems: Bool
@@ -901,17 +1052,24 @@ private struct HomeServiceHeader: View {
         selectedDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
     }
 
-    private var isSyncing: Bool {
-        controller.isSyncing || controller.isAutoRefreshing || controller.isStartupNetworkPassInFlight
+    private var isRefreshing: Bool {
+        controller.isSyncing
+            || controller.isAutoRefreshing
+            || controller.isStartupNetworkPassInFlight
     }
 
     private var syncText: String {
-        if isSyncing {
-            return "Syncing"
+        if controller.startupNetworkPassError != nil,
+           hasVisibleCachedData || controller.localCacheStoreHasReservations || controller.lastSyncedAt != nil {
+            return "Offline · saved data"
+        }
+
+        if isRefreshing {
+            return "Refreshing…"
         }
 
         guard let lastSyncedAt = controller.lastSyncedAt else {
-            return "Cache only"
+            return "Saved data"
         }
 
         return "Synced \(lastSyncedAt.formatted(date: .omitted, time: .shortened))"
@@ -1032,7 +1190,7 @@ private struct HomeServiceHeader: View {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                .disabled(isSyncing)
+                .disabled(isRefreshing)
 
                 if canViewFormProblems, failedImportCount > 0 {
                     Button {

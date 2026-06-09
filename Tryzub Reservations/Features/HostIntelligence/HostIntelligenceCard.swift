@@ -11,6 +11,9 @@ struct HostIntelligenceCard: View {
   let snapshot: HostDecisionSnapshot
   var briefingTextOverride: String? = nil
   var briefingSource: HostBriefingWriterSource? = nil
+  var compactOperationalPrompts: [HostOperationalBriefingPrompt] = []
+  var showOperationalReview: Bool = false
+  var onReviewTapped: (() -> Void)? = nil
   var onActionTapped: ((HostSuggestedAction) -> Void)? = nil
 
   var body: some View {
@@ -28,9 +31,13 @@ struct HostIntelligenceCard: View {
       Text("Host Intelligence")
         .font(.headline)
 
-      Text("Service looks stable right now.")
+      Text(displayBriefingText)
         .font(.subheadline)
         .foregroundStyle(.secondary)
+
+      compactPromptLines
+
+      reviewIntelligenceButton
     }
     .cardStyle()
   }
@@ -65,6 +72,10 @@ struct HostIntelligenceCard: View {
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
+
+      compactPromptLines
+
+      reviewIntelligenceButton
 
       if !topActions.isEmpty {
         VStack(alignment: .leading, spacing: 6) {
@@ -185,6 +196,30 @@ struct HostIntelligenceCard: View {
       + snapshot.guestSignals.count
       + snapshot.tableSignals.count
       + snapshot.seatedTimingSignals.count
+  }
+
+  @ViewBuilder
+  private var compactPromptLines: some View {
+    if showOperationalReview, !compactOperationalPrompts.isEmpty {
+      VStack(alignment: .leading, spacing: 4) {
+        ForEach(compactOperationalPrompts) { prompt in
+          Text(prompt.body)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var reviewIntelligenceButton: some View {
+    if showOperationalReview, onReviewTapped != nil {
+      Button("Review Intelligence") {
+        onReviewTapped?()
+      }
+      .font(.caption.weight(.semibold))
+    }
   }
 }
 

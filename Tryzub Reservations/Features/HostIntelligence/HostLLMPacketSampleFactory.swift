@@ -55,19 +55,11 @@ enum HostLLMPacketSampleFactory {
         ),
         HostLLMFact(
           severity: .watch,
-          category: .table,
-          title: "Table capacity option",
-          detail: "Table 12 seats 6.",
-          evidence: ["Local table inventory capacity."],
-          suggestedAction: "Review Table 12 for a party of six."
-        ),
-        HostLLMFact(
-          severity: .warning,
-          category: .table,
-          title: "No table assigned",
-          detail: "Party of 6 for Natalia is due in 20 minutes and has no table assigned.",
+          category: .largeParty,
+          title: "Large party needs table planning",
+          detail: "Party of 8 for Natalia is due in 20 minutes and needs table planning.",
           evidence: ["Large party without a table."],
-          suggestedAction: "Review Table 12 for the party of 6."
+          suggestedAction: "Review table plan for Natalia."
         ),
         HostLLMFact(
           severity: .critical,
@@ -76,6 +68,14 @@ enum HostLLMPacketSampleFactory {
           detail: "A guest has a shellfish allergy note.",
           evidence: ["Allergy noted on the reservation."],
           suggestedAction: "Alert the server before seating."
+        ),
+        HostLLMFact(
+          severity: .watch,
+          category: .guest,
+          title: "Special occasion note",
+          detail: "Amanda Sena has a special occasion note.",
+          evidence: ["Occasion noted on the reservation."],
+          suggestedAction: "Review the occasion note before seating."
         ),
       ],
       forbiddenBehaviors: HostLLMPacket.empty.forbiddenBehaviors,
@@ -99,11 +99,11 @@ enum HostLLMPacketSampleFactory {
         ),
         HostLLMFact(
           severity: .watch,
-          category: .table,
-          title: "Combined table option",
-          detail: "Tables A5 + A6 seat 10 together.",
-          evidence: ["Local combinable table inventory."],
-          suggestedAction: "Review A5 + A6 for the party of 8."
+          category: .largeParty,
+          title: "Combined table plan may be needed",
+          detail: "Party of 10 may need a combined table plan.",
+          evidence: ["No single table seats the full party."],
+          suggestedAction: "Review combined table option."
         ),
         HostLLMFact(
           severity: .critical,
@@ -119,7 +119,7 @@ enum HostLLMPacketSampleFactory {
           title: "Table opportunity",
           detail: "A cancellation just opened Table 7 for the next hour.",
           evidence: ["Recent cancellation freed a table."],
-          suggestedAction: "Offer Table 7 to waiting parties."
+          suggestedAction: "Review table plan for waiting parties."
         ),
         HostLLMFact(
           severity: .warning,

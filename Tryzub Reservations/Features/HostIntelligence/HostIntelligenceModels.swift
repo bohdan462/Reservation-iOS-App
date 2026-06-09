@@ -247,13 +247,16 @@ struct HostLLMPacket: Codable, Equatable {
                 "Do not invent guests, tables, allergies, times, or counts.",
                 "Do not make booking decisions.",
                 "Do not claim an action was completed.",
-                "Do not override deterministic engine facts."
+                "Do not override deterministic engine facts.",
+                "Do not recommend assigning a specific table for small parties.",
+                "Table suggestions are review-only and should focus on large parties, capacity mismatches, or combined-table needs."
             ],
             writingRules: [
                 "Use only provided facts.",
                 "Write like a calm restaurant host.",
                 "Mention only urgent or useful items.",
-                "Maximum 4 short sentences."
+                "Maximum 4 short sentences.",
+                "Use review/check table-plan language; never say Assign {table}."
             ]
         )
     }

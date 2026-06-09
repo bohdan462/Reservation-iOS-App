@@ -143,6 +143,12 @@ struct GuestInsightReport {
     var hasReliableContactIdentity: Bool {
         primaryPhone != nil || primaryEmail != nil
     }
+
+    /// True when Guest Insights has at least one prior exact/strong identity match.
+    /// `matchedReservations` excludes weak name-only possible matches.
+    var hasReliableRepeatGuestHistory: Bool {
+        summary.totalMatchedReservations >= 2
+    }
 }
 
 // MARK: - Hospitality Summary

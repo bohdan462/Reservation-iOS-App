@@ -1340,7 +1340,7 @@ private struct OperationalPromptPreviewSection: View {
   let decision: HostDecisionSnapshot
 
   private var prompts: [HostOperationalBriefingPrompt] {
-    HostOperationalBriefingPromptBuilder.build(from: decision)
+    HostOperationalBriefingPromptBuilder.buildExpandedPrompts(from: decision)
   }
 
   var body: some View {
@@ -1349,7 +1349,7 @@ private struct OperationalPromptPreviewSection: View {
         .font(.subheadline.weight(.semibold))
         .padding(.top, 8)
 
-      Text("Deterministic grouped prompts from engine facts. Diagnostics only.")
+      Text("Same deterministic builder used by the Review Intelligence view when separated prompts are enabled.")
         .font(.caption2)
         .foregroundStyle(.tertiary)
 

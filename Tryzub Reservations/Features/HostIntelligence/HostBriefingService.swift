@@ -42,7 +42,8 @@ struct HostBriefingService {
         sentences.append(detail.hasSuffix(".") ? detail : "\(detail).")
       }
       if let action = fact.suggestedActionTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-         !action.isEmpty
+         !action.isEmpty,
+         !isRedundantTemplateAction(action, detail: detail)
       {
         let actionSentence = action.hasSuffix(".") ? action : "\(action)."
         sentences.append(actionSentence)
@@ -77,6 +78,33 @@ struct HostBriefingService {
     case .critical:
       return "Service is under heavy pressure. Address critical alerts first."
     }
+  }
+
+  private func isRedundantTemplateAction(_ action: String, detail: String) -> Bool {
+    let normalizedAction = action.lowercased()
+    let normalizedDetail = detail.lowercased()
+
+    if normalizedAction.contains("review new reservations before confirming") {
+      return normalizedDetail.contains("waiting for staff review")
+    }
+
+    if normalizedAction.contains("review seating preference before assigning") {
+      return normalizedDetail.contains("prefers ")
+    }
+
+    if normalizedAction.hasPrefix("assign ") {
+      return true
+    }
+
+    if normalizedAction.hasPrefix("review "), normalizedAction.contains(" before ") {
+      return normalizedDetail.contains(normalizedAction
+        .replacingOccurrences(of: "review ", with: "")
+        .replacingOccurrences(of: " before seating.", with: "")
+        .replacingOccurrences(of: " before assigning.", with: "")
+      )
+    }
+
+    return false
   }
 
   private func categoryRank(_ category: HostFactCategory) -> Int {

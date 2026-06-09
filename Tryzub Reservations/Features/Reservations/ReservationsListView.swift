@@ -6,14 +6,6 @@
 import SwiftUI
 import SwiftData
 
-private func activeReservationWindowQueryBounds(daysAhead: Int = 120) -> (from: String, to: String) {
-    let now = Date()
-    let calendar = Calendar.current
-    let from = calendar.date(byAdding: .day, value: -1, to: now) ?? now
-    let to = calendar.date(byAdding: .day, value: daysAhead, to: now) ?? now
-    return (from.reservationDateString(), to.reservationDateString())
-}
-
 // MARK: - Root Reservation Shell
 
 struct ReservationsListView: View {
@@ -33,14 +25,115 @@ struct ReservationsListView: View {
     }
 
     var body: some View {
-        ReservationsTabShell(environment: environment, onLogout: onLogout)
+        StartupRootView(environment: environment, onLogout: onLogout)
             .environmentObject(controller)
             .environmentObject(hiddenReservations)
             .environmentObject(privacyCoverSettings)
             .environmentObject(hostIntentStore)
             .task {
-                await controller.performStartupNetworkPass(context: modelContext)
+                await controller.beginStartupPresentation(context: modelContext)
             }
+    }
+}
+
+private struct StartupRootView: View {
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
+    @EnvironmentObject private var privacyCoverSettings: RestaurantPrivacyCoverSettingsStore
+    @EnvironmentObject private var hostIntentStore: HostReservationOpenIntentStore
+    @Query
+    private var startupWindowRows: [ReservationRecord]
+
+    let environment: AppEnvironment
+    let onLogout: () -> Void
+
+    init(environment: AppEnvironment, onLogout: @escaping () -> Void) {
+        self.environment = environment
+        self.onLogout = onLogout
+        let bounds = activeReservationWindowQueryBounds()
+        let fromDate = bounds.from
+        let toDate = bounds.to
+        _startupWindowRows = Query(
+            filter: #Predicate<ReservationRecord> { reservation in
+                !reservation.isHidden
+                    && reservation.reservationDate >= fromDate
+                    && reservation.reservationDate <= toDate
+            }
+        )
+    }
+
+    var body: some View {
+        Group {
+            if showsStartupLoading {
+                startupLoadingView
+            } else {
+                ReservationsTabShell(environment: environment, onLogout: onLogout)
+            }
+        }
+        .onAppear {
+            controller.noteStartupWindowQueryDelivered(rowCount: startupWindowRows.count)
+            if !showsStartupLoading {
+                controller.releaseStartupUI()
+            }
+        }
+        .onChange(of: startupWindowRows.count) { _, count in
+            controller.noteStartupWindowQueryDelivered(rowCount: count)
+        }
+        .onChange(of: showsStartupLoading) { _, isLoading in
+            if !isLoading {
+                controller.releaseStartupUI()
+            }
+        }
+    }
+
+    private var showsStartupLoading: Bool {
+        switch controller.startupPresentationState {
+        case .checkingCache, .emptyCacheLoadingNetwork, .failedNoCache:
+            return true
+        case .loadingSavedReservations:
+            return false
+        case .ready, .showingCachedDataRefreshing:
+            return false
+        }
+    }
+
+    @ViewBuilder
+    private var startupLoadingView: some View {
+        switch controller.startupPresentationState {
+        case .failedNoCache(let message):
+            StartupCacheLoadingView(
+                mode: .loadingFromNetwork,
+                errorMessage: message,
+                onRetry: retryStartup
+            )
+        case .checkingCache:
+            StartupCacheLoadingView(
+                mode: .checkingSavedData,
+                errorMessage: nil,
+                onRetry: retryStartup
+            )
+        case .loadingSavedReservations:
+            StartupCacheLoadingView(
+                mode: .loadingSavedReservations,
+                errorMessage: nil,
+                onRetry: retryStartup
+            )
+        case .emptyCacheLoadingNetwork:
+            StartupCacheLoadingView(
+                mode: .loadingFromNetwork,
+                errorMessage: nil,
+                onRetry: retryStartup
+            )
+        case .ready, .showingCachedDataRefreshing:
+            EmptyView()
+        }
+    }
+
+    private func retryStartup() {
+        Task {
+            await controller.beginStartupPresentation(context: modelContext)
+        }
     }
 }
 
@@ -52,6 +145,7 @@ private struct ReservationsTabShell: View {
     private var serviceWindowReservations: [ReservationRecord]
 
     @StateObject private var restaurantSettingsStore: RestaurantSettingsStore
+    @StateObject private var hostTableConfigStore = HostTableConfigStore()
     @State private var selectedTab: ReservationsAppTab = .host
 
     let environment: AppEnvironment
@@ -137,6 +231,18 @@ private struct ReservationsTabShell: View {
             RestaurantPrivacyCoverDataController.snapshot(from: serviceWindowReservations)
         }
         .environmentObject(restaurantSettingsStore)
+        .environmentObject(hostTableConfigStore)
+        .onAppear {
+            restaurantSettingsStore.adoptRestaurantSetup(controller.restaurantSetup)
+            let raw = UserDefaults.standard.string(forKey: HostTableCapacityTextParser.storageKey) ?? ""
+            let result = HostTableCapacityTextParser.parse(raw)
+            if !result.tables.isEmpty {
+                hostTableConfigStore.save(result.tables)
+            }
+        }
+        .onChange(of: controller.restaurantSetup) { _, setup in
+            restaurantSettingsStore.adoptRestaurantSetup(setup)
+        }
     }
 
     private var visibleNotices: [AppNotice] {
@@ -300,8 +406,11 @@ private struct ReservationScheduleView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
+    @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @Query
     private var reservations: [ReservationRecord]
+    @Query
+    private var guestInsightHistoryPool: [ReservationRecord]
 
     // MARK: - Local UI State
 
@@ -335,6 +444,15 @@ private struct ReservationScheduleView: View {
                 !reservation.isHidden
                     && reservation.reservationDate >= fromDate
                     && reservation.reservationDate <= toDate
+            },
+            sort: [
+                SortDescriptor(\ReservationRecord.reservationDate),
+                SortDescriptor(\ReservationRecord.reservationTime)
+            ]
+        )
+        _guestInsightHistoryPool = Query(
+            filter: #Predicate<ReservationRecord> { reservation in
+                !reservation.isHidden
             },
             sort: [
                 SortDescriptor(\ReservationRecord.reservationDate),
@@ -404,6 +522,18 @@ private struct ReservationScheduleView: View {
                     scheduleControls
                 }
 
+                if scope == .needsReview {
+                    Section {
+                        NewBookingsIntelligenceCard(
+                            summary: NewBookingsIntelligenceSummary.build(
+                                from: reservations,
+                                historyPool: guestInsightHistoryPool,
+                                tableConfigs: hostTableConfigStore.activeTables
+                            )
+                        )
+                    }
+                }
+
                 if let allModeErrorMessage {
                     Section {
                         Label(allModeErrorMessage, systemImage: "exclamationmark.triangle")
@@ -436,6 +566,7 @@ private struct ReservationScheduleView: View {
                                     reservation: reservation,
                                     environment: environment,
                                     context: .schedule,
+                                    newBookingInsight: newBookingRowInsight(for: reservation),
                                     onOpenDetails: { navigationPath.append($0.remoteID) }
                                 )
                             }
@@ -591,6 +722,19 @@ private struct ReservationScheduleView: View {
                 reservationDestination(remoteID: remoteID)
             }
         }
+    }
+
+    private func newBookingRowInsight(for reservation: ReservationRecord) -> NewBookingRowInsight? {
+        guard scope == .needsReview else { return nil }
+        guard reservation.statusValue == .new || reservation.statusValue == .needsReview else {
+            return nil
+        }
+
+        return NewBookingRowInsightBuilder.build(
+            reservation: reservation,
+            historyPool: guestInsightHistoryPool,
+            tableConfigs: hostTableConfigStore.activeTables
+        )
     }
 
     private var reviewAttentionCount: Int {
@@ -935,8 +1079,8 @@ private struct ReservationMoreView: View {
     @EnvironmentObject private var privacyCoverSettings: RestaurantPrivacyCoverSettingsStore
     @EnvironmentObject private var settingsStore: RestaurantSettingsStore
 
+    @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
-    @StateObject private var hostTableConfigStore = HostTableConfigStore()
     @State private var showManualCreate = false
     @State private var showFailedImports = false
     @State private var showLogoutConfirmation = false
@@ -1696,6 +1840,7 @@ private struct ReservationNavigationRow: View {
     let environment: AppEnvironment
     var context: ReservationRowContext = .schedule
     var contextNote: String?
+    var newBookingInsight: NewBookingRowInsight?
     let onOpenDetails: (ReservationRecord) -> Void
 
     @State private var pendingAction: ReservationHostAction?
@@ -1710,6 +1855,7 @@ private struct ReservationNavigationRow: View {
             reservation: reservation,
             context: context,
             contextNote: contextNote ?? seatedDurationText,
+            newBookingInsight: newBookingInsight,
             seatedDurationDotStyle: seatedDurationDotStyle,
             capabilities: controller.capabilities,
             onTableTap: controller.capabilities.canEditReservationDetails && !controller.isNetworkDegraded

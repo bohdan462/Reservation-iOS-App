@@ -90,10 +90,10 @@ enum HostGuestIntelligenceSupport {
       id: "seating-preference-group",
       title: "Seating preferences",
       singularTitle: "Seating preference",
-      detailPrefix: "guests have seating preferences today",
+      detailPrefix: "guests noted seating preferences today",
       category: .preference,
       severity: .watch,
-      suggestedActionTitle: "Review seating notes before assigning tables."
+      suggestedActionTitle: nil
     ))
 
     return facts
@@ -125,7 +125,7 @@ enum HostGuestIntelligenceSupport {
           id: "guest-action-seating-\(signal.reservationID)",
           signal: signal,
           kind: .assignTable,
-          title: "Review seating preference for \(signal.guestName)",
+          title: seatingPreferenceActionTitle(for: signal),
           reason: signal.message
         )
       case .previousServiceIssue:
@@ -165,7 +165,7 @@ enum HostGuestIntelligenceSupport {
           id: "guest-action-occasion-\(signal.reservationID)",
           signal: signal,
           kind: .alertServer,
-          title: "Note special occasion for \(signal.guestName)",
+          title: "Review occasion note for \(signal.guestName)",
           reason: signal.message
         )
       case .regularGuest, .vip, .importantGuest, .noteReminder, .unknown:
@@ -207,13 +207,21 @@ enum HostGuestIntelligenceSupport {
     let matched = matchedKeywords(in: combined, keywords: allergyKeywords, negations: allergyNegationPhrases)
     guard !matched.isEmpty else { return nil }
 
+    let rawNotes = rawCombinedNotes(for: reservation)
+    let message: String
+    if let snippet = HostGuestNoteSnippetExtractor.allergySnippet(from: rawNotes) {
+      message = "\(reservation.guestName) has \(snippet) noted."
+    } else {
+      message = "\(reservation.guestName) has allergy-related notes."
+    }
+
     return HostGuestSignal(
       id: "guest-allergy-\(reservation.remoteID)",
       reservationID: reservation.remoteID,
       guestName: reservation.guestName,
       kind: .allergy,
       severity: .critical,
-      message: "\(reservation.guestName) has allergy-related notes.",
+      message: message,
       evidence: matched
     )
   }
@@ -235,13 +243,30 @@ enum HostGuestIntelligenceSupport {
       evidence.append(report.primaryPhone != nil ? "matchedByPhone" : "matchedByEmail")
     }
 
+    if let lastVisit = lastPriorVisitDisplayDate(
+      report: report,
+      excludingReservationID: reservation.remoteID
+    ) {
+      evidence.append("lastVisit=\(lastVisit)")
+    }
+
+    let message = returningGuestMessage(
+      guestName: reservation.guestName,
+      visitCount: report.summary.totalMatchedReservations,
+      lastVisitDisplayDate: lastPriorVisitDisplayDate(
+        report: report,
+        excludingReservationID: reservation.remoteID
+      ),
+      frequent: false
+    )
+
     return HostGuestSignal(
       id: "guest-regular-\(reservation.remoteID)",
       reservationID: reservation.remoteID,
       guestName: reservation.guestName,
       kind: .regularGuest,
       severity: .info,
-      message: "\(reservation.guestName) is a returning guest.",
+      message: message,
       evidence: evidence
     )
   }
@@ -252,54 +277,119 @@ enum HostGuestIntelligenceSupport {
   ) -> HostGuestSignal? {
     guard report.regularityLevel == .frequentRegular else { return nil }
 
+    var evidence = [
+      "frequentRegular",
+      "visitCount=\(report.summary.totalMatchedReservations)"
+    ]
+    if let lastVisit = lastPriorVisitDisplayDate(
+      report: report,
+      excludingReservationID: reservation.remoteID
+    ) {
+      evidence.append("lastVisit=\(lastVisit)")
+    }
+
+    let message = returningGuestMessage(
+      guestName: reservation.guestName,
+      visitCount: report.summary.totalMatchedReservations,
+      lastVisitDisplayDate: lastPriorVisitDisplayDate(
+        report: report,
+        excludingReservationID: reservation.remoteID
+      ),
+      frequent: true
+    )
+
     return HostGuestSignal(
       id: "guest-important-\(reservation.remoteID)",
       reservationID: reservation.remoteID,
       guestName: reservation.guestName,
       kind: .importantGuest,
       severity: .watch,
-      message: "\(reservation.guestName) is a frequent regular guest.",
-      evidence: [
-        "frequentRegular",
-        "visitCount=\(report.summary.totalMatchedReservations)"
-      ]
+      message: message,
+      evidence: evidence
     )
   }
 
   private static func seatingPreferenceSignals(
     for reservation: ReservationRecord
   ) -> [HostGuestSignal] {
-    keywordSignals(
-      for: reservation,
-      keywords: seatingPreferenceKeywords,
-      kind: .seatingPreference,
-      severity: .watch,
-      messagePrefix: "has a seating preference"
-    )
+    let rawNotes = rawCombinedNotes(for: reservation)
+    let combined = combinedNotes(for: reservation)
+    guard !combined.isEmpty else { return [] }
+
+    let matched = matchedKeywords(in: combined, keywords: seatingPreferenceKeywords, negations: [])
+    let snippet = HostGuestNoteSnippetExtractor.seatingPreferenceSnippet(from: rawNotes)
+    guard !matched.isEmpty || snippet != nil else { return [] }
+
+    let message: String
+    if let snippet {
+      message = "\(reservation.guestName) prefers \(snippet) if available."
+    } else {
+      message = "\(reservation.guestName) has a seating preference noted."
+    }
+
+    return [
+      HostGuestSignal(
+        id: "guest-seatingPreference-\(reservation.remoteID)",
+        reservationID: reservation.remoteID,
+        guestName: reservation.guestName,
+        kind: .seatingPreference,
+        severity: .watch,
+        message: message,
+        evidence: matched.isEmpty ? ["snippet"] : matched
+      )
+    ]
   }
 
   private static func accessibilitySignals(
     for reservation: ReservationRecord
   ) -> [HostGuestSignal] {
-    keywordSignals(
-      for: reservation,
-      keywords: accessibilityKeywords,
-      kind: .accessibility,
-      severity: .warning,
-      messagePrefix: "has accessibility needs noted"
-    )
+    let rawNotes = rawCombinedNotes(for: reservation)
+    let combined = combinedNotes(for: reservation)
+    guard !combined.isEmpty else { return [] }
+
+    let matched = matchedKeywords(in: combined, keywords: accessibilityKeywords, negations: [])
+    guard !matched.isEmpty else { return [] }
+
+    let message: String
+    if let snippet = HostGuestNoteSnippetExtractor.accessibilitySnippet(from: rawNotes) {
+      message = "\(reservation.guestName) needs \(snippet) noted."
+    } else {
+      message = "\(reservation.guestName) has accessibility needs noted."
+    }
+
+    return [
+      HostGuestSignal(
+        id: "guest-accessibility-\(reservation.remoteID)",
+        reservationID: reservation.remoteID,
+        guestName: reservation.guestName,
+        kind: .accessibility,
+        severity: .warning,
+        message: message,
+        evidence: matched
+      )
+    ]
   }
 
   private static func specialOccasionSignals(
     for reservation: ReservationRecord
   ) -> [HostGuestSignal] {
-    keywordSignals(
-      for: reservation,
-      keywords: specialOccasionKeywords,
-      kind: .specialOccasion,
-      severity: .watch,
-      messagePrefix: "has a special occasion noted"
-    )
+    let combined = combinedNotes(for: reservation)
+    guard !combined.isEmpty else { return [] }
+
+    let matched = matchedKeywords(in: combined, keywords: specialOccasionKeywords, negations: [])
+    guard !matched.isEmpty else { return [] }
+
+    return [
+      HostGuestSignal(
+        id: "guest-specialOccasion-\(reservation.remoteID)",
+        reservationID: reservation.remoteID,
+        guestName: reservation.guestName,
+        kind: .specialOccasion,
+        severity: .watch,
+        message: "\(reservation.guestName) has a special occasion note.",
+        evidence: matched
+      )
+    ]
   }
 
   private static func cancellationRiskSignal(
@@ -455,7 +545,7 @@ enum HostGuestIntelligenceSupport {
       detail: signal.message,
       evidence: signal.evidence,
       relatedReservationIDs: [signal.reservationID],
-      suggestedActionTitle: suggestedActionTitle(for: signal.kind)
+      suggestedActionTitle: suggestedActionTitle(for: signal)
     )
   }
 
@@ -529,7 +619,7 @@ enum HostGuestIntelligenceSupport {
     case .allergy: return "Allergy note"
     case .regularGuest: return "Regular guest"
     case .vip, .importantGuest: return "Important guest"
-    case .specialOccasion: return "Special occasion"
+    case .specialOccasion: return "Special occasion note"
     case .seatingPreference: return "Seating preference"
     case .accessibility: return "Accessibility need"
     case .cancellationRisk: return "Cancellation risk"
@@ -542,18 +632,92 @@ enum HostGuestIntelligenceSupport {
     }
   }
 
-  private static func suggestedActionTitle(for kind: HostGuestSignalKind) -> String? {
-    switch kind {
-    case .allergy: return "Review allergy notes before seating."
-    case .accessibility: return "Plan accessible seating."
-    case .seatingPreference: return "Review seating preference before assigning."
-    case .previousServiceIssue: return "Alert the server before seating."
-    case .noShowRisk, .cancellationRisk: return "Review before confirming."
-    case .possibleDuplicate: return "Review possible same guest before confirming."
-    case .manualCallIn: return "Confirm contact details manually."
-    case .specialOccasion: return "Mention the occasion at arrival."
-    default: return nil
+  private static func suggestedActionTitle(for signal: HostGuestSignal) -> String? {
+    switch signal.kind {
+    case .allergy:
+      return "Review allergy notes before seating."
+    case .accessibility:
+      if let snippet = HostGuestNoteSnippetExtractor.accessibilitySnippet(from: signal.message) {
+        return "Plan \(snippet) for \(signal.guestName)."
+      }
+      return "Plan accessible seating."
+    case .seatingPreference:
+      return seatingPreferenceActionTitle(for: signal)
+    case .previousServiceIssue:
+      return "Alert the server before seating."
+    case .noShowRisk, .cancellationRisk:
+      return "Review before confirming."
+    case .possibleDuplicate:
+      return "Review possible same guest before confirming."
+    case .manualCallIn:
+      return "Confirm contact details manually."
+    case .specialOccasion:
+      return "Review the occasion note before seating."
+    default:
+      return nil
     }
+  }
+
+  private static func seatingPreferenceActionTitle(for signal: HostGuestSignal) -> String {
+    guard let range = signal.message.range(of: "prefers ") else {
+      return "Review seating notes before assigning a table."
+    }
+    let tail = signal.message[range.upperBound...]
+      .replacingOccurrences(of: " if available.", with: "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !tail.isEmpty else {
+      return "Review seating notes before assigning a table."
+    }
+    return "Review \(tail) preference before assigning a table."
+  }
+
+  // MARK: - Returning Guest Copy
+
+  private static func returningGuestMessage(
+    guestName: String,
+    visitCount: Int,
+    lastVisitDisplayDate: String?,
+    frequent: Bool
+  ) -> String {
+    if visitCount >= 2, let ordinal = ordinalVisitText(for: visitCount) {
+      var message = frequent
+        ? "\(guestName) is a frequent returning guest; this appears to be their \(ordinal)."
+        : "\(guestName) is a returning guest; this appears to be their \(ordinal)."
+      if let lastVisitDisplayDate {
+        message += " Last visit: \(lastVisitDisplayDate)."
+      }
+      return message
+    }
+
+    if frequent {
+      return "\(guestName) is a frequent returning guest."
+    }
+    return "\(guestName) is a returning guest."
+  }
+
+  private static func ordinalVisitText(for visitCount: Int) -> String? {
+    guard visitCount >= 2 else { return nil }
+    switch visitCount {
+    case 2: return "2nd visit"
+    case 3: return "3rd visit"
+    default: return "\(visitCount)th visit"
+    }
+  }
+
+  private static func lastPriorVisitDisplayDate(
+    report: GuestInsightReport,
+    excludingReservationID: Int
+  ) -> String? {
+    report.matchedReservations
+      .filter { $0.reservationID != excludingReservationID }
+      .sorted { lhs, rhs in
+        if lhs.date == rhs.date {
+          return lhs.time < rhs.time
+        }
+        return lhs.date > rhs.date
+      }
+      .first?
+      .displayDate
   }
 
   // MARK: - Keyword Helpers
@@ -584,10 +748,14 @@ enum HostGuestIntelligenceSupport {
     ]
   }
 
-  private static func combinedNotes(for reservation: ReservationRecord) -> String {
+  private static func rawCombinedNotes(for reservation: ReservationRecord) -> String {
     "\(reservation.guestNotes ?? "") \(reservation.staffNotes ?? "")"
-      .lowercased()
+      .replacingOccurrences(of: "\n", with: " ")
       .trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private static func combinedNotes(for reservation: ReservationRecord) -> String {
+    rawCombinedNotes(for: reservation).lowercased()
   }
 
   private static func matchedKeywords(

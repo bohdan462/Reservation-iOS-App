@@ -55,6 +55,14 @@ extension Date {
     }
 }
 
+func activeReservationWindowQueryBounds(daysAhead: Int = 120) -> (from: String, to: String) {
+    let now = Date()
+    let calendar = Calendar.current
+    let from = calendar.date(byAdding: .day, value: -1, to: now) ?? now
+    let to = calendar.date(byAdding: .day, value: daysAhead, to: now) ?? now
+    return (from.reservationDateString(), to.reservationDateString())
+}
+
 enum ReservationScheduleScope: String, CaseIterable, Identifiable {
     case upcoming = "Upcoming"
     case needsReview = "Review"
@@ -62,6 +70,15 @@ enum ReservationScheduleScope: String, CaseIterable, Identifiable {
     case cancelled = "Cancelled"
 
     var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .needsReview:
+            return "New"
+        default:
+            return rawValue
+        }
+    }
 }
 
 enum ReservationQueueScope: String, CaseIterable, Identifiable {

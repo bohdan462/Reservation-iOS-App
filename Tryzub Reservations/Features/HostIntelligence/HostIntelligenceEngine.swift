@@ -144,6 +144,12 @@ struct HostIntelligenceEngine {
     )
     briefingFacts.append(contentsOf: bookingIntelligence.facts)
     suggestedActions.append(contentsOf: bookingIntelligence.actions)
+    appendNewReservationsAttentionFacts(
+      activeReservations: activeReservations,
+      existingFacts: briefingFacts,
+      briefingFacts: &briefingFacts,
+      suggestedActions: &suggestedActions
+    )
 
     let analyticsIntelligence: HostAnalyticsIntelligenceResult
     if context.settings.includeAnalyticsSignals {
@@ -569,7 +575,7 @@ struct HostIntelligenceEngine {
             "dueWindowMinutes=\(settings.noTableDueSoonMinutes)"
           ],
           relatedReservationIDs: [reservation.remoteID],
-          suggestedActionTitle: "Assign a table before they arrive."
+          suggestedActionTitle: "Review table plan before they arrive."
         )
       )
 
@@ -577,8 +583,8 @@ struct HostIntelligenceEngine {
         HostSuggestedAction(
           id: "assign-table-\(reservation.remoteID)",
           severity: severity,
-          kind: .assignTable,
-          title: "Assign table for \(reservation.guestName)",
+          kind: .reviewReservation,
+          title: "Review table plan for \(reservation.guestName)",
           reason: "Reservation at \(timeLabel) has no table assigned.",
           relatedReservationIDs: [reservation.remoteID],
           targetSlotTime: reservation.reservationTime,
@@ -872,7 +878,17 @@ struct HostIntelligenceEngine {
     var fitAvailableCount = 0
     var noSuitableCount = 0
 
+    let largePartyThreshold = context.settings.largePartyThreshold
+
     for reservation in reservations {
+      let partySize = reservation.partySize
+      guard HostTableIntelligenceSupport.shouldSurfaceNoTableFitAdvice(
+        partySize: partySize,
+        largePartyThreshold: largePartyThreshold
+      ) else {
+        continue
+      }
+
       let options = HostTableIntelligenceSupport.bestTableFitOptions(
         for: reservation,
         tableConfigs: context.tableConfigs,
@@ -881,29 +897,38 @@ struct HostIntelligenceEngine {
 
       if let best = options.first {
         fitAvailableCount += 1
-        let tableLabel = HostTableIntelligenceSupport.displayTableNames(best.tableNames)
+        let guestName = reservation.guestName
         let detail: String
+        let suggestedActionTitle: String
+        let actionTitle: String
+        let factTitle: String
+
         if best.isCombination {
-          detail = "Party of \(reservation.partySize) for \(reservation.guestName) has no table; \(tableLabel) can fit them."
+          factTitle = "Combined table plan may be needed"
+          detail = "Party of \(partySize) for \(guestName) may need a combined table plan."
+          suggestedActionTitle = "Review combined table option."
+          actionTitle = "Review combined table option"
         } else {
-          detail = "Party of \(reservation.partySize) for \(reservation.guestName) has no table; \(tableLabel) can fit them."
+          factTitle = "Large party needs table planning"
+          detail = "Party of \(partySize) for \(guestName) needs table planning."
+          suggestedActionTitle = "Review table plan for \(guestName)."
+          actionTitle = "Review table plan for \(guestName)"
         }
 
         facts.append(
           HostBriefingFact(
             id: "table-fit-\(reservation.remoteID)",
             severity: .watch,
-            category: .table,
-            title: "Table fit available",
+            category: .largeParty,
+            title: factTitle,
             detail: detail,
             evidence: [
+              "partySize=\(partySize)",
               "fitQuality=\(best.fitQuality.rawValue)",
-              "totalCapacity=\(best.totalCapacity)"
+              "combination=\(best.isCombination)"
             ],
             relatedReservationIDs: [reservation.remoteID],
-            suggestedActionTitle: best.isCombination
-              ? "Review \(tableLabel)."
-              : "Assign \(tableLabel)."
+            suggestedActionTitle: suggestedActionTitle
           )
         )
 
@@ -911,12 +936,12 @@ struct HostIntelligenceEngine {
           HostSuggestedAction(
             id: "table-fit-action-\(reservation.remoteID)",
             severity: .watch,
-            kind: .assignTable,
-            title: best.isCombination ? "Review \(tableLabel)" : "Assign \(tableLabel)",
+            kind: .reviewReservation,
+            title: actionTitle,
             reason: detail,
             relatedReservationIDs: [reservation.remoteID],
             targetSlotTime: reservation.reservationTime,
-            targetTableName: tableLabel,
+            targetTableName: nil,
             requiresStaffConfirmation: true
           )
         )
@@ -924,10 +949,10 @@ struct HostIntelligenceEngine {
         signals.append(
           HostTableSignal(
             id: "table-fit-signal-\(reservation.remoteID)",
-            tableName: best.tableNames.first,
+            tableName: nil,
             kind: .noTableAssigned,
             severity: .watch,
-            title: "Table fit available",
+            title: factTitle,
             detail: detail,
             relatedReservationIDs: [reservation.remoteID],
             evidence: ["combination=\(best.isCombination)"]
@@ -935,20 +960,23 @@ struct HostIntelligenceEngine {
         )
       } else {
         noSuitableCount += 1
-        let severity: HostSeverity = reservation.partySize >= context.settings.criticalPartyThreshold
+        let severity: HostSeverity = partySize >= context.settings.criticalPartyThreshold
           ? .critical
           : .warning
+        let guestName = reservation.guestName
+        let detail =
+          "Party of \(partySize) for \(guestName) has no configured single-table or pair fit."
 
         facts.append(
           HostBriefingFact(
             id: "no-table-fit-\(reservation.remoteID)",
             severity: severity,
-            category: .table,
+            category: .largeParty,
             title: "No suitable table",
-            detail: "Party of \(reservation.partySize) for \(reservation.guestName) has no configured table fit.",
-            evidence: ["partySize=\(reservation.partySize)"],
+            detail: detail,
+            evidence: ["partySize=\(partySize)"],
             relatedReservationIDs: [reservation.remoteID],
-            suggestedActionTitle: "Review table plan manually."
+            suggestedActionTitle: "Review table plan for \(guestName)."
           )
         )
 
@@ -957,8 +985,8 @@ struct HostIntelligenceEngine {
             id: "no-table-fit-action-\(reservation.remoteID)",
             severity: severity,
             kind: .reviewReservation,
-            title: "Review table plan for \(reservation.guestName)",
-            reason: "No configured single table or pair can seat \(reservation.partySize) guests.",
+            title: "Review table plan for \(guestName)",
+            reason: detail,
             relatedReservationIDs: [reservation.remoteID],
             targetSlotTime: reservation.reservationTime,
             targetTableName: nil,
@@ -986,30 +1014,26 @@ struct HostIntelligenceEngine {
     var count = 0
 
     for reservation in reservations where reservation.isOpenWork && reservation.hasTableAssignment {
-      guard let assignedName = reservation.assignedTableName else { continue }
-      let parsedNames = HostTableIntelligenceSupport.parseAssignedTableNames(assignedName)
-      guard let matchedTables = HostTableIntelligenceSupport.matchingTables(
-        for: parsedNames,
-        in: context.tableConfigs
+      guard let mismatch = HostTableIntelligenceSupport.assignedTableCapacityMismatch(
+        for: reservation,
+        tableConfigs: context.tableConfigs
       ) else {
         continue
       }
 
-      let totalCapacity = matchedTables.reduce(0) { $0 + $1.capacity }
-      guard reservation.partySize > totalCapacity else { continue }
-
       count += 1
       let tableLabel = HostTableIntelligenceSupport.displayTableNames(
-        matchedTables.map(\.name)
+        mismatch.tables.map(\.name)
       )
-      let detail = "Party of \(reservation.partySize) is assigned to \(tableLabel), which seats \(totalCapacity)."
+      let totalCapacity = mismatch.totalCapacity
+      let detail = "Assigned table may be too small for party of \(reservation.partySize) at \(tableLabel) (seats \(totalCapacity))."
 
       facts.append(
         HostBriefingFact(
           id: "table-mismatch-\(reservation.remoteID)",
           severity: .critical,
           category: .table,
-          title: "Assigned table too small",
+          title: "Assigned table may be too small",
           detail: detail,
           evidence: [
             "partySize=\(reservation.partySize)",
@@ -1025,7 +1049,7 @@ struct HostIntelligenceEngine {
           id: "table-mismatch-action-\(reservation.remoteID)",
           severity: .critical,
           kind: .reviewReservation,
-          title: "Review assignment for \(reservation.guestName)",
+          title: "Review table assignment for \(reservation.guestName)",
           reason: detail,
           relatedReservationIDs: [reservation.remoteID],
           targetSlotTime: reservation.reservationTime,
@@ -1399,6 +1423,62 @@ struct HostIntelligenceEngine {
 
   private func shouldCountReservationInAnalysis(_ reservation: ReservationRecord) -> Bool {
     !reservation.isHidden && reservation.isExpectedGuest
+  }
+
+  private func appendNewReservationsAttentionFacts(
+    activeReservations: [ReservationRecord],
+    existingFacts: [HostBriefingFact],
+    briefingFacts: inout [HostBriefingFact],
+    suggestedActions: inout [HostSuggestedAction]
+  ) {
+    let pending = activeReservations.filter {
+      $0.statusValue == .new || $0.statusValue == .needsReview
+    }
+    guard !pending.isEmpty else { return }
+    guard !existingFacts.contains(where: { $0.id == "new-reservations-attention" }) else { return }
+
+    let coveredIDs = Set(
+      existingFacts
+        .filter { $0.category == .bookingDecision }
+        .flatMap(\.relatedReservationIDs)
+    )
+    let uncovered = pending.filter { !coveredIDs.contains($0.remoteID) }
+    guard !uncovered.isEmpty else { return }
+
+    let count = pending.count
+    let detail = count == 1
+      ? "One new reservation is waiting for staff review."
+      : "\(count) new reservations are waiting for staff review."
+
+    briefingFacts.append(
+      HostBriefingFact(
+        id: "new-reservations-attention",
+        severity: .watch,
+        category: .bookingDecision,
+        title: "New reservations",
+        detail: detail,
+        evidence: [
+          "new=\(pending.filter { $0.statusValue == .new }.count)",
+          "needsReview=\(pending.filter { $0.statusValue == .needsReview }.count)"
+        ],
+        relatedReservationIDs: pending.map(\.remoteID),
+        suggestedActionTitle: nil
+      )
+    )
+
+    suggestedActions.append(
+      HostSuggestedAction(
+        id: "review-new-reservations",
+        severity: .watch,
+        kind: .reviewReservation,
+        title: "Open New bookings",
+        reason: detail,
+        relatedReservationIDs: pending.map(\.remoteID),
+        targetSlotTime: nil,
+        targetTableName: nil,
+        requiresStaffConfirmation: true
+      )
+    )
   }
 
   private func deduplicatedActions(_ actions: [HostSuggestedAction]) -> [HostSuggestedAction] {

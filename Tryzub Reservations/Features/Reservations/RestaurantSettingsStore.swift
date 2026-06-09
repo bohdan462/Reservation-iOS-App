@@ -52,6 +52,11 @@ final class RestaurantSettingsStore: ObservableObject {
     private var blockedSlotsByDate: [String: RestaurantBlockedSlotsResponseDTO] = [:]
     private var blockedSlotsLoadedAtByDate: [String: Date] = [:]
     private var dateOperationsLoadedAtByDate: [String: Date] = [:]
+    private var setupLoadedAt: Date?
+    private let setupFreshnessInterval: TimeInterval = 300
+    private var lastAnalyticsRequestKey: String?
+    private var analyticsInFlightKey: String?
+    private let analyticsFreshnessInterval: TimeInterval = 120
 
     // MARK: - Lifecycle
 
@@ -61,8 +66,17 @@ final class RestaurantSettingsStore: ObservableObject {
 
     // MARK: - Setup
 
+    func adoptRestaurantSetup(_ loadedSetup: RestaurantSetup, loadedAt: Date = Date()) {
+        setup = loadedSetup
+        setupLoadedAt = loadedAt
+    }
+
     @discardableResult
-    func loadRestaurantSetup() async throws -> RestaurantSetup {
+    func loadRestaurantSetup(force: Bool = false) async throws -> RestaurantSetup {
+        if !force, isFresh(setupLoadedAt), setup != .default {
+            return setup
+        }
+
         guard !setupLoading else { return setup }
 
         setupLoading = true
@@ -73,6 +87,7 @@ final class RestaurantSettingsStore: ObservableObject {
             let dto = try await apiClient.fetchRestaurantSetup(reason: .restaurantSetup)
             let loadedSetup = RestaurantSetup(dto: dto)
             setup = loadedSetup
+            setupLoadedAt = Date()
             return loadedSetup
         } catch {
             setupError = error.localizedDescription
@@ -436,15 +451,34 @@ final class RestaurantSettingsStore: ObservableObject {
     // MARK: - Analytics
 
     @discardableResult
-    func loadReservationAnalyticsSummary(from: String?, to: String?) async throws -> ReservationAnalyticsSummaryDTO {
-        guard !analyticsLoading else {
-            if let analyticsSummary { return analyticsSummary }
+    func loadReservationAnalyticsSummary(
+        from: String?,
+        to: String?,
+        force: Bool = false
+    ) async throws -> ReservationAnalyticsSummaryDTO {
+        let requestKey = "\(from ?? "")|\(to ?? "")"
+
+        if !force,
+           lastAnalyticsRequestKey == requestKey,
+           let analyticsSummary,
+           isFresh(analyticsLoadedAt, interval: analyticsFreshnessInterval) {
+            return analyticsSummary
+        }
+
+        if analyticsLoading {
+            if analyticsInFlightKey == requestKey, let analyticsSummary {
+                return analyticsSummary
+            }
             throw SettingsValidationError(message: "Analytics are already loading.")
         }
 
         analyticsLoading = true
+        analyticsInFlightKey = requestKey
         analyticsError = nil
-        defer { analyticsLoading = false }
+        defer {
+            analyticsLoading = false
+            analyticsInFlightKey = nil
+        }
 
         do {
             let summary = try await apiClient.fetchReservationAnalyticsSummary(
@@ -454,6 +488,7 @@ final class RestaurantSettingsStore: ObservableObject {
             )
             analyticsSummary = summary
             analyticsLoadedAt = Date()
+            lastAnalyticsRequestKey = requestKey
             return summary
         } catch {
             analyticsError = error.localizedDescription
@@ -463,9 +498,9 @@ final class RestaurantSettingsStore: ObservableObject {
 
     // MARK: - Private Helpers
 
-    private func isFresh(_ loadedAt: Date?) -> Bool {
+    private func isFresh(_ loadedAt: Date?, interval: TimeInterval? = nil) -> Bool {
         guard let loadedAt else { return false }
-        return Date().timeIntervalSince(loadedAt) < dateOperationsFreshnessInterval
+        return Date().timeIntervalSince(loadedAt) < (interval ?? dateOperationsFreshnessInterval)
     }
 
     private static func date(from value: String) -> Date? {
@@ -575,6 +610,7 @@ extension RestaurantSetup {
 
 struct RestaurantSettingsView: View {
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @ObservedObject var settingsStore: RestaurantSettingsStore
 
     @State private var draft = RestaurantSetupDraft(setup: .default)
@@ -584,7 +620,9 @@ struct RestaurantSettingsView: View {
     @State private var errorMessage: String?
     @State private var successMessage: String?
     @State private var didLoadInitialDraft = false
+    @State private var tableCapacityValidationMessage: String?
     @AppStorage(ReservationTableOptionsStore.storageKey) private var tableOptionsRawValue = ReservationTableOptionsStore.defaultRawValue
+    @AppStorage(HostTableCapacityTextParser.storageKey) private var tableCapacityRawValue = ""
 
     private var hasChanges: Bool {
         draft != savedDraft
@@ -640,11 +678,26 @@ struct RestaurantSettingsView: View {
 
                 SettingsCard(title: "Table Names", systemImage: "table.furniture") {
                     SettingsTextEditor(
-                        title: "iOS-local table list",
+                        title: "Assign Table button names",
                         text: $tableOptionsRawValue,
                         minHeight: 92
                     )
-                    SettingsHelperText("Temporary local list for Assign Table chips. Use one table per line or comma-separated names. Backend restaurant setup does not yet expose table_names.")
+                    SettingsHelperText("Used for Assign Table buttons. The reservation saves only the table name (for example, A1 or Patio). One name per line or comma-separated.")
+                }
+
+                SettingsCard(title: "Table Capacity (Host Intelligence)", systemImage: "person.2.badge.gearshape") {
+                    SettingsTextEditor(
+                        title: "Names with seats",
+                        text: $tableCapacityRawValue,
+                        placeholder: HostTableCapacityTextParser.formattedExample(),
+                        minHeight: 92
+                    )
+                    SettingsHelperText("Optional local seat counts for Host Intelligence suggestions. Example: A1: 4 A2: 4 Patio: 6. This does not change the backend. Assign Table still saves only \"A1\", \"A2\", etc.")
+                    if let tableCapacityValidationMessage {
+                        Text(tableCapacityValidationMessage)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.orange)
+                    }
                 }
 
                 SettingsCard(title: "Email Identity", systemImage: "envelope") {
@@ -702,11 +755,41 @@ struct RestaurantSettingsView: View {
         .task {
             await load(forceDraftUpdate: !didLoadInitialDraft)
         }
+        .onAppear {
+            applyTableCapacityConfiguration()
+        }
+        .onChange(of: tableCapacityRawValue) { _, _ in
+            applyTableCapacityConfiguration()
+        }
+    }
+
+    private func applyTableCapacityConfiguration() {
+        let result = HostTableCapacityTextParser.parse(tableCapacityRawValue)
+        hostTableConfigStore.save(result.tables)
+
+        if let invalidLine = result.invalidLines.first {
+            if result.invalidLines.count == 1 {
+                tableCapacityValidationMessage = "Could not parse: \(invalidLine)"
+            } else {
+                tableCapacityValidationMessage = "Could not parse: \(invalidLine) (+\(result.invalidLines.count - 1) more)"
+            }
+        } else {
+            tableCapacityValidationMessage = nil
+        }
+
+        guard !result.tableNames.isEmpty else { return }
+        let chipNames = ReservationTableOptionsStore.options(from: tableOptionsRawValue)
+        let merged = (chipNames + result.tableNames).uniquedPreservingOrder()
+        guard merged != chipNames else { return }
+        tableOptionsRawValue = merged.joined(separator: "\n")
     }
 
     private func load(forceDraftUpdate: Bool) async {
         errorMessage = nil
         successMessage = nil
+        if settingsStore.setup == .default {
+            settingsStore.adoptRestaurantSetup(controller.restaurantSetup)
+        }
         do {
             let loadedSetup = try await settingsStore.loadRestaurantSetup()
             setup = loadedSetup
@@ -1410,7 +1493,7 @@ struct BusinessAnalyticsView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task { await load() }
+                    Task { await load(force: true) }
                 } label: {
                     if isLoading || settingsStore.analyticsLoading {
                         ProgressView()
@@ -1432,6 +1515,11 @@ struct BusinessAnalyticsView: View {
         VStack(alignment: .leading, spacing: 14) {
             KPIGrid(summary: summary)
                 .padding(.horizontal, 16)
+
+            BusinessAnalyticsInsightsSection(
+                lines: BusinessAnalyticsInsightBuilder.build(from: summary)
+            )
+            .padding(.horizontal, 16)
 
             AnalyticsStatusSection(rows: summary.byStatus)
                 .padding(.horizontal, 16)
@@ -1456,7 +1544,7 @@ struct BusinessAnalyticsView: View {
         }
     }
 
-    private func load() async {
+    private func load(force: Bool = false) async {
         guard !isLoading else { return }
         if summary == nil, let cached = settingsStore.analyticsSummary {
             summary = cached
@@ -1472,10 +1560,39 @@ struct BusinessAnalyticsView: View {
             let dateRange = range.dateRange()
             summary = try await settingsStore.loadReservationAnalyticsSummary(
                 from: dateRange.from,
-                to: dateRange.to
+                to: dateRange.to,
+                force: force
             )
         } catch {
-            errorMessage = error.localizedDescription
+            if !error.isCancellationLike {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
+private struct BusinessAnalyticsInsightsSection: View {
+    let lines: [String]
+
+    var body: some View {
+        SettingsCard(title: "Business insights", systemImage: "lightbulb") {
+            if lines.isEmpty {
+                Text("No interpretation is available for this range yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Based on backend aggregate reservation analytics.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.subheadline)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
         }
     }
 }
@@ -1633,6 +1750,7 @@ private struct SettingsNumberField: View {
 private struct SettingsTextEditor: View {
     let title: String
     @Binding var text: String
+    var placeholder: String?
     var minHeight: CGFloat = 88
 
     var body: some View {
@@ -1641,17 +1759,29 @@ private struct SettingsTextEditor: View {
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
 
-            TextEditor(text: $text)
-                .font(.subheadline.weight(.medium))
-                .frame(minHeight: minHeight)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .scrollContentBackground(.hidden)
-                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $text)
+                    .font(.subheadline.weight(.medium))
+                    .frame(minHeight: minHeight)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .scrollContentBackground(.hidden)
+
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   let placeholder {
+                    Text(placeholder)
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 14)
+                        .allowsHitTesting(false)
                 }
+            }
+            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            }
         }
     }
 }

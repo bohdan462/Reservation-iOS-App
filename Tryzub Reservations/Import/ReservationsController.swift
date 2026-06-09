@@ -20,6 +20,12 @@ final class ReservationsController: ObservableObject {
         didSet { refreshStaffStatusDotStyle() }
     }
 
+    // Presentation-only entrance state for cache-first launch.
+    @Published private(set) var startupPresentationState: StartupPresentationState = .checkingCache
+    @Published private(set) var startupNetworkPassError: String?
+    @Published private(set) var localCacheStoreHasReservations = false
+    @Published private(set) var hasReleasedStartupUI = false
+
     // Tracks the quiet host-board loop that keeps today's cache warm.
     @Published private(set) var isAutoRefreshing = false {
         didSet { publishOperationState() }
@@ -170,6 +176,19 @@ final class ReservationsController: ObservableObject {
         notices.removeAll()
         errorMessage = nil
         noticeMessage = nil
+        hasAttemptedInitialLoad = false
+        startupPresentationState = .checkingCache
+        startupNetworkPassError = nil
+        localCacheStoreHasReservations = false
+        hasReleasedStartupUI = false
+    }
+
+    func releaseStartupUI() {
+        hasReleasedStartupUI = true
+        guard startupPresentationState == .loadingSavedReservations else { return }
+        startupPresentationState = isStartupNetworkPassInFlight
+            ? .showingCachedDataRefreshing
+            : .ready
     }
 
     private func cancelOwnedTasksForSessionEnd() {
@@ -207,8 +226,9 @@ final class ReservationsController: ObservableObject {
     // Intent: App starts with cached reservations visible, then refreshes the shared active window.
     // Called by: ReservationsListView root task.
     // Network: GET /managed-reservations?from=...&to=... when refresh proceeds.
-    func loadIfNeeded(context: ModelContext) async {
-        guard !hasAttemptedInitialLoad else { return }
+    @discardableResult
+    func loadIfNeeded(context: ModelContext) async -> Bool {
+        guard !hasAttemptedInitialLoad else { return true }
         hasAttemptedInitialLoad = true
 
         do {
@@ -226,18 +246,98 @@ final class ReservationsController: ObservableObject {
             )
         }
 
-        await performActiveWindowRefresh(context: context, mode: .startup, force: true)
+        return await performActiveWindowRefresh(context: context, mode: .startup, force: true)
+    }
+
+    // Intent: Cache-first entrance. Shows tabs immediately when SwiftData has reservations.
+    func beginStartupPresentation(context: ModelContext) async {
+        if case .failedNoCache = startupPresentationState {
+            hasAttemptedInitialLoad = false
+        }
+
+        startupPresentationState = .checkingCache
+        startupNetworkPassError = nil
+
+        await hydrateCacheMetadata(context: context)
+        let hasCache = Self.hasUsableCachedReservations(in: context)
+
+        if hasCache {
+            localCacheStoreHasReservations = true
+            hasReleasedStartupUI = true
+            startupPresentationState = .showingCachedDataRefreshing
+            Task { @MainActor in
+                _ = await self.performStartupNetworkPass(context: context)
+            }
+            return
+        }
+
+        startupPresentationState = .emptyCacheLoadingNetwork
+        let refreshSucceeded = await performStartupNetworkPass(context: context)
+
+        if Self.hasUsableCachedReservations(in: context) {
+            startupPresentationState = .ready
+            return
+        }
+
+        if refreshSucceeded {
+            startupPresentationState = .ready
+            return
+        }
+
+        startupPresentationState = .failedNoCache(
+            startupNetworkPassError ?? "Could not load reservations. Check your connection and try again."
+        )
     }
 
     // Intent: Runs the cold-start sync pass without blocking the launch splash.
     // Network: GET active window, then GET restaurant-setup (serialized by the API client).
-    func performStartupNetworkPass(context: ModelContext) async {
-        guard !isStartupNetworkPassInFlight else { return }
+    @discardableResult
+    func performStartupNetworkPass(context: ModelContext) async -> Bool {
+        guard !isStartupNetworkPassInFlight else { return false }
         isStartupNetworkPassInFlight = true
-        defer { isStartupNetworkPassInFlight = false }
+        defer {
+            isStartupNetworkPassInFlight = false
+            if startupPresentationState == .showingCachedDataRefreshing {
+                startupPresentationState = .ready
+            }
+        }
 
-        await loadIfNeeded(context: context)
+        startupNetworkPassError = nil
+        let refreshSucceeded = await loadIfNeeded(context: context)
+        if !refreshSucceeded {
+            startupNetworkPassError = notices.last(where: { $0.source == .startup })?.message
+                ?? "Could not refresh reservations."
+        }
+
         _ = try? await loadRestaurantSetup(context: context)
+        return refreshSucceeded
+    }
+
+    static func hasUsableCachedReservations(in context: ModelContext) -> Bool {
+        var descriptor = FetchDescriptor<ReservationRecord>(
+            predicate: #Predicate<ReservationRecord> { reservation in
+                !reservation.isHidden
+            }
+        )
+        descriptor.fetchLimit = 1
+        return ((try? context.fetch(descriptor))?.isEmpty == false)
+    }
+
+    func noteStartupWindowQueryDelivered(rowCount: Int) {
+        guard startupPresentationState == .loadingSavedReservations else { return }
+        guard rowCount > 0 else { return }
+        releaseStartupUI()
+    }
+
+    private func hydrateCacheMetadata(context: ModelContext) async {
+        do {
+            let repository = ReservationRepository(context: context)
+            if let latestLocalSyncDate = try repository.latestLocalSyncDate() {
+                lastSyncedAt = latestLocalSyncDate
+            }
+        } catch {
+            // Cache metadata is optional for presentation; startup refresh may still proceed.
+        }
     }
 
     // MARK: - Legacy Refresh Entry Points

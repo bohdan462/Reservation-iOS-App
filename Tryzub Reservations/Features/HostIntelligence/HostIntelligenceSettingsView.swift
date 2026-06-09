@@ -67,14 +67,13 @@ struct HostIntelligenceSettingsView: View {
         Text("Diagnostics can test the model. Host board use should remain off until output quality is verified.")
           .font(.caption)
           .foregroundStyle(.secondary)
-
-        Toggle("Show separated briefing prompts", isOn: binding(\.useSeparatedBriefingPrompts))
-          .disabled(!settingsStore.settings.useEnhancedBriefing)
-
-        Text("Breaks Host Intelligence into Table Plan, Guest Notes, and Timing prompts when useful.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
       }
+
+      Toggle("Show separated operational prompts", isOn: binding(\.useSeparatedBriefingPrompts))
+
+      Text("Adds a Review Intelligence view that breaks deterministic Host Intelligence facts into Reservation Attention, Table Plan, Guest Notes, Timing, and Booking prompts. This does not use the local model.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
 
       Text("The engine still makes all decisions. The writer only rewrites approved facts.")
         .font(.caption)

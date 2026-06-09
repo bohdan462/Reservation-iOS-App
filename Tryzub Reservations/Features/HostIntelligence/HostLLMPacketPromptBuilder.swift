@@ -27,9 +27,15 @@ enum HostLLMPacketPromptBuilder {
       Do not say no changes are needed unless there are no facts.
       Use review/check language, not completed-action language.
       Write as a reminder, not as a report of completed work.
+      Special occasion notes should be reviewed or shared with the server.
+      Do not instruct staff to mention the occasion directly unless the approved fact explicitly says to do so.
+      Do not invent visit counts, last-visit dates, or guest history.
+      Use returning-guest context only when provided in approved facts or evidence.
       Use table capacity only if it is provided in the approved facts.
       Do not invent table numbers, table capacities, or table assignments.
       Say review or check table options; never say a table was assigned.
+      Do not recommend assigning a specific table for small parties.
+      Table suggestions are review-only and should focus on large parties, capacity mismatches, or combined-table needs.
       Return only the final briefing text.
       Do not repeat instructions.
       Do not label the answer.
