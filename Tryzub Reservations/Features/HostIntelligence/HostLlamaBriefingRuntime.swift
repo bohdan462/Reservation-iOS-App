@@ -31,7 +31,26 @@ struct HostLlamaRunDiagnostics: Equatable {
 }
 
 enum HostLlamaBriefingRuntimeDiagnostics {
-  nonisolated(unsafe) static var lastRun = HostLlamaRunDiagnostics()
+  private static let lock = NSLock()
+  nonisolated(unsafe) private static var _lastRun = HostLlamaRunDiagnostics()
+
+  static var lastRun: HostLlamaRunDiagnostics {
+    lock.lock()
+    defer { lock.unlock() }
+    return _lastRun
+  }
+
+  static func storeLastRun(_ diagnostics: HostLlamaRunDiagnostics) {
+    lock.lock()
+    defer { lock.unlock() }
+    _lastRun = diagnostics
+  }
+
+  static func resetLastRun() {
+    lock.lock()
+    defer { lock.unlock() }
+    _lastRun = HostLlamaRunDiagnostics()
+  }
 }
 
 #if DEBUG
@@ -126,16 +145,16 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
       )
     } catch let error as HostLocalModelRuntimeError {
       diagnostics.lastError = error.errorDescription
-      HostLlamaBriefingRuntimeDiagnostics.lastRun = diagnostics
+      HostLlamaBriefingRuntimeDiagnostics.storeLastRun(diagnostics)
       throw error
     } catch {
       let message = error.localizedDescription
       diagnostics.lastError = message
-      HostLlamaBriefingRuntimeDiagnostics.lastRun = diagnostics
+      HostLlamaBriefingRuntimeDiagnostics.storeLastRun(diagnostics)
       throw HostLocalModelRuntimeError.generationFailed(message)
     }
 
-    HostLlamaBriefingRuntimeDiagnostics.lastRun = diagnostics
+    HostLlamaBriefingRuntimeDiagnostics.storeLastRun(diagnostics)
 
     let sanitized = Self.sanitizeGeneratedBriefing(generated)
     let trimmed = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)

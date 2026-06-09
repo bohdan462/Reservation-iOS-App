@@ -19,82 +19,146 @@ struct HostBriefingWriterResult: Equatable {
 
 /// In-memory diagnostics for developer tools only. Not persisted.
 enum HostLocalModelInferenceTracker {
+  private static let lock = NSLock()
   nonisolated(unsafe) private static var activeRequestCount = 0
 
-  static var isActive: Bool { activeRequestCount > 0 }
+  static var isActive: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return activeRequestCount > 0
+  }
 
   static func begin() {
+    lock.lock()
+    defer { lock.unlock() }
     activeRequestCount += 1
   }
 
   static func end() {
+    lock.lock()
+    defer { lock.unlock() }
     activeRequestCount = max(0, activeRequestCount - 1)
   }
 }
 
 enum HostBriefingWriterDiagnostics {
-  nonisolated(unsafe) static var lastGeneratedCandidate: String?
-  nonisolated(unsafe) static var lastRepairedOutput: String?
-  nonisolated(unsafe) static var lastValidationFailureReason: String?
-  nonisolated(unsafe) static var lastSemanticValidationFailureReason: String?
-  nonisolated(unsafe) static var inferenceSkippedBecauseNoFacts = false
-  nonisolated(unsafe) static var inferenceSkippedBecauseLowRiskSingleFact = false
+  private static let lock = NSLock()
+  nonisolated(unsafe) private static var _lastGeneratedCandidate: String?
+  nonisolated(unsafe) private static var _lastRepairedOutput: String?
+  nonisolated(unsafe) private static var _lastValidationFailureReason: String?
+  nonisolated(unsafe) private static var _lastSemanticValidationFailureReason: String?
+  nonisolated(unsafe) private static var _inferenceSkippedBecauseNoFacts = false
+  nonisolated(unsafe) private static var _inferenceSkippedBecauseLowRiskSingleFact = false
+
+  static var lastGeneratedCandidate: String? {
+    lock.lock()
+    defer { lock.unlock() }
+    return _lastGeneratedCandidate
+  }
+
+  static var lastRepairedOutput: String? {
+    lock.lock()
+    defer { lock.unlock() }
+    return _lastRepairedOutput
+  }
+
+  static var lastValidationFailureReason: String? {
+    lock.lock()
+    defer { lock.unlock() }
+    return _lastValidationFailureReason
+  }
+
+  static var lastSemanticValidationFailureReason: String? {
+    lock.lock()
+    defer { lock.unlock() }
+    return _lastSemanticValidationFailureReason
+  }
+
+  static var inferenceSkippedBecauseNoFacts: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return _inferenceSkippedBecauseNoFacts
+  }
+
+  static var inferenceSkippedBecauseLowRiskSingleFact: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return _inferenceSkippedBecauseLowRiskSingleFact
+  }
 
   private static let maxCandidateLength = 500
 
   static func storeCandidate(_ text: String) {
+    lock.lock()
+    defer { lock.unlock() }
+    storeCandidateLocked(text)
+  }
+
+  private static func storeCandidateLocked(_ text: String) {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    lastGeneratedCandidate = trimmed.count <= maxCandidateLength
+    _lastGeneratedCandidate = trimmed.count <= maxCandidateLength
       ? trimmed
       : String(trimmed.prefix(maxCandidateLength))
   }
 
   static func recordEmptyPacketSkip() {
-    lastGeneratedCandidate = nil
-    lastRepairedOutput = nil
-    lastValidationFailureReason = nil
-    lastSemanticValidationFailureReason = nil
-    inferenceSkippedBecauseNoFacts = true
-    inferenceSkippedBecauseLowRiskSingleFact = false
-    HostLlamaBriefingRuntimeDiagnostics.lastRun = HostLlamaRunDiagnostics()
+    lock.lock()
+    defer { lock.unlock() }
+    _lastGeneratedCandidate = nil
+    _lastRepairedOutput = nil
+    _lastValidationFailureReason = nil
+    _lastSemanticValidationFailureReason = nil
+    _inferenceSkippedBecauseNoFacts = true
+    _inferenceSkippedBecauseLowRiskSingleFact = false
+    HostLlamaBriefingRuntimeDiagnostics.resetLastRun()
   }
 
   static func recordLowRiskSingleFactSkip() {
-    lastGeneratedCandidate = nil
-    lastRepairedOutput = nil
-    lastValidationFailureReason = nil
-    lastSemanticValidationFailureReason = nil
-    inferenceSkippedBecauseNoFacts = false
-    inferenceSkippedBecauseLowRiskSingleFact = true
-    HostLlamaBriefingRuntimeDiagnostics.lastRun = HostLlamaRunDiagnostics()
+    lock.lock()
+    defer { lock.unlock() }
+    _lastGeneratedCandidate = nil
+    _lastRepairedOutput = nil
+    _lastValidationFailureReason = nil
+    _lastSemanticValidationFailureReason = nil
+    _inferenceSkippedBecauseNoFacts = false
+    _inferenceSkippedBecauseLowRiskSingleFact = true
+    HostLlamaBriefingRuntimeDiagnostics.resetLastRun()
   }
 
   static func prepareForInference() {
-    inferenceSkippedBecauseNoFacts = false
-    inferenceSkippedBecauseLowRiskSingleFact = false
+    lock.lock()
+    defer { lock.unlock() }
+    _inferenceSkippedBecauseNoFacts = false
+    _inferenceSkippedBecauseLowRiskSingleFact = false
   }
 
   static func recordValidationSuccess(generated: String, repaired: String? = nil) {
-    storeCandidate(generated)
-    lastRepairedOutput = repaired
-    lastValidationFailureReason = nil
-    lastSemanticValidationFailureReason = nil
+    lock.lock()
+    defer { lock.unlock() }
+    storeCandidateLocked(generated)
+    _lastRepairedOutput = repaired
+    _lastValidationFailureReason = nil
+    _lastSemanticValidationFailureReason = nil
   }
 
   static func recordValidationFailure(generated: String, reason: String?) {
-    storeCandidate(generated)
-    lastRepairedOutput = nil
-    lastValidationFailureReason = reason
-    lastSemanticValidationFailureReason = HostBriefingWriterValidator.isSemanticFailureReason(reason)
+    lock.lock()
+    defer { lock.unlock() }
+    storeCandidateLocked(generated)
+    _lastRepairedOutput = nil
+    _lastValidationFailureReason = reason
+    _lastSemanticValidationFailureReason = HostBriefingWriterValidator.isSemanticFailureReason(reason)
       ? reason
       : nil
   }
 
   static func recordRuntimeFailure() {
-    lastGeneratedCandidate = nil
-    lastRepairedOutput = nil
-    lastValidationFailureReason = nil
-    lastSemanticValidationFailureReason = nil
+    lock.lock()
+    defer { lock.unlock() }
+    _lastGeneratedCandidate = nil
+    _lastRepairedOutput = nil
+    _lastValidationFailureReason = nil
+    _lastSemanticValidationFailureReason = nil
   }
 }
 
