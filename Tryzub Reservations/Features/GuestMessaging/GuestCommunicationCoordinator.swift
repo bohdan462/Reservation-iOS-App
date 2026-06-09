@@ -45,6 +45,16 @@ final class GuestCommunicationCoordinator: ObservableObject {
         reservation: ReservationRecord,
         manageURL: String?
     ) async -> GuestMessageDraft {
+        guard !isDrafting else {
+            return GuestMessageDraftTemplateWriter.draft(
+                from: GuestMessageDraftPacketBuilder.build(
+                    kind: kind,
+                    reservation: reservation,
+                    manageURL: manageURL
+                )
+            )
+        }
+
         isDrafting = true
         lastErrorMessage = nil
         defer { isDrafting = false }

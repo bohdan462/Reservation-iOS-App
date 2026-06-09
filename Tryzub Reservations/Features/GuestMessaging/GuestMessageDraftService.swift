@@ -59,7 +59,6 @@ final class GuestMessageDraftService: ObservableObject {
         case .valid:
             return draft
         case .blocked(let reason):
-            lastErrorMessage = reason
             return GuestMessageDraft(
                 emailSubject: templateFallback.emailSubject,
                 emailBody: templateFallback.emailBody,

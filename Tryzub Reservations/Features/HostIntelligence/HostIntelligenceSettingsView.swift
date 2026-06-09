@@ -72,7 +72,7 @@ struct HostIntelligenceSettingsView: View {
 
       Toggle("Use local model for guest message drafts", isOn: binding(\.useLocalModelForGuestMessageDrafts))
 
-      Text("Drafts are reviewed by staff before sending. Template fallback is always used if the model is unavailable.")
+      Text("Applies only to Reservation Detail draft messages. Staff reviews before sending. Template fallback is always used.")
         .font(.caption)
         .foregroundStyle(.secondary)
 

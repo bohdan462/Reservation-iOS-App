@@ -1053,6 +1053,8 @@ struct ReservationDetailView: View {
 
     // Guest message drafts: template default; local model when Host Intelligence setting is on.
     private func generateGuestMessageDraft(kind: GuestMessageDraftKind) {
+        guard !guestCommunicationCoordinator.isDrafting else { return }
+
         Task {
             guestCommunicationCoordinator.clearStaffError()
             let draft = await guestCommunicationCoordinator.draftGuestMessage(

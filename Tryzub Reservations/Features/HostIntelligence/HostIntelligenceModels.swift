@@ -346,38 +346,129 @@ enum HostBriefingProviderKind: String, Codable, CaseIterable {
 // MARK: - Settings & Table Config
 
 struct HostIntelligenceSettings: Codable, Equatable {
-    var isEnabled: Bool = true
-    var slotIntervalMinutes: Int = 20
-    var lookaheadMinutes: Int = 180
-    var restaurantCapacity: Int = 100
+    var isEnabled: Bool
+    var slotIntervalMinutes: Int
+    var lookaheadMinutes: Int
+    var restaurantCapacity: Int
     /// Host advisory threshold for slot/table pressure (aligns with backend `largePartyReviewThreshold` default of 7).
-    var largePartyThreshold: Int = 7
-    var criticalPartyThreshold: Int = 12
-    var maxReservationsPerSlot: Int = 4
-    var maxLargePartiesPerSlot: Int = 1
-    var comfortableCapacityRatio: Double = 0.85
-    var criticalCapacityRatio: Double = 1.0
-    var dueSoonMinutes: Int = 20
-    var noTableDueSoonMinutes: Int = 30
-    var longSeatedWarningMinutes: Int = 90
-    var includeGuestSignals: Bool = true
-    var includeAnalyticsSignals: Bool = false
-    var includeLLMPacket: Bool = true
-    var enableBookingDecisioning: Bool = true
+    var largePartyThreshold: Int
+    var criticalPartyThreshold: Int
+    var maxReservationsPerSlot: Int
+    var maxLargePartiesPerSlot: Int
+    var comfortableCapacityRatio: Double
+    var criticalCapacityRatio: Double
+    var dueSoonMinutes: Int
+    var noTableDueSoonMinutes: Int
+    var longSeatedWarningMinutes: Int
+    var includeGuestSignals: Bool
+    var includeAnalyticsSignals: Bool
+    var includeLLMPacket: Bool
+    var enableBookingDecisioning: Bool
     /// Recommend as confirm candidate only — never auto-confirms.
-    var autoConfirmRecommendationsEnabled: Bool = false
-    var suggestAlternateTimesEnabled: Bool = true
-    var autoConfirmWeekdaysOnly: Bool = true
-    var minimumConfidenceForAutoConfirm: Double = 0.8
-    var maxPartySizeForAutoConfirm: Int = 6
-    var useEnhancedBriefing: Bool = false
-    var enhancedBriefingProvider: HostBriefingProviderKind = .template
+    var autoConfirmRecommendationsEnabled: Bool
+    var suggestAlternateTimesEnabled: Bool
+    var autoConfirmWeekdaysOnly: Bool
+    var minimumConfidenceForAutoConfirm: Double
+    var maxPartySizeForAutoConfirm: Int
+    var useEnhancedBriefing: Bool
+    var enhancedBriefingProvider: HostBriefingProviderKind
     /// When false, Host board uses template briefing even if local model is selected.
-    var useLocalModelOnHostBoard: Bool = false
+    var useLocalModelOnHostBoard: Bool
     /// When true, Reservation Detail may use on-device wording for guest message drafts (staff reviews before send).
-    var useLocalModelForGuestMessageDrafts: Bool = false
+    var useLocalModelForGuestMessageDrafts: Bool
     /// When true, Host board may show separated operational prompts from deterministic facts.
-    var useSeparatedBriefingPrompts: Bool = false
+    var useSeparatedBriefingPrompts: Bool
+
+    init(
+        isEnabled: Bool = true,
+        slotIntervalMinutes: Int = 20,
+        lookaheadMinutes: Int = 180,
+        restaurantCapacity: Int = 100,
+        largePartyThreshold: Int = 7,
+        criticalPartyThreshold: Int = 12,
+        maxReservationsPerSlot: Int = 4,
+        maxLargePartiesPerSlot: Int = 1,
+        comfortableCapacityRatio: Double = 0.85,
+        criticalCapacityRatio: Double = 1.0,
+        dueSoonMinutes: Int = 20,
+        noTableDueSoonMinutes: Int = 30,
+        longSeatedWarningMinutes: Int = 90,
+        includeGuestSignals: Bool = true,
+        includeAnalyticsSignals: Bool = false,
+        includeLLMPacket: Bool = true,
+        enableBookingDecisioning: Bool = true,
+        autoConfirmRecommendationsEnabled: Bool = false,
+        suggestAlternateTimesEnabled: Bool = true,
+        autoConfirmWeekdaysOnly: Bool = true,
+        minimumConfidenceForAutoConfirm: Double = 0.8,
+        maxPartySizeForAutoConfirm: Int = 6,
+        useEnhancedBriefing: Bool = false,
+        enhancedBriefingProvider: HostBriefingProviderKind = .template,
+        useLocalModelOnHostBoard: Bool = false,
+        useLocalModelForGuestMessageDrafts: Bool = false,
+        useSeparatedBriefingPrompts: Bool = false
+    ) {
+        self.isEnabled = isEnabled
+        self.slotIntervalMinutes = slotIntervalMinutes
+        self.lookaheadMinutes = lookaheadMinutes
+        self.restaurantCapacity = restaurantCapacity
+        self.largePartyThreshold = largePartyThreshold
+        self.criticalPartyThreshold = criticalPartyThreshold
+        self.maxReservationsPerSlot = maxReservationsPerSlot
+        self.maxLargePartiesPerSlot = maxLargePartiesPerSlot
+        self.comfortableCapacityRatio = comfortableCapacityRatio
+        self.criticalCapacityRatio = criticalCapacityRatio
+        self.dueSoonMinutes = dueSoonMinutes
+        self.noTableDueSoonMinutes = noTableDueSoonMinutes
+        self.longSeatedWarningMinutes = longSeatedWarningMinutes
+        self.includeGuestSignals = includeGuestSignals
+        self.includeAnalyticsSignals = includeAnalyticsSignals
+        self.includeLLMPacket = includeLLMPacket
+        self.enableBookingDecisioning = enableBookingDecisioning
+        self.autoConfirmRecommendationsEnabled = autoConfirmRecommendationsEnabled
+        self.suggestAlternateTimesEnabled = suggestAlternateTimesEnabled
+        self.autoConfirmWeekdaysOnly = autoConfirmWeekdaysOnly
+        self.minimumConfidenceForAutoConfirm = minimumConfidenceForAutoConfirm
+        self.maxPartySizeForAutoConfirm = maxPartySizeForAutoConfirm
+        self.useEnhancedBriefing = useEnhancedBriefing
+        self.enhancedBriefingProvider = enhancedBriefingProvider
+        self.useLocalModelOnHostBoard = useLocalModelOnHostBoard
+        self.useLocalModelForGuestMessageDrafts = useLocalModelForGuestMessageDrafts
+        self.useSeparatedBriefingPrompts = useSeparatedBriefingPrompts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            isEnabled: try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true,
+            slotIntervalMinutes: try container.decodeIfPresent(Int.self, forKey: .slotIntervalMinutes) ?? 20,
+            lookaheadMinutes: try container.decodeIfPresent(Int.self, forKey: .lookaheadMinutes) ?? 180,
+            restaurantCapacity: try container.decodeIfPresent(Int.self, forKey: .restaurantCapacity) ?? 100,
+            largePartyThreshold: try container.decodeIfPresent(Int.self, forKey: .largePartyThreshold) ?? 7,
+            criticalPartyThreshold: try container.decodeIfPresent(Int.self, forKey: .criticalPartyThreshold) ?? 12,
+            maxReservationsPerSlot: try container.decodeIfPresent(Int.self, forKey: .maxReservationsPerSlot) ?? 4,
+            maxLargePartiesPerSlot: try container.decodeIfPresent(Int.self, forKey: .maxLargePartiesPerSlot) ?? 1,
+            comfortableCapacityRatio: try container.decodeIfPresent(Double.self, forKey: .comfortableCapacityRatio) ?? 0.85,
+            criticalCapacityRatio: try container.decodeIfPresent(Double.self, forKey: .criticalCapacityRatio) ?? 1.0,
+            dueSoonMinutes: try container.decodeIfPresent(Int.self, forKey: .dueSoonMinutes) ?? 20,
+            noTableDueSoonMinutes: try container.decodeIfPresent(Int.self, forKey: .noTableDueSoonMinutes) ?? 30,
+            longSeatedWarningMinutes: try container.decodeIfPresent(Int.self, forKey: .longSeatedWarningMinutes) ?? 90,
+            includeGuestSignals: try container.decodeIfPresent(Bool.self, forKey: .includeGuestSignals) ?? true,
+            includeAnalyticsSignals: try container.decodeIfPresent(Bool.self, forKey: .includeAnalyticsSignals) ?? false,
+            includeLLMPacket: try container.decodeIfPresent(Bool.self, forKey: .includeLLMPacket) ?? true,
+            enableBookingDecisioning: try container.decodeIfPresent(Bool.self, forKey: .enableBookingDecisioning) ?? true,
+            autoConfirmRecommendationsEnabled: try container.decodeIfPresent(Bool.self, forKey: .autoConfirmRecommendationsEnabled) ?? false,
+            suggestAlternateTimesEnabled: try container.decodeIfPresent(Bool.self, forKey: .suggestAlternateTimesEnabled) ?? true,
+            autoConfirmWeekdaysOnly: try container.decodeIfPresent(Bool.self, forKey: .autoConfirmWeekdaysOnly) ?? true,
+            minimumConfidenceForAutoConfirm: try container.decodeIfPresent(Double.self, forKey: .minimumConfidenceForAutoConfirm) ?? 0.8,
+            maxPartySizeForAutoConfirm: try container.decodeIfPresent(Int.self, forKey: .maxPartySizeForAutoConfirm) ?? 6,
+            useEnhancedBriefing: try container.decodeIfPresent(Bool.self, forKey: .useEnhancedBriefing) ?? false,
+            enhancedBriefingProvider: try container.decodeIfPresent(HostBriefingProviderKind.self, forKey: .enhancedBriefingProvider) ?? .template,
+            useLocalModelOnHostBoard: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelOnHostBoard) ?? false,
+            useLocalModelForGuestMessageDrafts: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelForGuestMessageDrafts) ?? false,
+            useSeparatedBriefingPrompts: try container.decodeIfPresent(Bool.self, forKey: .useSeparatedBriefingPrompts) ?? false
+        )
+    }
 }
 
 struct RestaurantTableConfig: Identifiable, Codable, Equatable {
