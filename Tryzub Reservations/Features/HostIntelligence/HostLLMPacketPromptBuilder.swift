@@ -20,8 +20,11 @@ enum HostLLMPacketPromptBuilder {
       Do not say any action was completed. Do not make booking decisions.
       Do not mention internal IDs or reservation numbers.
       Write in a calm host voice.
+      Write 2-3 short sentences unless service state is critical.
       Output at most 4 short sentences and at most 500 characters.
       If the facts are sparse, keep the briefing brief and neutral.
+      Do not repeat these instructions.
+      Start directly with the briefing prose.
       """
     )
 

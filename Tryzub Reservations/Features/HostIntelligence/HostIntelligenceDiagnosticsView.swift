@@ -608,6 +608,13 @@ struct HostIntelligenceDiagnosticsView: View {
           .foregroundStyle(.tertiary)
       }
 
+      LocalModelBriefingDiagnosticTest(
+        packet: packet,
+        fallbackText: fallback,
+        settings: settings,
+        readiness: localModelReadiness
+      )
+
       Text("Writer output is presentation only. The deterministic engine remains authoritative.")
         .font(.caption2)
         .foregroundStyle(.tertiary)
@@ -707,6 +714,151 @@ struct HostIntelligenceDiagnosticsView: View {
     }
     return parts.joined(separator: " · ")
   }
+}
+
+// MARK: - Local Model Manual Test (developer diagnostics only)
+
+private struct LocalModelBriefingDiagnosticTest: View {
+  let packet: HostLLMPacket
+  let fallbackText: String
+  let settings: HostIntelligenceSettings
+  let readiness: HostLocalModelReadiness
+
+  @State private var isRunning = false
+  @State private var result: LocalModelBriefingDiagnosticResult?
+
+  private var canRunTest: Bool {
+    settings.enhancedBriefingProvider == .localModel
+      && readiness.status == .ready
+      && !isRunning
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Local model manual test")
+        .font(.subheadline.weight(.semibold))
+
+      Text("Device testing only. Runs on tap — does not call network or mutate reservations.")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+
+      Button("Test Local Model Briefing") {
+        runTest()
+      }
+      .disabled(!canRunTest)
+
+      if !canRunTest, settings.enhancedBriefingProvider != .localModel {
+        Text("Select Local model provider to enable this test.")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      } else if !canRunTest, readiness.status != .ready {
+        Text("Install the GGUF model in Application Support to enable this test.")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+
+      if isRunning {
+        ProgressView("Running local inference…")
+          .font(.caption)
+      }
+
+      if let result {
+        LabeledContent("Readiness") {
+          Text(result.readinessStatus.rawValue)
+        }
+        LabeledContent("Prompt characters") {
+          Text("\(result.promptCharacterCount)")
+        }
+        LabeledContent("Output characters") {
+          Text("\(result.outputCharacterCount)")
+        }
+        LabeledContent("Cold duration") {
+          Text(String(format: "%.2f s", result.coldDuration))
+        }
+        LabeledContent("Warm duration") {
+          Text(String(format: "%.2f s", result.warmDuration))
+        }
+        LabeledContent("Source") {
+          Text(result.writerResult.source.displayName)
+        }
+        Text(result.writerResult.text)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .textSelection(.enabled)
+        if let reason = result.writerResult.failedReason, !reason.isEmpty {
+          Text(reason)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
+        LabeledContent("Validation") {
+          Text(result.validation.isValid ? "Valid" : "Invalid")
+        }
+        if let reason = result.validation.reason {
+          Text(reason)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
+        if result.writerResult.source == .failedFallback {
+          Text("Fallback occurred — template text was used.")
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
+      }
+    }
+    .padding(.vertical, 4)
+  }
+
+  private func runTest() {
+    guard canRunTest else { return }
+    isRunning = true
+    result = nil
+
+    Task {
+      let prompt = HostLLMPacketPromptBuilder.buildPrompt(from: packet)
+      let readinessStatus = HostLocalModelReadinessProvider.currentReadiness().status
+      let writer = LocalModelHostBriefingWriter()
+
+      let coldStart = Date()
+      _ = await writer.writeBriefing(packet: packet, fallbackText: fallbackText)
+      let coldDuration = Date().timeIntervalSince(coldStart)
+
+      let warmStart = Date()
+      let writerResult = await writer.writeBriefing(
+        packet: packet,
+        fallbackText: fallbackText
+      )
+      let warmDuration = Date().timeIntervalSince(warmStart)
+
+      let validation = HostBriefingWriterValidator.validationResult(
+        writerResult.text,
+        packet: packet,
+        fallbackText: fallbackText
+      )
+
+      await MainActor.run {
+        result = LocalModelBriefingDiagnosticResult(
+          writerResult: writerResult,
+          validation: validation,
+          coldDuration: coldDuration,
+          warmDuration: warmDuration,
+          promptCharacterCount: prompt.count,
+          outputCharacterCount: writerResult.text.count,
+          readinessStatus: readinessStatus
+        )
+        isRunning = false
+      }
+    }
+  }
+}
+
+private struct LocalModelBriefingDiagnosticResult {
+  let writerResult: HostBriefingWriterResult
+  let validation: HostBriefingValidationResult
+  let coldDuration: TimeInterval
+  let warmDuration: TimeInterval
+  let promptCharacterCount: Int
+  let outputCharacterCount: Int
+  let readinessStatus: HostLocalModelReadinessStatus
 }
 
 #Preview {

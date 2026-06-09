@@ -22,9 +22,19 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
 
   static let shared = HostLlamaBriefingRuntime()
 
-  private static let maxOutputTokens = 120
-  private static let samplingTemperature = 0.2
+  private static let maxOutputTokens = 100
+  private static let samplingTemperature = 0.1
   private static let contextWindow = UInt32(2048)
+
+  private static let qwenImEndToken = String("<") + "|im_end|>"
+
+  private static let promptEchoStopMarkers = [
+    "Write the host briefing now:",
+    "Approved facts:",
+    "You are rewriting an approved restaurant host briefing",
+    "Writing rules:",
+    "Forbidden:"
+  ]
 
   private var session: LlamaLoadedSession?
   private var sessionModelPath: String?
@@ -66,11 +76,14 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
       throw HostLocalModelRuntimeError.modelLoadFailed("Llama session is unavailable.")
     }
 
+    let inferencePrompt = Self.wrapPromptForQwenInstruct(prompt)
+
     let generated: String
     do {
       generated = try session.generate(
-        prompt: prompt,
-        maxTokens: Int32(Self.maxOutputTokens)
+        prompt: inferencePrompt,
+        maxTokens: Int32(Self.maxOutputTokens),
+        echoStopMarkers: Self.promptEchoStopMarkers
       )
     } catch let error as HostLocalModelRuntimeError {
       throw error
@@ -78,11 +91,41 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
       throw HostLocalModelRuntimeError.generationFailed(error.localizedDescription)
     }
 
-    let trimmed = generated.trimmingCharacters(in: .whitespacesAndNewlines)
+    let sanitized = Self.sanitizeGeneratedBriefing(generated)
+    let trimmed = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else {
       throw HostLocalModelRuntimeError.outputEmpty
     }
     return trimmed
+  }
+
+  private static func wrapPromptForQwenInstruct(_ prompt: String) -> String {
+    """
+    <|im_start|>system
+    Rewrite the approved host facts into calm staff-facing prose. Obey every rule in the user message.
+    
+    <|im_start|>user
+    \(prompt)
+    
+    <|im_start|>assistant
+    """
+  }
+
+  private static func sanitizeGeneratedBriefing(_ raw: String) -> String {
+    var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    for marker in promptEchoStopMarkers {
+      if let range = text.range(of: marker) {
+        text = String(text[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+      }
+    }
+
+    text = text
+      .replacingOccurrences(of: "<|im_start|>", with: "")
+      .replacingOccurrences(of: qwenImEndToken, with: "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    return text
   }
 }
 
@@ -125,6 +168,7 @@ private final class LlamaLoadedSession: @unchecked Sendable {
     var samplerParams = llama_sampler_chain_default_params()
     let chain = llama_sampler_chain_init(samplerParams)
     llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
+    llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.9, 1))
     llama_sampler_chain_add(chain, llama_sampler_init_dist(UInt32.random(in: .min ... .max)))
     sampler = chain
   }
@@ -140,7 +184,11 @@ private final class LlamaLoadedSession: @unchecked Sendable {
     }
   }
 
-  func generate(prompt: String, maxTokens: Int32) throws -> String {
+  func generate(
+    prompt: String,
+    maxTokens: Int32,
+    echoStopMarkers: [String]
+  ) throws -> String {
     let promptTokens = try tokenize(prompt, addBOS: true)
     guard !promptTokens.isEmpty else {
       throw HostLocalModelRuntimeError.generationFailed("Prompt tokenization returned no tokens.")
@@ -197,6 +245,15 @@ private final class LlamaLoadedSession: @unchecked Sendable {
       }
 
       generated += try tokenPiece(for: nextToken)
+
+      if echoStopMarkers.contains(where: { generated.contains($0) }) {
+        for marker in echoStopMarkers where generated.contains(marker) {
+          if let range = generated.range(of: marker) {
+            generated = String(generated[..<range.lowerBound])
+          }
+        }
+        break
+      }
 
       batch.n_tokens = 1
       batch.token[0] = nextToken

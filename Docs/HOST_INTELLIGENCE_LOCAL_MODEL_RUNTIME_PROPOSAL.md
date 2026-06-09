@@ -319,11 +319,125 @@ No database migrations or server changes are involved. Rollback is a client-only
 
 ---
 
+## Phase 8B.2B — Local model test workflow
+
+**Status:** Developer/testing pipeline only — not production shipping.
+
+This workflow installs a GGUF for on-device testing without committing the model or increasing TestFlight IPA size.
+
+### 1. Fetch the model manually (Mac)
+
+```bash
+./Scripts/fetch-host-briefing-model.sh
+```
+
+- Downloads **Qwen2.5-0.5B-Instruct Q4_K_M** from Hugging Face (bartowski quant).
+- Renames to `host-briefing-qwen2_5-0_5b-instruct-q4_k_m.gguf`.
+- Stores under `LocalModels/HostIntelligence/` (gitignored).
+- SHA256 verification is skipped until `EXPECTED_SHA256` is set in the script.
+
+### 2. Copy into Application Support (device)
+
+The app looks for:
+
+```text
+Library/Application Support/HostIntelligence/Models/host-briefing-qwen2_5-0_5b-instruct-q4_k_m.gguf
+```
+
+**Physical device (recommended for inference):**
+
+1. Build and run Tryzub Host on the device.
+2. Xcode → Window → Devices and Simulators → select device → installed app.
+3. Download Container → copy the GGUF into `Library/Application Support/HostIntelligence/Models/`.
+4. Upload the modified container back (developer testing only).
+
+Do **not** bundle the GGUF in the app target for this phase.
+
+### 3. Configure Host Intelligence
+
+1. Launch the app on a **physical device**.
+2. Enable **Use enhanced briefing**.
+3. Set provider to **Local model**.
+
+### 4. Confirm readiness
+
+Open **Developer diagnostics** → Briefing Writer:
+
+| Field | Expected |
+|---|---|
+| Inference runtime linked | Yes |
+| Model presence | application support |
+| Current readiness | **ready** |
+
+Without the file installed, readiness stays **modelMissing**.
+
+### 5. Test output
+
+1. Tap **Test Local Model Briefing** in diagnostics (manual only — never automatic).
+2. Review source, output text, validation, duration, and any failure reason.
+3. Open **Host board** and confirm briefing text + caption behavior.
+4. If validation fails, the writer falls back to template text safely.
+
+### 6. Fallback verification
+
+- Remove or rename the GGUF file → readiness returns to **modelMissing**.
+- Host board should show template briefing with **Using template fallback**.
+
+---
+
+## Phase 8B.2C — Device inference tuning (completed in repo)
+
+### SHA256 locked
+
+`Scripts/fetch-host-briefing-model.sh` now verifies:
+
+```text
+6eb923e7d26e9cea28811e1a8e852009b21242fb157b26149d3b188f3a8c8653
+```
+
+Source: `bartowski/Qwen2.5-0.5B-Instruct-GGUF` Q4_K_M (~379 MB). File remains gitignored.
+
+### Runtime tuning (HostLlamaBriefingRuntime)
+
+| Setting | Before | After |
+|---|---|---|
+| Max output tokens | 120 | **100** |
+| Temperature | 0.2 | **0.1** |
+| Top-p | — | **0.9** |
+| Chat template | none | **Qwen `<|im_start|>` wrapper** |
+| Echo handling | none | stop markers + post-sanitize |
+
+### Prompt tuning (HostLLMPacketPromptBuilder)
+
+- Prefer **2–3 sentences** unless critical.
+- **Do not repeat instructions.**
+- **Start directly with briefing prose.**
+
+### Diagnostics manual test capture
+
+- Readiness status
+- Prompt / output character counts
+- Cold duration (first run, includes model load)
+- Warm duration (second run, cached session)
+- Source, validation, fallback flag
+
+### Device test checklist (run on physical iPhone)
+
+1. Install GGUF into Application Support (see 8B.2B).
+2. Confirm readiness **ready**.
+3. Tap **Test Local Model Briefing** twice-equivalent (one button runs cold + warm).
+4. Record device model, iOS version, durations, output, validation.
+5. Open Host board — confirm no freeze, template-first then local briefing if valid.
+6. Confirm invalid output falls back with caption.
+
+---
+
 ## Suggested phase sequence after 8A
 
 | Phase | Goal |
 |---|---|
-| **8B** | llama.cpp + Qwen2.5-0.5B bundled; real `LocalModelHostBriefingWriter` |
-| **8C** | Optional model download / ODR; device test matrix |
+| **8B.2B** | Manual fetch script + Application Support install + diagnostics test button |
+| **8B.2C** | Optional TestFlight bundling / ODR / install UX |
+| **8C** | Device test matrix + prompt tuning |
 | **9A** | Apple Foundation Models tier for eligible devices |
-| **9B** | Prompt tuning + validator hardening from real device output logs (diagnostics only) |
+| **9B** | Validator hardening from real device output logs (diagnostics only) |

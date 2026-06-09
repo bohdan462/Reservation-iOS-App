@@ -3,3 +3,11 @@
 .DS_Store
 LocalCredentials.swift
 LocalConfig.plist
+
+# Host Intelligence local GGUF models (manual dev/test only — never commit)
+*.gguf
+LocalModels/
+Models/*.gguf
+Resources/Models/
+Tryzub Reservations/Resources/Models/
+Tryzub Reservations/Features/HostIntelligence/Models/

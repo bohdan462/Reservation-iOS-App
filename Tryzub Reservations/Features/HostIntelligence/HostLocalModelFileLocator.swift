@@ -54,28 +54,36 @@ enum HostLocalModelFileLocator {
     return "missing"
   }
 
-  static func modelLookupPathDescription() -> String {
-    let bundledPath = Bundle.main.path(
-      forResource: expectedModelBaseName,
-      ofType: expectedModelExtension
-    ) ?? "not in app bundle"
-    let appSupportPath = applicationSupportCandidatePath()
-    return "Bundle: \(bundledPath). Application Support: \(appSupportPath)."
-  }
-
-  private static func applicationSupportCandidatePath() -> String {
+  static func applicationSupportModelDirectoryURL() -> URL? {
     guard let supportDirectory = FileManager.default.urls(
       for: .applicationSupportDirectory,
       in: .userDomainMask
     ).first else {
-      return "Application Support unavailable"
+      return nil
     }
 
     return supportDirectory
       .appendingPathComponent("HostIntelligence", isDirectory: true)
       .appendingPathComponent("Models", isDirectory: true)
-      .appendingPathComponent(expectedModelFileName)
-      .path
+  }
+
+  static func expectedApplicationSupportModelPathDescription() -> String {
+    guard let directory = applicationSupportModelDirectoryURL() else {
+      return "Application Support unavailable"
+    }
+    return directory.appendingPathComponent(expectedModelFileName).path
+  }
+
+  static func modelLookupPathDescription() -> String {
+    let bundledPath = Bundle.main.path(
+      forResource: expectedModelBaseName,
+      ofType: expectedModelExtension
+    ) ?? "not in app bundle"
+    return "Bundle: \(bundledPath). Application Support: \(expectedApplicationSupportModelPathDescription())."
+  }
+
+  private static func applicationSupportCandidatePath() -> String {
+    expectedApplicationSupportModelPathDescription()
   }
 
   private static func fileExists(at url: URL) -> Bool {
