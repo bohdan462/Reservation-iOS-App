@@ -2,194 +2,58 @@
 //  ReservationDensityWaveChart.swift
 //  Tryzub Reservations
 //
-//  15-minute guest-density wave for the Host/Home service tab.
+//  15-minute arrival flow chart for the Host/Home service tab.
 //
 
 import SwiftUI
 
-struct ReservationDensityPoint: Identifiable, Equatable {
-  let id: String
-  let bucketStart: Date
-  let bucketLabel: String
-  let guestCount: Int
-  let reservationCount: Int
-  let isPeak: Bool
-}
-
 enum ReservationDensityCalculator {
-  private static let bucketMinutes = 15
-
-  static func points(
-    from reservations: [ReservationRecord],
-    selectedDate: Date,
-    serviceOpen: Date?,
-    serviceClose: Date?,
-    calendar: Calendar = .current
-  ) -> [ReservationDensityPoint] {
-    let active = reservations.filter { $0.isExpectedGuest && !$0.isHidden }
-    guard let range = resolveBucketRange(
-      reservations: active,
-      selectedDate: selectedDate,
-      serviceOpen: serviceOpen,
-      serviceClose: serviceClose,
-      calendar: calendar
-    ) else {
-      return []
-    }
-
-    var bucketStarts: [Date] = []
-    var guestCounts: [Date: Int] = [:]
-    var reservationCounts: [Date: Int] = [:]
-
-    var cursor = range.lowerBound
-    while cursor <= range.upperBound {
-      bucketStarts.append(cursor)
-      guestCounts[cursor] = 0
-      reservationCounts[cursor] = 0
-      guard let next = calendar.date(byAdding: .minute, value: bucketMinutes, to: cursor) else { break }
-      cursor = next
-    }
-
-    for reservation in active {
-      guard let serviceDate = reservation.serviceDateTime else { continue }
-      let bucket = floorToBucketStart(serviceDate, calendar: calendar)
-      guard guestCounts[bucket] != nil else { continue }
-      guestCounts[bucket, default: 0] += reservation.partySize
-      reservationCounts[bucket, default: 0] += 1
-    }
-
-    let peakGuestCount = guestCounts.values.max() ?? 0
-
-    return bucketStarts.map { bucketStart in
-      let guests = guestCounts[bucketStart] ?? 0
-      let reservations = reservationCounts[bucketStart] ?? 0
-      return ReservationDensityPoint(
-        id: "\(bucketStart.timeIntervalSince1970)",
-        bucketStart: bucketStart,
-        bucketLabel: bucketLabel(for: bucketStart, calendar: calendar),
-        guestCount: guests,
-        reservationCount: reservations,
-        isPeak: guests > 0 && guests == peakGuestCount
-      )
-    }
-  }
-
-  static func peakPoint(in points: [ReservationDensityPoint]) -> ReservationDensityPoint? {
-    points.first(where: { $0.isPeak && $0.guestCount > 0 })
-  }
-
   static func bucketStart(for reservation: ReservationRecord, calendar: Calendar = .current) -> Date? {
-    guard let serviceDate = reservation.serviceDateTime else { return nil }
-    return floorToBucketStart(serviceDate, calendar: calendar)
+    ArrivalFlowBucketBuilder.bucketStart(for: reservation, calendar: calendar)
   }
 
   static func bucketStart(for date: Date, calendar: Calendar = .current) -> Date {
-    floorToBucketStart(date, calendar: calendar)
-  }
-
-  // MARK: - Private
-
-  private static func resolveBucketRange(
-    reservations: [ReservationRecord],
-    selectedDate: Date,
-    serviceOpen: Date?,
-    serviceClose: Date?,
-    calendar: Calendar
-  ) -> ClosedRange<Date>? {
-    if let serviceOpen, let serviceClose, serviceOpen <= serviceClose {
-      let lower = floorToBucketStart(serviceOpen, calendar: calendar)
-      let upper = floorToBucketStart(serviceClose, calendar: calendar)
-      return extendRangeIfNeeded(
-        lower: lower,
-        upper: upper,
-        reservations: reservations,
-        calendar: calendar
-      )
-    }
-
-    let serviceDates = reservations.compactMap(\.serviceDateTime)
-    guard let earliest = serviceDates.min(), let latest = serviceDates.max() else {
-      return nil
-    }
-
-    let paddedLower = calendar.date(byAdding: .hour, value: -1, to: earliest) ?? earliest
-    let paddedUpper = calendar.date(byAdding: .hour, value: 1, to: latest) ?? latest
-    let lower = floorToBucketStart(paddedLower, calendar: calendar)
-    let upper = floorToBucketStart(paddedUpper, calendar: calendar)
-    return lower...max(lower, upper)
-  }
-
-  private static func extendRangeIfNeeded(
-    lower: Date,
-    upper: Date,
-    reservations: [ReservationRecord],
-    calendar: Calendar
-  ) -> ClosedRange<Date> {
-    var rangeLower = lower
-    var rangeUpper = upper
-
-    for reservation in reservations {
-      guard let serviceDate = reservation.serviceDateTime else { continue }
-      let bucket = floorToBucketStart(serviceDate, calendar: calendar)
-      if bucket < rangeLower {
-        rangeLower = bucket
-      }
-      if bucket > rangeUpper {
-        rangeUpper = bucket
-      }
-    }
-
-    return rangeLower...rangeUpper
-  }
-
-  private static func floorToBucketStart(_ date: Date, calendar: Calendar) -> Date {
-    var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
-    let minute = components.minute ?? 0
-    components.minute = (minute / bucketMinutes) * bucketMinutes
-    components.second = 0
-    components.nanosecond = 0
-    return calendar.date(from: components) ?? date
-  }
-
-  private static func bucketLabel(for date: Date, calendar: Calendar) -> String {
-    compactAxisLabel(for: date, calendar: calendar)
+    ArrivalFlowBucketBuilder.bucketStart(for: date, calendar: calendar)
   }
 
   static func compactAxisLabel(for date: Date, calendar: Calendar) -> String {
     let hour = calendar.component(.hour, from: date)
     let minute = calendar.component(.minute, from: date)
-    let adjustedHour = hour % 12 == 0 ? 12 : hour % 12
     if minute == 0 {
-      return "\(adjustedHour)"
+      return String(format: "%02d:00", hour)
     }
-    return String(format: "%d:%02d", adjustedHour, minute)
+    return String(format: "%02d:%02d", hour, minute)
   }
 }
 
 struct ReservationDensityWaveChart: View {
-  let points: [ReservationDensityPoint]
-  var highlightBucketStart: Date?
-  var height: CGFloat = 88
+  let buckets: [ArrivalFlowBucket]
+  var height: CGFloat = 96
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var revealProgress: CGFloat = 0
   @State private var peakPulse = false
   @State private var gridOpacity: Double = 0.35
+  @State private var selectedBucketID: String?
 
-  private let leftGutter: CGFloat = 18
+  private let leftGutter: CGFloat = 22
   private let bottomGutter: CGFloat = 14
-  private let topGutter: CGFloat = 2
+  private let topGutter: CGFloat = 4
 
   private var chartSeriesKey: String {
-    points.map { "\($0.id):\($0.guestCount)" }.joined(separator: "|")
+    buckets.map { "\($0.id):\($0.guestCount)" }.joined(separator: "|")
   }
 
-  private var hasPressure: Bool {
-    points.contains { $0.guestCount > 0 }
+  private var arrivalBuckets: [ArrivalFlowBucket] {
+    buckets.filter(\.hasArrivals)
+  }
+
+  private var hasArrivals: Bool {
+    !arrivalBuckets.isEmpty
   }
 
   private var maxGuests: Int {
-    max(points.map(\.guestCount).max() ?? 0, 1)
+    max(buckets.map(\.guestCount).max() ?? 0, 1)
   }
 
   private var yTicks: [Int] {
@@ -197,8 +61,8 @@ struct ReservationDensityWaveChart: View {
   }
 
   private var xLabelIndices: [Int] {
-    guard !points.isEmpty else { return [] }
-    let count = points.count
+    guard !buckets.isEmpty else { return [] }
+    let count = buckets.count
     let step: Int
     if count <= 17 {
       step = 1
@@ -210,27 +74,61 @@ struct ReservationDensityWaveChart: View {
     return stride(from: 0, to: count, by: step).map { $0 }
   }
 
+  private var selectedBucket: ArrivalFlowBucket? {
+    guard let selectedBucketID else { return nil }
+    return buckets.first(where: { $0.id == selectedBucketID })
+  }
+
   var body: some View {
-    if !hasPressure {
+    if !hasArrivals {
       HStack(spacing: 8) {
-        Image(systemName: "waveform.path")
+        Image(systemName: "clock")
           .foregroundStyle(TryzubColors.mutedText)
-        Text("No reservation pressure for this date.")
+        Text("No arrivals for this day.")
           .font(.caption.weight(.medium))
           .foregroundStyle(TryzubColors.mutedText)
         Spacer(minLength: 0)
       }
       .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel("No arrivals for this day.")
     } else {
-      VStack(alignment: .leading, spacing: 4) {
+      VStack(alignment: .leading, spacing: 6) {
         chartWithAxes
           .onAppear { playChartEntrance() }
-          .onChange(of: chartSeriesKey) { _, _ in playChartEntrance() }
-        Text("Guests per 15-minute arrival window")
-          .font(.caption2)
-          .foregroundStyle(TryzubColors.mutedText)
-          .opacity(0.35 + revealProgress * 0.65)
+          .onChange(of: chartSeriesKey) { _, _ in
+            selectedBucketID = nil
+            playChartEntrance()
+          }
+
+        footerCaption
+          .padding(.bottom, 2)
       }
+      .accessibilityElement(children: .contain)
+    }
+  }
+
+  @ViewBuilder
+  private var footerCaption: some View {
+    if let selectedBucket {
+      let summary = ArrivalFlowBucketBuilder.selectedSummary(for: selectedBucket)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(summary.headline)
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(TryzubColors.primaryText)
+        if let detail = summary.detail {
+          Text(detail)
+            .font(.caption2)
+            .foregroundStyle(TryzubColors.mutedText)
+        }
+      }
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel(ArrivalFlowBucketBuilder.accessibilityLabel(for: selectedBucket))
+    } else {
+      Text("Tap a spike to see who is coming.")
+        .font(.caption2)
+        .foregroundStyle(TryzubColors.mutedText)
+        .accessibilityHidden(true)
     }
   }
 
@@ -275,6 +173,7 @@ struct ReservationDensityWaveChart: View {
       }
     }
     .frame(width: leftGutter - 2, height: height.tryzubFiniteNonNegativeLayoutValue, alignment: .topLeading)
+    .accessibilityHidden(true)
   }
 
   private func yOffset(for tick: Int, plotHeight: CGFloat) -> CGFloat {
@@ -290,19 +189,20 @@ struct ReservationDensityWaveChart: View {
       let plotWidth = max(proxy.size.width, 1)
       ZStack(alignment: .topLeading) {
         ForEach(xLabelIndices, id: \.self) { index in
-          Text(points[index].bucketLabel)
+          Text(buckets[index].axisLabel)
             .font(.system(size: 8, weight: .medium, design: .rounded))
             .monospacedDigit()
             .foregroundStyle(TryzubColors.mutedText.opacity(0.9))
             .fixedSize()
             .position(
-              x: xPosition(for: index, plotWidth: plotWidth, bucketCount: points.count),
+              x: xPosition(for: index, plotWidth: plotWidth, bucketCount: buckets.count),
               y: 6
             )
         }
       }
     }
     .frame(height: bottomGutter)
+    .accessibilityHidden(true)
   }
 
   private var chartBody: some View {
@@ -323,16 +223,24 @@ struct ReservationDensityWaveChart: View {
           )
         }
 
-        if linePoints.count == 1, let point = linePoints.first {
+        if arrivalBuckets.count == 1,
+           let bucket = arrivalBuckets.first,
+           let index = buckets.firstIndex(where: { $0.id == bucket.id }) {
+          let point = CGPoint(
+            x: plotX(index, plotWidth: plotWidth, bucketCount: buckets.count),
+            y: plotY(for: bucket.guestCount, plotHeight: plotHeight, chartMaxGuests: chartMaxGuests)
+          )
           singlePointMarker(at: point)
             .opacity(Double(revealProgress))
-        } else {
+        } else if buckets.count > 1 {
           Canvas { context, size in
             drawWave(
               context: &context,
               size: size,
               chartMaxGuests: chartMaxGuests,
-              revealProgress: revealProgress
+              revealProgress: revealProgress,
+              plotWidth: plotWidth,
+              plotHeight: plotHeight
             )
           }
           .mask(alignment: .leading) {
@@ -340,16 +248,59 @@ struct ReservationDensityWaveChart: View {
               .frame(width: plotWidth * revealProgress)
           }
 
-          peakMarkers(
-            plotWidth: plotWidth,
-            plotHeight: plotHeight,
-            chartMaxGuests: chartMaxGuests
-          )
-          .opacity(Double(revealProgress))
+          if let selectedBucket,
+             let index = buckets.firstIndex(where: { $0.id == selectedBucket.id }) {
+            Canvas { context, size in
+              let x = plotX(index, plotWidth: plotWidth, bucketCount: buckets.count)
+              var guide = Path()
+              guide.move(to: CGPoint(x: x, y: 0))
+              guide.addLine(to: CGPoint(x: x, y: size.height))
+              context.stroke(
+                guide,
+                with: .color(TryzubColors.primaryControl.opacity(0.28)),
+                style: StrokeStyle(lineWidth: 1, dash: [3, 3])
+              )
+            }
+            .allowsHitTesting(false)
+          }
         }
+
+        dataPointMarkers(
+          plotWidth: plotWidth,
+          plotHeight: plotHeight,
+          chartMaxGuests: chartMaxGuests
+        )
+        .opacity(Double(revealProgress))
       }
+      .contentShape(Rectangle())
+      .gesture(
+        DragGesture(minimumDistance: 0)
+          .onEnded { value in
+            selectBucket(at: value.location.x, plotWidth: plotWidth)
+          }
+      )
     }
     .frame(height: plotHeight)
+  }
+
+  private func selectBucket(at x: CGFloat, plotWidth: CGFloat) {
+    guard !buckets.isEmpty else { return }
+
+    let nearestIndex = buckets.indices.min(by: { lhs, rhs in
+      let lhsDistance = abs(plotX(lhs, plotWidth: plotWidth, bucketCount: buckets.count) - x)
+      let rhsDistance = abs(plotX(rhs, plotWidth: plotWidth, bucketCount: buckets.count) - x)
+      return lhsDistance < rhsDistance
+    })
+
+    guard let nearestIndex else { return }
+    let bucket = buckets[nearestIndex]
+    guard bucket.hasArrivals else { return }
+
+    if selectedBucketID == bucket.id {
+      selectedBucketID = nil
+    } else {
+      selectedBucketID = bucket.id
+    }
   }
 
   private func waveLinePoints(
@@ -357,10 +308,10 @@ struct ReservationDensityWaveChart: View {
     plotHeight: CGFloat,
     chartMaxGuests: Int
   ) -> [CGPoint] {
-    points.enumerated().map { index, point in
+    buckets.enumerated().map { index, bucket in
       CGPoint(
-        x: plotX(index, plotWidth: plotWidth, bucketCount: points.count),
-        y: plotY(for: point.guestCount, plotHeight: plotHeight, chartMaxGuests: chartMaxGuests)
+        x: plotX(index, plotWidth: plotWidth, bucketCount: buckets.count),
+        y: plotY(for: bucket.guestCount, plotHeight: plotHeight, chartMaxGuests: chartMaxGuests)
       )
     }
   }
@@ -375,7 +326,7 @@ struct ReservationDensityWaveChart: View {
       numerator: CGFloat(guestCount),
       denominator: CGFloat(chartMaxGuests)
     )
-    return plotHeight * (1 - fraction)
+    return topGutter + (plotHeight - topGutter) * (1 - fraction)
   }
 
   private func drawGrid(
@@ -384,7 +335,7 @@ struct ReservationDensityWaveChart: View {
     chartMaxGuests: Int,
     gridOpacity: Double
   ) {
-    guard points.count >= 1, size.width > 1, size.height > 1 else { return }
+    guard buckets.count >= 1, size.width > 1, size.height > 1 else { return }
 
     let plotWidth = size.width
     let plotHeight = size.height.tryzubFiniteNonNegativeLayoutValue
@@ -403,9 +354,9 @@ struct ReservationDensityWaveChart: View {
       )
     }
 
-    for index in points.indices {
-      let x = plotX(index, plotWidth: plotWidth, bucketCount: points.count)
-      let isHour = Calendar.current.component(.minute, from: points[index].bucketStart) == 0
+    for index in buckets.indices {
+      let x = plotX(index, plotWidth: plotWidth, bucketCount: buckets.count)
+      let isHour = Calendar.current.component(.minute, from: buckets[index].bucketStart) == 0
       var path = Path()
       path.move(to: CGPoint(x: x, y: 0))
       path.addLine(to: CGPoint(x: x, y: plotHeight))
@@ -421,73 +372,100 @@ struct ReservationDensityWaveChart: View {
     context: inout GraphicsContext,
     size: CGSize,
     chartMaxGuests: Int,
-    revealProgress: CGFloat
+    revealProgress: CGFloat,
+    plotWidth: CGFloat,
+    plotHeight: CGFloat
   ) {
-    guard points.count >= 2, size.width > 1, size.height > 1 else { return }
+    guard buckets.count >= 2, size.width > 1, size.height > 1 else { return }
 
-    let plotWidth = size.width
-    let plotHeight = size.height.tryzubFiniteNonNegativeLayoutValue
     let linePoints = waveLinePoints(
       plotWidth: plotWidth,
       plotHeight: plotHeight,
       chartMaxGuests: chartMaxGuests
     )
 
-    var areaPath = smoothPath(through: linePoints)
+    var areaPath = linearPath(through: linePoints)
     areaPath.addLine(to: CGPoint(x: linePoints.last?.x ?? 0, y: plotHeight))
     areaPath.addLine(to: CGPoint(x: linePoints.first?.x ?? 0, y: plotHeight))
     areaPath.closeSubpath()
 
-    let fillOpacity = 0.18 + Double(revealProgress) * 0.12
+    let fillOpacity = 0.12 + Double(revealProgress) * 0.08
     context.fill(
       areaPath,
       with: .linearGradient(
         Gradient(colors: [
-          TryzubColors.primaryControl.opacity(fillOpacity + 0.1),
-          TryzubColors.primaryControl.opacity(0.03)
+          TryzubColors.primaryControl.opacity(fillOpacity + 0.06),
+          TryzubColors.primaryControl.opacity(0.02)
         ]),
         startPoint: CGPoint(x: 0, y: 0),
         endPoint: CGPoint(x: 0, y: plotHeight)
       )
     )
 
-    let strokePath = smoothPath(through: linePoints)
+    let strokePath = linearPath(through: linePoints)
     context.stroke(
       strokePath,
-      with: .color(TryzubColors.primaryControl.opacity(0.72 + Double(revealProgress) * 0.2)),
-      style: StrokeStyle(lineWidth: 1.75, lineCap: .round, lineJoin: .round)
+      with: .color(TryzubColors.primaryControl.opacity(0.68 + Double(revealProgress) * 0.18)),
+      style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round)
     )
+
   }
 
   @ViewBuilder
   private func singlePointMarker(at point: CGPoint) -> some View {
-    Circle()
-      .fill(TryzubColors.primaryControl)
-      .frame(width: 7, height: 7)
+    if let bucket = arrivalBuckets.first {
+      let isSelected = selectedBucketID == bucket.id
+      ZStack {
+        if isSelected {
+          Circle()
+            .stroke(TryzubColors.primaryControl.opacity(0.35), lineWidth: 2)
+            .frame(width: 16, height: 16)
+        }
+        Circle()
+          .fill(TryzubColors.primaryControl)
+          .frame(width: bucket.isPeak ? 8 : 6, height: bucket.isPeak ? 8 : 6)
+          .scaleEffect(bucket.isPeak && peakPulse && !reduceMotion ? 1.12 : 1)
+      }
       .position(point)
-      .scaleEffect(peakPulse ? 1.14 : 0.94)
+      .accessibilityLabel(ArrivalFlowBucketBuilder.accessibilityLabel(for: bucket))
+    }
   }
 
   @ViewBuilder
-  private func peakMarkers(
+  private func dataPointMarkers(
     plotWidth: CGFloat,
     plotHeight: CGFloat,
     chartMaxGuests: Int
   ) -> some View {
-    ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
-      if point.guestCount > 0,
-         point.isPeak || highlightBucketStart == point.bucketStart {
+    ForEach(Array(buckets.enumerated()), id: \.element.id) { index, bucket in
+      if bucket.hasArrivals {
         let center = CGPoint(
-          x: plotX(index, plotWidth: plotWidth, bucketCount: points.count),
-          y: plotY(for: point.guestCount, plotHeight: plotHeight, chartMaxGuests: chartMaxGuests)
+          x: plotX(index, plotWidth: plotWidth, bucketCount: buckets.count),
+          y: plotY(for: bucket.guestCount, plotHeight: plotHeight, chartMaxGuests: chartMaxGuests)
         )
-        let isPeak = point.isPeak
+        let isSelected = selectedBucketID == bucket.id
+        let dotSize: CGFloat = isSelected ? 8 : (bucket.isPeak ? 7 : 5)
 
-        Circle()
-          .fill(isPeak ? TryzubColors.primaryControl : TryzubColors.primaryControl.opacity(0.85))
-          .frame(width: isPeak ? 7 : 6, height: isPeak ? 7 : 6)
-          .scaleEffect(isPeak && peakPulse && !reduceMotion ? 1.14 : 1)
-          .position(center)
+        ZStack {
+          if isSelected {
+            Circle()
+              .stroke(TryzubColors.primaryControl.opacity(0.4), lineWidth: 2)
+              .frame(width: 16, height: 16)
+          } else if bucket.isNextArrival {
+            Circle()
+              .stroke(TryzubColors.primaryControl.opacity(0.25), lineWidth: 1.5)
+              .frame(width: 12, height: 12)
+          }
+
+          Circle()
+            .fill(bucket.isPeak ? TryzubColors.primaryControl : TryzubColors.primaryControl.opacity(0.88))
+            .frame(width: dotSize, height: dotSize)
+            .scaleEffect(bucket.isPeak && peakPulse && !reduceMotion && !isSelected ? 1.12 : 1)
+        }
+        .position(center)
+        .accessibilityElement()
+        .accessibilityLabel(ArrivalFlowBucketBuilder.accessibilityLabel(for: bucket))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
       }
     }
   }
@@ -496,32 +474,13 @@ struct ReservationDensityWaveChart: View {
     plotX(index, plotWidth: plotWidth, bucketCount: bucketCount)
   }
 
-  private func smoothPath(through points: [CGPoint]) -> Path {
-    guard !points.isEmpty else { return Path() }
-    guard points.count > 1 else {
-      var path = Path()
-      path.addEllipse(in: CGRect(x: points[0].x - 3, y: points[0].y - 3, width: 6, height: 6))
-      return path
-    }
-
+  private func linearPath(through points: [CGPoint]) -> Path {
+    guard let first = points.first else { return Path() }
     var path = Path()
-    path.move(to: points[0])
-
-    for index in 1..<points.count {
-      let previous = points[index - 1]
-      let current = points[index]
-      let midpoint = CGPoint(x: (previous.x + current.x) / 2, y: (previous.y + current.y) / 2)
-      if index == 1 {
-        path.addLine(to: midpoint)
-      } else {
-        path.addQuadCurve(to: midpoint, control: previous)
-      }
+    path.move(to: first)
+    for point in points.dropFirst() {
+      path.addLine(to: point)
     }
-
-    if let last = points.last {
-      path.addLine(to: last)
-    }
-
     return path
   }
 }

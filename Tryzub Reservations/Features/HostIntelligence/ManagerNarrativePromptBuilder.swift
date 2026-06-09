@@ -17,7 +17,7 @@ enum ManagerNarrativePromptBuilder {
       You are writing a short manager briefing for restaurant staff.
       Use simple restaurant staff language.
       Write so a busy host understands in five seconds.
-      Do not use technical words: backend, cache, sync, API, endpoint, packet, model, validation, diagnostics, confidence, capacity ratio.
+      Do not use technical words: backend, cache, sync, API, endpoint, packet, model, validation, diagnostics, confidence, capacity ratio, lead time, auto-confirm, candidate, slot pressure, eligible, rule, threshold, based on.
       Use only the provided facts and actions.
       Do not invent guests, tables, times, counts, allergies, notes, or actions.
       Do not say anything was confirmed, sent, assigned, cancelled, seated, or changed.

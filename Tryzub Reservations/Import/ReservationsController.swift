@@ -111,6 +111,7 @@ final class ReservationsController: ObservableObject {
         didSet { publishOperationState() }
     }
     private var availabilitySummaryTasksByDate: [String: Task<Void, Never>] = [:]
+    private var activeWindowRefreshTask: Task<Bool, Never>?
     private var lastOfflineNoticeAt: Date?
     private var pendingReviewAttentionCount = 0
     private var staffStatusBoundaryTask: Task<Void, Never>?
@@ -147,7 +148,7 @@ final class ReservationsController: ObservableObject {
     }
 
     private var hasActiveReservationRefresh: Bool {
-        isSyncing || isAutoRefreshing
+        isSyncing || isAutoRefreshing || activeWindowRefreshTask != nil
     }
 
     var isNetworkDegraded: Bool {
@@ -255,6 +256,8 @@ final class ReservationsController: ObservableObject {
         historyPrefetchTask = nil
         deferredRestaurantSetupTask?.cancel()
         deferredRestaurantSetupTask = nil
+        activeWindowRefreshTask?.cancel()
+        activeWindowRefreshTask = nil
     }
 
     private func applyNetworkPathStatus(_ isSatisfied: Bool) {
@@ -491,6 +494,8 @@ final class ReservationsController: ObservableObject {
 
     private func startDeferredRestaurantSetupIfNeeded() {
         guard deferredRestaurantSetupTask == nil else { return }
+        guard !hasLoadedRestaurantSetup else { return }
+        guard !isLoadingRestaurantSetup else { return }
         deferredRestaurantSetupTask = Task(priority: .utility) { @MainActor in
             _ = try? await self.loadRestaurantSetup()
             self.deferredRestaurantSetupTask = nil
@@ -877,18 +882,44 @@ final class ReservationsController: ObservableObject {
         let window = activeWindow()
         let scope = ReservationSyncScope.activeWindow(from: window.from, to: window.to)
 
+        if let existing = activeWindowRefreshTask {
+            recordRefreshDecision(scope: scope, mode: mode, outcome: "coalesced_in_flight")
+            ReservationAPILogger.skip(
+                reason: .scopeSkipInFlight,
+                message: "\(scope.description) coalesced with identical in-flight active-window refresh"
+            )
+            return await existing.value
+        }
+
+        let task = Task { @MainActor in
+            await self.performActiveWindowRefreshBody(
+                context: context,
+                mode: mode,
+                force: force,
+                window: window,
+                scope: scope
+            )
+        }
+        activeWindowRefreshTask = task
+        let result = await task.value
+        activeWindowRefreshTask = nil
+        return result
+    }
+
+    @discardableResult
+    private func performActiveWindowRefreshBody(
+        context: ModelContext,
+        mode: ReservationRefreshMode,
+        force: Bool,
+        window: (from: String, to: String),
+        scope: ReservationSyncScope
+    ) async -> Bool {
         if !force,
            mode != .automatic,
            isScopeFresh(scope, freshnessInterval: mode == .review ? reviewFreshnessInterval : scheduleFreshnessInterval) {
             recordRefreshDecision(scope: scope, mode: mode, outcome: "skipped_fresh")
             ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "\(scope.description) skipped because cache is fresh")
             return true
-        }
-
-        guard !hasActiveReservationRefresh else {
-            recordRefreshDecision(scope: scope, mode: mode, outcome: "skipped_busy")
-            ReservationAPILogger.skip(reason: .scopeSkipInFlight, message: "\(scope.description) skipped because another reservation refresh is active")
-            return mode == .automatic
         }
 
         guard beginScope(scope, intent: mode.syncIntent) else {

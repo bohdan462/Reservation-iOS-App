@@ -80,7 +80,20 @@ enum HostBookingDecisionSupport {
       }
     }
 
-    let rankedFacts = Array(rankFacts(facts).prefix(maxBookingFacts))
+    let groupedFacts = HostBookingFactGrouping.groupedFacts(
+      from: facts,
+      decisions: decisions,
+      reservations: candidates,
+      settings: settings
+    )
+    let rankedFacts = Array(
+      rankFacts(
+        groupedFacts,
+        reservations: candidates,
+        now: now,
+        settings: settings
+      ).prefix(maxBookingFacts)
+    )
     let topReservationIDs = Set(rankedFacts.flatMap(\.relatedReservationIDs))
     let filteredDecisions = decisions.filter { decision in
       guard let reservationID = decision.reservationID else { return false }
@@ -246,7 +259,7 @@ enum HostBookingDecisionSupport {
         requestedTime: requestedTime,
         suggestedTime: nil,
         confidence: 0.95,
-        reason: "Critical large party requires staff review.",
+        reason: "Large party needs a staff check before confirming.",
         evidence: ["partySize=\(reservation.partySize)", "threshold=\(settings.criticalPartyThreshold)"]
       )
     }
@@ -258,7 +271,7 @@ enum HostBookingDecisionSupport {
         requestedTime: requestedTime,
         suggestedTime: nil,
         confidence: 0.9,
-        reason: "Manual/call-in or no usable email; staff should review before confirmation.",
+        reason: "This booking needs a staff check before confirming.",
         evidence: [
           "manualOrCallIn=\(reservation.isManualOrCallIn)",
           "hasUsableEmail=\(reservation.hasUsableConfirmationEmail)"
@@ -291,7 +304,7 @@ enum HostBookingDecisionSupport {
         requestedTime: requestedTime,
         suggestedTime: nil,
         confidence: 0.86,
-        reason: "Requested time is inside minimum lead time window.",
+        reason: HostStaffLanguage.leadTimeReason(requestedTime: requestedTime),
         evidence: ["leadTimeMinutes=\(leadMinutes)"]
       )
     }
@@ -358,7 +371,7 @@ enum HostBookingDecisionSupport {
           requestedTime: requestedTime,
           suggestedTime: alternate,
           confidence: 0.8,
-          reason: "Large party at \(requestedTime) needs review; \(alternate) has less pressure.",
+          reason: "Large party at \(requestedTime) may fit better at \(alternate).",
           evidence: [
             "partySize=\(reservation.partySize)",
             "slotSeverity=\(slotPressure?.severity.rawValue ?? "unknown")"
@@ -372,7 +385,7 @@ enum HostBookingDecisionSupport {
         requestedTime: requestedTime,
         suggestedTime: nil,
         confidence: 0.9,
-        reason: "Large party requires staff review before confirmation.",
+        reason: "Large party needs a staff check before confirming.",
         evidence: ["partySize=\(reservation.partySize)", "hasTableFit=\(hasTableFit)"]
       )
     }
@@ -384,7 +397,7 @@ enum HostBookingDecisionSupport {
         requestedTime: requestedTime,
         suggestedTime: nil,
         confidence: 0.85,
-        reason: "No suitable table fit exists for this party size.",
+        reason: "No table looks like a good fit for this party.",
         evidence: ["partySize=\(reservation.partySize)", "tableInventoryConfigured=true"]
       )
     }
@@ -419,7 +432,7 @@ enum HostBookingDecisionSupport {
         requestedTime: requestedTime,
         suggestedTime: nil,
         confidence: 0.87,
-        reason: "\(requestedTime) is under heavy pressure and needs staff review.",
+        reason: "Seating is busy around \(requestedTime). Check before confirming.",
         evidence: [
           "slotSeverity=\(slotPressure?.severity.rawValue ?? "unknown")",
           "reservationCount=\(slotPressure?.reservationCount ?? 0)"
@@ -461,7 +474,7 @@ enum HostBookingDecisionSupport {
         requestedTime: requestedTime,
         suggestedTime: nil,
         confidence: 0.85,
-        reason: "This request can be confirmed based on slot pressure and party size.",
+        reason: HostStaffLanguage.autoConfirmReason(),
         evidence: [
           "partySize=\(reservation.partySize)",
           "slotSeverity=\(slotPressure?.severity.rawValue ?? "calm")",
@@ -493,17 +506,16 @@ enum HostBookingDecisionSupport {
       return nil
     case .autoConfirm:
       guard settings.autoConfirmRecommendationsEnabled else { return nil }
-      let detail =
-        "\(reservation.guestName), party of \(reservation.partySize), requested \(decision.requestedTime ?? reservation.displayTime). \(decision.reason)"
+      let firstName = HostBookingFactGrouping.staffFirstName(from: reservation.guestName)
       return HostBriefingFact(
         id: factID(for: decision) ?? "booking-fact-\(reservation.remoteID)",
         severity: .info,
         category: .bookingDecision,
-        title: "Auto-confirm candidate",
-        detail: detail,
+        title: "\(firstName) looks safe to confirm.",
+        detail: "The time looks manageable, but staff should still check details.",
         evidence: decision.evidence,
         relatedReservationIDs: [reservation.remoteID],
-        suggestedActionTitle: "Review auto-confirm candidate."
+        suggestedActionTitle: "Confirm if details look right."
       )
     case .suggestAlternateTime:
       let detail =
@@ -559,7 +571,7 @@ enum HostBookingDecisionSupport {
         id: "booking-action-confirm-\(reservation.remoteID)",
         severity: .info,
         kind: .confirmReservation,
-        title: "Review auto-confirm candidate for \(reservation.guestName)",
+        title: "Check \(reservation.guestName)'s booking",
         reason: decision.reason,
         relatedReservationIDs: [reservation.remoteID],
         targetSlotTime: reservation.reservationTime,
@@ -583,7 +595,7 @@ enum HostBookingDecisionSupport {
         id: "booking-action-review-\(reservation.remoteID)",
         severity: factSeverity(for: decision),
         kind: .reviewReservation,
-        title: "Review booking for \(reservation.guestName)",
+        title: "Check \(reservation.guestName)'s booking",
         reason: decision.reason,
         relatedReservationIDs: [reservation.remoteID],
         targetSlotTime: reservation.reservationTime,
@@ -673,15 +685,15 @@ enum HostBookingDecisionSupport {
 
     switch match.kind {
     case .allergy:
-      return "Allergy signal requires staff review before confirmation."
+      return "Allergy note needs a staff check before confirming."
     case .accessibility:
-      return "Accessibility needs require staff review before confirmation."
+      return "Accessibility needs require a staff check before confirming."
     case .previousServiceIssue:
-      return "Previous service issue requires staff review before confirmation."
+      return "Previous service issue needs a staff check before confirming."
     case .possibleDuplicate:
-      return "Possible duplicate booking requires staff review."
+      return "Possible duplicate booking needs a staff check."
     default:
-      return "Guest risk signal requires staff review."
+      return "Guest note needs a staff check."
     }
   }
 
@@ -795,13 +807,79 @@ enum HostBookingDecisionSupport {
     }
   }
 
-  private static func rankFacts(_ facts: [HostBriefingFact]) -> [HostBriefingFact] {
-    facts.sorted { lhs, rhs in
+  private static func rankFacts(
+    _ facts: [HostBriefingFact],
+    reservations: [ReservationRecord],
+    now: Date,
+    settings: HostIntelligenceSettings
+  ) -> [HostBriefingFact] {
+    let lookup = Dictionary(uniqueKeysWithValues: reservations.map { ($0.remoteID, $0) })
+
+    return facts.sorted { lhs, rhs in
+      let lhsScore = factPriorityScore(
+        lhs,
+        lookup: lookup,
+        now: now,
+        settings: settings
+      )
+      let rhsScore = factPriorityScore(
+        rhs,
+        lookup: lookup,
+        now: now,
+        settings: settings
+      )
+      if lhsScore != rhsScore {
+        return lhsScore > rhsScore
+      }
       if lhs.severity.rank != rhs.severity.rank {
         return lhs.severity.rank < rhs.severity.rank
       }
       return lhs.title < rhs.title
     }
+  }
+
+  private static func factPriorityScore(
+    _ fact: HostBriefingFact,
+    lookup: [Int: ReservationRecord],
+    now: Date,
+    settings: HostIntelligenceSettings
+  ) -> Int {
+    var score = 0
+    score += max(0, 4 - fact.severity.rank) * 20
+
+    if fact.category == .bookingDecision || fact.category == .largeParty {
+      score += 15
+    }
+
+    for reservationID in fact.relatedReservationIDs {
+      guard let reservation = lookup[reservationID] else { continue }
+
+      if reservation.statusValue == .new || reservation.statusValue == .needsReview {
+        score += 40
+      }
+      if !reservation.hasTableAssignment {
+        score += 35
+      }
+      if reservation.partySize >= settings.largePartyThreshold {
+        score += 25
+      }
+      if reservation.statusValue == .confirmed, reservation.hasTableAssignment {
+        score -= 60
+      }
+
+      switch reservation.operationalTimingState(now: now) {
+      case .overdue, .dueNow:
+        score += 50
+      case .dueSoon:
+        score += 35
+      case .normal:
+        score += 5
+      case .none:
+        break
+      }
+    }
+
+    return score
   }
 
   private static func deduplicatedActions(_ actions: [HostSuggestedAction]) -> [HostSuggestedAction] {

@@ -111,7 +111,10 @@ enum ManagerNarrativeValidator {
     "payload", "packet", "json", "validation", "diagnostics", "debug output",
     "debug ", "confidence", "capacity ratio", "language model", "local model",
     "llm", "server response", "api server", "backend server", "evidence array",
-    "as an ai", "as a model"
+    "as an ai", "as a model",
+    "minimum lead time", "lead time window", "auto-confirm", "auto confirm",
+    "candidate", "slot pressure", "party size threshold", "eligible",
+    " based on "
   ]
 
   private static let completionPhrases = [

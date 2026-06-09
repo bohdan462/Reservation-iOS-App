@@ -903,14 +903,56 @@ enum HostBriefingHostBoardGate {
 enum HostIntelligenceDiagnostics {
   static func skipLocalModel(reason: String) {
     #if DEBUG
-    print("[HOST_AI] skip local model reason=\(reason)")
+    print("[HOST_AI] local model skipped: \(localModelSkipLabel(for: reason))")
     #endif
   }
 
   static func skipBriefing(reason: String) {
     #if DEBUG
-    print("[HOST_AI] skip briefing reason=\(reason)")
+    print("[HOST_AI] briefing skipped: \(briefingSkipLabel(for: reason))")
     #endif
+  }
+
+  static func localModelAttempted(surface: String) {
+    #if DEBUG
+    print("[HOST_AI] local model attempted surface=\(surface)")
+    #endif
+  }
+
+  static func localModelFallback(reason: String) {
+    #if DEBUG
+    print("[HOST_AI] local model fallback: \(reason)")
+    #endif
+  }
+
+  private static func localModelSkipLabel(for reason: String) -> String {
+    switch reason {
+    case "host_board_gate_off":
+      return "enhanced briefing off, provider not local model, or Host board local model disabled"
+    case "host_board_template_only":
+      return "packet is template-only (guest/booking facts only; no operational pressure)"
+    case "startup_in_flight":
+      return "startup reservation refresh still in flight"
+    case "history_prefetch_in_flight":
+      return "history prefetch still in flight"
+    case "local_model_in_flight":
+      return "another local model inference is active"
+    case "stabilization_delay":
+      return "waiting for post-startup stabilization window"
+    case "no_meaningful_facts":
+      return "no meaningful briefing facts in packet"
+    default:
+      return reason
+    }
+  }
+
+  private static func briefingSkipLabel(for reason: String) -> String {
+    switch reason {
+    case "same_packet":
+      return "packet unchanged since last briefing"
+    default:
+      return reason
+    }
   }
 }
 

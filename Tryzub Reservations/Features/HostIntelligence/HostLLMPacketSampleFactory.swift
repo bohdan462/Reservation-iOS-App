@@ -14,12 +14,14 @@ enum HostLLMPacketSampleFactory {
     case calm
     case busy
     case critical
+    case groupedBookings
 
     var displayName: String {
       switch self {
       case .calm: return "Calm"
       case .busy: return "Busy"
       case .critical: return "Critical"
+      case .groupedBookings: return "Grouped bookings"
       }
     }
 
@@ -143,11 +145,40 @@ enum HostLLMPacketSampleFactory {
     )
   }
 
+  static func groupedBookingDecisions() -> HostLLMPacket {
+    HostLLMPacket(
+      generatedAtDescription: "Developer sample — grouped booking decisions",
+      serviceState: .building,
+      pressureScore: 22,
+      topFacts: [
+        HostLLMFact(
+          severity: .info,
+          category: .bookingDecision,
+          title: HostBookingFactGroupingSamples.twoSafeToConfirmTitle,
+          detail: HostBookingFactGroupingSamples.twoSafeToConfirmDetail,
+          evidence: ["Grouped auto-confirm sample."],
+          suggestedAction: "Confirm if details look right."
+        ),
+        HostLLMFact(
+          severity: .watch,
+          category: .bookingDecision,
+          title: HostBookingFactGroupingSamples.twoDueSoonTitle,
+          detail: "Check details before confirming.",
+          evidence: ["Grouped due-soon sample."],
+          suggestedAction: "Check before confirming."
+        ),
+      ],
+      forbiddenBehaviors: HostLLMPacket.empty.forbiddenBehaviors,
+      writingRules: HostLLMPacket.empty.writingRules
+    )
+  }
+
   static func packet(for sample: Sample) -> HostLLMPacket {
     switch sample {
     case .calm: return calmWithNoFacts()
     case .busy: return busyHostShift()
     case .critical: return criticalTablePressure()
+    case .groupedBookings: return groupedBookingDecisions()
     }
   }
 

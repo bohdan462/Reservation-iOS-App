@@ -118,11 +118,11 @@ struct HostIntelligenceReviewView: View {
           .font(.subheadline)
           .foregroundStyle(.secondary)
       } else {
-        ForEach(Array(snapshot.briefingFacts.prefix(5))) { fact in
+        ForEach(Array(dedupedReviewFacts.prefix(5))) { fact in
           VStack(alignment: .leading, spacing: 4) {
-            Text(fact.title)
+            Text(HostStaffLanguage.rewrite(fact.title))
               .font(.subheadline.weight(.semibold))
-            Text(fact.detail)
+            Text(HostStaffLanguage.rewrite(fact.detail))
               .font(.caption)
               .foregroundStyle(.secondary)
           }
@@ -182,10 +182,10 @@ struct HostIntelligenceReviewView: View {
   private func actionRow(_ action: HostSuggestedAction, isTappable: Bool) -> some View {
     HStack(alignment: .top, spacing: 8) {
       VStack(alignment: .leading, spacing: 4) {
-        Text(action.title)
+        Text(HostStaffLanguage.rewrite(action.title))
           .font(.subheadline.weight(.semibold))
           .multilineTextAlignment(.leading)
-        Text(action.reason)
+        Text(HostStaffLanguage.rewrite(action.reason))
           .font(.caption)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.leading)
@@ -223,6 +223,22 @@ struct HostIntelligenceReviewView: View {
   private var displayBriefingText: String {
     let trimmed = briefingText.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? snapshot.templateBriefingText : trimmed
+  }
+
+  private var dedupedReviewFacts: [HostBriefingFact] {
+    var seenKeys = Set<String>()
+    var results: [HostBriefingFact] = []
+
+    for fact in snapshot.briefingFacts {
+      let title = HostStaffLanguage.rewrite(fact.title).lowercased()
+      let detail = HostStaffLanguage.rewrite(fact.detail).lowercased()
+      let key = "\(title)|\(detail)"
+      guard !seenKeys.contains(key) else { continue }
+      seenKeys.insert(key)
+      results.append(fact)
+    }
+
+    return results
   }
 
   private var briefingSourceCaption: String? {

@@ -174,7 +174,8 @@ struct HostBoardView: View {
                 selectedDate: selectedDate,
                 now: clockTick,
                 serviceOpen: densityBounds.open,
-                serviceClose: densityBounds.close
+                serviceClose: densityBounds.close,
+                largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
             )
 
             let closedPresentation = closedDayPresentation(for: snapshot)
@@ -378,7 +379,9 @@ struct HostBoardView: View {
             parts.append("\(open)–\(close)")
         }
         if let slots = todaySlots {
-            parts.append("\(slots.slots.count) slots")
+            let openTimeCount = slots.slots.count
+            let label = openTimeCount == 1 ? "1 open time" : "\(openTimeCount) open times"
+            parts.append(label)
         }
         if todayBlockedSlots.count > 0 {
             parts.append("\(todayBlockedSlots.count) blocked")
@@ -535,8 +538,8 @@ struct HostBoardView: View {
             noTableCount: snapshot.noTableCount,
             peakTimeText: snapshot.peakTimeText,
             nextReservationText: snapshot.nextReservationText,
-            densityPoints: snapshot.densityPoints,
-            highlightBucketStart: snapshot.nextReservationBucketStart,
+            arrivalBuckets: snapshot.arrivalBuckets,
+            isSelectedDateToday: snapshot.selectedDate.reservationDateString() == Date.reservationDateString(),
             availabilitySummary: availabilitySummaryLine,
             isAvailabilityLoading: isLoadingAvailabilitySummary,
             onRefreshAvailability: selectedDate.reservationDateString() == Date.reservationDateString()
@@ -769,9 +772,8 @@ private struct HostBoardSnapshot {
     let noTableCount: Int
     let expectedGuestCount: Int
     let peakTimeText: String
-    let nextReservationText: String
-    let densityPoints: [ReservationDensityPoint]
-    let nextReservationBucketStart: Date?
+    let nextReservationText: String?
+    let arrivalBuckets: [ArrivalFlowBucket]
 
     // Active same-day reservations remain visible until staff changes status.
     // Time only chooses the "next" highlight; it does not auto-complete or hide rows.
@@ -780,7 +782,8 @@ private struct HostBoardSnapshot {
         selectedDate: Date,
         now: Date,
         serviceOpen: Date? = nil,
-        serviceClose: Date? = nil
+        serviceClose: Date? = nil,
+        largePartyThreshold: Int = 7
     ) {
         self.selectedDate = selectedDate
         self.now = now
@@ -804,37 +807,53 @@ private struct HostBoardSnapshot {
             selectedDate: selectedDate,
             now: now
         )
-        nextReservationText = nextReservation.map { reservation in
-            if isToday, let serviceDate = reservation.serviceDateTime {
-                let minutes = Int(ceil(abs(serviceDate.timeIntervalSince(now)) / 60))
-                if serviceDate < now {
-                    return "\(Self.durationText(minutes: minutes)) late"
-                }
-                if minutes <= 15 {
-                    return "now"
-                }
-                return "in \(Self.durationText(minutes: minutes))"
-            }
-            return reservation.displayTime
-        } ?? "-"
+        nextReservationText = Self.nextReservationText(
+            for: nextReservation,
+            isToday: isToday,
+            now: now
+        )
         let pressureReservations = upcoming + seated
-        densityPoints = ReservationDensityCalculator.points(
+        let nextArrivalBucketStart = nextReservation.flatMap {
+            ArrivalFlowBucketBuilder.bucketStart(for: $0)
+        }
+        arrivalBuckets = ArrivalFlowBucketBuilder.build(
             from: pressureReservations,
             selectedDate: selectedDate,
             serviceOpen: serviceOpen,
-            serviceClose: serviceClose
+            serviceClose: serviceClose,
+            nextArrivalBucketStart: nextArrivalBucketStart,
+            largePartyThreshold: largePartyThreshold
         )
-        peakTimeText = Self.peakTimeText(from: densityPoints)
-        nextReservationBucketStart = nextReservation.flatMap {
-            ReservationDensityCalculator.bucketStart(for: $0)
-        }
+        peakTimeText = Self.peakTimeText(from: arrivalBuckets)
     }
 
-    private static func peakTimeText(from points: [ReservationDensityPoint]) -> String {
-        guard let peak = ReservationDensityCalculator.peakPoint(in: points) else {
-            return "No peak yet"
+    private static func peakTimeText(from buckets: [ArrivalFlowBucket]) -> String {
+        guard let peak = ArrivalFlowBucketBuilder.peakBucket(in: buckets) else {
+            return "—"
         }
-        return "\(peak.bucketLabel) · \(peak.guestCount) guests"
+        let guestLabel = peak.guestCount == 1 ? "1 guest" : "\(peak.guestCount) guests"
+        return "\(peak.displayTime) · \(guestLabel)"
+    }
+
+    private static func nextReservationText(
+        for reservation: ReservationRecord?,
+        isToday: Bool,
+        now: Date
+    ) -> String? {
+        guard isToday, let reservation, let serviceDate = reservation.serviceDateTime else {
+            return nil
+        }
+
+        let time = ReservationFormatters.shortTime.string(from: serviceDate)
+        let minutes = Int(ceil(abs(serviceDate.timeIntervalSince(now)) / 60))
+
+        if serviceDate < now {
+            return "\(time) · \(durationText(minutes: minutes)) late"
+        }
+        if minutes <= 15 {
+            return "\(time) · now"
+        }
+        return "\(time) · in \(durationText(minutes: minutes))"
     }
 
     private static func durationText(minutes: Int) -> String {
@@ -873,9 +892,9 @@ private struct HostBoardSummaryCard: View {
     let failedImportCount: Int
     let noTableCount: Int
     let peakTimeText: String
-    let nextReservationText: String
-    let densityPoints: [ReservationDensityPoint]
-    let highlightBucketStart: Date?
+    let nextReservationText: String?
+    let arrivalBuckets: [ArrivalFlowBucket]
+    var isSelectedDateToday = true
     var availabilitySummary: String?
     var isAvailabilityLoading = false
     var onRefreshAvailability: (() -> Void)?
@@ -938,23 +957,32 @@ private struct HostBoardSummaryCard: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text("Arrival density")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(TryzubColors.mutedText)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Arrival flow")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(TryzubColors.primaryText)
+                        Text(isSelectedDateToday
+                            ? "Today's arrivals by 15-minute window"
+                            : "Arrivals by 15-minute window")
+                            .font(.caption2)
+                            .foregroundStyle(TryzubColors.mutedText)
+                    }
 
                     Spacer(minLength: 8)
 
-                    timelineLegend(label: "Peak", value: peakTimeText)
-
-                    timelineLegend(label: "Next", value: nextReservationText)
+                    VStack(alignment: .trailing, spacing: 4) {
+                        timelineLegend(label: "Peak", value: peakTimeText)
+                        if let nextReservationText {
+                            timelineLegend(label: "Next", value: nextReservationText)
+                        }
+                    }
                 }
 
                 ReservationDensityWaveChart(
-                    points: densityPoints,
-                    highlightBucketStart: highlightBucketStart,
-                    height: 92
+                    buckets: arrivalBuckets,
+                    height: 96
                 )
             }
         }

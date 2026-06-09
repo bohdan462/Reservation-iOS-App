@@ -230,7 +230,12 @@ struct HostIntelligenceEngine {
       pressureScore: pressureScore,
       slotPressures: slotPressures,
       briefingFacts: rankedFacts,
-      suggestedActions: deduplicatedActions(suggestedActions),
+      suggestedActions: rankSuggestedActions(
+        deduplicatedActions(suggestedActions),
+        reservations: activeReservations,
+        now: context.now,
+        settings: context.settings
+      ),
       guestSignals: guestSignals,
       tableSignals: tableSignals,
       seatedTimingSignals: seatedTimingSignals,
@@ -469,7 +474,7 @@ struct HostIntelligenceEngine {
       detail: "\(largePartyCount) large parties are arriving around \(timeLabel).",
       evidence: partySummaries + ["threshold=\(settings.maxLargePartiesPerSlot)"],
       relatedReservationIDs: ids,
-      suggestedActionTitle: "Require manual review before accepting more bookings in this slot."
+      suggestedActionTitle: "Check before adding more bookings at this time."
     )
   }
 
@@ -506,14 +511,14 @@ struct HostIntelligenceEngine {
       reasons.append("projected capacity is about \(percent)%")
     }
     if severity == .critical, reasons.isEmpty {
-      reasons.append("slot pressure is critical")
+      reasons.append("seating is very busy")
     }
 
     return HostSuggestedAction(
       id: "close-slot-\(slotTimeKey(slot))",
       severity: .critical,
       kind: .closeSlot,
-      title: "Close \(timeLabel) slot",
+      title: "Check open times at \(timeLabel)",
       reason: reasons.joined(separator: "; ") + ".",
       relatedReservationIDs: reservations.map(\.remoteID),
       targetSlotTime: apiSlotTimeString(slot),
@@ -536,12 +541,25 @@ struct HostIntelligenceEngine {
     settings: HostIntelligenceSettings
   ) -> [ReservationRecord] {
     reservations.filter { reservation in
+      guard reservationNeedsTableAttention(reservation) else { return false }
       guard let serviceDate = reservation.serviceDateTime else { return false }
       let minutesUntil = serviceDate.timeIntervalSince(now) / 60
       if minutesUntil < 0 {
         return abs(minutesUntil) <= Double(settings.noTableDueSoonMinutes)
       }
       return minutesUntil <= Double(settings.noTableDueSoonMinutes)
+    }
+  }
+
+  private func reservationNeedsTableAttention(_ reservation: ReservationRecord) -> Bool {
+    guard reservation.isOpenWork, !reservation.hasTableAssignment else { return false }
+    switch reservation.statusValue {
+    case .new, .needsReview:
+      return true
+    case .confirmed:
+      return true
+    case .seated, .completed, .cancelled, .noShow:
+      return false
     }
   }
 
@@ -567,13 +585,23 @@ struct HostIntelligenceEngine {
       }
 
       let timeLabel = reservation.displayTime
+      let detail: String
+      switch timing {
+      case .dueSoon, .dueNow, .overdue:
+        detail = HostStaffLanguage.dueSoonNoTableDetail(
+          guestName: reservation.guestName,
+          timeLabel: timeLabel
+        )
+      default:
+        detail = "\(reservation.guestName) at \(timeLabel) still needs a table."
+      }
       facts.append(
         HostBriefingFact(
           id: "no-table-due-soon-\(reservation.remoteID)",
           severity: severity,
           category: .table,
           title: "No table yet",
-          detail: "\(reservation.guestName) at \(timeLabel) still needs a table.",
+          detail: detail,
           evidence: [
             "partySize=\(reservation.partySize)",
             "dueWindowMinutes=\(settings.noTableDueSoonMinutes)"
@@ -1493,6 +1521,20 @@ struct HostIntelligenceEngine {
       seen.insert(action.id)
       return true
     }
+  }
+
+  private func rankSuggestedActions(
+    _ actions: [HostSuggestedAction],
+    reservations: [ReservationRecord],
+    now: Date,
+    settings: HostIntelligenceSettings
+  ) -> [HostSuggestedAction] {
+    briefingService.rankSuggestedActions(
+      actions,
+      reservations: reservations,
+      now: now,
+      settings: settings
+    )
   }
 
   private func elevatedSlotSeverity(

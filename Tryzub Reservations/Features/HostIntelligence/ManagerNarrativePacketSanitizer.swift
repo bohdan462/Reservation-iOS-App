@@ -27,10 +27,14 @@ enum ManagerNarrativePacketSanitizer {
     guard !containsPhone(trimmed) else { return nil }
     guard !looksLikeEvidence(trimmed) else { return nil }
 
-    if trimmed.count <= maxLineLength {
-      return trimmed
+    let rewritten = HostStaffLanguage.rewrite(trimmed)
+    guard !rewritten.isEmpty else { return nil }
+    guard !HostStaffLanguage.containsBlockedTechnicalLanguage(rewritten) else { return nil }
+
+    if rewritten.count <= maxLineLength {
+      return rewritten
     }
-    return String(trimmed.prefix(maxLineLength))
+    return String(rewritten.prefix(maxLineLength))
   }
 
   static func staffSafeOptionalLine(_ value: String?) -> String? {

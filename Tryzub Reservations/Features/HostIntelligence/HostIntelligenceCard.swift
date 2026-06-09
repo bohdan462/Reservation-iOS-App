@@ -264,7 +264,12 @@ struct HostIntelligenceCard: View {
   }
 
   private var attentionItems: [ManagerAttentionItem] {
-    ManagerAttentionItemBuilder.build(from: snapshot, maxItems: 3)
+    ManagerAttentionItemBuilder.build(
+      from: snapshot,
+      maxItems: 3,
+      compactPresentation: staffFacingPresentation,
+      briefingText: displayBriefingText
+    )
   }
 
   private var visibleCompactPrompts: [HostOperationalBriefingPrompt] {

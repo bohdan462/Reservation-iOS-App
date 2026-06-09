@@ -78,9 +78,7 @@ private struct StartupRootView: View {
             }
         }
         .onAppear {
-            if controller.releaseStartupUIFromLocalCacheIfAvailable(context: modelContext) {
-                controller.startStartupNetworkPassInBackgroundIfNeeded(context: modelContext)
-            }
+            _ = controller.releaseStartupUIFromLocalCacheIfAvailable(context: modelContext)
             controller.noteStartupWindowQueryDelivered(rowCount: startupWindowRows.count)
             if !showsStartupLoading {
                 controller.releaseStartupUI()

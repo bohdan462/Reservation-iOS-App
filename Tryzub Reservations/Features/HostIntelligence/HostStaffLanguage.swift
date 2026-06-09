@@ -1,0 +1,127 @@
+//
+//  HostStaffLanguage.swift
+//  Tryzub Reservations
+//
+//  Rewrites internal Host/booking phrases into plain restaurant staff language.
+//
+
+import Foundation
+
+enum HostStaffLanguage {
+
+  private static let exactReplacements: [(String, String)] = [
+    (
+      "requested time is inside minimum lead time window",
+      "that time is coming up soon"
+    ),
+    (
+      "this request can be confirmed based on slot pressure and party size",
+      "the time looks manageable for this party. staff should still check the details"
+    ),
+    (
+      "this request can be confirmed based on table pressure and party",
+      "the time looks manageable for this party. staff should still check the details"
+    ),
+    ("review auto-confirm candidate for", "check booking for"),
+    ("review auto-confirm candidate", "confirm if details look right"),
+    ("auto-confirm candidate", "looks safe to confirm"),
+    ("auto confirm candidate", "looks safe to confirm"),
+    ("needs manual review before confirming", "needs a staff check before confirming"),
+    ("need manual review before confirming", "need a staff check before confirming"),
+    ("manual review before confirming", "staff check before confirming"),
+    ("manual review", "staff check"),
+    ("minimum lead time window", "coming up soon"),
+    ("minimum lead time", "coming up soon"),
+    ("slot pressure", "table pressure"),
+    ("seating pressure", "table pressure"),
+    ("party size threshold", "large party"),
+    ("no suitable table fit exists for this party size", "no table looks like a good fit for this party"),
+    ("critical large party requires staff review", "large party needs a staff check before confirming"),
+    ("large party requires staff review before confirmation", "large party needs a staff check before confirming"),
+    (
+      "manual/call-in or no usable email; staff should review before confirmation",
+      "this booking needs a staff check before confirming"
+    ),
+    ("allergy signal requires staff review before confirmation", "allergy note needs a staff check before confirming"),
+    (
+      "accessibility needs require staff review before confirmation",
+      "accessibility needs require a staff check before confirming"
+    ),
+    (
+      "previous service issue requires staff review before confirmation",
+      "previous service issue needs a staff check before confirming"
+    ),
+    (
+      "possible duplicate booking requires staff review",
+      "possible duplicate booking needs a staff check"
+    ),
+    ("guest risk signal requires staff review", "guest note needs a staff check"),
+    ("is under heavy pressure and needs staff review", "is busy and needs a staff check"),
+    ("has less pressure", "looks less busy"),
+    ("booking risk signals should be reviewed", "bookings need a closer look"),
+    ("booking risk signal should be reviewed", "one booking needs a closer look"),
+    ("may need confirmation review", "still needs a staff check"),
+    ("require manual review before accepting more bookings in this slot", "check before adding more bookings at this time"),
+    ("should be reviewed manually", "need a staff check"),
+  ]
+
+  private static let blockedPhrases = [
+    "minimum lead time",
+    "lead time window",
+    "auto-confirm",
+    "auto confirm",
+    "candidate",
+    "slot pressure",
+    "party size threshold",
+    "confidence",
+    "eligible",
+    " based on ",
+    "threshold=",
+    "evidence=",
+  ]
+
+  static func rewrite(_ text: String) -> String {
+    var line = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !line.isEmpty else { return line }
+
+    for (pattern, replacement) in exactReplacements {
+      line = line.replacingOccurrences(of: pattern, with: replacement, options: .caseInsensitive)
+    }
+
+    line = line.replacingOccurrences(
+      of: #"\bparty size\b"#,
+      with: "party",
+      options: [.regularExpression, .caseInsensitive]
+    )
+
+    return collapseWhitespace(line)
+  }
+
+  static func leadTimeReason(requestedTime: String) -> String {
+    "Guest wants \(requestedTime), but that time is coming up soon."
+  }
+
+  static func autoConfirmReason() -> String {
+    "The time looks manageable for this party. Staff should still check the details."
+  }
+
+  static func dueSoonNoTableDetail(guestName: String, timeLabel: String) -> String {
+    "\(guestName)'s party arrives soon and still needs a table."
+  }
+
+  static func dueSoonBookingReason(requestedTime: String) -> String {
+    "Guest wants \(requestedTime), and that is coming up soon. Check details before confirming."
+  }
+
+  static func containsBlockedTechnicalLanguage(_ text: String) -> Bool {
+    let lower = text.lowercased()
+    return blockedPhrases.contains { lower.contains($0) }
+  }
+
+  private static func collapseWhitespace(_ text: String) -> String {
+    text
+      .split(whereSeparator: \.isWhitespace)
+      .joined(separator: " ")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+}

@@ -139,15 +139,15 @@ enum HostOperationalBriefingPromptBuilder {
     manualReviews.compactMap(\.reservationID).forEach { reservationIDs.insert($0) }
 
     if confirmCandidates.count == 1 {
-      lines.append("One reservation may need confirmation review.")
+      lines.append("One booking looks safe to confirm, but staff should still check the details.")
     } else if confirmCandidates.count > 1 {
-      lines.append("\(confirmCandidates.count) reservations may need confirmation review.")
+      lines.append("\(confirmCandidates.count) bookings look safe to confirm, but staff should still check the details.")
     }
 
     if manualReviews.count == 1 {
-      lines.append("One request needs manual review before confirming.")
+      lines.append("One booking needs a staff check before confirming.")
     } else if manualReviews.count > 1 {
-      lines.append("\(manualReviews.count) requests need manual review before confirming.")
+      lines.append("\(manualReviews.count) bookings need a staff check before confirming.")
     }
 
     let manualCallIns = snapshot.guestSignals.filter { $0.kind == .manualCallIn }
@@ -168,9 +168,9 @@ enum HostOperationalBriefingPromptBuilder {
       $0.kind == .cancellationRisk || $0.kind == .noShowRisk
     }
     if riskSignals.count == 1 {
-      lines.append("One booking risk signal should be reviewed.")
+      lines.append("One booking needs a closer look.")
     } else if riskSignals.count > 1 {
-      lines.append("\(riskSignals.count) booking risk signals should be reviewed.")
+      lines.append("\(riskSignals.count) bookings need a closer look.")
     }
     riskSignals.forEach { reservationIDs.insert($0.reservationID) }
 
@@ -409,7 +409,7 @@ enum HostOperationalBriefingPromptBuilder {
 
     let confirmables = snapshot.bookingDecisions.filter { $0.decision == .autoConfirm }
     if confirmables.count == 1, lines.count < 2 {
-      lines.append("One small party looks confirmable, but staff still needs to review.")
+      lines.append("One booking looks safe to confirm, but staff should still check the details.")
       confirmables.compactMap(\.reservationID).forEach { reservationIDs.insert($0) }
     }
 
@@ -492,8 +492,9 @@ enum HostOperationalBriefingPromptBuilder {
   }
 
   private static func sanitizeLine(_ text: String) -> String {
-    var line = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    var line = HostStaffLanguage.rewrite(text)
     guard !line.isEmpty else { return "" }
+    guard !HostStaffLanguage.containsBlockedTechnicalLanguage(line) else { return "" }
 
     let forbidden = [
       "has been assigned", "is assigned", "has been confirmed", "has been reviewed",

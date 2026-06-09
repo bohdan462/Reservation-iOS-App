@@ -125,7 +125,10 @@ struct ManagerNarrativeWriter {
     _ fallback: ManagerNarrative,
     reason: String?
   ) -> ManagerNarrative {
-    ManagerNarrative(
+    if let reason, !reason.isEmpty {
+      HostIntelligenceDiagnostics.localModelFallback(reason: reason)
+    }
+    return ManagerNarrative(
       headline: fallback.headline,
       whyItMatters: fallback.whyItMatters,
       checkNext: fallback.checkNext,

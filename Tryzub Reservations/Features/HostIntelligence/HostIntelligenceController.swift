@@ -113,7 +113,7 @@ final class HostIntelligenceController: ObservableObject {
 
     if hostBoardContext != nil,
        HostBriefingHostBoardGate.shouldUseTemplateOnlyOnHostBoard(packet: packet) {
-      HostIntelligenceDiagnostics.skipLocalModel(reason: "host_board_template_only")
+      HostIntelligenceDiagnostics.skipLocalModel(reason: HostBriefingHostBoardGate.SkipReason.host_board_template_only.rawValue)
       storeBriefingResult(
         cacheKey: cacheKey,
         fingerprint: fingerprint,
@@ -144,6 +144,7 @@ final class HostIntelligenceController: ObservableObject {
     }
 
     if hostBoardContext != nil, provider == .localModel {
+      HostIntelligenceDiagnostics.localModelAttempted(surface: "host_home")
       let narrativePacket = ManagerNarrativePacketBuilder.buildHostHome(from: decisionSnapshot)
       let narrativeResult = await ManagerNarrativeWriter().write(
         narrativePacket: narrativePacket,

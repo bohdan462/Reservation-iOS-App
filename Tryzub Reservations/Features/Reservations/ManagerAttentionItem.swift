@@ -40,12 +40,21 @@ struct ManagerAttentionItem: Identifiable, Equatable {
 
 enum ManagerAttentionItemBuilder {
 
-  static func build(from snapshot: HostDecisionSnapshot, maxItems: Int = 3) -> [ManagerAttentionItem] {
-    Array(
-      snapshot.suggestedActions
-        .prefix(maxItems)
-        .map { staffItem(from: $0) }
-    )
+  static func build(
+    from snapshot: HostDecisionSnapshot,
+    maxItems: Int = 3,
+    compactPresentation: Bool = false,
+    briefingText: String = ""
+  ) -> [ManagerAttentionItem] {
+    let actions = Array(snapshot.suggestedActions.prefix(maxItems))
+    return actions.map { action in
+      staffItem(
+        from: action,
+        among: actions,
+        compactPresentation: compactPresentation,
+        briefingText: briefingText
+      )
+    }
   }
 
   static func nonRedundantPrompts(
@@ -80,12 +89,22 @@ enum ManagerAttentionItemBuilder {
 
   // MARK: - Private
 
-  private static func staffItem(from action: HostSuggestedAction) -> ManagerAttentionItem {
+  private static func staffItem(
+    from action: HostSuggestedAction,
+    among actions: [HostSuggestedAction],
+    compactPresentation: Bool,
+    briefingText: String
+  ) -> ManagerAttentionItem {
     ManagerAttentionItem(
       id: action.id,
       priority: priority(for: action.severity),
       title: staffTitle(for: action),
-      detail: staffDetail(for: action),
+      detail: staffDetail(
+        for: action,
+        among: actions,
+        compactPresentation: compactPresentation,
+        briefingText: briefingText
+      ),
       actionTitle: staffTapLabel(for: action.kind),
       destinationHint: destinationHint(for: action.kind),
       relatedReservationIDs: action.relatedReservationIDs,
@@ -106,14 +125,71 @@ enum ManagerAttentionItemBuilder {
   }
 
   private static func staffTitle(for action: HostSuggestedAction) -> String {
-    let title = action.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    let title = HostStaffLanguage.rewrite(action.title)
     if !title.isEmpty { return title }
     return staffTapLabel(for: action.kind)
   }
 
-  private static func staffDetail(for action: HostSuggestedAction) -> String? {
-    let reason = action.reason.trimmingCharacters(in: .whitespacesAndNewlines)
-    return reason.isEmpty ? nil : reason
+  private static func staffDetail(
+    for action: HostSuggestedAction,
+    among actions: [HostSuggestedAction],
+    compactPresentation: Bool,
+    briefingText: String
+  ) -> String? {
+    let reason = HostStaffLanguage.rewrite(action.reason)
+    guard !reason.isEmpty else { return nil }
+
+    if compactPresentation,
+       shouldHideCompactDetail(
+         for: action,
+         reason: reason,
+         among: actions,
+         briefingText: briefingText
+       ) {
+      return nil
+    }
+
+    return reason
+  }
+
+  private static func shouldHideCompactDetail(
+    for action: HostSuggestedAction,
+    reason: String,
+    among actions: [HostSuggestedAction],
+    briefingText: String
+  ) -> Bool {
+    let normalizedReason = reason.lowercased()
+    let normalizedBriefing = briefingText.lowercased()
+
+    if normalizedBriefing.contains(normalizedReason) {
+      return true
+    }
+
+    if normalizedBriefing.contains("look safe to confirm"),
+       action.kind == .confirmReservation {
+      return true
+    }
+
+    if normalizedBriefing.contains("coming up soon"),
+       action.kind == .reviewReservation,
+       normalizedReason.contains("coming up soon") {
+      return true
+    }
+
+    let matchingReasonCount = actions.filter {
+      HostStaffLanguage.rewrite($0.reason).lowercased() == normalizedReason
+    }.count
+    if matchingReasonCount >= 2 {
+      return true
+    }
+
+    if action.kind == .confirmReservation,
+       actions.filter({ $0.kind == .confirmReservation }).count >= 2,
+       normalizedReason.contains("time looks manageable") {
+      return true
+    }
+
+    return false
   }
 
   private static func staffTapLabel(for kind: HostActionKind) -> String {

@@ -15,6 +15,37 @@ struct HostBriefingService {
 
   // MARK: - Public
 
+  func rankSuggestedActions(
+    _ actions: [HostSuggestedAction],
+    reservations: [ReservationRecord],
+    now: Date,
+    settings: HostIntelligenceSettings
+  ) -> [HostSuggestedAction] {
+    let lookup = Dictionary(uniqueKeysWithValues: reservations.map { ($0.remoteID, $0) })
+
+    return actions.sorted { lhs, rhs in
+      let lhsScore = actionPriorityScore(
+        lhs,
+        lookup: lookup,
+        now: now,
+        settings: settings
+      )
+      let rhsScore = actionPriorityScore(
+        rhs,
+        lookup: lookup,
+        now: now,
+        settings: settings
+      )
+      if lhsScore != rhsScore {
+        return lhsScore > rhsScore
+      }
+      if lhs.severity.rank != rhs.severity.rank {
+        return lhs.severity.rank < rhs.severity.rank
+      }
+      return lhs.title < rhs.title
+    }
+  }
+
   func rankHostFacts(_ facts: [HostBriefingFact]) -> [HostBriefingFact] {
     facts.sorted { lhs, rhs in
       if lhs.severity.rank != rhs.severity.rank {
@@ -153,20 +184,19 @@ struct HostBriefingService {
   }
 
   private func templateSentence(for fact: HostBriefingFact) -> String? {
-    let detail = fact.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+    let detail = HostStaffLanguage.rewrite(fact.detail)
     if !detail.isEmpty {
       return punctuate(detail)
     }
-    let title = fact.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    let title = HostStaffLanguage.rewrite(fact.title)
     guard !title.isEmpty else { return nil }
     return punctuate(title)
   }
 
   private func templateActionSentence(for fact: HostBriefingFact?) -> String? {
     guard let fact else { return nil }
-    guard let action = fact.suggestedActionTitle?
-      .trimmingCharacters(in: .whitespacesAndNewlines),
-      !action.isEmpty else {
+    let action = HostStaffLanguage.rewrite(fact.suggestedActionTitle ?? "")
+    guard !action.isEmpty else {
       return nil
     }
 
@@ -228,6 +258,54 @@ struct HostBriefingService {
       return 9
     }
     return categoryRank(fact.category)
+  }
+
+  private func actionPriorityScore(
+    _ action: HostSuggestedAction,
+    lookup: [Int: ReservationRecord],
+    now: Date,
+    settings: HostIntelligenceSettings
+  ) -> Int {
+    var score = max(0, 4 - action.severity.rank) * 20
+
+    switch action.kind {
+    case .reviewReservation, .confirmReservation, .suggestAlternateTime:
+      score += 10
+    case .assignTable, .holdTable:
+      score += 8
+    default:
+      break
+    }
+
+    for reservationID in action.relatedReservationIDs {
+      guard let reservation = lookup[reservationID] else { continue }
+
+      if reservation.statusValue == .new || reservation.statusValue == .needsReview {
+        score += 45
+      }
+      if !reservation.hasTableAssignment {
+        score += 40
+      }
+      if reservation.partySize >= settings.largePartyThreshold {
+        score += 25
+      }
+      if reservation.statusValue == .confirmed, reservation.hasTableAssignment {
+        score -= 70
+      }
+
+      switch reservation.operationalTimingState(now: now) {
+      case .overdue, .dueNow:
+        score += 55
+      case .dueSoon:
+        score += 40
+      case .normal:
+        score += 5
+      case .none:
+        break
+      }
+    }
+
+    return score
   }
 
   private func categoryRank(_ category: HostFactCategory) -> Int {
