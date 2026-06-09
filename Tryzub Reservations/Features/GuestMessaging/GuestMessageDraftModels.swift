@@ -15,6 +15,38 @@ enum GuestMessageDraftKind: String, Codable, CaseIterable, Equatable {
     case clarificationRequest
     case largePartyConfirmation
     case tableReady
+
+    var staffLabel: String {
+        switch self {
+        case .confirmation:
+            return "Confirmation"
+        case .reminder:
+            return "Reminder"
+        case .clarificationRequest:
+            return "Clarification"
+        case .largePartyConfirmation:
+            return "Large party"
+        case .tableReady:
+            return "Table ready"
+        }
+    }
+
+    var draftActionTitle: String {
+        "Draft \(staffLabel.lowercased())"
+    }
+}
+
+extension GuestMessageDraftSource {
+    var staffLabel: String {
+        switch self {
+        case .template:
+            return "Template draft"
+        case .localModel:
+            return "Enhanced draft"
+        case .blocked:
+            return "Blocked"
+        }
+    }
 }
 
 // MARK: - Tone & language

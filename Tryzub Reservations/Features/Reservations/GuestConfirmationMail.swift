@@ -15,6 +15,7 @@ enum GuestConfirmationMailPresenter {
         let htmlBody: String
         let plainBody: String
         let logBodySnapshot: String
+        var prefersPlainText = false
 
         var id: String {
             "\(reservationID)|" + recipients.joined(separator: ",") + "|" + subject
@@ -23,6 +24,30 @@ enum GuestConfirmationMailPresenter {
 
     static func canSendMail() -> Bool {
         MFMailComposeViewController.canSendMail()
+    }
+
+    /// Staff-reviewed plain-text draft. Does not call POST /confirm or record sent status.
+    static func manualDraft(
+        reservation: ReservationRecord,
+        subject: String,
+        body: String
+    ) -> Draft? {
+        let email = reservation.email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !email.isEmpty else { return nil }
+
+        let trimmedSubject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSubject.isEmpty, !trimmedBody.isEmpty else { return nil }
+
+        return Draft(
+            reservationID: reservation.remoteID,
+            recipients: [email],
+            subject: trimmedSubject,
+            htmlBody: trimmedBody,
+            plainBody: trimmedBody,
+            logBodySnapshot: trimmedBody,
+            prefersPlainText: true
+        )
     }
 
     static func draft(
@@ -88,7 +113,11 @@ struct GuestConfirmationMailComposer: UIViewControllerRepresentable {
         composer.mailComposeDelegate = context.coordinator
         composer.setToRecipients(draft.recipients)
         composer.setSubject(draft.subject)
-        composer.setMessageBody(draft.htmlBody, isHTML: true)
+        if draft.prefersPlainText {
+            composer.setMessageBody(draft.plainBody, isHTML: false)
+        } else {
+            composer.setMessageBody(draft.htmlBody, isHTML: true)
+        }
         return composer
     }
 

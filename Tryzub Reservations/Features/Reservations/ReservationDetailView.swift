@@ -130,6 +130,7 @@ struct ReservationDetailPresentation {
 // MARK: - Manual Confirmation Draft
 
 struct ManualEmailDraftService {
+    // Legacy confirmation-link email may include guest notes; AI-safe guest message drafts intentionally do not.
     // Builds copy staff can paste into Gmail/Mail. Does not call POST /confirm.
     static func confirmationSubject(reservation: ReservationRecord) -> String {
         "Your reservation at \(ReservationEmailWorkflow.restaurantName) — \(emailDateLine(for: reservation)) at \(emailTimeLine(for: reservation))"
@@ -364,6 +365,10 @@ struct ReservationDetailView: View {
     @State private var isGeneratingGuestManageLink = false
     @State private var guestConfirmationMailDraft: GuestConfirmationMailPresenter.Draft?
     @State private var guestInsightReport: GuestInsightReport?
+    @StateObject private var guestCommunicationCoordinator = GuestCommunicationCoordinator.templateOnly()
+    @State private var draftReviewContext: GuestMessageDraftReviewContext?
+    @State private var guestMessageMailDraft: GuestConfirmationMailPresenter.Draft?
+    @State private var guestMessageTextDraft: GuestTextMessageDraft?
 
     var body: some View {
         GeometryReader { proxy in
@@ -419,6 +424,29 @@ struct ReservationDetailView: View {
         .sheet(item: $guestConfirmationMailDraft) { draft in
             GuestConfirmationMailComposer(draft: draft) { result in
                 handleGuestConfirmationMailFinished(result, draft: draft)
+            }
+        }
+        .sheet(item: $draftReviewContext) { context in
+            GuestMessageDraftReviewView(
+                kind: context.kind,
+                draft: context.draft,
+                canSendEmail: reservation.hasUsableConfirmationEmail,
+                canSendText: GuestTextMessagePresenter.hasDialablePhone(reservation.phone),
+                onSendEmail: { sendDraftEmail(context.draft) },
+                onSendText: { sendDraftText(context.draft) },
+                onCopyEmail: { copyDraftEmail(context.draft) },
+                onCopyText: { copyDraftText(context.draft) },
+                onDismiss: { draftReviewContext = nil }
+            )
+        }
+        .sheet(item: $guestMessageMailDraft) { draft in
+            GuestConfirmationMailComposer(draft: draft) { _ in
+                guestMessageMailDraft = nil
+            }
+        }
+        .sheet(item: $guestMessageTextDraft) { draft in
+            GuestTextMessageComposer(draft: draft) {
+                guestMessageTextDraft = nil
             }
         }
         .navigationDestination(isPresented: $showEditScreen) {
@@ -513,7 +541,10 @@ struct ReservationDetailView: View {
                     detailColumnPair {
                         contactCard
                     } right: {
-                        notesCard(presentation)
+                        VStack(spacing: 14) {
+                            draftMessageCard
+                            notesCard(presentation)
+                        }
                     }
 
                     detailColumnPair {
@@ -532,6 +563,7 @@ struct ReservationDetailView: View {
                     DetailHeroCard(header: presentation.header)
                     actionBar
                     contactCard
+                    draftMessageCard
                     notesCard(presentation)
                     detailsCard(presentation)
                     ReservationServiceLoadCard(
@@ -578,6 +610,15 @@ struct ReservationDetailView: View {
                 tint: TryzubColors.info
             )
         }
+
+        if let message = guestCommunicationCoordinator.lastErrorMessage {
+            DetailWarningCard(
+                title: "Guest message",
+                message: message,
+                symbolName: "text.bubble",
+                tint: TryzubColors.info
+            )
+        }
     }
 
     private var actionBar: some View {
@@ -612,6 +653,14 @@ struct ReservationDetailView: View {
             onRestoreHidden: reservation.isHidden
                 ? { Task { await restoreHiddenReservation() } }
                 : nil
+        )
+    }
+
+    private var draftMessageCard: some View {
+        GuestMessageDraftActionsSection(
+            reservation: reservation,
+            isDrafting: guestCommunicationCoordinator.isDrafting,
+            onDraft: generateGuestMessageDraft
         )
     }
 
@@ -996,6 +1045,88 @@ struct ReservationDetailView: View {
         }
     }
 
+    // Guest message drafts: template-only. Coordinator prepares content; view owns sheet presentation.
+    private func generateGuestMessageDraft(kind: GuestMessageDraftKind) {
+        Task {
+            guestCommunicationCoordinator.clearStaffError()
+            let draft = await guestCommunicationCoordinator.draftGuestMessage(
+                kind: kind,
+                reservation: reservation,
+                manageURL: guestManageLink?.url
+            )
+            draftReviewContext = GuestMessageDraftReviewContext(kind: kind, draft: draft)
+            ReservationHaptics.selection()
+        }
+    }
+
+    private func sendDraftEmail(_ draft: GuestMessageDraft) {
+        guard let mailDraft = guestCommunicationCoordinator.makeEmailComposerDraft(
+            reservation: reservation,
+            draft: draft
+        ) else {
+            ReservationHaptics.warning()
+            return
+        }
+
+        draftReviewContext = nil
+
+        Task { @MainActor in
+            await Task.yield()
+
+            if GuestConfirmationMailPresenter.canSendMail() {
+                guestMessageMailDraft = mailDraft
+                ReservationHaptics.selection()
+            } else if GuestConfirmationMailPresenter.openMailtoFallback(draft: mailDraft) {
+                ReservationHaptics.selection()
+            } else {
+                guestCommunicationCoordinator.copyEmailDraft(draft)
+                guestCommunicationCoordinator.noteStaffError(
+                    GuestCommunicationCoordinator.StaffMessage.mailUnavailableCopied
+                )
+                ReservationHaptics.warning()
+            }
+        }
+    }
+
+    private func sendDraftText(_ draft: GuestMessageDraft) {
+        guard let textDraft = guestCommunicationCoordinator.makeTextComposerDraft(
+            reservation: reservation,
+            draft: draft
+        ) else {
+            ReservationHaptics.warning()
+            return
+        }
+
+        draftReviewContext = nil
+
+        Task { @MainActor in
+            await Task.yield()
+
+            if GuestTextMessagePresenter.canSendText() {
+                guestMessageTextDraft = textDraft
+                ReservationHaptics.selection()
+            } else if GuestTextMessagePresenter.openSMSFallback(draft: textDraft) {
+                ReservationHaptics.selection()
+            } else {
+                guestCommunicationCoordinator.copyTextDraft(draft)
+                guestCommunicationCoordinator.noteStaffError(
+                    GuestCommunicationCoordinator.StaffMessage.messagesUnavailableCopied
+                )
+                ReservationHaptics.warning()
+            }
+        }
+    }
+
+    private func copyDraftEmail(_ draft: GuestMessageDraft) {
+        guestCommunicationCoordinator.copyEmailDraft(draft)
+        ReservationHaptics.success()
+    }
+
+    private func copyDraftText(_ draft: GuestMessageDraft) {
+        guestCommunicationCoordinator.copyTextDraft(draft)
+        ReservationHaptics.success()
+    }
+
     private func recordManualConfirmationFailure(draft: GuestConfirmationMailPresenter.Draft) async {
         do {
             _ = try await controller.recordManualConfirmationFailed(
@@ -1011,6 +1142,12 @@ struct ReservationDetailView: View {
         }
         ReservationHaptics.warning()
     }
+}
+
+private struct GuestMessageDraftReviewContext: Identifiable {
+    let id = UUID()
+    let kind: GuestMessageDraftKind
+    let draft: GuestMessageDraft
 }
 
 private struct ReservationDetailGuestInsightCacheKey: Hashable {
