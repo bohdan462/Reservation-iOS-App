@@ -20,10 +20,18 @@ enum HostLLMPacketPromptBuilder {
       Do not say any action was completed. Do not make booking decisions.
       Do not mention internal IDs or reservation numbers.
       Write in a calm host voice.
-      Write 2-3 short sentences unless service state is critical.
+      Write 1-3 short sentences. Never write more than 4 sentences.
       Output at most 4 short sentences and at most 500 characters.
-      If the facts are sparse, keep the briefing brief and neutral.
-      Do not repeat these instructions.
+      If there are no urgent facts, keep it short.
+      Never say something has been reviewed, assigned, confirmed, seated, completed, handled, or resolved.
+      Do not say no changes are needed unless there are no facts.
+      Use review/check language, not completed-action language.
+      Write as a reminder, not as a report of completed work.
+      Return only the final briefing text.
+      Do not repeat instructions.
+      Do not label the answer.
+      Do not use bullet points.
+      Do not include headers.
       Start directly with the briefing prose.
       """
     )

@@ -60,6 +60,13 @@ struct HostIntelligenceSettingsView: View {
       if settingsStore.settings.useEnhancedBriefing,
          settingsStore.settings.enhancedBriefingProvider == .localModel {
         localModelReadinessNotice
+
+        Toggle("Use local model on Host board", isOn: binding(\.useLocalModelOnHostBoard))
+          .disabled(!settingsStore.settings.useEnhancedBriefing)
+
+        Text("Diagnostics can test the model. Host board use should remain off until output quality is verified.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
 
       Text("The engine still makes all decisions. The writer only rewrites approved facts.")

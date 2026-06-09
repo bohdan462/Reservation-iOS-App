@@ -451,6 +451,11 @@ struct HostIntelligenceDiagnosticsView: View {
       LabeledContent("Provider") {
         Text(settings.enhancedBriefingProvider.displayName)
       }
+      if settings.enhancedBriefingProvider == .localModel {
+        LabeledContent("Host board local model gate") {
+          Text(settings.useLocalModelOnHostBoard ? "Enabled" : "Disabled")
+        }
+      }
       if let briefingSource {
         LabeledContent("Current source") {
           Text(briefingSource.displayName)
@@ -627,6 +632,12 @@ struct HostIntelligenceDiagnosticsView: View {
       LocalModelBriefingDiagnosticTest(
         packet: packet,
         fallbackText: fallback,
+        settings: settings,
+        readiness: localModelReadiness,
+        testLabel: "Current service packet"
+      )
+
+      LocalModelSamplePacketTests(
         settings: settings,
         readiness: localModelReadiness
       )
@@ -819,11 +830,72 @@ private struct LocalModelGGUFImportControls: View {
 
 // MARK: - Local Model Manual Test (developer diagnostics only)
 
+private enum LocalModelBriefingDiagnosticRunner {
+  static func run(
+    packet: HostLLMPacket,
+    fallbackText: String,
+    testLabel: String,
+    settings: HostIntelligenceSettings
+  ) async -> LocalModelBriefingDiagnosticResult {
+    let prompt = HostLLMPacketPromptBuilder.buildPrompt(from: packet)
+    let readinessStatus = HostLocalModelReadinessProvider.currentReadiness().status
+    let writer = LocalModelHostBriefingWriter()
+    let clock = ContinuousClock()
+
+    let coldMark = clock.now
+    let coldWriterResult = await writer.writeBriefing(
+      packet: packet,
+      fallbackText: fallbackText
+    )
+    let coldDuration = LocalModelDiagnosticDuration.seconds(since: coldMark, on: clock)
+
+    let warmMark = clock.now
+    let writerResult = await writer.writeBriefing(
+      packet: packet,
+      fallbackText: fallbackText
+    )
+    let warmDuration = LocalModelDiagnosticDuration.seconds(since: warmMark, on: clock)
+
+    let validation = HostBriefingWriterValidator.validationResult(
+      writerResult.text,
+      packet: packet,
+      fallbackText: fallbackText
+    )
+    let runtimeDiagnostics = HostLlamaBriefingRuntimeDiagnostics.lastRun
+    let fallbackOccurred = coldWriterResult.source == .failedFallback
+      || writerResult.source == .failedFallback
+    let writerDiagnostics = HostBriefingWriterDiagnostics.self
+
+    return LocalModelBriefingDiagnosticResult(
+      testLabel: testLabel,
+      coldWriterResult: coldWriterResult,
+      writerResult: writerResult,
+      validation: validation,
+      coldDuration: coldDuration,
+      warmDuration: warmDuration,
+      promptCharacterCount: prompt.count,
+      outputCharacterCount: writerResult.text.count,
+      readinessStatus: readinessStatus,
+      fallbackText: fallbackText,
+      fallbackOccurred: fallbackOccurred,
+      runtimeDiagnostics: runtimeDiagnostics,
+      inferenceSkippedBecauseNoFacts: writerDiagnostics.inferenceSkippedBecauseNoFacts,
+      inferenceSkippedBecauseLowRiskSingleFact: writerDiagnostics.inferenceSkippedBecauseLowRiskSingleFact,
+      hostBoardLocalModelGateEnabled: settings.useLocalModelOnHostBoard,
+      generatedCandidate: writerDiagnostics.lastGeneratedCandidate,
+      repairedOutput: writerDiagnostics.lastRepairedOutput,
+      candidateValidationFailureReason: writerDiagnostics.lastValidationFailureReason,
+      semanticValidationFailureReason: writerDiagnostics.lastSemanticValidationFailureReason
+    )
+  }
+}
+
 private struct LocalModelBriefingDiagnosticTest: View {
   let packet: HostLLMPacket
   let fallbackText: String
   let settings: HostIntelligenceSettings
   let readiness: HostLocalModelReadiness
+  let testLabel: String
 
   @State private var isRunning = false
   @State private var result: LocalModelBriefingDiagnosticResult?
@@ -864,116 +936,7 @@ private struct LocalModelBriefingDiagnosticTest: View {
       }
 
       if let result {
-        if result.inferenceSkippedBecauseNoFacts {
-          Text("Local model skipped: no packet facts.")
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-        }
-        LabeledContent("Readiness") {
-          Text(result.readinessStatus.rawValue)
-        }
-        LabeledContent("Prompt characters") {
-          Text("\(result.promptCharacterCount)")
-        }
-        if let promptTokens = result.runtimeDiagnostics?.promptTokenCount, promptTokens > 0 {
-          LabeledContent("Prompt tokens") {
-            Text("\(promptTokens)")
-          }
-        }
-        LabeledContent("Output characters") {
-          Text("\(result.outputCharacterCount)")
-        }
-        LabeledContent("Cold duration") {
-          Text(LocalModelDiagnosticDuration.format(result.coldDuration))
-        }
-        LabeledContent("Warm duration") {
-          Text(LocalModelDiagnosticDuration.format(result.warmDuration))
-        }
-        LabeledContent("Cold source") {
-          Text(result.coldWriterResult.source.displayName)
-        }
-        LabeledContent("Warm source") {
-          Text(result.writerResult.source.displayName)
-        }
-        LabeledContent("Fallback occurred") {
-          Text(result.fallbackOccurred ? "Yes" : "No")
-        }
-        if let modelSource = result.runtimeDiagnostics?.modelSource {
-          LabeledContent("Model source") {
-            Text(modelSource)
-          }
-        }
-        if let decodeCode = result.runtimeDiagnostics?.initialDecodeCode {
-          LabeledContent("Initial decode code") {
-            Text("\(decodeCode)")
-          }
-        }
-        if let runtimeDiagnostics = result.runtimeDiagnostics {
-          if runtimeDiagnostics.generationRan {
-            if let decodeCode = runtimeDiagnostics.generationDecodeCode {
-              LabeledContent("Generation decode code") {
-                Text("\(decodeCode)")
-              }
-            }
-          } else if !result.inferenceSkippedBecauseNoFacts {
-            LabeledContent("Token generation") {
-              Text("No token generation ran")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-            }
-          }
-        }
-        if let candidate = result.generatedCandidate, !candidate.isEmpty {
-          LabeledContent("Model candidate preview") {
-            Text(candidate)
-              .font(.caption2)
-              .foregroundStyle(.secondary)
-              .textSelection(.enabled)
-          }
-        }
-        if let reason = result.candidateValidationFailureReason, !reason.isEmpty {
-          LabeledContent("Candidate validation failure") {
-            Text(reason)
-              .font(.caption2)
-              .foregroundStyle(.tertiary)
-          }
-        }
-        if let runtimeError = result.runtimeDiagnostics?.lastError, !runtimeError.isEmpty {
-          LabeledContent("Runtime error") {
-            Text(runtimeError)
-              .font(.caption2)
-              .foregroundStyle(.tertiary)
-          }
-        }
-        LabeledContent("Output text") {
-          Text(result.writerResult.text)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .textSelection(.enabled)
-        }
-        if let reason = result.writerResult.failedReason, !reason.isEmpty {
-          LabeledContent("Failure reason") {
-            Text(reason)
-              .font(.caption2)
-              .foregroundStyle(.tertiary)
-          }
-        }
-        LabeledContent("Validation") {
-          Text(result.validation.isValid ? "Valid" : "Invalid")
-        }
-        if let reason = result.validation.reason {
-          Text(reason)
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-        }
-        if result.fallbackOccurred {
-          LabeledContent("Fallback text") {
-            Text(result.fallbackText)
-              .font(.caption2)
-              .foregroundStyle(.tertiary)
-              .textSelection(.enabled)
-          }
-        }
+        LocalModelBriefingDiagnosticResultView(result: result)
       }
     }
     .padding(.vertical, 4)
@@ -985,59 +948,242 @@ private struct LocalModelBriefingDiagnosticTest: View {
     result = nil
 
     Task {
-      let prompt = HostLLMPacketPromptBuilder.buildPrompt(from: packet)
-      let readinessStatus = HostLocalModelReadinessProvider.currentReadiness().status
-      let writer = LocalModelHostBriefingWriter()
-      let clock = ContinuousClock()
-
-      let coldMark = clock.now
-      let coldWriterResult = await writer.writeBriefing(
+      let diagnosticResult = await LocalModelBriefingDiagnosticRunner.run(
         packet: packet,
-        fallbackText: fallbackText
+        fallbackText: fallbackText,
+        testLabel: testLabel,
+        settings: settings
       )
-      let coldDuration = LocalModelDiagnosticDuration.seconds(since: coldMark, on: clock)
-
-      let warmMark = clock.now
-      let writerResult = await writer.writeBriefing(
-        packet: packet,
-        fallbackText: fallbackText
-      )
-      let warmDuration = LocalModelDiagnosticDuration.seconds(since: warmMark, on: clock)
-
-      let validation = HostBriefingWriterValidator.validationResult(
-        writerResult.text,
-        packet: packet,
-        fallbackText: fallbackText
-      )
-      let runtimeDiagnostics = HostLlamaBriefingRuntimeDiagnostics.lastRun
-      let fallbackOccurred = coldWriterResult.source == .failedFallback
-        || writerResult.source == .failedFallback
-      let writerDiagnostics = HostBriefingWriterDiagnostics.self
-
       await MainActor.run {
-        result = LocalModelBriefingDiagnosticResult(
-          coldWriterResult: coldWriterResult,
-          writerResult: writerResult,
-          validation: validation,
-          coldDuration: coldDuration,
-          warmDuration: warmDuration,
-          promptCharacterCount: prompt.count,
-          outputCharacterCount: writerResult.text.count,
-          readinessStatus: readinessStatus,
-          fallbackText: fallbackText,
-          fallbackOccurred: fallbackOccurred,
-          runtimeDiagnostics: runtimeDiagnostics,
-          inferenceSkippedBecauseNoFacts: writerDiagnostics.inferenceSkippedBecauseNoFacts,
-          generatedCandidate: writerDiagnostics.lastGeneratedCandidate,
-          candidateValidationFailureReason: writerDiagnostics.lastValidationFailureReason
-        )
+        result = diagnosticResult
         isRunning = false
       }
     }
   }
 }
 
+private struct LocalModelSamplePacketTests: View {
+  let settings: HostIntelligenceSettings
+  let readiness: HostLocalModelReadiness
+
+  @State private var isRunning = false
+  @State private var runningSampleName: String?
+  @State private var result: LocalModelBriefingDiagnosticResult?
+
+  private var canRunTests: Bool {
+    settings.enhancedBriefingProvider == .localModel
+      && readiness.status == .ready
+      && !isRunning
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Sample Packet Tests")
+        .font(.subheadline.weight(.semibold))
+
+      Text("Synthetic HostLLMPacket fixtures for local model quality testing. Diagnostics only.")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+
+      ForEach(HostLLMPacketSampleFactory.Sample.allCases, id: \.self) { sample in
+        Button(sample.buttonTitle) {
+          runSample(sample)
+        }
+        .disabled(!canRunTests)
+      }
+
+      if !canRunTests, settings.enhancedBriefingProvider != .localModel {
+        Text("Select Local model provider to enable sample tests.")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      } else if !canRunTests, readiness.status != .ready {
+        Text("Import the GGUF from Files or install it in Application Support to enable sample tests.")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+
+      if isRunning, let runningSampleName {
+        ProgressView("Running sample \(runningSampleName)…")
+          .font(.caption)
+      }
+
+      if let result {
+        LocalModelBriefingDiagnosticResultView(result: result)
+      }
+    }
+    .padding(.vertical, 4)
+  }
+
+  private func runSample(_ sample: HostLLMPacketSampleFactory.Sample) {
+    guard canRunTests else { return }
+    isRunning = true
+    runningSampleName = sample.displayName
+    result = nil
+
+    Task {
+      let diagnosticResult = await LocalModelBriefingDiagnosticRunner.run(
+        packet: HostLLMPacketSampleFactory.packet(for: sample),
+        fallbackText: HostLLMPacketSampleFactory.fallbackText(for: sample),
+        testLabel: "Sample: \(sample.displayName)",
+        settings: settings
+      )
+      await MainActor.run {
+        result = diagnosticResult
+        runningSampleName = nil
+        isRunning = false
+      }
+    }
+  }
+}
+
+private struct LocalModelBriefingDiagnosticResultView: View {
+  let result: LocalModelBriefingDiagnosticResult
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      LabeledContent("Test") {
+        Text(result.testLabel)
+      }
+      if result.inferenceSkippedBecauseNoFacts {
+        Text("Local model skipped: no packet facts.")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+      if result.inferenceSkippedBecauseLowRiskSingleFact {
+        Text("Local model skipped: low-risk single-fact packet uses template.")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+      LabeledContent("Host board local model gate") {
+        Text(result.hostBoardLocalModelGateEnabled ? "Enabled" : "Disabled")
+      }
+      LabeledContent("Readiness") {
+        Text(result.readinessStatus.rawValue)
+      }
+      LabeledContent("Prompt characters") {
+        Text("\(result.promptCharacterCount)")
+      }
+      if let promptTokens = result.runtimeDiagnostics?.promptTokenCount, promptTokens > 0 {
+        LabeledContent("Prompt tokens") {
+          Text("\(promptTokens)")
+        }
+      }
+      LabeledContent("Output characters") {
+        Text("\(result.outputCharacterCount)")
+      }
+      LabeledContent("Cold duration") {
+        Text(LocalModelDiagnosticDuration.format(result.coldDuration))
+      }
+      LabeledContent("Warm duration") {
+        Text(LocalModelDiagnosticDuration.format(result.warmDuration))
+      }
+      LabeledContent("Cold source") {
+        Text(result.coldWriterResult.source.displayName)
+      }
+      LabeledContent("Warm source") {
+        Text(result.writerResult.source.displayName)
+      }
+      LabeledContent("Fallback occurred") {
+        Text(result.fallbackOccurred ? "Yes" : "No")
+      }
+      if let modelSource = result.runtimeDiagnostics?.modelSource {
+        LabeledContent("Model source") {
+          Text(modelSource)
+        }
+      }
+      if let decodeCode = result.runtimeDiagnostics?.initialDecodeCode {
+        LabeledContent("Initial decode code") {
+          Text("\(decodeCode)")
+        }
+      }
+      if let runtimeDiagnostics = result.runtimeDiagnostics {
+        if runtimeDiagnostics.generationRan {
+          if let decodeCode = runtimeDiagnostics.generationDecodeCode {
+            LabeledContent("Generation decode code") {
+              Text("\(decodeCode)")
+            }
+          }
+        } else if !result.inferenceSkippedBecauseNoFacts,
+                  !result.inferenceSkippedBecauseLowRiskSingleFact {
+          LabeledContent("Token generation") {
+            Text("No token generation ran")
+              .font(.caption2)
+              .foregroundStyle(.tertiary)
+          }
+        }
+      }
+      if let candidate = result.generatedCandidate, !candidate.isEmpty {
+        LabeledContent("Model candidate preview") {
+          Text(candidate)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        }
+      }
+      if let repaired = result.repairedOutput, !repaired.isEmpty {
+        LabeledContent("Repaired output used") {
+          Text(repaired)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        }
+      }
+      if let reason = result.candidateValidationFailureReason, !reason.isEmpty {
+        LabeledContent("Candidate validation failure") {
+          Text(reason)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
+      }
+      if let reason = result.semanticValidationFailureReason, !reason.isEmpty {
+        LabeledContent("Semantic validation failure") {
+          Text(reason)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
+      }
+      if let runtimeError = result.runtimeDiagnostics?.lastError, !runtimeError.isEmpty {
+        LabeledContent("Runtime error") {
+          Text(runtimeError)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
+      }
+      LabeledContent("Output text") {
+        Text(result.writerResult.text)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .textSelection(.enabled)
+      }
+      if let reason = result.writerResult.failedReason, !reason.isEmpty {
+        LabeledContent("Failure reason") {
+          Text(reason)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
+      }
+      LabeledContent("Validation") {
+        Text(result.validation.isValid ? "Valid" : "Invalid")
+      }
+      if let reason = result.validation.reason {
+        Text(reason)
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+      if result.fallbackOccurred {
+        LabeledContent("Fallback text") {
+          Text(result.fallbackText)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .textSelection(.enabled)
+        }
+      }
+    }
+  }
+}
+
 private struct LocalModelBriefingDiagnosticResult {
+  let testLabel: String
   let coldWriterResult: HostBriefingWriterResult
   let writerResult: HostBriefingWriterResult
   let validation: HostBriefingValidationResult
@@ -1050,8 +1196,12 @@ private struct LocalModelBriefingDiagnosticResult {
   let fallbackOccurred: Bool
   let runtimeDiagnostics: HostLlamaRunDiagnostics?
   let inferenceSkippedBecauseNoFacts: Bool
+  let inferenceSkippedBecauseLowRiskSingleFact: Bool
+  let hostBoardLocalModelGateEnabled: Bool
   let generatedCandidate: String?
+  let repairedOutput: String?
   let candidateValidationFailureReason: String?
+  let semanticValidationFailureReason: String?
 }
 
 private enum LocalModelDiagnosticDuration {

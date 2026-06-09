@@ -42,7 +42,7 @@ struct GuestInsightsController {
 
         let possibleResults = matchResults.filter {
             $0.record.remoteID != reservation.remoteID
-                && ($0.confidence == .possible || $0.confidence == .weak)
+                && $0.confidence == .possible
                 && !intentDeduper.isDuplicateIntent($0.record, ofAny: matchedRecords)
         }
         let possibleResultByID = Dictionary(
@@ -405,8 +405,8 @@ struct GuestInsightsController {
             warnings.append(
                 GuestInsightWarning(
                     id: "possible-duplicates",
-                    title: "Possible duplicate identities",
-                    message: "Some cached reservations look similar, but are not strong enough to merge automatically.",
+                    title: "Possible same guest",
+                    message: "Shared phone/email or similar full name evidence was found. Review only; nothing is merged.",
                     systemImage: "person.2"
                 )
             )

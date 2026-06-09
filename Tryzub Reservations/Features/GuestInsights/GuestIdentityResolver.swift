@@ -136,25 +136,16 @@ struct GuestIdentityResolver {
             return GuestIdentityMatch(
                 record: record,
                 confidence: .possible,
-                reasons: ["Same name and similar booking pattern"]
+                reasons: ["Similar full name", "Similar booking pattern"]
             )
         }
 
-        if namesLookSimilar(selected.normalizedName, candidate.normalizedName) {
+        if sameName,
+           nameTokens(selected.normalizedName).count >= 2 {
             return GuestIdentityMatch(
                 record: record,
-                confidence: .weak,
-                reasons: ["Similar name"]
-            )
-        }
-
-        if let selectedLast4 = selected.phoneLast4,
-           let candidateLast4 = candidate.phoneLast4,
-           selectedLast4 == candidateLast4 {
-            return GuestIdentityMatch(
-                record: record,
-                confidence: .weak,
-                reasons: ["Same phone ending only"]
+                confidence: .possible,
+                reasons: ["Similar full name"]
             )
         }
 
@@ -245,19 +236,65 @@ struct GuestIdentityResolver {
 
     // MARK: - Name / Email Similarity
 
-    func namesLookSimilar(_ lhs: String, _ rhs: String) -> Bool {
-        guard lhs.count >= 4, rhs.count >= 4 else { return false }
-        if lhs == rhs { return true }
-        if lhs.contains(rhs) || rhs.contains(lhs) { return true }
-
-        let lhsTokens = Set(lhs.split(separator: " ").map(String.init).filter { $0.count > 1 })
-        let rhsTokens = Set(rhs.split(separator: " ").map(String.init).filter { $0.count > 1 })
-        guard !lhsTokens.isEmpty, !rhsTokens.isEmpty else { return false }
-
-        let overlap = lhsTokens.intersection(rhsTokens).count
-        let smallerCount = min(lhsTokens.count, rhsTokens.count)
-        return Double(overlap) / Double(smallerCount) >= 0.5
+    func nameTokens(_ name: String) -> [String] {
+        name
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+            .filter { !$0.isEmpty }
     }
+
+    func isSingleTokenName(_ name: String) -> Bool {
+        nameTokens(name).count <= 1
+    }
+
+    /// Used only when phone or email already matches.
+    func namesCompatibleWithSharedContact(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs == rhs { return true }
+        return fullNamesLookSimilar(lhs, rhs)
+    }
+
+    func fullNamesLookSimilar(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs == rhs { return true }
+
+        let leftTokens = nameTokens(lhs)
+        let rightTokens = nameTokens(rhs)
+        guard !leftTokens.isEmpty, !rightTokens.isEmpty else { return false }
+
+        if isSingleTokenName(lhs) != isSingleTokenName(rhs) {
+            return false
+        }
+
+        if leftTokens.count == 1, rightTokens.count == 1 {
+            return leftTokens[0] == rightTokens[0]
+        }
+
+        guard let leftLast = leftTokens.last,
+              let rightLast = rightTokens.last,
+              leftLast == rightLast else {
+            return false
+        }
+
+        let leftFirst = leftTokens[0]
+        let rightFirst = rightTokens[0]
+        if leftFirst == rightFirst { return true }
+        if leftFirst.count == 1, rightFirst.hasPrefix(leftFirst) { return true }
+        if rightFirst.count == 1, leftFirst.hasPrefix(rightFirst) { return true }
+
+        return false
+    }
+
+    // MARK: - Manual Test Cases (no unit test target)
+    //
+    // firstNameOnlyDoesNotSurface:
+    //   Anna Kyrychenko should not match Anna Koget / Anna Petrovych / Anna Sinh.
+    // singleTokenNameDoesNotMatchFullNameWithoutPhoneOrEmail:
+    //   anna should not match Anna Kyrychenko without shared phone/email.
+    // samePhoneSurfacesStrongMatch:
+    //   Anna Kyrychenko + phone X matches A. Kyrychenko + phone X.
+    // sameEmailSurfacesStrongMatch:
+    //   same normalized email always exact match.
+    // sameFullNameSurfacesPossibleMatch:
+    //   Anna Kyrychenko matches Anna Kyrychenko as possible same guest.
 
     private func emailLocalPartsLookSimilar(_ lhs: String?, _ rhs: String?) -> Bool {
         guard let lhs, let rhs else { return false }

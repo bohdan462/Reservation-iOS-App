@@ -155,6 +155,16 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
     """
   }
 
+  private static let generatedArtifactPrefixes = [
+    "Briefing:",
+    "Host briefing:",
+    "Final briefing:",
+    "Here is the host briefing:",
+    "Here is the briefing:",
+    "Here is your host briefing:",
+    "Here is..."
+  ]
+
   private static func sanitizeGeneratedBriefing(_ raw: String) -> String {
     var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -170,7 +180,25 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
       .replacingOccurrences(of: "</s>", with: "")
       .trimmingCharacters(in: .whitespacesAndNewlines)
 
+    text = stripGeneratedArtifactPrefixes(from: text)
+
     return text
+  }
+
+  private static func stripGeneratedArtifactPrefixes(from text: String) -> String {
+    var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let lowered = cleaned.lowercased()
+
+    for prefix in generatedArtifactPrefixes {
+      let normalizedPrefix = prefix.lowercased()
+      if lowered.hasPrefix(normalizedPrefix) {
+        cleaned = String(cleaned.dropFirst(prefix.count))
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+        break
+      }
+    }
+
+    return cleaned
   }
 
 }

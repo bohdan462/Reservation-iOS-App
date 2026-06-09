@@ -337,6 +337,8 @@ struct HostIntelligenceSettings: Codable, Equatable {
     var maxPartySizeForAutoConfirm: Int = 6
     var useEnhancedBriefing: Bool = false
     var enhancedBriefingProvider: HostBriefingProviderKind = .template
+    /// When false, Host board uses template briefing even if local model is selected.
+    var useLocalModelOnHostBoard: Bool = false
 }
 
 struct RestaurantTableConfig: Identifiable, Codable, Equatable {

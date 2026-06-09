@@ -417,7 +417,7 @@ private struct GuestInsightPossibleMatchesSection: View {
         if !report.possibleMatches.isEmpty {
             GuestInsightCard(title: "Possible Same Guest", systemImage: "person.2") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("These records look similar, but are not strong identity matches. Review only; nothing is merged.")
+                    Text("Possible same guest matches with shared phone/email or similar full name evidence. Review only; nothing is merged.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 

@@ -149,7 +149,7 @@ enum HostGuestIntelligenceSupport {
           id: "guest-action-duplicate-\(signal.reservationID)",
           signal: signal,
           kind: .reviewReservation,
-          title: "Review possible duplicate for \(signal.guestName)",
+          title: "Review possible same guest for \(signal.guestName)",
           reason: signal.message
         )
       case .manualCallIn:
@@ -413,16 +413,31 @@ enum HostGuestIntelligenceSupport {
       )
     }
 
-    if report.collapsedDuplicateReservationCount > 0
-      || report.warnings.contains(where: { $0.id == "possible-duplicates" }) {
+    if report.collapsedDuplicateReservationCount > 0 {
+      return HostGuestSignal(
+        id: "guest-duplicate-intent-\(reservation.remoteID)",
+        reservationID: reservation.remoteID,
+        guestName: reservation.guestName,
+        kind: .possibleDuplicate,
+        severity: .watch,
+        message: "\(reservation.guestName) may have duplicate booking copies in cache.",
+        evidence: ["collapsedDuplicateIntent"]
+      )
+    }
+
+    if let identityMatch = report.possibleMatches.first {
+      var evidence = identityMatch.matchReasons
+      if evidence.isEmpty {
+        evidence = ["possibleIdentityMatch"]
+      }
       return HostGuestSignal(
         id: "guest-duplicate-identity-\(reservation.remoteID)",
         reservationID: reservation.remoteID,
         guestName: reservation.guestName,
         kind: .possibleDuplicate,
         severity: .watch,
-        message: "\(reservation.guestName) may match another guest identity.",
-        evidence: ["possibleIdentityMatch"]
+        message: "Possible same guest for \(reservation.guestName). Review only; nothing is merged.",
+        evidence: evidence
       )
     }
 
@@ -521,7 +536,7 @@ enum HostGuestIntelligenceSupport {
     case .noShowRisk: return "No-show risk"
     case .previousServiceIssue: return "Prior service issue"
     case .manualCallIn: return "Manual call-in"
-    case .possibleDuplicate: return "Possible duplicate"
+    case .possibleDuplicate: return "Possible same guest"
     case .noteReminder: return "Note reminder"
     case .unknown: return "Guest note"
     }
@@ -534,7 +549,7 @@ enum HostGuestIntelligenceSupport {
     case .seatingPreference: return "Review seating preference before assigning."
     case .previousServiceIssue: return "Alert the server before seating."
     case .noShowRisk, .cancellationRisk: return "Review before confirming."
-    case .possibleDuplicate: return "Review before confirming."
+    case .possibleDuplicate: return "Review possible same guest before confirming."
     case .manualCallIn: return "Confirm contact details manually."
     case .specialOccasion: return "Mention the occasion at arrival."
     default: return nil

@@ -68,7 +68,12 @@ final class HostIntelligenceController: ObservableObject {
       return
     }
 
-    let writer = HostBriefingWriterFactory.writer(for: settings.enhancedBriefingProvider)
+    let provider = HostBriefingWriterFactory.effectiveProvider(
+      requested: settings.enhancedBriefingProvider,
+      settings: settings,
+      forHostBoard: true
+    )
+    let writer = HostBriefingWriterFactory.writer(for: provider)
     let result = await writer.writeBriefing(
       packet: decisionSnapshot.llmPacket,
       fallbackText: fallback

@@ -289,7 +289,7 @@ struct RegularGuestsController {
                     continue
                 }
 
-                if match.confidence == .possible || match.confidence == .weak {
+                if match.confidence == .possible {
                     possibleIDs.insert(record.remoteID)
                     break
                 }
