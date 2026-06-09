@@ -293,6 +293,20 @@ struct HostDecisionSnapshot: Codable, Equatable {
     }
 }
 
+// MARK: - Briefing Writer
+
+enum HostBriefingProviderKind: String, Codable, CaseIterable {
+    case template
+    case localPlaceholder
+
+    var displayName: String {
+        switch self {
+        case .template: return "Template"
+        case .localPlaceholder: return "Local placeholder"
+        }
+    }
+}
+
 // MARK: - Settings & Table Config
 
 struct HostIntelligenceSettings: Codable, Equatable {
@@ -319,6 +333,8 @@ struct HostIntelligenceSettings: Codable, Equatable {
     var autoConfirmWeekdaysOnly: Bool = true
     var minimumConfidenceForAutoConfirm: Double = 0.8
     var maxPartySizeForAutoConfirm: Int = 6
+    var useEnhancedBriefing: Bool = false
+    var enhancedBriefingProvider: HostBriefingProviderKind = .template
 }
 
 struct RestaurantTableConfig: Identifiable, Codable, Equatable {

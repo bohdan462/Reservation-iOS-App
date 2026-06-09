@@ -9,6 +9,8 @@ import SwiftUI
 
 struct HostIntelligenceCard: View {
   let snapshot: HostDecisionSnapshot
+  var briefingTextOverride: String? = nil
+  var briefingSource: HostBriefingWriterSource? = nil
   var onActionTapped: ((HostSuggestedAction) -> Void)? = nil
 
   var body: some View {
@@ -54,9 +56,15 @@ struct HostIntelligenceCard: View {
         .font(.caption)
         .foregroundStyle(.secondary)
 
-      Text(snapshot.templateBriefingText)
+      Text(displayBriefingText)
         .font(.subheadline)
         .fixedSize(horizontal: false, vertical: true)
+
+      if let briefingSourceCaption {
+        Text(briefingSourceCaption)
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
 
       if !topActions.isEmpty {
         VStack(alignment: .leading, spacing: 6) {
@@ -144,6 +152,26 @@ struct HostIntelligenceCard: View {
 
   private var stateLine: String {
     "Service state · pressure \(Int(snapshot.pressureScore.rounded()))/100"
+  }
+
+  private var displayBriefingText: String {
+    let override = briefingTextOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if !override.isEmpty {
+      return override
+    }
+    return snapshot.templateBriefingText
+  }
+
+  private var briefingSourceCaption: String? {
+    guard let briefingSource else { return nil }
+    switch briefingSource {
+    case .template:
+      return nil
+    case .localPlaceholder:
+      return "Enhanced briefing"
+    case .failedFallback:
+      return "Using template fallback"
+    }
   }
 
   private var topActions: [HostSuggestedAction] {

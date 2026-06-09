@@ -11,6 +11,9 @@ import Foundation
 final class HostIntelligenceController: ObservableObject {
 
   @Published private(set) var decisionSnapshot: HostDecisionSnapshot = .empty
+  @Published private(set) var briefingText: String = HostDecisionSnapshot.empty.templateBriefingText
+  @Published private(set) var briefingSource: HostBriefingWriterSource = .template
+  @Published private(set) var briefingFailureReason: String?
 
   let settingsStore: HostIntelligenceSettingsStore
   let tableStore: HostTableConfigStore
@@ -29,6 +32,7 @@ final class HostIntelligenceController: ObservableObject {
   func evaluate(input: HostEngineInput) {
     guard settingsStore.settings.isEnabled else {
       decisionSnapshot = .empty
+      applyTemplateBriefing(from: .empty)
       return
     }
 
@@ -46,10 +50,59 @@ final class HostIntelligenceController: ObservableObject {
     )
 
     decisionSnapshot = engine.evaluateHostDecisionSnapshot(input: enriched)
+    applyTemplateBriefing(from: decisionSnapshot)
+  }
+
+  /// Presentation-only rewrite of the approved LLM packet. Does not change engine output.
+  func refreshBriefing() async {
+    let fallback = decisionSnapshot.templateBriefingText
+    let settings = settingsStore.settings
+
+    guard settings.isEnabled else {
+      applyTemplateBriefing(from: .empty)
+      return
+    }
+
+    guard settings.useEnhancedBriefing else {
+      applyTemplateBriefing(from: decisionSnapshot)
+      return
+    }
+
+    let writer = HostBriefingWriterFactory.writer(for: settings.enhancedBriefingProvider)
+    let result = await writer.writeBriefing(
+      packet: decisionSnapshot.llmPacket,
+      fallbackText: fallback
+    )
+
+    let validation = HostBriefingWriterValidator.validationResult(
+      result.text,
+      packet: decisionSnapshot.llmPacket,
+      fallbackText: fallback
+    )
+
+    if validation.isValid {
+      briefingText = result.text
+      briefingSource = result.source
+      briefingFailureReason = result.failedReason
+      return
+    }
+
+    briefingText = fallback
+    briefingSource = .failedFallback
+    briefingFailureReason = validation.reason
+      ?? result.failedReason
+      ?? "Briefing validation failed."
   }
 
   func reset() {
     decisionSnapshot = .empty
+    applyTemplateBriefing(from: .empty)
+  }
+
+  private func applyTemplateBriefing(from snapshot: HostDecisionSnapshot) {
+    briefingText = snapshot.templateBriefingText
+    briefingSource = .template
+    briefingFailureReason = nil
   }
 
   var settings: HostIntelligenceSettings {

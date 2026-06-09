@@ -100,7 +100,9 @@ struct HostBoardView: View {
         let tableStamp = hostIntelligenceController.tableStore.totalActiveCapacity
         let tableCount = hostIntelligenceController.tableStore.tables.count
         let analyticsStamp = analyticsSummaryIdentity
-        return "\(selectedDateKey)-\(reservations.count)-\(syncStamp)-\(availabilityStamp)-\(seatedStamp)-\(tableCount)-\(tableStamp)-\(analyticsStamp)-\(minute)"
+        let briefingStamp =
+          "\(hostIntelligenceController.settings.useEnhancedBriefing)-\(hostIntelligenceController.settings.enhancedBriefingProvider.rawValue)"
+        return "\(selectedDateKey)-\(reservations.count)-\(syncStamp)-\(availabilityStamp)-\(seatedStamp)-\(tableCount)-\(tableStamp)-\(analyticsStamp)-\(briefingStamp)-\(minute)"
     }
 
     private var analyticsSummaryIdentity: String {
@@ -232,6 +234,7 @@ struct HostBoardView: View {
             hostIntelligenceController.tableStore.reload()
             hostIntelligenceController.settingsStore.reload()
             hostIntelligenceController.evaluate(input: makeHostEngineInput(now: clockTick))
+            await hostIntelligenceController.refreshBriefing()
         }
     }
 
@@ -347,7 +350,11 @@ struct HostBoardView: View {
     private var hostIntelligenceSection: some View {
         let snapshot = hostIntelligenceController.decisionSnapshot
 
-        HostIntelligenceCard(snapshot: snapshot) { action in
+        HostIntelligenceCard(
+            snapshot: snapshot,
+            briefingTextOverride: hostIntelligenceController.briefingText,
+            briefingSource: hostIntelligenceController.briefingSource
+        ) { action in
             handleHostIntelligenceAction(action)
         }
 

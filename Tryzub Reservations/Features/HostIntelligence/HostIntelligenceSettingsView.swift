@@ -17,6 +17,7 @@ struct HostIntelligenceSettingsView: View {
   var body: some View {
     Form {
       featureSection
+      briefingWriterSection
       bookingDecisionsSection
       capacitySection
       timingSection
@@ -43,6 +44,32 @@ struct HostIntelligenceSettingsView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
     }
+  }
+
+  private var briefingWriterSection: some View {
+    Section("Briefing Writer") {
+      Toggle("Use enhanced briefing", isOn: binding(\.useEnhancedBriefing))
+
+      Picker("Provider", selection: providerBinding) {
+        ForEach(HostBriefingProviderKind.allCases, id: \.self) { provider in
+          Text(provider.displayName).tag(provider)
+        }
+      }
+      .disabled(!settingsStore.settings.useEnhancedBriefing)
+
+      Text("The engine still makes all decisions. The writer only rewrites approved facts.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  private var providerBinding: Binding<HostBriefingProviderKind> {
+    Binding(
+      get: { settingsStore.settings.enhancedBriefingProvider },
+      set: { newValue in
+        settingsStore.update { $0.enhancedBriefingProvider = newValue }
+      }
+    )
   }
 
   private var bookingDecisionsSection: some View {

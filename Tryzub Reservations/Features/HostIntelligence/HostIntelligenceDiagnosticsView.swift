@@ -16,6 +16,8 @@ struct HostIntelligenceDiagnosticsView: View {
   let restaurantSetup: RestaurantSetup?
   let localSeatedAtByReservationID: [Int: Date]
   let settings: HostIntelligenceSettings
+  var briefingSource: HostBriefingWriterSource? = nil
+  var briefingFailureReason: String? = nil
   var tableConfigs: [RestaurantTableConfig] = []
   var allKnownReservations: [ReservationRecord] = []
 
@@ -48,6 +50,7 @@ struct HostIntelligenceDiagnosticsView: View {
       cancellationOverdueSection(decision)
       bookingDecisionsSection(decision)
       analyticsIntelligenceSection(decision)
+      briefingWriterSection(decision)
       signalsSection(decision)
     }
   }
@@ -395,6 +398,131 @@ struct HostIntelligenceDiagnosticsView: View {
           .padding(.vertical, 2)
         }
       }
+    }
+  }
+
+  @ViewBuilder
+  private func briefingWriterSection(_ decision: HostDecisionSnapshot) -> some View {
+    let packet = decision.llmPacket
+    let fallback = decision.templateBriefingText
+    let placeholderPreview = LocalPlaceholderHostBriefingWriter.buildPlaceholderText(
+      packet: packet,
+      fallbackText: fallback
+    )
+    let templateValidation = HostBriefingWriterValidator.validationResult(
+      fallback,
+      packet: packet,
+      fallbackText: fallback
+    )
+    let placeholderValidation = HostBriefingWriterValidator.validationResult(
+      placeholderPreview,
+      packet: packet,
+      fallbackText: fallback
+    )
+
+    Section("Briefing Writer") {
+      LabeledContent("Enhanced briefing") {
+        Text(settings.useEnhancedBriefing ? "Yes" : "No")
+      }
+      LabeledContent("Provider") {
+        Text(settings.enhancedBriefingProvider.displayName)
+      }
+      if let briefingSource {
+        LabeledContent("Current source") {
+          Text(briefingSource.displayName)
+        }
+      }
+      if let briefingFailureReason, !briefingFailureReason.isEmpty {
+        LabeledContent("Failure reason") {
+          Text(briefingFailureReason)
+        }
+      }
+
+      Text("Template briefing")
+        .font(.subheadline.weight(.semibold))
+      Text(fallback)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+      Text("LLM packet")
+        .font(.subheadline.weight(.semibold))
+      LabeledContent("Generated at") {
+        Text(packet.generatedAtDescription.isEmpty ? "—" : packet.generatedAtDescription)
+      }
+      LabeledContent("Service state") {
+        Text(packet.serviceState.rawValue.capitalized)
+      }
+      LabeledContent("Pressure score") {
+        Text(String(format: "%.0f", packet.pressureScore))
+      }
+      LabeledContent("Top facts") {
+        Text("\(packet.topFacts.count)")
+      }
+      LabeledContent("Forbidden behaviors") {
+        Text("\(packet.forbiddenBehaviors.count)")
+      }
+      LabeledContent("Writing rules") {
+        Text("\(packet.writingRules.count)")
+      }
+
+      if packet.topFacts.isEmpty {
+        Text("No packet facts.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(Array(packet.topFacts.prefix(5).enumerated()), id: \.offset) { _, fact in
+          VStack(alignment: .leading, spacing: 4) {
+            Text("\(fact.severity.rawValue.capitalized) · \(fact.category.rawValue) · \(fact.title)")
+              .font(.caption.weight(.semibold))
+            Text(fact.detail)
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+            if let action = fact.suggestedAction?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !action.isEmpty {
+              Text("Action: \(action)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            }
+          }
+          .padding(.vertical, 2)
+        }
+      }
+
+      Text("Packet debug summary")
+        .font(.subheadline.weight(.semibold))
+      Text(HostLLMPacketDebugFormatter.debugSummary(from: packet))
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .textSelection(.enabled)
+
+      Text("Validator")
+        .font(.subheadline.weight(.semibold))
+      LabeledContent("Template briefing") {
+        Text(templateValidation.isValid ? "Valid" : "Invalid")
+      }
+      if let reason = templateValidation.reason {
+        Text(reason)
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+
+      Text("Local placeholder preview")
+        .font(.subheadline.weight(.semibold))
+      Text(placeholderPreview)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      LabeledContent("Placeholder validation") {
+        Text(placeholderValidation.isValid ? "Valid" : "Invalid")
+      }
+      if let reason = placeholderValidation.reason {
+        Text(reason)
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+
+      Text("Writer output is presentation only. The deterministic engine remains authoritative.")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
     }
   }
 
