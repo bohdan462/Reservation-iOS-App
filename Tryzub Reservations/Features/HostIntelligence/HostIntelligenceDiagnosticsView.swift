@@ -104,6 +104,15 @@ struct HostIntelligenceDiagnosticsView: View {
             Text(action.reason)
               .font(.caption)
               .foregroundStyle(.secondary)
+            Text(
+              HostSuggestedActionRouter.routeDescription(
+                for: action,
+                dayReservations: reservations,
+                knownReservations: allKnownReservations
+              )
+            )
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
           }
           .padding(.vertical, 2)
         }

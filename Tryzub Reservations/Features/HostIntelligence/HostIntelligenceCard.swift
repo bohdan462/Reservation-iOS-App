@@ -9,6 +9,7 @@ import SwiftUI
 
 struct HostIntelligenceCard: View {
   let snapshot: HostDecisionSnapshot
+  var onActionTapped: ((HostSuggestedAction) -> Void)? = nil
 
   var body: some View {
     if isCalmPresentation {
@@ -74,7 +75,22 @@ struct HostIntelligenceCard: View {
     .cardStyle()
   }
 
+  @ViewBuilder
   private func actionRow(_ action: HostSuggestedAction) -> some View {
+    if let onActionTapped {
+      Button {
+        onActionTapped(action)
+      } label: {
+        actionRowContent(action, isTappable: true)
+      }
+      .buttonStyle(.plain)
+      .accessibilityHint("Opens reservation for staff review.")
+    } else {
+      actionRowContent(action, isTappable: false)
+    }
+  }
+
+  private func actionRowContent(_ action: HostSuggestedAction, isTappable: Bool) -> some View {
     HStack(alignment: .top, spacing: 8) {
       Text(action.severity.rawValue.capitalized)
         .font(.caption2.weight(.semibold))
@@ -89,6 +105,18 @@ struct HostIntelligenceCard: View {
           .font(.caption2)
           .foregroundStyle(.secondary)
           .lineLimit(2)
+        if isTappable {
+          Text("Tap to review")
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
+      }
+
+      if isTappable {
+        Spacer(minLength: 4)
+        Image(systemName: "chevron.right")
+          .font(.caption2.weight(.semibold))
+          .foregroundStyle(.tertiary)
       }
     }
     .padding(.horizontal, 10)

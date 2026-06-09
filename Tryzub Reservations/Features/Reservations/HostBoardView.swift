@@ -330,7 +330,9 @@ struct HostBoardView: View {
     private var hostIntelligenceSection: some View {
         let snapshot = hostIntelligenceController.decisionSnapshot
 
-        HostIntelligenceCard(snapshot: snapshot)
+        HostIntelligenceCard(snapshot: snapshot) { action in
+            handleHostIntelligenceAction(action)
+        }
 
         if hasMeaningfulSlotPressure(snapshot) {
             SlotPressureStripView(pressures: snapshot.slotPressures)
@@ -340,6 +342,29 @@ struct HostBoardView: View {
     private func hasMeaningfulSlotPressure(_ snapshot: HostDecisionSnapshot) -> Bool {
         snapshot.slotPressures.contains { pressure in
             pressure.reservationCount > 0 || pressure.severity != .calm
+        }
+    }
+
+    private func handleHostIntelligenceAction(_ action: HostSuggestedAction) {
+        let route = HostSuggestedActionRouter.route(for: action)
+
+        switch route.destination {
+        case .reservation(let remoteID), .reservationIntent(let remoteID, _):
+            guard let reservation = HostSuggestedActionRouter.findReservation(
+                remoteID: HostSuggestedActionRouter.resolvedRemoteID(
+                    for: action,
+                    dayReservations: reservations,
+                    knownReservations: allKnownReservations
+                ) ?? remoteID,
+                dayReservations: reservations,
+                knownReservations: allKnownReservations
+            ) else {
+                return
+            }
+            onOpenReservation(reservation)
+
+        case .slot, .none:
+            break
         }
     }
 
