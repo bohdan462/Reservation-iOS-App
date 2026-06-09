@@ -28,6 +28,7 @@ struct HostBoardView: View {
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hostIntentStore: HostReservationOpenIntentStore
     @EnvironmentObject private var restaurantSettingsStore: RestaurantSettingsStore
+    @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
 
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
@@ -144,7 +145,8 @@ struct HostBoardView: View {
         let analyticsStamp = analyticsSummaryIdentity
         let briefingStamp =
           "\(hostIntelligenceController.settings.useEnhancedBriefing)-\(hostIntelligenceController.settings.enhancedBriefingProvider.rawValue)-\(hostIntelligenceController.settings.useLocalModelOnHostBoard)"
-        return "\(selectedDateKey)-\(reservationStamp)-\(historyStamp)-\(availabilityStamp)-\(seatedStamp)-\(tableCount)-\(tableStamp)-\(analyticsStamp)-\(briefingStamp)"
+        let guestIntelStamp = guestIntelligenceStore.cacheStamp(for: selectedDateKey)
+        return "\(selectedDateKey)-\(reservationStamp)-\(historyStamp)-\(availabilityStamp)-\(seatedStamp)-\(tableCount)-\(tableStamp)-\(analyticsStamp)-\(briefingStamp)-\(guestIntelStamp)"
     }
 
     private var analyticsSummaryIdentity: String {
@@ -284,6 +286,19 @@ struct HostBoardView: View {
                   !shouldDeferStartupOptionalLoads,
                   isVisible else { return }
             controller.ensureAvailabilitySummary(date: selectedDateKey)
+        }
+        .task(id: "\(isVisible)-\(selectedDateKey)-guest-intelligence-\(deferNetworkLoads)-\(shouldDeferStartupOptionalLoads)") {
+            // Non-blocking guest intelligence: first Host pulse uses local fallback.
+            // Defer flags stay in the task id so load runs once startup optional loads release.
+            guard !isRunningForPreviews else { return }
+            guard isVisible else { return }
+            guard !deferNetworkLoads, !shouldDeferStartupOptionalLoads else { return }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled,
+                  isVisible,
+                  !deferNetworkLoads,
+                  !shouldDeferStartupOptionalLoads else { return }
+            await guestIntelligenceStore.load(dateKey: selectedDateKey)
         }
         .task(id: hostIntelligenceRefreshKey) {
             guard isVisible else {
@@ -623,7 +638,10 @@ struct HostBoardView: View {
             tableConfigs: hostIntelligenceController.tableStore.tables,
             allKnownReservations: allKnownReservations.isEmpty
                 ? reservations
-                : allKnownReservations
+                : allKnownReservations,
+            guestIntelligenceSummariesByReservationID: guestIntelligenceStore.summariesByReservationID(
+                for: selectedDateKey
+            )
         )
     }
 

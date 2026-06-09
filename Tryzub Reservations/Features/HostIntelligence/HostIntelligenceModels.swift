@@ -461,4 +461,32 @@ struct HostEngineInput {
     let tableConfigs: [RestaurantTableConfig]
     /// Broader local cache for guest memory. Falls back to `reservations` when empty.
     let allKnownReservations: [ReservationRecord]
+    /// Backend guest intelligence summaries for the selected service date, keyed by reservation ID.
+    let guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO]
+
+    init(
+        now: Date,
+        selectedDate: Date,
+        reservations: [ReservationRecord],
+        availabilitySummary: ReservationAvailabilitySummary?,
+        analyticsSummary: ReservationAnalyticsSummaryDTO?,
+        restaurantSetup: RestaurantSetup?,
+        localSeatedAtByReservationID: [Int: Date],
+        settings: HostIntelligenceSettings,
+        tableConfigs: [RestaurantTableConfig],
+        allKnownReservations: [ReservationRecord],
+        guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO] = [:]
+    ) {
+        self.now = now
+        self.selectedDate = selectedDate
+        self.reservations = reservations
+        self.availabilitySummary = availabilitySummary
+        self.analyticsSummary = analyticsSummary
+        self.restaurantSetup = restaurantSetup
+        self.localSeatedAtByReservationID = localSeatedAtByReservationID
+        self.settings = settings
+        self.tableConfigs = tableConfigs
+        self.allKnownReservations = allKnownReservations
+        self.guestIntelligenceSummariesByReservationID = guestIntelligenceSummariesByReservationID
+    }
 }

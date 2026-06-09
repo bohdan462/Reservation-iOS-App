@@ -47,6 +47,9 @@ enum ReservationAPIRequestReason: String {
     case restaurantBlockedSlotsCreate = "restaurant_blocked_slots_create"
     case restaurantBlockedSlotsDelete = "restaurant_blocked_slots_delete"
     case reservationAnalyticsSummary = "reservation_analytics_summary"
+    case businessIntelligenceSummary = "business_intelligence_summary"
+    case guestIntelligence = "guest_intelligence"
+    case intelligenceSystemStatus = "intelligence_system_status"
     case reconcileByID = "reconcile_by_id"
     case manualSkipBusy = "manual_skip_busy"
     case manualSkipCooldown = "manual_skip_cooldown"
@@ -55,6 +58,15 @@ enum ReservationAPIRequestReason: String {
     case scheduleAllBlocked = "schedule_all_page_blocked"
     case autoSkipBusy = "auto_skip_busy"
     case autoSkipInactive = "auto_skip_inactive"
+
+    var suppressesResponseBodyLogging: Bool {
+        switch self {
+        case .businessIntelligenceSummary, .guestIntelligence, .intelligenceSystemStatus:
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 // MARK: - Sanitized Request Logging
@@ -301,6 +313,20 @@ protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
     func deleteRestaurantBlockedSlots(date: String, slots: [String], reason: ReservationAPIRequestReason) async throws -> RestaurantBlockedSlotsResponseDTO
     func deleteAllRestaurantBlockedSlots(date: String, reason: ReservationAPIRequestReason) async throws -> RestaurantBlockedSlotsResponseDTO
     func fetchReservationAnalyticsSummary(from: String?, to: String?, reason: ReservationAPIRequestReason) async throws -> ReservationAnalyticsSummaryDTO
+    func fetchBusinessIntelligenceSummary(
+        from: String,
+        to: String,
+        reason: ReservationAPIRequestReason
+    ) async throws -> BusinessIntelligenceSummaryDTO
+    func fetchGuestIntelligence(
+        date: String,
+        reason: ReservationAPIRequestReason
+    ) async throws -> GuestIntelligenceDayResponseDTO
+    func fetchIntelligenceSystemStatus(
+        from: String,
+        to: String,
+        reason: ReservationAPIRequestReason
+    ) async throws -> IntelligenceSystemStatusDTO
     func fetchImportFailures(page: Int, perPage: Int, reason: ReservationAPIRequestReason) async throws -> ImportFailuresResponse
 }
 
@@ -859,6 +885,64 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return try decode(ReservationAnalyticsSummaryDTO.self, from: data, request: request)
     }
 
+    // MARK: - Intelligence
+
+    // Intent: Reads backend business intelligence aggregates (all source types).
+    // Network: GET /business-intelligence/summary.
+    func fetchBusinessIntelligenceSummary(
+        from: String,
+        to: String,
+        reason: ReservationAPIRequestReason = .businessIntelligenceSummary
+    ) async throws -> BusinessIntelligenceSummaryDTO {
+        let url = try makeURL(
+            path: "business-intelligence/summary",
+            queryItems: [
+                URLQueryItem(name: "from", value: from),
+                URLQueryItem(name: "to", value: to)
+            ]
+        )
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+
+        return try decodeBusinessIntelligenceSummary(from: data, request: request)
+    }
+
+    // Intent: Reads compact per-reservation guest intelligence for a service date.
+    // Network: GET /guest-intelligence.
+    func fetchGuestIntelligence(
+        date: String,
+        reason: ReservationAPIRequestReason = .guestIntelligence
+    ) async throws -> GuestIntelligenceDayResponseDTO {
+        let url = try makeURL(
+            path: "guest-intelligence",
+            queryItems: [URLQueryItem(name: "date", value: date)]
+        )
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+
+        return try decodeGuestIntelligenceDay(from: data, request: request)
+    }
+
+    // Intent: Reads intelligence pipeline health and contract checks for a date range.
+    // Network: GET /intelligence/system-status.
+    func fetchIntelligenceSystemStatus(
+        from: String,
+        to: String,
+        reason: ReservationAPIRequestReason = .intelligenceSystemStatus
+    ) async throws -> IntelligenceSystemStatusDTO {
+        let url = try makeURL(
+            path: "intelligence/system-status",
+            queryItems: [
+                URLQueryItem(name: "from", value: from),
+                URLQueryItem(name: "to", value: to)
+            ]
+        )
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+
+        return try decodeIntelligenceSystemStatus(from: data, request: request)
+    }
+
     // MARK: - Import Failure Diagnostics
 
     // Intent: Developer/manager reads failed public-form imports.
@@ -950,6 +1034,96 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
             )
             throw ReservationAPIError.decodingFailure(error, diagnostics: diagnostics)
         }
+    }
+
+    private func decodeBusinessIntelligenceSummary(
+        from data: Data,
+        request: URLRequest
+    ) throws -> BusinessIntelligenceSummaryDTO {
+        do {
+            if let envelope = try? decoder.decode(BusinessIntelligenceSummaryResponse.self, from: data) {
+                if envelope.success == false {
+                    throw intelligenceEnvelopeFailure()
+                }
+                if let payload = envelope.data {
+                    return payload
+                }
+            }
+
+            return try decoder.decode(BusinessIntelligenceSummaryDTO.self, from: data)
+        } catch let error as ReservationAPIError {
+            throw error
+        } catch {
+            throw intelligenceDecodingFailure(error, data: data, request: request)
+        }
+    }
+
+    private func decodeGuestIntelligenceDay(
+        from data: Data,
+        request: URLRequest
+    ) throws -> GuestIntelligenceDayResponseDTO {
+        do {
+            if let envelope = try? decoder.decode(GuestIntelligenceDayAPIResponse.self, from: data) {
+                if envelope.success == false {
+                    throw intelligenceEnvelopeFailure()
+                }
+                if let payload = envelope.data {
+                    return payload
+                }
+            }
+
+            return try decoder.decode(GuestIntelligenceDayResponseDTO.self, from: data)
+        } catch let error as ReservationAPIError {
+            throw error
+        } catch {
+            throw intelligenceDecodingFailure(error, data: data, request: request)
+        }
+    }
+
+    private func decodeIntelligenceSystemStatus(
+        from data: Data,
+        request: URLRequest
+    ) throws -> IntelligenceSystemStatusDTO {
+        do {
+            if let envelope = try? decoder.decode(IntelligenceSystemStatusResponse.self, from: data) {
+                if envelope.success == false {
+                    throw intelligenceEnvelopeFailure()
+                }
+                if let payload = envelope.data {
+                    return payload
+                }
+            }
+
+            return try decoder.decode(IntelligenceSystemStatusDTO.self, from: data)
+        } catch let error as ReservationAPIError {
+            throw error
+        } catch {
+            throw intelligenceDecodingFailure(error, data: data, request: request)
+        }
+    }
+
+    private func intelligenceEnvelopeFailure() -> ReservationAPIError {
+        let error = NSError(
+            domain: "TryzubIntelligenceAPI",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Intelligence response reported success=false."]
+        )
+        return .decodingFailure(error, diagnostics: nil)
+    }
+
+    private func intelligenceDecodingFailure(
+        _ error: Error,
+        data: Data,
+        request: URLRequest
+    ) -> ReservationAPIError {
+        let diagnostics = ReservationAPIDiagnostics.make(
+            request: request,
+            response: nil,
+            data: data,
+            decodingError: error,
+            includeResponseBody: false
+        )
+        return .decodingFailure(error, diagnostics: diagnostics)
     }
 
     private func decodeRestaurantSetup(from data: Data, request: URLRequest) throws -> RestaurantSetupDTO {
@@ -1076,11 +1250,13 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         while attempt <= effectiveRetryCount {
             do {
                 let (data, response) = try await requestSerializer.data(for: request, session: session)
-                try validate(response: response, data: data, request: request)
+                try validate(response: response, data: data, request: request, reason: reason)
+                let includeResponseBody = !reason.suppressesResponseBodyLogging
                 let successDiagnostics = ReservationAPIDiagnostics.make(
                     request: request,
                     response: response as? HTTPURLResponse,
-                    data: data
+                    data: data,
+                    includeResponseBody: includeResponseBody
                 )
                 ReservationAPILogger.end(
                     request: request,
@@ -1142,13 +1318,21 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
 
     // MARK: - Response Validation
 
-    private func validate(response: URLResponse, data: Data, request: URLRequest) throws {
+    private func validate(
+        response: URLResponse,
+        data: Data,
+        request: URLRequest,
+        reason: ReservationAPIRequestReason
+    ) throws {
+        let includeResponseBody = !reason.suppressesResponseBodyLogging
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ReservationAPIError.invalidResponse(
                 diagnostics: ReservationAPIDiagnostics.make(
                     request: request,
                     response: nil,
-                    data: data
+                    data: data,
+                    includeResponseBody: includeResponseBody
                 )
             )
         }
@@ -1156,7 +1340,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let diagnostics = ReservationAPIDiagnostics.make(
             request: request,
             response: httpResponse,
-            data: data
+            data: data,
+            includeResponseBody: includeResponseBody
         )
 
         switch httpResponse.statusCode {

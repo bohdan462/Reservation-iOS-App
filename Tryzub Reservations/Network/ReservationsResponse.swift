@@ -111,3 +111,20 @@ struct PingResponseDTO: Decodable, Equatable {
         case tableExists = "table_exists"
     }
 }
+
+// MARK: - Intelligence Envelopes
+
+struct BusinessIntelligenceSummaryResponse: Decodable {
+    let success: Bool?
+    let data: BusinessIntelligenceSummaryDTO?
+}
+
+struct GuestIntelligenceDayAPIResponse: Decodable {
+    let success: Bool?
+    let data: GuestIntelligenceDayResponseDTO?
+}
+
+struct IntelligenceSystemStatusResponse: Decodable {
+    let success: Bool?
+    let data: IntelligenceSystemStatusDTO?
+}

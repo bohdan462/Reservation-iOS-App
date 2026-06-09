@@ -60,6 +60,7 @@ struct HostIntelligenceEngine {
         activeReservations: activeReservations,
         allDayReservations: context.reservations,
         allKnownReservations: context.allKnownReservations,
+        guestIntelligenceSummariesByReservationID: context.guestIntelligenceSummariesByReservationID,
         settings: context.settings
       )
       briefingFacts.append(
@@ -252,6 +253,7 @@ struct HostIntelligenceEngine {
     let settings: HostIntelligenceSettings
     let tableConfigs: [RestaurantTableConfig]
     let allKnownReservations: [ReservationRecord]
+    let guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO]
   }
 
   private func buildServiceDayContext(from input: HostEngineInput) -> ServiceDayContext {
@@ -270,7 +272,8 @@ struct HostIntelligenceEngine {
       localSeatedAtByReservationID: input.localSeatedAtByReservationID,
       settings: input.settings,
       tableConfigs: input.tableConfigs,
-      allKnownReservations: input.allKnownReservations
+      allKnownReservations: input.allKnownReservations,
+      guestIntelligenceSummariesByReservationID: input.guestIntelligenceSummariesByReservationID
     )
   }
 

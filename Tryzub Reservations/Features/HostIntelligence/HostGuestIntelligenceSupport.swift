@@ -26,6 +26,7 @@ enum HostGuestIntelligenceSupport {
     activeReservations: [ReservationRecord],
     allDayReservations: [ReservationRecord],
     allKnownReservations: [ReservationRecord],
+    guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO] = [:],
     settings: HostIntelligenceSettings
   ) -> [HostGuestSignal] {
     guard settings.includeGuestSignals else { return [] }
@@ -40,6 +41,21 @@ enum HostGuestIntelligenceSupport {
     var reportCache: [Int: GuestInsightReport] = [:]
 
     for reservation in activeReservations {
+      // Backend-first: one summary per reservation skips local GuestInsightsController.analyze
+      // for that row. Weak identity still gets backend note/risk flags but no returning claims.
+      if let summary = guestIntelligenceSummariesByReservationID[reservation.remoteID] {
+        appendUnique(
+          &signals,
+          &seenKeys,
+          contentsOf: buildBackendGuestSignals(
+            reservation: reservation,
+            summary: summary,
+            settings: settings
+          )
+        )
+        continue
+      }
+
       let report: GuestInsightReport
       if let cached = reportCache[reservation.remoteID] {
         report = cached
@@ -214,6 +230,287 @@ enum HostGuestIntelligenceSupport {
     }
     // Guest memory only — historical pressure uses backend aggregate analytics, not local cache breadth.
     return dayReservations
+  }
+
+  // MARK: - Backend Guest Intelligence
+
+  private static func buildBackendGuestSignals(
+    reservation: ReservationRecord,
+    summary: GuestIntelligenceSummaryDTO,
+    settings: HostIntelligenceSettings
+  ) -> [HostGuestSignal] {
+    var signals: [HostGuestSignal] = []
+
+    if summary.hasAllergyNote {
+      signals.append(
+        HostGuestSignal(
+          id: "guest-allergy-\(reservation.remoteID)",
+          reservationID: reservation.remoteID,
+          guestName: reservation.guestName,
+          kind: .allergy,
+          severity: .critical,
+          message: "\(reservation.guestName) has allergy-related notes.",
+          evidence: backendEvidence(summary: summary, extra: ["allergyFlag"])
+        )
+      )
+    }
+
+    if hasReliableReturningIdentity(summary.identityConfidence) {
+      switch summary.classification {
+      case .returning, .regular:
+        if let signal = backendRegularGuestSignal(for: reservation, summary: summary) {
+          signals.append(signal)
+        }
+      case .frequentRegular:
+        if let signal = backendImportantGuestSignal(for: reservation, summary: summary) {
+          signals.append(signal)
+        }
+      case .new, .unknown, .needsReview:
+        break
+      }
+    }
+
+    if summary.hasSeatingPreference {
+      signals.append(
+        HostGuestSignal(
+          id: "guest-seatingPreference-\(reservation.remoteID)",
+          reservationID: reservation.remoteID,
+          guestName: reservation.guestName,
+          kind: .seatingPreference,
+          severity: .watch,
+          message: "\(reservation.guestName) has a seating preference noted.",
+          evidence: backendEvidence(summary: summary, extra: ["seatingPreferenceFlag"])
+        )
+      )
+    }
+
+    if summary.hasAccessibilityNote {
+      signals.append(
+        HostGuestSignal(
+          id: "guest-accessibility-\(reservation.remoteID)",
+          reservationID: reservation.remoteID,
+          guestName: reservation.guestName,
+          kind: .accessibility,
+          severity: .warning,
+          message: "\(reservation.guestName) has accessibility needs noted.",
+          evidence: backendEvidence(summary: summary, extra: ["accessibilityFlag"])
+        )
+      )
+    }
+
+    if summary.hasSpecialOccasionNote {
+      signals.append(
+        HostGuestSignal(
+          id: "guest-specialOccasion-\(reservation.remoteID)",
+          reservationID: reservation.remoteID,
+          guestName: reservation.guestName,
+          kind: .specialOccasion,
+          severity: .watch,
+          message: "\(reservation.guestName) has a special occasion note.",
+          evidence: backendEvidence(summary: summary, extra: ["specialOccasionFlag"])
+        )
+      )
+    }
+
+    if summary.cancelledCount >= 3 {
+      signals.append(
+        HostGuestSignal(
+          id: "guest-cancel-risk-\(reservation.remoteID)",
+          reservationID: reservation.remoteID,
+          guestName: reservation.guestName,
+          kind: .cancellationRisk,
+          severity: .watch,
+          message: "\(reservation.guestName) has prior cancellations in guest memory.",
+          evidence: backendEvidence(
+            summary: summary,
+            extra: ["cancelledCount=\(summary.cancelledCount)"]
+          )
+        )
+      )
+    }
+
+    if summary.noShowCount >= 2 {
+      signals.append(
+        HostGuestSignal(
+          id: "guest-noshow-risk-\(reservation.remoteID)",
+          reservationID: reservation.remoteID,
+          guestName: reservation.guestName,
+          kind: .noShowRisk,
+          severity: .warning,
+          message: "\(reservation.guestName) has prior no-shows in guest memory.",
+          evidence: backendEvidence(
+            summary: summary,
+            extra: ["noShowCount=\(summary.noShowCount)"]
+          )
+        )
+      )
+    }
+
+    if summary.hasPriorServiceIssue {
+      signals.append(
+        HostGuestSignal(
+          id: "guest-service-issue-\(reservation.remoteID)",
+          reservationID: reservation.remoteID,
+          guestName: reservation.guestName,
+          kind: .previousServiceIssue,
+          severity: .warning,
+          message: "\(reservation.guestName) has prior service-issue notes.",
+          evidence: backendEvidence(summary: summary, extra: ["priorServiceIssueFlag"])
+        )
+      )
+    }
+
+    if summary.possibleDuplicate {
+      var evidence = backendEvidence(summary: summary, extra: ["possibleDuplicateFlag"])
+      if !summary.relatedReservationIds.isEmpty {
+        evidence.append(
+          "relatedReservationIds=\(summary.relatedReservationIds.map(String.init).joined(separator: ","))"
+        )
+      }
+      signals.append(
+        HostGuestSignal(
+          id: "guest-duplicate-backend-\(reservation.remoteID)",
+          reservationID: reservation.remoteID,
+          guestName: reservation.guestName,
+          kind: .possibleDuplicate,
+          severity: .watch,
+          message: "\(reservation.guestName) may need duplicate review.",
+          evidence: evidence
+        )
+      )
+    }
+
+    return signals
+  }
+
+  private static func backendRegularGuestSignal(
+    for reservation: ReservationRecord,
+    summary: GuestIntelligenceSummaryDTO
+  ) -> HostGuestSignal? {
+    let upcomingVisitCount = summary.cleanVisitCount + 1
+    guard upcomingVisitCount >= 2 else { return nil }
+
+    let lastVisit = summary.lastVisitDate?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let lastVisitDisplay = (lastVisit?.isEmpty == false) ? lastVisit : nil
+    let message = returningGuestMessage(
+      guestName: reservation.guestName,
+      visitCount: upcomingVisitCount,
+      lastVisitDisplayDate: lastVisitDisplay,
+      frequent: false
+    )
+
+    let isPendingReview = reservation.statusValue == .new
+      || reservation.statusValue == .needsReview
+
+    return HostGuestSignal(
+      id: "guest-regular-\(reservation.remoteID)",
+      reservationID: reservation.remoteID,
+      guestName: reservation.guestName,
+      kind: .regularGuest,
+      severity: isPendingReview ? .watch : .info,
+      message: message,
+      evidence: backendEvidence(
+        summary: summary,
+        extra: ["upcomingVisitCount=\(upcomingVisitCount)", "returningGuest"]
+      )
+    )
+  }
+
+  private static func backendImportantGuestSignal(
+    for reservation: ReservationRecord,
+    summary: GuestIntelligenceSummaryDTO
+  ) -> HostGuestSignal? {
+    let upcomingVisitCount = summary.cleanVisitCount + 1
+    guard upcomingVisitCount >= 2 else { return nil }
+
+    let lastVisit = summary.lastVisitDate?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let lastVisitDisplay = (lastVisit?.isEmpty == false) ? lastVisit : nil
+    let message = returningGuestMessage(
+      guestName: reservation.guestName,
+      visitCount: upcomingVisitCount,
+      lastVisitDisplayDate: lastVisitDisplay,
+      frequent: true
+    )
+
+    return HostGuestSignal(
+      id: "guest-important-\(reservation.remoteID)",
+      reservationID: reservation.remoteID,
+      guestName: reservation.guestName,
+      kind: .importantGuest,
+      severity: .watch,
+      message: message,
+      evidence: backendEvidence(
+        summary: summary,
+        extra: ["upcomingVisitCount=\(upcomingVisitCount)", "frequentRegular"]
+      )
+    )
+  }
+
+  private static func hasReliableReturningIdentity(
+    _ confidence: GuestIdentityConfidenceDTO
+  ) -> Bool {
+    switch confidence {
+    case .exact, .strong:
+      return true
+    case .possible, .weak, .unknown:
+      return false
+    }
+  }
+
+  private static func backendEvidence(
+    summary: GuestIntelligenceSummaryDTO,
+    extra: [String] = []
+  ) -> [String] {
+    var evidence = [
+      "source=backend_guest_intelligence",
+      "classification=\(classificationEvidenceValue(summary.classification))",
+      "identity_confidence=\(identityEvidenceValue(summary.identityConfidence))",
+      "clean_visit_count=\(summary.cleanVisitCount)",
+      "matched_visit_count=\(summary.matchedVisitCount)"
+    ]
+    if let lastVisitDate = summary.lastVisitDate?
+      .trimmingCharacters(in: .whitespacesAndNewlines),
+       !lastVisitDate.isEmpty {
+      evidence.append("last_visit_date=\(lastVisitDate)")
+    }
+    evidence.append(contentsOf: extra)
+    return evidence
+  }
+
+  private static func classificationEvidenceValue(
+    _ classification: GuestClassificationDTO
+  ) -> String {
+    switch classification {
+    case .unknown:
+      return "unknown"
+    case .new:
+      return "new"
+    case .returning:
+      return "returning"
+    case .regular:
+      return "regular"
+    case .frequentRegular:
+      return "frequent_regular"
+    case .needsReview:
+      return "needs_review"
+    }
+  }
+
+  private static func identityEvidenceValue(
+    _ confidence: GuestIdentityConfidenceDTO
+  ) -> String {
+    switch confidence {
+    case .exact:
+      return "exact"
+    case .strong:
+      return "strong"
+    case .possible:
+      return "possible"
+    case .weak:
+      return "weak"
+    case .unknown:
+      return "unknown"
+    }
   }
 
   // MARK: - Per-Guest Signals

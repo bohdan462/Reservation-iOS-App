@@ -156,7 +156,10 @@ private struct ReservationsTabShell: View {
     private var serviceWindowReservations: [ReservationRecord]
 
     @StateObject private var restaurantSettingsStore: RestaurantSettingsStore
-    @StateObject private var hostTableConfigStore = HostTableConfigStore()
+    @StateObject private var hostTableConfigStore: HostTableConfigStore
+    @StateObject private var guestIntelligenceStore: GuestIntelligenceStore
+    @StateObject private var businessIntelligenceStore: BusinessIntelligenceStore
+    @StateObject private var intelligenceSystemStatusStore: IntelligenceSystemStatusStore
     @State private var selectedTab: ReservationsAppTab = .host
 
     let environment: AppEnvironment
@@ -167,6 +170,16 @@ private struct ReservationsTabShell: View {
         self.onLogout = onLogout
         _restaurantSettingsStore = StateObject(
             wrappedValue: RestaurantSettingsStore(apiClient: environment.apiClient)
+        )
+        _hostTableConfigStore = StateObject(wrappedValue: HostTableConfigStore())
+        _guestIntelligenceStore = StateObject(
+            wrappedValue: GuestIntelligenceStore(apiClient: environment.apiClient)
+        )
+        _businessIntelligenceStore = StateObject(
+            wrappedValue: BusinessIntelligenceStore(apiClient: environment.apiClient)
+        )
+        _intelligenceSystemStatusStore = StateObject(
+            wrappedValue: IntelligenceSystemStatusStore(apiClient: environment.apiClient)
         )
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
@@ -243,6 +256,9 @@ private struct ReservationsTabShell: View {
         }
         .environmentObject(restaurantSettingsStore)
         .environmentObject(hostTableConfigStore)
+        .environmentObject(guestIntelligenceStore)
+        .environmentObject(businessIntelligenceStore)
+        .environmentObject(intelligenceSystemStatusStore)
         .onAppear {
             restaurantSettingsStore.adoptRestaurantSetup(controller.restaurantSetup)
             let raw = UserDefaults.standard.string(forKey: HostTableCapacityTextParser.storageKey) ?? ""

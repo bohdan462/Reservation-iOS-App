@@ -2495,6 +2495,28 @@ final class ReservationsController: ObservableObject {
                     reason: .reservationAnalyticsSummary
                 )
                 summary = "\(analytics.summary?.reservationsCount ?? 0) reservations in summary"
+            case .businessIntelligenceSummary:
+                let window = scheduleWindow()
+                let business = try await environment.apiClient.fetchBusinessIntelligenceSummary(
+                    from: window.from,
+                    to: window.to,
+                    reason: .businessIntelligenceSummary
+                )
+                summary = "\(business.summary.totalReservations ?? 0) reservations in BI summary"
+            case .guestIntelligence:
+                let guestDay = try await environment.apiClient.fetchGuestIntelligence(
+                    date: Date.reservationDateString(),
+                    reason: .guestIntelligence
+                )
+                summary = "\(guestDay.items.count) guest intelligence items for \(guestDay.date)"
+            case .intelligenceSystemStatus:
+                let window = scheduleWindow()
+                let status = try await environment.apiClient.fetchIntelligenceSystemStatus(
+                    from: window.from,
+                    to: window.to,
+                    reason: .intelligenceSystemStatus
+                )
+                summary = "system status \(status.status), \(status.checks.count) checks"
             case .startupToday:
                 let response = try await environment.apiClient.fetchReservations(
                     page: 1,
@@ -3357,6 +3379,9 @@ enum AdminFetchTest: String, CaseIterable, Identifiable {
     case restaurantDayAvailability
     case reservationSlots
     case reservationAnalyticsSummary
+    case businessIntelligenceSummary
+    case guestIntelligence
+    case intelligenceSystemStatus
     case startupToday
     case manualToday
     case failureCount
@@ -3381,6 +3406,12 @@ enum AdminFetchTest: String, CaseIterable, Identifiable {
             return "Test reservation_slots"
         case .reservationAnalyticsSummary:
             return "Test reservation_analytics_summary"
+        case .businessIntelligenceSummary:
+            return "Test business_intelligence_summary"
+        case .guestIntelligence:
+            return "Test guest_intelligence"
+        case .intelligenceSystemStatus:
+            return "Test intelligence_system_status"
         case .startupToday:
             return "Test startup_today"
         case .manualToday:

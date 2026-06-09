@@ -220,6 +220,11 @@ struct HostIntelligenceDiagnosticsView: View {
             Text(signal.message)
               .font(.caption)
               .foregroundStyle(.secondary)
+            if signal.evidence.contains(where: { $0.hasPrefix("source=backend_guest_intelligence") }) {
+              Text(signal.evidence.joined(separator: " · "))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            }
           }
           .padding(.vertical, 2)
         }

@@ -2,19 +2,20 @@
 
 **Branch:** `intelligence`  
 **Date:** 2026-05-29  
-**Status:** Research spike only — no production code changes in Phase 8A
+**Status:** Phase 8A research; **llama.cpp runtime implemented** for Host briefing. Guest message drafting uses a **separate writer path** (see `Docs/LOCAL_MODEL_INTELLIGENCE.md`).
 
 ## Executive summary
 
-Tryzub Reservations already has the right integration boundary for a future on-device briefing model:
+Tryzub Reservations has the right integration boundary for on-device wording assistance:
 
 - Deterministic `HostIntelligenceEngine` remains authoritative.
-- `HostLLMPacket` is the only writer input (max 5 ranked facts, writing rules, forbidden behaviors).
+- `HostLLMPacket` is the only **Host briefing** writer input (max 5 ranked facts, writing rules, forbidden behaviors).
 - `HostBriefingWriter` + `HostBriefingWriterValidator` enforce presentation-only output (≤4 sentences, ≤500 chars).
-- `LocalModelHostBriefingWriter` is a safe shell that falls back to template text today.
+- **`LocalModelHostBriefingWriter` + `HostLlamaBriefingRuntime` are implemented** — on-device llama.cpp via LlamaSwift, with template fallback.
 - `HostLocalModelReadinessProvider` is the single readiness source of truth.
+- **Guest message drafts** (`GuestMessageDraftPacket`, `GuestMessageDraftWriter`) reuse the same runtime but are **not mixed into Host briefing** — separate packet, prompt, validator, and template writers.
 
-This proposal compares four runtime options for **Phase 8B** integration. The use case is narrow: rewrite a small, sanitized packet into calm host prose — not chat, not tool use, not reservation mutation.
+This proposal compares four runtime options for **Phase 8B** integration. The Host briefing use case is narrow: rewrite a small, sanitized packet into calm host prose — not chat, not tool use, not reservation mutation.
 
 **Recommendation:** Implement **llama.cpp (via `swift-llama` or `mattt/llama.swift`) + a small bundled GGUF model** in Phase 8B for predictable TestFlight coverage. Add **Apple Foundation Models** as an optional fast path in a later phase when device gating is acceptable.
 

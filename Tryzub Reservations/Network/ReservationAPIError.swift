@@ -32,13 +32,14 @@ struct ReservationAPIDiagnostics: Equatable {
         request: URLRequest,
         response: HTTPURLResponse?,
         data: Data?,
-        decodingError: Error? = nil
+        decodingError: Error? = nil,
+        includeResponseBody: Bool = true
     ) -> ReservationAPIDiagnostics {
         ReservationAPIDiagnostics(
             method: request.httpMethod ?? "GET",
             pathAndQuery: sanitizedPathAndQuery(for: request.url),
             statusCode: response?.statusCode,
-            responseBodySnippet: sanitizedBodySnippet(from: data),
+            responseBodySnippet: includeResponseBody ? sanitizedBodySnippet(from: data) : nil,
             decodingError: decodingError.map { String($0.localizedDescription) }
         )
     }
