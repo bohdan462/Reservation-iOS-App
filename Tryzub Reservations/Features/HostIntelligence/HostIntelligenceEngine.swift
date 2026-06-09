@@ -585,29 +585,21 @@ struct HostIntelligenceEngine {
       }
 
       let timeLabel = reservation.displayTime
-      let detail: String
-      switch timing {
-      case .dueSoon, .dueNow, .overdue:
-        detail = HostStaffLanguage.dueSoonNoTableDetail(
-          guestName: reservation.guestName,
-          timeLabel: timeLabel
-        )
-      default:
-        detail = "\(reservation.guestName) at \(timeLabel) still needs a table."
-      }
+      let firstName = HostBookingFactGrouping.staffFirstName(from: reservation.guestName)
+      let headline = HostStaffLanguage.noTableHeadline(guestName: reservation.guestName)
       facts.append(
         HostBriefingFact(
           id: "no-table-due-soon-\(reservation.remoteID)",
           severity: severity,
           category: .table,
-          title: "No table yet",
-          detail: detail,
+          title: headline,
+          detail: "Check the table plan.",
           evidence: [
             "partySize=\(reservation.partySize)",
             "dueWindowMinutes=\(settings.noTableDueSoonMinutes)"
           ],
           relatedReservationIDs: [reservation.remoteID],
-          suggestedActionTitle: "Check the table plan before they arrive."
+          suggestedActionTitle: "Check the table plan."
         )
       )
 
@@ -615,9 +607,12 @@ struct HostIntelligenceEngine {
         HostSuggestedAction(
           id: "assign-table-\(reservation.remoteID)",
           severity: severity,
-          kind: .reviewReservation,
-          title: "Check table plan for \(reservation.guestName)",
-          reason: "Reservation at \(timeLabel) still needs a table.",
+          kind: .assignTable,
+          title: "Check table plan for \(firstName)",
+          reason: HostStaffLanguage.compactReservationDetail(
+            timeLabel: timeLabel,
+            partySize: reservation.partySize
+          ),
           relatedReservationIDs: [reservation.remoteID],
           targetSlotTime: reservation.reservationTime,
           targetTableName: nil,

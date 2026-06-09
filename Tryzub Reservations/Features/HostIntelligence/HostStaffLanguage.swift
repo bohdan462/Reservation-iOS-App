@@ -105,8 +105,24 @@ enum HostStaffLanguage {
     "The time looks manageable for this party. Staff should still check the details."
   }
 
+  static func noTableHeadline(guestName: String) -> String {
+    let firstName = firstName(from: guestName)
+    return "\(firstName)'s party arrives soon and still needs a table."
+  }
+
+  static func compactReservationDetail(timeLabel: String, partySize: Int) -> String {
+    let guestLabel = partySize == 1 ? "1 guest" : "\(partySize) guests"
+    return "\(timeLabel) · \(guestLabel)"
+  }
+
   static func dueSoonNoTableDetail(guestName: String, timeLabel: String) -> String {
-    "\(guestName)'s party arrives soon and still needs a table."
+    noTableHeadline(guestName: guestName)
+  }
+
+  private static func firstName(from guestName: String) -> String {
+    let trimmed = guestName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "Guest" }
+    return trimmed.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? trimmed
   }
 
   static func dueSoonBookingReason(requestedTime: String) -> String {
@@ -116,6 +132,47 @@ enum HostStaffLanguage {
   static func containsBlockedTechnicalLanguage(_ text: String) -> Bool {
     let lower = text.lowercased()
     return blockedPhrases.contains { lower.contains($0) }
+  }
+
+  private static let genericCheckPhrases = [
+    "check details before confirming",
+    "check before confirming",
+    "confirm if details look right",
+    "check reservation",
+    "confirm details",
+    "check details",
+    "check the table plan",
+  ]
+
+  static func isGenericCheckLine(_ text: String) -> Bool {
+    let normalized = normalizeStaffLine(text)
+    guard !normalized.isEmpty else { return false }
+    return genericCheckPhrases.contains { phrase in
+      normalized == phrase || normalized.hasPrefix(phrase)
+    }
+  }
+
+  static func areSameStaffMeaning(_ lhs: String, _ rhs: String) -> Bool {
+    let a = normalizeStaffLine(lhs)
+    let b = normalizeStaffLine(rhs)
+    guard !a.isEmpty, !b.isEmpty else { return false }
+    if a == b { return true }
+    if isGenericCheckLine(a), isGenericCheckLine(b) { return true }
+    if a.contains(b) || b.contains(a) {
+      if isGenericCheckLine(a) || isGenericCheckLine(b) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private static func normalizeStaffLine(_ text: String) -> String {
+    text
+      .lowercased()
+      .replacingOccurrences(of: #"[^\w\s]"#, with: "", options: .regularExpression)
+      .split(whereSeparator: \.isWhitespace)
+      .joined(separator: " ")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   private static func collapseWhitespace(_ text: String) -> String {

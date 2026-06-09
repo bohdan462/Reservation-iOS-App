@@ -150,11 +150,10 @@ enum ManagerNarrativePacketBuilder {
 enum ManagerNarrativeTemplateBuilder {
 
   static func build(from snapshot: HostDecisionSnapshot) -> ManagerNarrative {
-    let headline = snapshot.templateBriefingText
     let ranked = HostBriefingService().rankHostFacts(snapshot.briefingFacts)
-
-    let whyItMatters = whyLine(from: ranked, snapshot: snapshot)
-    let checkNext = checkLine(from: snapshot)
+    let headline = headlineLine(from: ranked, snapshot: snapshot)
+    let whyItMatters = whyLine(from: ranked, snapshot: snapshot, headline: headline)
+    let checkNext = checkLine(from: snapshot, headline: headline)
 
     return ManagerNarrative(
       headline: headline,
@@ -165,18 +164,50 @@ enum ManagerNarrativeTemplateBuilder {
     )
   }
 
-  private static func whyLine(
+  private static func headlineLine(
     from rankedFacts: [HostBriefingFact],
     snapshot: HostDecisionSnapshot
+  ) -> String {
+    if let first = rankedFacts.first {
+      let title = HostStaffLanguage.rewrite(first.title)
+      if !title.isEmpty, !HostStaffLanguage.isGenericCheckLine(title) {
+        return punctuate(title)
+      }
+    }
+
+    let briefing = snapshot.templateBriefingText
+    if let firstSentence = firstSentence(from: briefing),
+       !HostStaffLanguage.isGenericCheckLine(firstSentence) {
+      return punctuate(firstSentence)
+    }
+    return briefing
+  }
+
+  private static func whyLine(
+    from rankedFacts: [HostBriefingFact],
+    snapshot: HostDecisionSnapshot,
+    headline: String
   ) -> String? {
+    if let first = rankedFacts.first,
+       let detail = ManagerNarrativePacketSanitizer.staffSafeLine(first.detail),
+       !detail.isEmpty,
+       !repeatsNoTableMeaning(detail, headline: headline),
+       !HostStaffLanguage.areSameStaffMeaning(detail, headline) {
+      if HostStaffLanguage.isGenericCheckLine(detail) || detail.count <= 40 {
+        return punctuate(detail)
+      }
+    }
+
     if rankedFacts.count >= 2 {
       let fact = rankedFacts[1]
       if let detail = ManagerNarrativePacketSanitizer.staffSafeLine(fact.detail),
-         !isNearDuplicate(detail, headline: snapshot.templateBriefingText) {
+         !HostStaffLanguage.isGenericCheckLine(detail),
+         !HostStaffLanguage.areSameStaffMeaning(detail, headline) {
         return punctuate(detail)
       }
       if let title = ManagerNarrativePacketSanitizer.staffSafeLine(fact.title),
-         !isNearDuplicate(title, headline: snapshot.templateBriefingText) {
+         !HostStaffLanguage.isGenericCheckLine(title),
+         !HostStaffLanguage.areSameStaffMeaning(title, headline) {
         return punctuate(title)
       }
     }
@@ -186,17 +217,57 @@ enum ManagerNarrativeTemplateBuilder {
     }) {
       let time = displaySlotTime(pressure.slotTime)
       let line = "Seating pressure builds around \(time)."
-      if !isNearDuplicate(line, headline: snapshot.templateBriefingText) {
+      if !HostStaffLanguage.areSameStaffMeaning(line, headline) {
         return line
       }
+    }
+
+    if let secondSentence = secondSentence(from: snapshot.templateBriefingText),
+       !HostStaffLanguage.areSameStaffMeaning(secondSentence, headline) {
+      return punctuate(secondSentence)
     }
 
     return nil
   }
 
-  private static func checkLine(from snapshot: HostDecisionSnapshot) -> String? {
+  private static func firstSentence(from briefing: String) -> String? {
+    briefing
+      .split(whereSeparator: { $0 == "." || $0 == "!" || $0 == "?" })
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .first(where: { !$0.isEmpty })
+  }
+
+  private static func repeatsNoTableMeaning(_ detail: String, headline: String) -> Bool {
+    let normalizedDetail = detail.lowercased()
+    let normalizedHeadline = headline.lowercased()
+    let noTablePhrases = [
+      "still needs a table",
+      "needs a table",
+      "arrives soon",
+      "arriving soon",
+    ]
+    guard noTablePhrases.contains(where: { normalizedHeadline.contains($0) }) else {
+      return false
+    }
+    return noTablePhrases.contains(where: { normalizedDetail.contains($0) })
+  }
+
+  private static func secondSentence(from briefing: String) -> String? {
+    let parts = briefing
+      .split(whereSeparator: { $0 == "." || $0 == "!" || $0 == "?" })
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    guard parts.count >= 2 else { return nil }
+    return parts[1]
+  }
+
+  private static func checkLine(from snapshot: HostDecisionSnapshot, headline: String) -> String? {
     guard let action = snapshot.suggestedActions.first else { return nil }
-    return ManagerAttentionItemBuilder.tapLabel(for: action)
+    let label = ManagerAttentionItemBuilder.tapLabel(for: action)
+    if HostStaffLanguage.areSameStaffMeaning(label, headline) {
+      return nil
+    }
+    return label
   }
 
   private static func displaySlotTime(_ value: String) -> String {
@@ -215,12 +286,6 @@ enum ManagerNarrativeTemplateBuilder {
     return "\(trimmed)."
   }
 
-  private static func isNearDuplicate(_ candidate: String, headline: String) -> Bool {
-    let lhs = candidate.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    let rhs = headline.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !lhs.isEmpty, !rhs.isEmpty else { return false }
-    return rhs.contains(lhs) || lhs.contains(rhs)
-  }
 }
 
 enum ManagerNarrativeWritingRules {

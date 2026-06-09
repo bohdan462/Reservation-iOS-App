@@ -176,6 +176,23 @@ enum ManagerAttentionItemBuilder {
       return true
     }
 
+    if normalizedBriefing.contains("still needs a table")
+        || normalizedBriefing.contains("needs a table") {
+      if normalizedReason.contains("still needs a table")
+          || normalizedReason.contains("needs a table") {
+        return true
+      }
+      if action.kind == .assignTable {
+        return false
+      }
+    }
+
+    if action.kind == .assignTable,
+       normalizedReason.contains("·"),
+       normalizedBriefing.contains("table") {
+      return false
+    }
+
     let matchingReasonCount = actions.filter {
       HostStaffLanguage.rewrite($0.reason).lowercased() == normalizedReason
     }.count

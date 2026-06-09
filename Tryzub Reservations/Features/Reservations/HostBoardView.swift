@@ -848,10 +848,13 @@ private struct HostBoardSnapshot {
         let minutes = Int(ceil(abs(serviceDate.timeIntervalSince(now)) / 60))
 
         if serviceDate < now {
+            if minutes <= 10 {
+                return "\(time) · now"
+            }
             return "\(time) · \(durationText(minutes: minutes)) late"
         }
-        if minutes <= 15 {
-            return "\(time) · now"
+        if minutes <= 5 {
+            return "\(time) · soon"
         }
         return "\(time) · in \(durationText(minutes: minutes))"
     }

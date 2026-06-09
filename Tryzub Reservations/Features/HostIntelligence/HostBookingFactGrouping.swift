@@ -124,7 +124,7 @@ enum HostBookingFactGrouping {
         id: "booking-fact-group-dueSoon-\(idSuffix)",
         severity: elevatedSeverity(severity, minimum: .watch),
         category: .bookingDecision,
-        title: "\(reservations.count) bookings are coming up soon.",
+        title: dueSoonTitle(for: reservations),
         detail: "Check details before confirming.",
         evidence: evidence,
         relatedReservationIDs: reservationIDs,
@@ -202,6 +202,22 @@ enum HostBookingFactGrouping {
     return trimmed.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? trimmed
   }
 
+  private static func dueSoonTitle(for reservations: [ReservationRecord]) -> String {
+    let firstNames = reservations.map { staffFirstName(from: $0.guestName) }
+    switch reservations.count {
+    case 0:
+      return "Bookings are coming up soon."
+    case 1:
+      return "\(firstNames[0])'s booking is coming up soon."
+    case 2:
+      return "\(namesPhrase(for: reservations))'s bookings are coming up soon."
+    case 3:
+      return "\(firstNames[0]), \(firstNames[1]), and 1 more booking are coming up soon."
+    default:
+      return "\(reservations.count) bookings are coming up soon."
+    }
+  }
+
   private static func namesPhrase(for reservations: [ReservationRecord]) -> String {
     let firstNames = reservations.map { staffFirstName(from: $0.guestName) }
     switch firstNames.count {
@@ -235,7 +251,7 @@ enum HostBookingFactGroupingSamples {
     "Their times look manageable, but staff should still check details."
 
   static let threeSafeToConfirmTitle = "Nick, Max, and 1 more look safe to confirm."
-  static let twoDueSoonTitle = "2 bookings are coming up soon."
+  static let twoDueSoonTitle = "Max and Nick's bookings are coming up soon."
   static let singleSafeTitle = "Max looks safe to confirm."
 }
 #endif

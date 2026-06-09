@@ -74,14 +74,21 @@ struct HostBriefingService {
     for fact in selected {
       guard sentences.count < maxTemplateSentences else { break }
       guard let sentence = templateSentence(for: fact) else { continue }
-      if !sentences.contains(where: { isNearDuplicateSentence($0, sentence) }) {
+      if !sentences.contains(where: { HostStaffLanguage.areSameStaffMeaning($0, sentence) }) {
         sentences.append(sentence)
       }
     }
 
     if sentences.count < maxTemplateSentences,
-       let actionSentence = templateActionSentence(for: selected.first),
-       !sentences.contains(where: { isNearDuplicateSentence($0, actionSentence) }) {
+       let fact = selected.first,
+       let checkSentence = templateGenericCheckSentence(for: fact),
+       !sentences.contains(where: { HostStaffLanguage.areSameStaffMeaning($0, checkSentence) }) {
+      sentences.append(checkSentence)
+    }
+
+    if sentences.count < maxTemplateSentences,
+       let actionSentence = templateActionSentence(for: selected.first, existing: sentences),
+       !sentences.contains(where: { HostStaffLanguage.areSameStaffMeaning($0, actionSentence) }) {
       sentences.append(actionSentence)
     }
 
@@ -184,28 +191,51 @@ struct HostBriefingService {
   }
 
   private func templateSentence(for fact: HostBriefingFact) -> String? {
+    let title = HostStaffLanguage.rewrite(fact.title)
     let detail = HostStaffLanguage.rewrite(fact.detail)
-    if !detail.isEmpty {
+
+    if !title.isEmpty, !HostStaffLanguage.isGenericCheckLine(title) {
+      if detail.isEmpty || HostStaffLanguage.isGenericCheckLine(detail) {
+        return punctuate(title)
+      }
+    }
+
+    if !detail.isEmpty, !HostStaffLanguage.isGenericCheckLine(detail) {
       return punctuate(detail)
     }
-    let title = HostStaffLanguage.rewrite(fact.title)
-    guard !title.isEmpty else { return nil }
-    return punctuate(title)
+
+    if !title.isEmpty {
+      return punctuate(title)
+    }
+    return nil
   }
 
-  private func templateActionSentence(for fact: HostBriefingFact?) -> String? {
+  private func templateGenericCheckSentence(for fact: HostBriefingFact) -> String? {
+    let detail = HostStaffLanguage.rewrite(fact.detail)
+    if !detail.isEmpty, HostStaffLanguage.isGenericCheckLine(detail) {
+      return punctuate(detail)
+    }
+
+    let action = HostStaffLanguage.rewrite(fact.suggestedActionTitle ?? "")
+    if !action.isEmpty, HostStaffLanguage.isGenericCheckLine(action) {
+      return punctuate(action)
+    }
+    return nil
+  }
+
+  private func templateActionSentence(
+    for fact: HostBriefingFact?,
+    existing sentences: [String]
+  ) -> String? {
     guard let fact else { return nil }
     let action = HostStaffLanguage.rewrite(fact.suggestedActionTitle ?? "")
-    guard !action.isEmpty else {
+    guard !action.isEmpty, !HostStaffLanguage.isGenericCheckLine(action) else {
       return nil
     }
 
-    let detailCorpus = [
-      fact.detail,
-      fact.title,
-    ].joined(separator: " ").lowercased()
-    let actionLower = action.lowercased()
-    if detailCorpus.contains(actionLower) {
+    let corpus = ([fact.detail, fact.title] + sentences)
+      .map { HostStaffLanguage.rewrite($0) }
+    if corpus.contains(where: { HostStaffLanguage.areSameStaffMeaning($0, action) }) {
       return nil
     }
 

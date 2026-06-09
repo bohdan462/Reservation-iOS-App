@@ -419,20 +419,7 @@ struct LocalModelHostBriefingWriter: HostBriefingWriter {
   }
 
   static func shouldUseTemplateForLowRiskSingleFact(_ packet: HostLLMPacket) -> Bool {
-    guard packet.topFacts.count == 1, let fact = packet.topFacts.first else {
-      return false
-    }
-    guard packet.serviceState == .calm, packet.pressureScore <= 5 else {
-      return false
-    }
-    guard fact.severity == .info || fact.severity == .watch else {
-      return false
-    }
-
-    let lowRiskCategories: Set<HostFactCategory> = [
-      .preference, .note, .guest, .bookingDecision
-    ]
-    return lowRiskCategories.contains(fact.category)
+    HostBriefingHostBoardGate.shouldPreferDeterministicHostSummary(packet: packet)
   }
 }
 
@@ -869,6 +856,14 @@ enum HostBriefingHostBoardGate {
 
   static func shouldUseTemplateOnlyOnHostBoard(packet: HostLLMPacket) -> Bool {
     packet.isHostBoardTemplateOnlyPacket
+      || shouldPreferDeterministicHostSummary(packet: packet)
+  }
+
+  /// Single-category or simple operational packets are clearer as deterministic template copy.
+  static func shouldPreferDeterministicHostSummary(packet: HostLLMPacket) -> Bool {
+    guard packet.hasMeaningfulBriefingFacts else { return true }
+    let categories = Set(packet.topFacts.map(\.category))
+    return categories.count < 2
   }
 
   static func shouldUseLocalModelOnHostBoard(
@@ -915,7 +910,7 @@ enum HostIntelligenceDiagnostics {
 
   static func localModelAttempted(surface: String) {
     #if DEBUG
-    print("[HOST_AI] local model attempted surface=\(surface)")
+    print("[HOST_AI] host board local model attempted surface=\(surface)")
     #endif
   }
 
@@ -930,7 +925,7 @@ enum HostIntelligenceDiagnostics {
     case "host_board_gate_off":
       return "enhanced briefing off, provider not local model, or Host board local model disabled"
     case "host_board_template_only":
-      return "packet is template-only (guest/booking facts only; no operational pressure)"
+      return "host board template-only because simple operational facts are clearer as deterministic copy"
     case "startup_in_flight":
       return "startup reservation refresh still in flight"
     case "history_prefetch_in_flight":

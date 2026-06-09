@@ -181,9 +181,9 @@ enum ArrivalFlowBucketBuilder {
     let hour = calendar.component(.hour, from: date)
     let minute = calendar.component(.minute, from: date)
     if minute == 0 {
-      return String(format: "%02d:00", hour)
+      return "\(hour)"
     }
-    return String(format: "%02d:%02d", hour, minute)
+    return String(format: "%d:%02d", hour, minute)
   }
 
   private static func resolveBucketRange(

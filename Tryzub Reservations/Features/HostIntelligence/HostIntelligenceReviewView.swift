@@ -57,9 +57,17 @@ struct HostIntelligenceReviewView: View {
       Text("Right now")
         .font(.headline)
 
-      Text(displayBriefingText)
-        .font(.body)
+      Text(staffFacingNarrative.headline)
+        .font(.body.weight(.semibold))
         .fixedSize(horizontal: false, vertical: true)
+
+      if let why = staffFacingNarrative.whyItMatters?.trimmingCharacters(in: .whitespacesAndNewlines),
+         !why.isEmpty {
+        Text(why)
+          .font(.body)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
 
       if let briefingSourceCaption {
         Text(briefingSourceCaption)
@@ -220,19 +228,37 @@ struct HostIntelligenceReviewView: View {
     snapshot.generatedAt.formatted(date: .abbreviated, time: .shortened)
   }
 
-  private var displayBriefingText: String {
+  private var staffFacingNarrative: ManagerNarrative {
+    let template = ManagerNarrativeTemplateBuilder.build(from: snapshot)
     let trimmed = briefingText.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? snapshot.templateBriefingText : trimmed
+    if briefingSource != .template, !trimmed.isEmpty {
+      return ManagerNarrative(
+        headline: trimmed,
+        whyItMatters: nil,
+        checkNext: nil,
+        source: template.source,
+        failedReason: nil
+      )
+    }
+    return template
   }
 
   private var dedupedReviewFacts: [HostBriefingFact] {
+    let narrative = staffFacingNarrative
     var seenKeys = Set<String>()
     var results: [HostBriefingFact] = []
 
     for fact in snapshot.briefingFacts {
-      let title = HostStaffLanguage.rewrite(fact.title).lowercased()
-      let detail = HostStaffLanguage.rewrite(fact.detail).lowercased()
-      let key = "\(title)|\(detail)"
+      let title = HostStaffLanguage.rewrite(fact.title)
+      let detail = HostStaffLanguage.rewrite(fact.detail)
+      if HostStaffLanguage.areSameStaffMeaning(title, narrative.headline) {
+        continue
+      }
+      if HostStaffLanguage.isGenericCheckLine(detail),
+         HostStaffLanguage.areSameStaffMeaning(detail, narrative.whyItMatters ?? "") {
+        continue
+      }
+      let key = "\(title.lowercased())|\(detail.lowercased())"
       guard !seenKeys.contains(key) else { continue }
       seenKeys.insert(key)
       results.append(fact)

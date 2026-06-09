@@ -83,10 +83,17 @@ enum ManagerNarrativeOutputParser {
   }
 
   private static func labeledValue(prefix: String, in line: String) -> String? {
-    guard line.uppercased().hasPrefix(prefix) else { return nil }
-    let value = String(line.dropFirst(prefix.count))
+    let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    let upperLine = trimmedLine.uppercased()
+    let upperPrefix = prefix.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    guard upperLine.hasPrefix(upperPrefix) else { return nil }
+
+    var remainder = String(trimmedLine.dropFirst(upperPrefix.count))
       .trimmingCharacters(in: .whitespacesAndNewlines)
-    return value.isEmpty ? nil : value
+    if remainder.first == ":" || remainder.first == "=" {
+      remainder = String(remainder.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    return remainder.isEmpty ? nil : remainder
   }
 
   private static func normalizedOptionalLine(_ value: String?) -> String? {
@@ -146,6 +153,23 @@ enum ManagerNarrativeValidator {
       if let failure = validateField(field, packet: packet, hostPacket: hostPacket) {
         return failure
       }
+    }
+
+    if let why = narrative.whyItMatters,
+       HostStaffLanguage.areSameStaffMeaning(headline, why) {
+      return ManagerNarrativeValidationResult(
+        isValid: false,
+        reason: "Narrative repeats the same meaning in headline and why."
+      )
+    }
+
+    if headline.uppercased().hasPrefix("HEADLINE")
+        || headline.contains("WHY =")
+        || headline.contains("CHECK =") {
+      return ManagerNarrativeValidationResult(
+        isValid: false,
+        reason: "Narrative contains unparsed model labels."
+      )
     }
 
     let combined = narrative.compactBriefingText

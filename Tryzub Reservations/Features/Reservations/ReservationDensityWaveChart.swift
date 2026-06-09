@@ -62,16 +62,7 @@ struct ReservationDensityWaveChart: View {
 
   private var xLabelIndices: [Int] {
     guard !buckets.isEmpty else { return [] }
-    let count = buckets.count
-    let step: Int
-    if count <= 17 {
-      step = 1
-    } else if count <= 33 {
-      step = 2
-    } else {
-      step = 4
-    }
-    return stride(from: 0, to: count, by: step).map { $0 }
+    return Array(buckets.indices)
   }
 
   private var selectedBucket: ArrivalFlowBucket? {

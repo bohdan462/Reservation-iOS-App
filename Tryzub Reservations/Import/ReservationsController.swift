@@ -112,6 +112,7 @@ final class ReservationsController: ObservableObject {
     }
     private var availabilitySummaryTasksByDate: [String: Task<Void, Never>] = [:]
     private var activeWindowRefreshTask: Task<Bool, Never>?
+    private var activeWindowRefreshScope: ReservationSyncScope?
     private var lastOfflineNoticeAt: Date?
     private var pendingReviewAttentionCount = 0
     private var staffStatusBoundaryTask: Task<Void, Never>?
@@ -258,6 +259,7 @@ final class ReservationsController: ObservableObject {
         deferredRestaurantSetupTask = nil
         activeWindowRefreshTask?.cancel()
         activeWindowRefreshTask = nil
+        activeWindowRefreshScope = nil
     }
 
     private func applyNetworkPathStatus(_ isSatisfied: Bool) {
@@ -883,26 +885,39 @@ final class ReservationsController: ObservableObject {
         let scope = ReservationSyncScope.activeWindow(from: window.from, to: window.to)
 
         if let existing = activeWindowRefreshTask {
-            recordRefreshDecision(scope: scope, mode: mode, outcome: "coalesced_in_flight")
+            if activeWindowRefreshScope == scope {
+                recordRefreshDecision(scope: scope, mode: mode, outcome: "coalesced_in_flight")
+                ReservationAPILogger.skip(
+                    reason: .scopeSkipInFlight,
+                    message: "\(scope.description) same active-window scope coalesced with in-flight refresh"
+                )
+                return await existing.value
+            }
+
+            recordRefreshDecision(scope: scope, mode: mode, outcome: "scope_changed_not_coalesced")
             ReservationAPILogger.skip(
                 reason: .scopeSkipInFlight,
-                message: "\(scope.description) coalesced with identical in-flight active-window refresh"
+                message: "\(scope.description) different active-window scope not coalesced (in-flight: \(activeWindowRefreshScope?.description ?? "unknown"))"
             )
-            return await existing.value
         }
 
+        let capturedScope = scope
         let task = Task { @MainActor in
             await self.performActiveWindowRefreshBody(
                 context: context,
                 mode: mode,
                 force: force,
                 window: window,
-                scope: scope
+                scope: capturedScope
             )
         }
         activeWindowRefreshTask = task
+        activeWindowRefreshScope = capturedScope
         let result = await task.value
-        activeWindowRefreshTask = nil
+        if activeWindowRefreshScope == capturedScope {
+            activeWindowRefreshTask = nil
+            activeWindowRefreshScope = nil
+        }
         return result
     }
 
@@ -1800,6 +1815,14 @@ final class ReservationsController: ObservableObject {
         status: ReservationStatus,
         context: ModelContext
     ) async {
+        let previousStatus = reservation.status
+        let previousSeatedAt = localSeatedAtByReservationID[reservation.remoteID]
+        applyOptimisticStatusUpdate(
+            reservation: reservation,
+            status: status,
+            context: context
+        )
+
         do {
             let updated = try await updateReservation(
                 id: reservation.remoteID,
@@ -1808,6 +1831,12 @@ final class ReservationsController: ObservableObject {
             )
             updateLocalSeatedTimestamp(after: updated)
         } catch {
+            revertOptimisticStatusUpdate(
+                reservation: reservation,
+                previousStatus: previousStatus,
+                previousSeatedAt: previousSeatedAt,
+                context: context
+            )
             if errorMessage == nil {
                 errorMessage = "Update did not sync. Please retry or check the reservation before relying on this change."
             }
@@ -3076,6 +3105,38 @@ final class ReservationsController: ObservableObject {
 
         return ReservationFormatters.serverDateTime.date(from: value)
             ?? ReservationFormatters.serverDateMinute.date(from: value)
+    }
+
+    private func applyOptimisticStatusUpdate(
+        reservation: ReservationRecord,
+        status: ReservationStatus,
+        context: ModelContext
+    ) {
+        reservation.status = status.rawValue
+        if status == .seated {
+            localSeatedAtByReservationID[reservation.remoteID] = Date()
+            persistLocalSeatedTimestamps()
+        } else if localSeatedAtByReservationID[reservation.remoteID] != nil {
+            localSeatedAtByReservationID[reservation.remoteID] = nil
+            persistLocalSeatedTimestamps()
+        }
+        try? context.save()
+    }
+
+    private func revertOptimisticStatusUpdate(
+        reservation: ReservationRecord,
+        previousStatus: String,
+        previousSeatedAt: Date?,
+        context: ModelContext
+    ) {
+        reservation.status = previousStatus
+        if let previousSeatedAt {
+            localSeatedAtByReservationID[reservation.remoteID] = previousSeatedAt
+        } else {
+            localSeatedAtByReservationID[reservation.remoteID] = nil
+        }
+        persistLocalSeatedTimestamps()
+        try? context.save()
     }
 
     private func updateLocalSeatedTimestamp(after reservation: ReservationDTO) {

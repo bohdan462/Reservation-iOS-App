@@ -100,11 +100,14 @@ enum ReservationOperationalTimingState: Equatable {
         case .none, .normal:
             return nil
         case .dueSoon(let minutes):
+            if minutes <= 5 {
+                return "Due soon"
+            }
             return "Due in \(Self.durationText(minutes: minutes))"
         case .dueNow:
             return "Due now"
         case .overdue(let minutes):
-            return "\(Self.durationText(minutes: minutes)) past due"
+            return "Late by \(Self.durationText(minutes: minutes))"
         }
     }
 
@@ -257,18 +260,23 @@ extension ReservationRecord {
 
         let secondsUntilReservation = serviceDate.timeIntervalSince(now)
         if secondsUntilReservation < 0 {
-            return .overdue(minutes: Int(ceil(abs(secondsUntilReservation) / 60)))
-        }
-
-        if secondsUntilReservation <= 15 * 60 {
+            let minutesLate = Int(ceil(abs(secondsUntilReservation) / 60))
+            if minutesLate > 10 {
+                return .overdue(minutes: minutesLate)
+            }
             return .dueNow
         }
 
-        if secondsUntilReservation <= 2 * 60 * 60 {
-            return .dueSoon(minutes: Int(ceil(secondsUntilReservation / 60)))
+        let minutesUntil = Int(ceil(secondsUntilReservation / 60))
+        if minutesUntil > 5 {
+            return .dueSoon(minutes: minutesUntil)
         }
 
-        return .normal
+        if minutesUntil >= 1 {
+            return .dueSoon(minutes: minutesUntil)
+        }
+
+        return .dueNow
     }
 
     var hasTableAssignment: Bool {

@@ -77,7 +77,13 @@ final class RestaurantSettingsStore: ObservableObject {
             return setup
         }
 
-        guard !setupLoading else { return setup }
+        guard !setupLoading else {
+            ReservationAPILogger.skip(
+                reason: .scopeSkipInFlight,
+                message: "restaurant_setup skipped because settings store request is already in flight"
+            )
+            return setup
+        }
 
         setupLoading = true
         setupError = nil
