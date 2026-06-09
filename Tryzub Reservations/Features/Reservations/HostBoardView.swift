@@ -11,6 +11,7 @@ import SwiftData
 struct HostBoardView: View {
     // Cached reservations for the selected service date.
     let reservations: [ReservationRecord]
+    var allKnownReservations: [ReservationRecord] = []
     let environment: AppEnvironment
     @Binding var selectedDate: Date
     let failedImportCount: Int
@@ -352,7 +353,10 @@ struct HostBoardView: View {
             restaurantSetup: controller.hasLoadedRestaurantSetup ? controller.restaurantSetup : nil,
             localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
             settings: hostIntelligenceController.settings,
-            tableConfigs: hostIntelligenceController.tableStore.tables
+            tableConfigs: hostIntelligenceController.tableStore.tables,
+            allKnownReservations: allKnownReservations.isEmpty
+                ? reservations
+                : allKnownReservations
         )
     }
 

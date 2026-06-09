@@ -43,10 +43,14 @@ enum HostFactCategory: String, Codable, CaseIterable {
     case largeParty
     case arrivalWave
     case cancellation
+    case overdue
+    case opportunity
     case bookingDecision
     case analytics
     case sync
     case note
+    case preference
+    case duplicate
     case unknown
 }
 
@@ -78,6 +82,8 @@ enum HostActionKind: String, Codable, CaseIterable {
     case alertServer
     case generateEmailDraft
     case generateGuestManageLink
+    case markNoShow
+    case reviewCancellationOpportunity
     case noAction
 }
 
@@ -123,11 +129,15 @@ enum HostGuestSignalKind: String, Codable, CaseIterable {
     case allergy
     case regularGuest
     case vip
+    case importantGuest
     case specialOccasion
     case seatingPreference
     case accessibility
     case cancellationRisk
     case noShowRisk
+    case previousServiceIssue
+    case manualCallIn
+    case possibleDuplicate
     case noteReminder
     case unknown
 }
@@ -151,6 +161,7 @@ enum HostTableSignalKind: String, Codable, CaseIterable {
     case tableFreed
     case tableCapacityMismatch
     case longSeated
+    case cancellationFreedTable
     case unknown
 }
 
@@ -385,4 +396,6 @@ struct HostEngineInput {
     let localSeatedAtByReservationID: [Int: Date]
     let settings: HostIntelligenceSettings
     let tableConfigs: [RestaurantTableConfig]
+    /// Broader local cache for guest memory. Falls back to `reservations` when empty.
+    let allKnownReservations: [ReservationRecord]
 }

@@ -221,6 +221,7 @@ private struct HomeDashboardView: View {
             // Child view reads SwiftData cache and sends staff intent back to the controller.
             HostBoardView(
                 reservations: selectedDateReservations,
+                allKnownReservations: reservations,
                 environment: environment,
                 selectedDate: $selectedDate,
                 failedImportCount: controller.importFailureCount,

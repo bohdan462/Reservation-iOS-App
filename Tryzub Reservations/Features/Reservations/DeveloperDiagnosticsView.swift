@@ -219,7 +219,8 @@ struct DeveloperDiagnosticsView: View {
             restaurantSetup: controller.hasLoadedRestaurantSetup ? controller.restaurantSetup : nil,
             localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
             settings: hostIntelligenceSettings.settings,
-            tableConfigs: hostTableConfigStore.tables
+            tableConfigs: hostTableConfigStore.tables,
+            allKnownReservations: reservations
         )
     }
 

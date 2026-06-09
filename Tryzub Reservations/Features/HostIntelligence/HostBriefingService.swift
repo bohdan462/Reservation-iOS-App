@@ -83,17 +83,21 @@ struct HostBriefingService {
     switch category {
     case .largeParty: return 0
     case .capacity: return 1
-    case .arrivalWave: return 2
-    case .table: return 3
-    case .allergy: return 4
-    case .timing: return 5
-    case .bookingDecision: return 6
-    case .analytics: return 7
-    case .guest: return 8
-    case .note: return 9
-    case .sync: return 10
-    case .cancellation: return 11
-    case .unknown: return 12
+    case .table: return 2
+    case .overdue: return 3
+    case .opportunity: return 4
+    case .cancellation: return 5
+    case .allergy: return 6
+    case .arrivalWave: return 7
+    case .preference: return 8
+    case .duplicate: return 9
+    case .timing: return 10
+    case .bookingDecision: return 11
+    case .analytics: return 12
+    case .guest: return 13
+    case .note: return 14
+    case .sync: return 15
+    case .unknown: return 16
     }
   }
 }

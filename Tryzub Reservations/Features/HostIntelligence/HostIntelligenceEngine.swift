@@ -46,9 +46,29 @@ struct HostIntelligenceEngine {
     var guestSignals: [HostGuestSignal] = []
     var tableSignals: [HostTableSignal] = []
 
+    var guestMetrics = HostGuestIntelligenceSupport.GuestIntelligenceMetrics(
+      allergyCount: 0,
+      accessibilityCount: 0,
+      previousServiceIssueCount: 0,
+      noShowRiskCount: 0,
+      cancellationRiskCount: 0,
+      regularGuestCount: 0
+    )
+
     if context.settings.includeGuestSignals {
-      guestSignals = extractAllergySignals(reservations: activeReservations)
-      briefingFacts.append(contentsOf: allergyBriefingFacts(from: guestSignals))
+      guestSignals = HostGuestIntelligenceSupport.buildGuestSignals(
+        activeReservations: activeReservations,
+        allDayReservations: context.reservations,
+        allKnownReservations: context.allKnownReservations,
+        settings: context.settings
+      )
+      briefingFacts.append(
+        contentsOf: HostGuestIntelligenceSupport.buildGuestBriefingFacts(signals: guestSignals)
+      )
+      suggestedActions.append(
+        contentsOf: HostGuestIntelligenceSupport.buildGuestSuggestedActions(signals: guestSignals)
+      )
+      guestMetrics = HostGuestIntelligenceSupport.metrics(from: guestSignals)
     }
 
     let seatedTimingSignals = analyzeSeatedTimingReliability(context: context)
@@ -61,10 +81,6 @@ struct HostIntelligenceEngine {
       now: context.now,
       settings: context.settings
     )
-    briefingFacts.append(contentsOf: noTableFactsAndActions.facts)
-    suggestedActions.append(contentsOf: noTableFactsAndActions.actions)
-    tableSignals.append(contentsOf: noTableFactsAndActions.tableSignals)
-
     let tableIntelligence = analyzeTableIntelligence(
       context: context,
       noTableReservations: noTableReservations,
@@ -74,16 +90,66 @@ struct HostIntelligenceEngine {
     suggestedActions.append(contentsOf: tableIntelligence.actions)
     tableSignals.append(contentsOf: tableIntelligence.signals)
 
+    let cancellationIntelligence = HostCancellationIntelligenceSupport.analyze(
+      activeReservations: activeReservations,
+      allDayReservations: context.reservations,
+      tableConfigs: context.tableConfigs,
+      now: context.now,
+      settings: context.settings
+    )
+
+    let filteredNoTable = filterSupersededNoTableOutputs(
+      outputs: noTableFactsAndActions,
+      overdueReservationIDs: cancellationIntelligence.overdueReservationIDs
+    )
+
+    briefingFacts = briefingFacts.filter { fact in
+      !shouldReplaceWithOverdueFact(
+        fact,
+        overdueReservationIDs: cancellationIntelligence.overdueReservationIDs
+      )
+    }
+    suggestedActions = suggestedActions.filter { action in
+      !shouldReplaceWithOverdueAction(
+        action,
+        overdueReservationIDs: cancellationIntelligence.overdueReservationIDs
+      )
+    }
+    tableSignals = tableSignals.filter { signal in
+      !shouldReplaceWithOverdueTableSignal(
+        signal,
+        overdueReservationIDs: cancellationIntelligence.overdueReservationIDs
+      )
+    }
+
+    briefingFacts.append(contentsOf: filteredNoTable.facts)
+    suggestedActions.append(contentsOf: filteredNoTable.actions)
+    tableSignals.append(contentsOf: filteredNoTable.tableSignals)
+
+    briefingFacts.append(contentsOf: cancellationIntelligence.facts)
+    suggestedActions.append(contentsOf: cancellationIntelligence.actions)
+    tableSignals.append(contentsOf: cancellationIntelligence.tableSignals)
+
     let rankedFacts = briefingService.rankHostFacts(briefingFacts)
     let pressureScore = calculatePressureScore(
       slotPressures: slotPressures,
       briefingFacts: rankedFacts,
-      noTableDueSoonCount: noTableDueSoon.count,
-      allergySignalCount: guestSignals.filter { $0.kind == .allergy }.count,
+      noTableDueSoonCount: noTableDueSoon.filter {
+        !cancellationIntelligence.overdueReservationIDs.contains($0.remoteID)
+      }.count,
+      allergySignalCount: guestMetrics.allergyCount,
+      accessibilitySignalCount: guestMetrics.accessibilityCount,
+      previousServiceIssueCount: guestMetrics.previousServiceIssueCount,
+      noShowRiskCount: guestMetrics.noShowRiskCount,
+      cancellationRiskCount: guestMetrics.cancellationRiskCount,
       tableCapacityMismatchCount: tableIntelligence.capacityMismatchCount,
       noSuitableTableCount: tableIntelligence.noSuitableTableCount,
       tableTurnRiskCount: tableIntelligence.turnRiskCount,
-      tableFitAvailableCount: tableIntelligence.fitAvailableCount
+      tableFitAvailableCount: tableIntelligence.fitAvailableCount,
+      overdueWarningOrCriticalCount: cancellationIntelligence.overdueFactCount,
+      lateLargePartyCount: cancellationIntelligence.lateLargePartyCount,
+      cancellationOpportunityCount: cancellationIntelligence.cancellationOpportunityCount,
+      pastDueCompleteCount: cancellationIntelligence.pastDueCompleteCount
     )
     let serviceState = classifyServiceState(pressureScore: pressureScore)
     let templateBriefingText = briefingService.buildTemplateBriefingFallback(
@@ -126,6 +192,7 @@ struct HostIntelligenceEngine {
     let localSeatedAtByReservationID: [Int: Date]
     let settings: HostIntelligenceSettings
     let tableConfigs: [RestaurantTableConfig]
+    let allKnownReservations: [ReservationRecord]
   }
 
   private func buildServiceDayContext(from input: HostEngineInput) -> ServiceDayContext {
@@ -143,7 +210,8 @@ struct HostIntelligenceEngine {
       restaurantSetup: input.restaurantSetup,
       localSeatedAtByReservationID: input.localSeatedAtByReservationID,
       settings: input.settings,
-      tableConfigs: input.tableConfigs
+      tableConfigs: input.tableConfigs,
+      allKnownReservations: input.allKnownReservations
     )
   }
 
@@ -482,47 +550,6 @@ struct HostIntelligenceEngine {
     }
 
     return (facts, actions, tableSignals)
-  }
-
-  // MARK: - Guest Signals
-
-  private func extractAllergySignals(
-    reservations: [ReservationRecord]
-  ) -> [HostGuestSignal] {
-    reservations.compactMap { reservation in
-      let guestNotes = reservation.guestNotes ?? ""
-      let staffNotes = reservation.staffNotes ?? ""
-      let combined = "\(guestNotes) \(staffNotes)".lowercased()
-      guard !combined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-
-      let matched = matchedAllergyKeywords(in: combined)
-      guard !matched.isEmpty else { return nil }
-
-      return HostGuestSignal(
-        id: "allergy-\(reservation.remoteID)",
-        reservationID: reservation.remoteID,
-        guestName: reservation.guestName,
-        kind: .allergy,
-        severity: .critical,
-        message: "\(reservation.guestName) has allergy-related notes.",
-        evidence: matched
-      )
-    }
-  }
-
-  private func allergyBriefingFacts(from signals: [HostGuestSignal]) -> [HostBriefingFact] {
-    signals.map { signal in
-      HostBriefingFact(
-        id: "allergy-fact-\(signal.reservationID)",
-        severity: .critical,
-        category: .allergy,
-        title: "Allergy note",
-        detail: signal.message,
-        evidence: signal.evidence,
-        relatedReservationIDs: [signal.reservationID],
-        suggestedActionTitle: "Review allergy notes before seating."
-      )
-    }
   }
 
   // MARK: - Seated Timing
@@ -1151,15 +1178,63 @@ struct HostIntelligenceEngine {
 
   // MARK: - Scoring & Classification
 
+  private func filterSupersededNoTableOutputs(
+    outputs: (facts: [HostBriefingFact], actions: [HostSuggestedAction], tableSignals: [HostTableSignal]),
+    overdueReservationIDs: Set<Int>
+  ) -> (facts: [HostBriefingFact], actions: [HostSuggestedAction], tableSignals: [HostTableSignal]) {
+    let facts = outputs.facts.filter { fact in
+      !fact.relatedReservationIDs.contains(where: overdueReservationIDs.contains)
+    }
+    let actions = outputs.actions.filter { action in
+      !action.relatedReservationIDs.contains(where: overdueReservationIDs.contains)
+    }
+    let tableSignals = outputs.tableSignals.filter { signal in
+      !signal.relatedReservationIDs.contains(where: overdueReservationIDs.contains)
+    }
+    return (facts, actions, tableSignals)
+  }
+
+  private func shouldReplaceWithOverdueFact(
+    _ fact: HostBriefingFact,
+    overdueReservationIDs: Set<Int>
+  ) -> Bool {
+    guard fact.id.hasPrefix("no-table-due-soon-") else { return false }
+    return fact.relatedReservationIDs.contains(where: overdueReservationIDs.contains)
+  }
+
+  private func shouldReplaceWithOverdueAction(
+    _ action: HostSuggestedAction,
+    overdueReservationIDs: Set<Int>
+  ) -> Bool {
+    guard action.id.hasPrefix("assign-table-") else { return false }
+    return action.relatedReservationIDs.contains(where: overdueReservationIDs.contains)
+  }
+
+  private func shouldReplaceWithOverdueTableSignal(
+    _ signal: HostTableSignal,
+    overdueReservationIDs: Set<Int>
+  ) -> Bool {
+    guard signal.id.hasPrefix("no-table-") else { return false }
+    return signal.relatedReservationIDs.contains(where: overdueReservationIDs.contains)
+  }
+
   private func calculatePressureScore(
     slotPressures: [HostSlotPressure],
     briefingFacts: [HostBriefingFact],
     noTableDueSoonCount: Int,
     allergySignalCount: Int,
+    accessibilitySignalCount: Int,
+    previousServiceIssueCount: Int,
+    noShowRiskCount: Int,
+    cancellationRiskCount: Int,
     tableCapacityMismatchCount: Int,
     noSuitableTableCount: Int,
     tableTurnRiskCount: Int,
-    tableFitAvailableCount: Int
+    tableFitAvailableCount: Int,
+    overdueWarningOrCriticalCount: Int,
+    lateLargePartyCount: Int,
+    cancellationOpportunityCount: Int,
+    pastDueCompleteCount: Int
   ) -> Double {
     let maxRatio = slotPressures.compactMap(\.capacityRatio).max() ?? 0
     let criticalSlotCount = slotPressures.filter { $0.severity == .critical }.count
@@ -1173,10 +1248,18 @@ struct HostIntelligenceEngine {
       + Double(criticalFactCount) * 10
       + Double(noTableDueSoonCount) * 5
       + Double(allergySignalCount) * 5
+      + Double(accessibilitySignalCount) * 4
+      + Double(previousServiceIssueCount) * 5
+      + Double(noShowRiskCount) * 4
+      + Double(cancellationRiskCount) * 3
       + Double(tableCapacityMismatchCount) * 12
       + Double(noSuitableTableCount) * 10
       + Double(tableTurnRiskCount) * 8
       + Double(tableFitAvailableCount) * 2
+      + Double(overdueWarningOrCriticalCount) * 6
+      + Double(lateLargePartyCount) * 8
+      + Double(cancellationOpportunityCount) * 1
+      + Double(pastDueCompleteCount) * 2
 
     return min(max(raw, 0), 100)
   }
@@ -1342,33 +1425,5 @@ struct HostIntelligenceEngine {
 
   private func normalizedSlotTimeString(_ value: String) -> String {
     value.count >= 5 ? String(value.prefix(5)) : value
-  }
-
-  private let allergyKeywords = [
-    "allergy", "allergic", "shellfish", "shrimp", "crab", "lobster",
-    "nuts", "peanut", "gluten", "dairy", "celiac"
-  ]
-
-  private let allergyNegationPhrases = [
-    "no allergy", "no allergies", "not allergic", "no shellfish allergy"
-  ]
-
-  private func matchedAllergyKeywords(in text: String) -> [String] {
-    allergyKeywords.filter { keyword in
-      guard text.contains(keyword) else { return false }
-      return !isNegatedAllergyKeyword(keyword, in: text)
-    }
-  }
-
-  private func isNegatedAllergyKeyword(_ keyword: String, in text: String) -> Bool {
-    if allergyNegationPhrases.contains(where: { phrase in
-      text.contains(phrase) && (phrase.contains(keyword) || keyword == "allergy" || keyword == "allergic")
-    }) {
-      return true
-    }
-
-    guard let range = text.range(of: keyword) else { return false }
-    let prefix = text[..<range.lowerBound].suffix(8)
-    return prefix.hasSuffix("no ") || prefix.hasSuffix("not ")
   }
 }

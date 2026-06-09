@@ -16,6 +16,7 @@ struct HostIntelligenceDiagnosticsView: View {
   let localSeatedAtByReservationID: [Int: Date]
   let settings: HostIntelligenceSettings
   var tableConfigs: [RestaurantTableConfig] = []
+  var allKnownReservations: [ReservationRecord] = []
 
   private var snapshot: HostDecisionSnapshot {
     let input = HostEngineInput(
@@ -27,7 +28,8 @@ struct HostIntelligenceDiagnosticsView: View {
       restaurantSetup: restaurantSetup,
       localSeatedAtByReservationID: localSeatedAtByReservationID,
       settings: settings,
-      tableConfigs: tableConfigs
+      tableConfigs: tableConfigs,
+      allKnownReservations: allKnownReservations
     )
     return HostIntelligenceEngine().evaluateHostDecisionSnapshot(input: input)
   }
@@ -41,6 +43,8 @@ struct HostIntelligenceDiagnosticsView: View {
       suggestedActionsSection(decision)
       slotPressureSection(decision)
       tableInventorySection
+      guestSignalsSection(decision)
+      cancellationOverdueSection(decision)
       signalsSection(decision)
     }
   }
@@ -169,10 +173,118 @@ struct HostIntelligenceDiagnosticsView: View {
   }
 
   @ViewBuilder
+  private func guestSignalsSection(_ decision: HostDecisionSnapshot) -> some View {
+    Section("Top Guest Signals") {
+      if decision.guestSignals.isEmpty {
+        Text("No guest signals.")
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(Array(decision.guestSignals.prefix(5))) { signal in
+          VStack(alignment: .leading, spacing: 4) {
+            Text("\(signal.severity.rawValue.capitalized) · \(signal.kind.rawValue)")
+              .font(.subheadline.weight(.semibold))
+            Text(signal.guestName)
+              .font(.caption)
+            Text(signal.message)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 2)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func cancellationOverdueSection(_ decision: HostDecisionSnapshot) -> some View {
+    let cancellationFacts = decision.briefingFacts.filter {
+      $0.category == .cancellation || $0.category == .opportunity || $0.category == .overdue
+    }
+    let cancellationActions = decision.suggestedActions.filter {
+      $0.kind == .reviewCancellationOpportunity
+        || $0.kind == .markNoShow
+        || $0.kind == .completeReservation
+        || ($0.kind == .reviewReservation && $0.id.hasPrefix("overdue-"))
+        || ($0.kind == .assignTable && $0.id.hasPrefix("overdue-no-table-"))
+    }
+
+    Section("Cancellation / Overdue") {
+      LabeledContent("Cancellation facts") {
+        Text("\(decision.briefingFacts.filter { $0.category == .cancellation }.count)")
+      }
+      LabeledContent("Opportunity facts") {
+        Text("\(decision.briefingFacts.filter { $0.category == .opportunity }.count)")
+      }
+      LabeledContent("Overdue facts") {
+        Text("\(decision.briefingFacts.filter { $0.category == .overdue }.count)")
+      }
+      LabeledContent("Mark no-show actions") {
+        Text("\(decision.suggestedActions.filter { $0.kind == .markNoShow }.count)")
+      }
+      LabeledContent("Cancellation opportunity actions") {
+        Text("\(decision.suggestedActions.filter { $0.kind == .reviewCancellationOpportunity }.count)")
+      }
+
+      if cancellationFacts.isEmpty {
+        Text("No cancellation or overdue facts.")
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(Array(cancellationFacts.prefix(5))) { fact in
+          VStack(alignment: .leading, spacing: 4) {
+            Text("\(fact.severity.rawValue.capitalized) · \(fact.category.rawValue) · \(fact.title)")
+              .font(.subheadline.weight(.semibold))
+            Text(fact.detail)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 2)
+        }
+      }
+
+      if !cancellationActions.isEmpty {
+        ForEach(Array(cancellationActions.prefix(5))) { action in
+          VStack(alignment: .leading, spacing: 4) {
+            Text("\(action.severity.rawValue.capitalized) · \(action.kind.rawValue) · \(action.title)")
+              .font(.subheadline.weight(.semibold))
+            Text(action.reason)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 2)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
   private func signalsSection(_ decision: HostDecisionSnapshot) -> some View {
     Section("Signals") {
       LabeledContent("Guest signals") {
         Text("\(decision.guestSignals.count)")
+      }
+      LabeledContent("Regular guests") {
+        Text("\(decision.guestSignals.filter { $0.kind == .regularGuest }.count)")
+      }
+      LabeledContent("Seating preferences") {
+        Text("\(decision.guestSignals.filter { $0.kind == .seatingPreference }.count)")
+      }
+      LabeledContent("Accessibility") {
+        Text("\(decision.guestSignals.filter { $0.kind == .accessibility }.count)")
+      }
+      LabeledContent("Special occasions") {
+        Text("\(decision.guestSignals.filter { $0.kind == .specialOccasion }.count)")
+      }
+      LabeledContent("Cancellation risk") {
+        Text("\(decision.guestSignals.filter { $0.kind == .cancellationRisk }.count)")
+      }
+      LabeledContent("No-show risk") {
+        Text("\(decision.guestSignals.filter { $0.kind == .noShowRisk }.count)")
+      }
+      LabeledContent("Prior service issues") {
+        Text("\(decision.guestSignals.filter { $0.kind == .previousServiceIssue }.count)")
+      }
+      LabeledContent("Possible duplicates") {
+        Text("\(decision.guestSignals.filter { $0.kind == .possibleDuplicate }.count)")
       }
       LabeledContent("Allergy signals") {
         Text("\(decision.guestSignals.filter { $0.kind == .allergy }.count)")
@@ -188,6 +300,9 @@ struct HostIntelligenceDiagnosticsView: View {
       }
       LabeledContent("Table turn risk") {
         Text("\(decision.tableSignals.filter { $0.kind == .tableTurnRisk }.count)")
+      }
+      LabeledContent("Cancellation freed table") {
+        Text("\(decision.tableSignals.filter { $0.kind == .cancellationFreedTable }.count)")
       }
       LabeledContent("Seated timing signals") {
         Text("\(decision.seatedTimingSignals.count)")

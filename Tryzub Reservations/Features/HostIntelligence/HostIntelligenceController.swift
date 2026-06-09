@@ -41,7 +41,8 @@ final class HostIntelligenceController: ObservableObject {
       restaurantSetup: input.restaurantSetup,
       localSeatedAtByReservationID: input.localSeatedAtByReservationID,
       settings: settingsStore.settings,
-      tableConfigs: input.tableConfigs
+      tableConfigs: input.tableConfigs,
+      allKnownReservations: input.allKnownReservations
     )
 
     decisionSnapshot = engine.evaluateHostDecisionSnapshot(input: enriched)
