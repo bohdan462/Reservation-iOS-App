@@ -16,7 +16,7 @@ struct HostTableConfigView: View {
   var body: some View {
     List {
       Section {
-        Text("Backend stores only the table name. Seat counts are local Host Intelligence settings used for recommendations.")
+        Text("The server stores only the table name on the reservation. Seat counts here help with table planning on this device.")
           .font(.caption)
           .foregroundStyle(.secondary)
       }

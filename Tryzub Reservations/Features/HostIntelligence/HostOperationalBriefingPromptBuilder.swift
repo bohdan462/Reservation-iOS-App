@@ -294,7 +294,7 @@ enum HostOperationalBriefingPromptBuilder {
     if noTableSignals.count == 1 {
       lines.append(sanitizeLine(noTableSignals[0].detail))
     } else if noTableSignals.count > 1 {
-      lines.append("\(noTableSignals.count) reservations still need a table.")
+      lines.append("\(noTableSignals.count) upcoming reservations still need tables.")
     }
     noTableSignals.forEach { reservationIDs.formUnion($0.relatedReservationIDs) }
 

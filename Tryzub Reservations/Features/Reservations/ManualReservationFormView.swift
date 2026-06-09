@@ -105,8 +105,8 @@ struct ManualReservationFormView: View {
         } catch {
             ReservationHaptics.warning()
             errorMessage = error.isOfflineLike
-                ? "Offline. Showing saved reservations. Edits require internet."
-                : "Could not create reservation. Please try again."
+                ? "Could not save. Check the connection and try again."
+                : "Could not save. Check the details and try again."
         }
     }
 
@@ -231,8 +231,8 @@ struct ReservationEditFormView: View {
         } catch {
             ReservationHaptics.warning()
             errorMessage = error.isOfflineLike
-                ? "Offline. Showing saved reservations. Edits require internet."
-                : "Could not save changes. Please try again."
+                ? "Could not save. Check the connection and try again."
+                : "Could not save. Check the details and try again."
         }
     }
 
@@ -246,7 +246,7 @@ struct ReservationEditFormView: View {
             ReservationHaptics.warning()
             dismiss()
         } catch {
-            errorMessage = "Could not hide this reservation. Please retry."
+            errorMessage = "Could not hide this reservation. Please try again."
             ReservationHaptics.warning()
         }
     }
@@ -381,6 +381,7 @@ private struct ReservationFormContent: View {
     @State private var publicSlotsError: String?
     @State private var loadedSlotsDateKey: String?
     @State private var slotLoadTask: Task<Void, Never>?
+    @State private var hasAttemptedSave = false
 
     private var isWideForm: Bool {
         horizontalSizeClass == .regular
@@ -515,7 +516,7 @@ private struct ReservationFormContent: View {
             }
 
             if controller.isNetworkDegraded {
-                ReservationFormWarningCard(message: "Offline. Showing saved reservations. Edits require internet.")
+                ReservationFormWarningCard(message: "Connection is weak. You can view saved reservations, but saving needs internet.")
             }
 
             if showsGuestLookupDetailReminder {
@@ -801,7 +802,7 @@ private struct ReservationFormContent: View {
                     .foregroundStyle(TryzubColors.danger)
             }
 
-            if let timeValidationMessage {
+            if hasAttemptedSave, let timeValidationMessage {
                 Label(timeValidationMessage, systemImage: "clock.badge.exclamationmark")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(TryzubColors.danger)
@@ -1004,7 +1005,7 @@ private struct ReservationFormContent: View {
     }
 
     private var primaryActionButton: some View {
-        let isSubmitDisabled = controller.isNetworkDegraded || formBlockingMessage != nil
+        let isSubmitDisabled = controller.isNetworkDegraded || availabilityBlockingMessage != nil
 
         return VStack(spacing: 0) {
             Divider()
@@ -1032,8 +1033,10 @@ private struct ReservationFormContent: View {
     }
 
     private func submitIfValid() {
-        guard formBlockingMessage == nil,
-              !controller.isNetworkDegraded,
+        hasAttemptedSave = true
+        guard !controller.isNetworkDegraded,
+              availabilityBlockingMessage == nil,
+              validationErrorMessage == nil,
               !isSaving else {
             ReservationHaptics.warning()
             return
@@ -1045,10 +1048,18 @@ private struct ReservationFormContent: View {
     private var appliesStaffLeadTime: Bool { false }
 
     private var formBlockingMessage: String? {
-        if let availabilityValidationMessage {
-            return availabilityValidationMessage
+        if let availabilityBlockingMessage {
+            return availabilityBlockingMessage
         }
+        guard hasAttemptedSave else { return nil }
+        return validationErrorMessage
+    }
 
+    private var availabilityBlockingMessage: String? {
+        availabilityValidationMessage
+    }
+
+    private var validationErrorMessage: String? {
         do {
             _ = try ReservationFormValidator.validate(
                 draft: draft,
@@ -1068,7 +1079,7 @@ private struct ReservationFormContent: View {
             && loadedSlotsDateKey != dateKey
             && loadedAvailabilityDateKey != dateKey
             && activeSuggestedSlots == nil {
-            return "Checking available times for this date."
+            return "Loading open times for this date."
         }
 
         if shouldBlockClosedDate {
@@ -1484,12 +1495,12 @@ private enum ReservationFormValidator {
     ) throws -> ReservationFormState {
         let guestName = ReservationInputNormalizer.collapsedWhitespace(draft.guestName)
         guard guestName.count >= 2 else {
-            throw ReservationFormValidationError(message: "Guest name is required.")
+            throw ReservationFormValidationError(message: "Add the guest name before saving.")
         }
 
         let phoneDigits = ReservationInputNormalizer.phoneDigits(draft.phone)
         guard isPlausibleUSPhone(phoneDigits) else {
-            throw ReservationFormValidationError(message: "Enter a valid 10 digit phone number.")
+            throw ReservationFormValidationError(message: "Add a valid 10-digit phone number before saving.")
         }
 
         let email = ReservationInputNormalizer.normalizedEmail(draft.email)
@@ -1498,7 +1509,7 @@ private enum ReservationFormValidator {
         }
 
         guard (1...60).contains(draft.partySize) else {
-            throw ReservationFormValidationError(message: "Party size must be between 1 and 60.")
+            throw ReservationFormValidationError(message: "Party size must be at least 1.")
         }
 
         if let message = timeValidationMessage(

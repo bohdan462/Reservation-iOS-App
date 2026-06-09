@@ -98,7 +98,7 @@ enum HostReservationSlotContextSupport {
       hints.append("\(label) already in this window.")
     }
     if noTableCount > 0 {
-      let label = noTableCount == 1 ? "1 booking has no table" : "\(noTableCount) bookings have no table"
+      let label = noTableCount == 1 ? "1 booking still needs a table" : "\(noTableCount) bookings still need tables"
       hints.append(label)
     }
     if let tableHint = tablePlanningHint(

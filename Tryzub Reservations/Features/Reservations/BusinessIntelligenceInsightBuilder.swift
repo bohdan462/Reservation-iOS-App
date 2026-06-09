@@ -33,12 +33,12 @@ enum BusinessIntelligenceInsightBuilder {
         let noTable = summary.risk.noTableCount
         if let needsReview, needsReview > 0 {
             if let noTable, noTable > 0 {
-                lines.append("\(needsReview) need review, including \(noTable) with no table.")
+                lines.append("\(needsReview) need attention, including \(noTable) without a table.")
             } else {
-                lines.append("\(needsReview) need review.")
+                lines.append("\(needsReview) need attention.")
             }
         } else if let noTable, noTable > 0 {
-            lines.append("\(noTable) reservations have no table assigned.")
+            lines.append("\(noTable) upcoming reservations still need tables.")
         }
 
         if lines.isEmpty,

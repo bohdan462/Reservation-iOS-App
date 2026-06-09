@@ -860,7 +860,7 @@ private struct ReservationScheduleView: View {
 
         if usesAllModeCache {
             if controller.isHistoryPrefetching {
-                return "\(displayedReservations.count) reservations · syncing older history…"
+                return "\(displayedReservations.count) reservations · loading older history…"
             }
             return "\(displayedReservations.count) saved reservations"
         }

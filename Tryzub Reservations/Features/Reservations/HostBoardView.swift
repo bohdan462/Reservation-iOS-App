@@ -1155,7 +1155,7 @@ private struct HomeServiceHeader: View {
             return "Saved data"
         }
 
-        return "Synced \(lastSyncedAt.formatted(date: .omitted, time: .shortened))"
+        return "Updated \(lastSyncedAt.formatted(date: .omitted, time: .shortened))"
     }
     
     var body: some View {

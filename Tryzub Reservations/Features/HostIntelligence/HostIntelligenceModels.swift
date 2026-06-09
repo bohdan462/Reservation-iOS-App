@@ -322,7 +322,7 @@ struct HostDecisionSnapshot: Codable, Equatable {
             tableSignals: [],
             seatedTimingSignals: [],
             bookingDecisions: [],
-            templateBriefingText: "No urgent Host alerts right now.",
+            templateBriefingText: "Nothing needs attention right now.",
             llmPacket: .empty
         )
     }

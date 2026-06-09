@@ -19,7 +19,10 @@ enum HostLLMPacketPromptBuilder {
       Use only the facts below. Do not invent guests, tables, allergies, times, or counts.
       Do not say any action was completed. Do not make booking decisions.
       Do not mention internal IDs, reservation numbers, AI, models, packets, backend, system, or debug details.
-      Write in a calm restaurant host voice.
+      Write in a calm restaurant host voice using simple staff language.
+      Do not use technical words like backend, cache, sync, packet, model, validation, API, capacity ratio, or diagnostics.
+      Prefer: table plan, open times, saved reservations, needs attention, check, update, refresh.
+      Write so a busy host can understand it in five seconds.
       Write 1-2 short sentences for the Host board. Never write more than 2 sentences.
       Output at most 500 characters.
       Prioritize, in order: critical/warning facts, no-table pressure, large-party table fit, arrival waves, new or needs-review bookings, allergy or accessibility notes.
@@ -28,8 +31,8 @@ enum HostLLMPacketPromptBuilder {
       Use concrete numbers only when provided in approved facts.
       Never say something has been reviewed, assigned, confirmed, seated, completed, handled, or resolved.
       Do not say no changes are needed unless there are no facts.
-      Use review/check language, not completed-action language.
-      End with one manual staff review action only when a suggested review action is provided and it adds value.
+      Use check/review language, not completed-action language.
+      End with one manual staff action only when a suggested action is provided and it adds value.
       Special occasion notes should be reviewed or shared with the server.
       Do not instruct staff to mention the occasion directly unless the approved fact explicitly says to do so.
       Do not invent visit counts, last-visit dates, or guest history.
@@ -55,7 +58,7 @@ enum HostLLMPacketPromptBuilder {
     if packet.topFacts.isEmpty {
       sections.append("Approved facts: none")
       sections.append(
-        "When no facts are provided, respond with one calm sentence that there are no urgent Host alerts."
+        "When no facts are provided, respond with one calm sentence that nothing needs attention right now."
       )
     } else {
       sections.append("Approved facts:")

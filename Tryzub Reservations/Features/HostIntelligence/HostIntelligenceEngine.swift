@@ -572,14 +572,14 @@ struct HostIntelligenceEngine {
           id: "no-table-due-soon-\(reservation.remoteID)",
           severity: severity,
           category: .table,
-          title: "No table assigned",
-          detail: "\(reservation.guestName) at \(timeLabel) has no table assigned.",
+          title: "No table yet",
+          detail: "\(reservation.guestName) at \(timeLabel) still needs a table.",
           evidence: [
             "partySize=\(reservation.partySize)",
             "dueWindowMinutes=\(settings.noTableDueSoonMinutes)"
           ],
           relatedReservationIDs: [reservation.remoteID],
-          suggestedActionTitle: "Review table plan before they arrive."
+          suggestedActionTitle: "Check the table plan before they arrive."
         )
       )
 
@@ -588,8 +588,8 @@ struct HostIntelligenceEngine {
           id: "assign-table-\(reservation.remoteID)",
           severity: severity,
           kind: .reviewReservation,
-          title: "Review table plan for \(reservation.guestName)",
-          reason: "Reservation at \(timeLabel) has no table assigned.",
+          title: "Check table plan for \(reservation.guestName)",
+          reason: "Reservation at \(timeLabel) still needs a table.",
           relatedReservationIDs: [reservation.remoteID],
           targetSlotTime: reservation.reservationTime,
           targetTableName: nil,

@@ -51,7 +51,7 @@ enum HostLLMPacketSampleFactory {
           title: "Arrival wave",
           detail: "Three parties are expected around 6:00 PM, totaling 12 guests.",
           evidence: ["Arrival cluster around 6:00 PM."],
-          suggestedAction: "Review the 6:00 PM seating plan."
+          suggestedAction: "Check the 6:00 PM table plan."
         ),
         HostLLMFact(
           severity: .watch,
@@ -59,7 +59,7 @@ enum HostLLMPacketSampleFactory {
           title: "Large party needs table planning",
           detail: "Party of 8 for Natalia is due in 20 minutes and needs table planning.",
           evidence: ["Large party without a table."],
-          suggestedAction: "Review table plan for Natalia."
+          suggestedAction: "Check the table plan for Natalia."
         ),
         HostLLMFact(
           severity: .critical,

@@ -2974,7 +2974,7 @@ final class ReservationsController: ObservableObject {
             severity: .warning,
             source: source,
             title: "Offline — showing saved reservations.",
-            message: "Cached reservations remain visible. Edits require internet.",
+            message: "You can keep viewing saved reservations. Saving changes needs internet.",
             requestReason: requestReason,
             errorCode: errorLogCode(error),
             developerDiagnostics: error.reservationAPIDeveloperDetail
@@ -3153,7 +3153,7 @@ private enum ReservationControllerError: LocalizedError {
         case .missingReservationID:
             return "Enter a reservation ID first."
         case .networkUnavailable:
-            return "Edits require internet. Showing saved reservations."
+            return "Could not save. Check the connection and try again."
         }
     }
 }
@@ -3287,13 +3287,13 @@ private enum ReservationRefreshMode {
         case .startup:
             return "Showing saved data"
         case .manual:
-            return "Refresh failed"
+            return "Could not refresh"
         case .automatic:
-            return "Auto refresh failed"
+            return "Could not refresh automatically"
         case .schedule:
-            return "Schedule refresh failed"
+            return "Could not refresh schedule"
         case .review:
-            return "Review refresh failed"
+            return "Could not refresh new bookings"
         }
     }
 
@@ -3306,9 +3306,9 @@ private enum ReservationRefreshMode {
         case .automatic:
             return "The app will try again later."
         case .schedule:
-            return "Could not refresh the schedule. Cached reservations remain visible."
+            return "Could not refresh the schedule. You can keep viewing saved reservations."
         case .review:
-            return "Could not refresh review queues. Cached reservations remain visible."
+            return "Could not refresh new bookings. You can keep viewing saved reservations."
         }
     }
 

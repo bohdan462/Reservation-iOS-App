@@ -73,7 +73,7 @@ struct RegularGuestsView: View {
             Text("Regulars / Seen Before")
                 .font(.title3.weight(.medium))
 
-            Text("Based on cached reservations on this device.")
+            Text("Based on saved reservations on this device.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

@@ -793,7 +793,7 @@ struct TableAssignmentSheet: View {
                     }
 
                     if controller.isNetworkDegraded {
-                        Label("Offline — showing saved reservations. Edits require internet.", systemImage: "wifi.slash")
+                        Label("Connection is weak. Saving changes may need to wait.", systemImage: "wifi.slash")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(TryzubColors.mutedText)
                             .fixedSize(horizontal: false, vertical: true)

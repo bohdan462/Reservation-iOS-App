@@ -196,10 +196,10 @@ enum NewBookingRowInsightBuilder {
     )
 
     if singles.isEmpty, !combinations.isEmpty {
-      return "Large party — check combined tables"
+      return "Large party — check joined tables"
     }
 
-    return "No table yet — review table fit"
+    return "No table yet — check table fit"
   }
 }
 

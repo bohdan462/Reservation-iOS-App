@@ -142,13 +142,13 @@ struct HostBriefingService {
   private func stableMessage(for serviceState: HostServiceState) -> String {
     switch serviceState {
     case .calm:
-      return "No urgent Host alerts right now."
+      return "Nothing needs attention right now."
     case .building:
-      return "Arrivals are picking up. Watch the next seating window."
+      return "More guests are arriving soon. Watch the next seating window."
     case .busy:
-      return "Floor pressure is elevated. Check no-table rows and upcoming arrivals."
+      return "The floor is getting busy. Check tables still open and upcoming arrivals."
     case .critical:
-      return "Heavy service pressure. Address critical alerts first."
+      return "Service is very busy. Start with the most urgent items."
     }
   }
 

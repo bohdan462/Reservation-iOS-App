@@ -78,7 +78,7 @@ struct GuestLookupView: View {
                         )
                     }
                 } else {
-                    Section("Cached guests") {
+                    Section("Saved guests") {
                         ForEach(store.results) { result in
                             GuestLookupResultCard(
                                 result: result,
