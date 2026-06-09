@@ -32,6 +32,7 @@ struct HostBoardView: View {
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
     @StateObject private var hostIntelligenceController = HostIntelligenceController()
+    @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var isShowingHostIntelligenceReview = false
 
     private var hasOpenInteraction: Bool {
@@ -180,6 +181,7 @@ struct HostBoardView: View {
                 if safeWidth >= 1100 {
                     VStack(alignment: .leading, spacing: 8) {
                         homeServiceHeader
+                        onDeviceSupportStatusBanner
 
                         closedOrOperationalBody(
                             snapshot: snapshot,
@@ -192,6 +194,7 @@ struct HostBoardView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
                             homeServiceHeader
+                            onDeviceSupportStatusBanner
 
                             closedOrOperationalBody(
                                 snapshot: snapshot,
@@ -499,6 +502,16 @@ struct HostBoardView: View {
     }
 
     @ViewBuilder
+    private var onDeviceSupportStatusBanner: some View {
+        if onDeviceSupportCoordinator.phase.showsHostTabStatus {
+            OnDeviceSupportStatusBanner(
+                phase: onDeviceSupportCoordinator.phase,
+                style: .compact
+            )
+        }
+    }
+
+    @ViewBuilder
     private func homeOperationalHeader(snapshot: HostBoardSnapshot) -> some View {
         HostBoardSummaryCard(
             reservationCount: snapshot.upcoming.count + snapshot.seated.count,
@@ -538,6 +551,7 @@ struct HostBoardView: View {
             briefingSource: hostIntelligenceController.briefingSource,
             compactOperationalPrompts: compactPrompts,
             showOperationalReview: useSeparatedPrompts,
+            externalPulseActive: onDeviceSupportCoordinator.phase.pulseIsActive,
             onReviewTapped: useSeparatedPrompts ? { isShowingHostIntelligenceReview = true } : nil
         ) { action in
             handleHostIntelligenceAction(action)

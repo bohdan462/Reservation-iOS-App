@@ -778,11 +778,26 @@ private struct LocalModelDiagnosticsControls: View {
       Text("Local model")
         .font(.subheadline.weight(.semibold))
 
-      Text("Local model is included with this build but is optional. Prepare it here only for developer testing.")
+      Text("Local model is included with this build but is optional. The app prepares it privately on this iPhone after launch when idle.")
         .font(.caption2)
         .foregroundStyle(.tertiary)
 
-      Text("Host board uses deterministic assistance by default. Normal staff do not need to prepare the model.")
+      Text("Host board uses deterministic assistance by default. Inference only runs from diagnostics or when the Host board local model gate is explicitly enabled.")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+
+      LabeledContent("Auto-prepare completed") {
+        Text(HostLocalModelAutoPrepareCoordinator.shared.hasCompletedAutoPrepare ? "Yes" : "No")
+      }
+      if let autoFailure = HostLocalModelAutoPrepareCoordinator.shared.technicalFailureDetail {
+        Text("Auto-prepare failure: \(autoFailure)")
+          .font(.caption2)
+          .foregroundStyle(.red)
+      }
+      Text("Bundled path: \(HostLocalModelFileLocator.bundledModelURL()?.path ?? "not packaged")")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+      Text("Application Support path: \(HostLocalModelFileLocator.applicationSupportModelURL()?.path ?? HostLocalModelFileLocator.expectedApplicationSupportModelPathDescription())")
         .font(.caption2)
         .foregroundStyle(.tertiary)
 
@@ -800,7 +815,11 @@ private struct LocalModelDiagnosticsControls: View {
         Button("Prepare local model") {
           prepareModel()
         }
-        .disabled(isPreparing || coordinator.loadingState.isBusy)
+        .disabled(
+          isPreparing
+            || coordinator.loadingState.isBusy
+            || HostLocalModelAutoPrepareCoordinator.shared.isPrepareInFlight
+        )
       } else if coordinator.isInferenceModelInstalled {
         Text("Prepared model is installed in Application Support.")
           .font(.caption2)

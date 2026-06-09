@@ -28,7 +28,7 @@ struct HostIntelligenceReviewView: View {
       }
       .padding()
     }
-    .navigationTitle("Review signals")
+    .navigationTitle("Review details")
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItem(placement: .confirmationAction) {

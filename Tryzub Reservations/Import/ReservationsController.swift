@@ -463,6 +463,7 @@ final class ReservationsController: ObservableObject {
         guard !hasReleasedStartupUI else { return }
         hasReleasedStartupUI = true
         startupUIReleasedAt = Date()
+        HostLocalModelAutoPrepareCoordinator.shared.scheduleWhenReady(controller: self)
     }
 
     private func startDeferredRestaurantSetupIfNeeded() {

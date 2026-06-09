@@ -1144,6 +1144,7 @@ private struct ReservationMoreView: View {
 
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
+    @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var showManualCreate = false
     @State private var showFailedImports = false
     @State private var showLogoutConfirmation = false
@@ -1175,6 +1176,8 @@ private struct ReservationMoreView: View {
                 }
 
                 RestaurantPrivacyCoverSettingsSection(settings: privacyCoverSettings)
+
+                OnDeviceSupportMoreSection(coordinator: onDeviceSupportCoordinator)
 
                 Section("Restaurant Operations") {
                     NavigationLink(value: ReservationMoreDestination.cancelled) {

@@ -15,6 +15,8 @@ struct HostIntelligenceCard: View {
   var showOperationalReview: Bool = false
   /// When true, hides technical briefing captions and uses staff-facing labels.
   var staffFacingPresentation: Bool = true
+  /// Pulses the awareness icon during on-device support preparation, etc.
+  var externalPulseActive: Bool = false
   var onReviewTapped: (() -> Void)? = nil
   var onActionTapped: ((HostSuggestedAction) -> Void)? = nil
 
@@ -188,7 +190,8 @@ struct HostIntelligenceCard: View {
   }
 
   private var pulseIsActive: Bool {
-    signalCount > 0
+    externalPulseActive
+      || signalCount > 0
       || !snapshot.briefingFacts.isEmpty
       || !snapshot.suggestedActions.isEmpty
       || snapshot.serviceState != .calm
@@ -244,7 +247,7 @@ struct HostIntelligenceCard: View {
           if staffFacingPresentation {
             HostPulseIcon(isActive: pulseIsActive, size: 14)
           }
-          Text(staffFacingPresentation ? "Review signals" : "Review Intelligence")
+          Text(staffFacingPresentation ? "Review details" : "Review Intelligence")
         }
       }
       .font(.caption.weight(.semibold))

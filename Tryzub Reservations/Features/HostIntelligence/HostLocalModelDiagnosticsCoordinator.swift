@@ -35,6 +35,7 @@ final class HostLocalModelDiagnosticsCoordinator: ObservableObject {
 
   var canPrepareBundledModel: Bool {
     !loadingState.isBusy
+      && !HostLocalModelAutoPrepareCoordinator.shared.isPrepareInFlight
       && HostLocalModelFileLocator.applicationSupportModelURL() == nil
       && HostLocalModelFileLocator.bundledModelURL() != nil
   }
@@ -67,6 +68,7 @@ final class HostLocalModelDiagnosticsCoordinator: ObservableObject {
     lastFailureMessage = nil
 
     if HostLocalModelFileLocator.applicationSupportModelURL() != nil {
+      HostLocalModelAutoPrepareCoordinator.shared.markCompleted()
       setPhase(.ready)
       try? await Task.sleep(nanoseconds: 400_000_000)
       setPhase(.idle)
@@ -86,6 +88,7 @@ final class HostLocalModelDiagnosticsCoordinator: ObservableObject {
           self?.setPhase(.copyingBundledModel(progress: progress))
         }
       }
+      HostLocalModelAutoPrepareCoordinator.shared.markCompleted()
       setPhase(.ready)
       try? await Task.sleep(nanoseconds: 400_000_000)
       setPhase(.idle)
