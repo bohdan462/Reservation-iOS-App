@@ -15,6 +15,12 @@ struct HostTableConfigView: View {
 
   var body: some View {
     List {
+      Section {
+        Text("Backend stores only the table name. Seat counts are local Host Intelligence settings used for recommendations.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
       if tableStore.sortedTables.isEmpty {
         ContentUnavailableView(
           "No Tables Configured",
@@ -75,7 +81,7 @@ struct HostTableConfigView: View {
           .foregroundStyle(table.isActive ? .primary : .secondary)
       }
 
-      Text("Capacity \(table.capacity)")
+      Text("Seats \(table.capacity)")
         .font(.subheadline)
 
       if !table.section.isEmpty {
@@ -131,9 +137,9 @@ struct HostTableConfigEditorView: View {
   var body: some View {
     Form {
       Section("Table") {
-        TextField("Name", text: $draft.name)
+        TextField("Table name", text: $draft.name)
         Stepper(value: $draft.capacity, in: 1...24) {
-          LabeledContent("Capacity", value: "\(draft.capacity)")
+          LabeledContent("Seats", value: "\(draft.capacity)")
         }
         TextField("Section", text: $draft.section)
         Toggle("Active", isOn: $draft.isActive)
@@ -148,7 +154,7 @@ struct HostTableConfigEditorView: View {
         Toggle("Preferred for quiet seating", isOn: $draft.preferredForQuietSeating)
       }
 
-      Section("Combinable Tables") {
+      Section("Can combine with") {
         if otherTables.isEmpty {
           Text("Add more tables to configure combinations.")
             .foregroundStyle(.secondary)

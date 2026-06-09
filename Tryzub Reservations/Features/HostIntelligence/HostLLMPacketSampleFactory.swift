@@ -54,12 +54,20 @@ enum HostLLMPacketSampleFactory {
           suggestedAction: "Review the 6:00 PM seating plan."
         ),
         HostLLMFact(
+          severity: .watch,
+          category: .table,
+          title: "Table capacity option",
+          detail: "Table 12 seats 6.",
+          evidence: ["Local table inventory capacity."],
+          suggestedAction: "Review Table 12 for a party of six."
+        ),
+        HostLLMFact(
           severity: .warning,
           category: .table,
           title: "No table assigned",
           detail: "Party of 6 for Natalia is due in 20 minutes and has no table assigned.",
           evidence: ["Large party without a table."],
-          suggestedAction: "Review Table 12 or a combined table option."
+          suggestedAction: "Review Table 12 for the party of 6."
         ),
         HostLLMFact(
           severity: .critical,
@@ -69,14 +77,6 @@ enum HostLLMPacketSampleFactory {
           evidence: ["Allergy noted on the reservation."],
           suggestedAction: "Alert the server before seating."
         ),
-        HostLLMFact(
-          severity: .watch,
-          category: .table,
-          title: "Table fit option",
-          detail: "Table 12 can seat a combined party of six if needed.",
-          evidence: ["Combined seating is available."],
-          suggestedAction: "Hold Table 12 for the incoming party of six."
-        )
       ],
       forbiddenBehaviors: HostLLMPacket.empty.forbiddenBehaviors,
       writingRules: HostLLMPacket.empty.writingRules
@@ -93,9 +93,17 @@ enum HostLLMPacketSampleFactory {
           severity: .critical,
           category: .capacity,
           title: "Table capacity mismatch",
-          detail: "Party of 8 is assigned to a four-top that cannot seat them.",
+          detail: "Assigned Table 4 seats 4, but the party size is 8.",
           evidence: ["Assigned table is too small."],
-          suggestedAction: "Move the party to a larger table or combine tables."
+          suggestedAction: "Review a larger table or combined option."
+        ),
+        HostLLMFact(
+          severity: .watch,
+          category: .table,
+          title: "Combined table option",
+          detail: "Tables A5 + A6 seat 10 together.",
+          evidence: ["Local combinable table inventory."],
+          suggestedAction: "Review A5 + A6 for the party of 8."
         ),
         HostLLMFact(
           severity: .critical,

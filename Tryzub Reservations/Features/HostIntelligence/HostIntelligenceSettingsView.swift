@@ -67,6 +67,13 @@ struct HostIntelligenceSettingsView: View {
         Text("Diagnostics can test the model. Host board use should remain off until output quality is verified.")
           .font(.caption)
           .foregroundStyle(.secondary)
+
+        Toggle("Show separated briefing prompts", isOn: binding(\.useSeparatedBriefingPrompts))
+          .disabled(!settingsStore.settings.useEnhancedBriefing)
+
+        Text("Breaks Host Intelligence into Table Plan, Guest Notes, and Timing prompts when useful.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
 
       Text("The engine still makes all decisions. The writer only rewrites approved facts.")
@@ -218,8 +225,12 @@ struct HostIntelligenceSettingsView: View {
 
   private var tableInventorySection: some View {
     Section("Table Inventory") {
+      Text("Backend stores only the table name. Seat counts are local Host Intelligence settings used for recommendations.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
       LabeledContent("Active tables", value: "\(tableStore.activeTables.count)")
-      LabeledContent("Total active capacity", value: "\(tableStore.totalActiveCapacity)")
+      LabeledContent("Total active seats", value: "\(tableStore.totalActiveCapacity)")
       LabeledContent("Inactive tables", value: "\(tableStore.tables.count - tableStore.activeTables.count)")
 
       NavigationLink {

@@ -339,6 +339,8 @@ struct HostIntelligenceSettings: Codable, Equatable {
     var enhancedBriefingProvider: HostBriefingProviderKind = .template
     /// When false, Host board uses template briefing even if local model is selected.
     var useLocalModelOnHostBoard: Bool = false
+    /// When true, Host board may show separated operational prompts from deterministic facts.
+    var useSeparatedBriefingPrompts: Bool = false
 }
 
 struct RestaurantTableConfig: Identifiable, Codable, Equatable {

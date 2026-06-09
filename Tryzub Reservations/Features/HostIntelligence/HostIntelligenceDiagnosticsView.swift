@@ -639,8 +639,12 @@ struct HostIntelligenceDiagnosticsView: View {
 
       LocalModelSamplePacketTests(
         settings: settings,
-        readiness: localModelReadiness
+        readiness: localModelReadiness,
+        currentPacket: packet,
+        currentFallback: fallback
       )
+
+      OperationalPromptPreviewSection(decision: decision)
 
       Text("Writer output is presentation only. The deterministic engine remains authoritative.")
         .font(.caption2)
@@ -965,10 +969,14 @@ private struct LocalModelBriefingDiagnosticTest: View {
 private struct LocalModelSamplePacketTests: View {
   let settings: HostIntelligenceSettings
   let readiness: HostLocalModelReadiness
+  let currentPacket: HostLLMPacket
+  let currentFallback: String
 
   @State private var isRunning = false
   @State private var runningSampleName: String?
   @State private var result: LocalModelBriefingDiagnosticResult?
+  @State private var evaluationRuns: [HostLocalModelEvaluationRun] = []
+  @State private var evaluationProgress: String?
 
   private var canRunTests: Bool {
     settings.enhancedBriefingProvider == .localModel
@@ -1010,8 +1018,96 @@ private struct LocalModelSamplePacketTests: View {
       if let result {
         LocalModelBriefingDiagnosticResultView(result: result)
       }
+
+      Text("Local Model Evaluation")
+        .font(.subheadline.weight(.semibold))
+        .padding(.top, 8)
+
+      Text("Do not enable local model on Host board by default until repeated Busy/Critical tests pass validation consistently and do not produce completed-action claims.")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+
+      Button("Run Busy Sample 5x") {
+        runEvaluation(sample: .busy, label: "Busy sample")
+      }
+      .disabled(!canRunTests)
+
+      Button("Run Critical Sample 5x") {
+        runEvaluation(sample: .critical, label: "Critical sample")
+      }
+      .disabled(!canRunTests)
+
+      if !currentPacket.topFacts.isEmpty {
+        Button("Run Current Packet 5x") {
+          runEvaluation(
+            packet: currentPacket,
+            fallbackText: currentFallback,
+            label: "Current packet"
+          )
+        }
+        .disabled(!canRunTests)
+      }
+
+      Button("Clear Evaluation Results", role: .destructive) {
+        evaluationRuns = []
+        evaluationProgress = nil
+      }
+      .disabled(evaluationRuns.isEmpty && evaluationProgress == nil)
+
+      if let evaluationProgress {
+        ProgressView(evaluationProgress)
+          .font(.caption)
+      }
+
+      if !evaluationRuns.isEmpty {
+        LocalModelEvaluationSummaryView(runs: evaluationRuns)
+      }
     }
     .padding(.vertical, 4)
+  }
+
+  private func runEvaluation(
+    sample: HostLLMPacketSampleFactory.Sample,
+    label: String
+  ) {
+    runEvaluation(
+      packet: HostLLMPacketSampleFactory.packet(for: sample),
+      fallbackText: HostLLMPacketSampleFactory.fallbackText(for: sample),
+      label: label
+    )
+  }
+
+  private func runEvaluation(
+    packet: HostLLMPacket,
+    fallbackText: String,
+    label: String
+  ) {
+    guard canRunTests else { return }
+    isRunning = true
+    runningSampleName = label
+    evaluationProgress = "Running \(label) 0/5…"
+    result = nil
+
+    Task {
+      let runs = await HostLocalModelEvaluationHarness.runSequential(
+        count: 5,
+        label: label,
+        packet: packet,
+        fallbackText: fallbackText,
+        settings: settings
+      ) { index, total in
+        Task { @MainActor in
+          evaluationProgress = "Running \(label) \(index)/\(total)…"
+        }
+      }
+
+      await MainActor.run {
+        evaluationRuns = runs
+        evaluationProgress = nil
+        runningSampleName = nil
+        isRunning = false
+      }
+    }
   }
 
   private func runSample(_ sample: HostLLMPacketSampleFactory.Sample) {
@@ -1176,6 +1272,115 @@ private struct LocalModelBriefingDiagnosticResultView: View {
             .font(.caption2)
             .foregroundStyle(.tertiary)
             .textSelection(.enabled)
+        }
+      }
+    }
+  }
+}
+
+private struct LocalModelEvaluationSummaryView: View {
+  let runs: [HostLocalModelEvaluationRun]
+
+  private var summary: HostLocalModelEvaluationSummary {
+    HostLocalModelEvaluationSummary.build(from: runs)
+  }
+
+  var body: some View {
+    let candidatePreviews = runs.compactMap(\.candidatePreview).suffix(5)
+    let acceptedOutputs = runs.compactMap(\.acceptedOutput).suffix(5)
+
+    VStack(alignment: .leading, spacing: 8) {
+      LabeledContent("Total runs") {
+        Text("\(summary.totalRuns)")
+      }
+      LabeledContent("Passed") {
+        Text("\(summary.passedRuns)")
+      }
+      LabeledContent("Fallback") {
+        Text("\(summary.fallbackRuns)")
+      }
+      LabeledContent("Semantic failures") {
+        Text("\(summary.semanticFailureRuns)")
+      }
+      LabeledContent("Average duration") {
+        Text(LocalModelDiagnosticDuration.format(summary.averageDuration))
+      }
+      if !summary.mostCommonFailureReasons.isEmpty {
+        LabeledContent("Common failures") {
+          Text(summary.mostCommonFailureReasons.joined(separator: " · "))
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
+      }
+      if !candidatePreviews.isEmpty {
+        Text("Last candidate previews")
+          .font(.caption.weight(.semibold))
+        ForEach(Array(candidatePreviews.enumerated()), id: \.offset) { _, preview in
+          Text(preview)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        }
+      }
+      if !acceptedOutputs.isEmpty {
+        Text("Last accepted outputs")
+          .font(.caption.weight(.semibold))
+        ForEach(Array(acceptedOutputs.enumerated()), id: \.offset) { _, output in
+          Text(output)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        }
+      }
+    }
+  }
+}
+
+private struct OperationalPromptPreviewSection: View {
+  let decision: HostDecisionSnapshot
+
+  private var prompts: [HostOperationalBriefingPrompt] {
+    HostOperationalBriefingPromptBuilder.build(from: decision)
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Operational Prompt Preview")
+        .font(.subheadline.weight(.semibold))
+        .padding(.top, 8)
+
+      Text("Deterministic grouped prompts from engine facts. Diagnostics only.")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+
+      if prompts.isEmpty {
+        Text("No operational prompts for the current snapshot.")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      } else {
+        ForEach(prompts) { prompt in
+          VStack(alignment: .leading, spacing: 4) {
+            LabeledContent("Title") {
+              Text(prompt.title)
+            }
+            LabeledContent("Category") {
+              Text(prompt.category.rawValue)
+            }
+            LabeledContent("Severity") {
+              Text(prompt.severity.rawValue.capitalized)
+            }
+            LabeledContent("Source") {
+              Text(prompt.source.displayName)
+            }
+            LabeledContent("Related reservations") {
+              Text("\(prompt.relatedReservationIDs.count)")
+            }
+            Text(prompt.body)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .textSelection(.enabled)
+          }
+          .padding(.vertical, 4)
         }
       }
     }

@@ -27,6 +27,9 @@ enum HostLLMPacketPromptBuilder {
       Do not say no changes are needed unless there are no facts.
       Use review/check language, not completed-action language.
       Write as a reminder, not as a report of completed work.
+      Use table capacity only if it is provided in the approved facts.
+      Do not invent table numbers, table capacities, or table assignments.
+      Say review or check table options; never say a table was assigned.
       Return only the final briefing text.
       Do not repeat instructions.
       Do not label the answer.
