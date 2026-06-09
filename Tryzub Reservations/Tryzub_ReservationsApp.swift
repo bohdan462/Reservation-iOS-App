@@ -15,6 +15,20 @@ struct Tryzub_ReservationsApp: App {
     @StateObject private var credentialStore = AppCredentialStore()
     @StateObject private var roleStore = AppRoleStore()
 
+    private let modelContainer: ModelContainer
+
+    init() {
+        do {
+            try PersistenceDirectoryBootstrap.ensureApplicationSupportDirectoryExists()
+            modelContainer = try ModelContainer(for: ReservationRecord.self)
+        } catch {
+            #if DEBUG
+            print("[PERSISTENCE] ModelContainer creation failed: \(error)")
+            #endif
+            fatalError("Failed to create ModelContainer: \(error)")
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             AppRootView(
@@ -22,7 +36,7 @@ struct Tryzub_ReservationsApp: App {
                 roleStore: roleStore
             )
         }
-        .modelContainer(for: ReservationRecord.self)
+        .modelContainer(modelContainer)
     }
 }
 
