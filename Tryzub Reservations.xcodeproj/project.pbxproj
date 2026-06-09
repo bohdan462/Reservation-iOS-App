@@ -65,6 +65,7 @@
 			);
 			name = "Tryzub Reservations";
 			packageProductDependencies = (
+				CA1101C12FB51DE800C6335C /* LlamaSwift */,
 			);
 			productName = "Tryzub Reservations";
 			productReference = CA1101B02FB51DE600C6335C /* Tryzub Reservations.app */;
@@ -97,6 +98,9 @@
 			preferredProjectObjectVersion = 77;
 			productRefGroup = CA1101B12FB51DE600C6335C /* Products */;
 			projectDirPath = "";
+			packageReferences = (
+				CA1101C02FB51DE800C6335C /* XCRemoteSwiftPackageReference "llama.swift" */,
+			);
 			projectRoot = "";
 			targets = (
 				CA1101AF2FB51DE600C6335C /* Tryzub Reservations */,
@@ -186,6 +190,7 @@
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = minimal;
 			};
 			name = Debug;
 		};
@@ -242,6 +247,7 @@
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_STRICT_CONCURRENCY = minimal;
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
@@ -270,7 +276,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "Bohdan-Solovey.Tryzub-Reservations";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -299,12 +305,31 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "Bohdan-Solovey.Tryzub-Reservations";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		CA1101C02FB51DE800C6335C /* XCRemoteSwiftPackageReference "llama.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mattt/llama.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9568.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		CA1101C12FB51DE800C6335C /* LlamaSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CA1101C02FB51DE800C6335C /* XCRemoteSwiftPackageReference "llama.swift" */;
+			productName = LlamaSwift;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCConfigurationList section */
 		CA1101AB2FB51DE600C6335C /* Build configuration list for PBXProject "Tryzub Reservations" */ = {

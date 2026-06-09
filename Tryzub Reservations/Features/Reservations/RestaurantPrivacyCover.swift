@@ -507,11 +507,13 @@ private struct PrivacyCoverInteractionObserver: UIViewRepresentable {
             .first(where: \.isKeyWindow)
     }
 
+    @MainActor
     final class Coordinator {
         let monitor = PrivacyCoverWindowTouchMonitor()
     }
 }
 
+@MainActor
 private final class PrivacyCoverGestureDelegate: NSObject, UIGestureRecognizerDelegate {
     var isActive = false
 
@@ -535,6 +537,7 @@ private final class PrivacyCoverGestureDelegate: NSObject, UIGestureRecognizerDe
     }
 }
 
+@MainActor
 private final class PrivacyCoverWindowTouchMonitor: NSObject {
     var isActive = false {
         didSet { gestureDelegate.isActive = isActive }

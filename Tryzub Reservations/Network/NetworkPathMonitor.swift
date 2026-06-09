@@ -7,7 +7,7 @@ import Foundation
 import Network
 
 /// Low-energy reachability signal. `NWPathMonitor` only fires on path changes — no polling.
-final class NetworkPathMonitor {
+final class NetworkPathMonitor: @unchecked Sendable {
     typealias PathChangeHandler = @MainActor (Bool) -> Void
 
     private let monitor = NWPathMonitor()
@@ -22,8 +22,9 @@ final class NetworkPathMonitor {
 
         monitor.pathUpdateHandler = { [weak self] path in
             let isSatisfied = path.status == .satisfied
-            Task { @MainActor [weak self] in
-                self?.onPathChange?(isSatisfied)
+            let handler = self?.onPathChange
+            Task { @MainActor in
+                handler?(isSatisfied)
             }
         }
         monitor.start(queue: queue)

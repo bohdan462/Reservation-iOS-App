@@ -207,7 +207,7 @@ final class ReservationRepository: ReservationRepositoryProtocol {
 }
 
 enum ReservationSyncDiagnostics {
-    static var logsHomeVisibleRows = false
+    static let logsHomeVisibleRows = false
 
     private static let logger = Logger(
         subsystem: "Bohdan-Solovey.Tryzub-Reservations",

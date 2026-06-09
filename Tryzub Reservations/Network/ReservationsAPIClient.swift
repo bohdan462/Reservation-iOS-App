@@ -252,7 +252,7 @@ enum ReservationAPILogger {
 
 // MARK: - API Client Contract
 
-protocol ReservationsAPIClientProtocol: AnyObject {
+protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
     var debugBaseURLDescription: String { get }
     var hasConfiguredCredentials: Bool { get }
 
@@ -1238,3 +1238,5 @@ private extension URLError {
         }
     }
 }
+
+extension ReservationsAPIClient: @unchecked Sendable {}
