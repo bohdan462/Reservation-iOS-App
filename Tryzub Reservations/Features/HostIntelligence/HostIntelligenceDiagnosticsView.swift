@@ -12,6 +12,7 @@ struct HostIntelligenceDiagnosticsView: View {
   let selectedDate: Date
   let availabilitySummary: ReservationAvailabilitySummary?
   let analyticsSummary: ReservationAnalyticsSummaryDTO?
+  var analyticsLoadedAt: Date? = nil
   let restaurantSetup: RestaurantSetup?
   let localSeatedAtByReservationID: [Int: Date]
   let settings: HostIntelligenceSettings
@@ -46,8 +47,19 @@ struct HostIntelligenceDiagnosticsView: View {
       guestSignalsSection(decision)
       cancellationOverdueSection(decision)
       bookingDecisionsSection(decision)
+      analyticsIntelligenceSection(decision)
       signalsSection(decision)
     }
+  }
+
+  private var analyticsIntelligence: HostAnalyticsIntelligenceResult {
+    HostAnalyticsIntelligenceSupport.analyze(
+      slotPressures: snapshot.slotPressures,
+      analyticsSummary: analyticsSummary,
+      selectedDate: selectedDate,
+      now: Date(),
+      settings: settings
+    )
   }
 
   // MARK: - Sections
@@ -305,6 +317,77 @@ struct HostIntelligenceDiagnosticsView: View {
             }
             if !result.evidence.isEmpty {
               Text(result.evidence.joined(separator: " · "))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            }
+          }
+          .padding(.vertical, 2)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func analyticsIntelligenceSection(_ decision: HostDecisionSnapshot) -> some View {
+    let metrics = analyticsIntelligence.metrics
+    let analyticsFacts = decision.briefingFacts.filter { $0.category == .analytics }
+
+    Section("Analytics Intelligence") {
+      LabeledContent("Enabled in settings") {
+        Text(settings.includeAnalyticsSignals ? "Yes" : "No")
+      }
+      LabeledContent("Cached summary present") {
+        Text(analyticsSummary == nil ? "No" : "Yes")
+      }
+      LabeledContent("Used by engine") {
+        Text(settings.includeAnalyticsSignals && metrics.hasAnalytics ? "Yes" : "No")
+      }
+      LabeledContent("Source") {
+        Text("Backend aggregate analytics")
+      }
+      if let analyticsLoadedAt {
+        LabeledContent("Loaded at") {
+          Text(analyticsLoadedAt.formatted(date: .omitted, time: .standard))
+        }
+      }
+      Text("Not full local reservation history.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      LabeledContent("Has analytics") {
+        Text(metrics.hasAnalytics ? "Yes" : "No")
+      }
+      LabeledContent("Confidence") {
+        Text(String(format: "%.0f%%", metrics.confidence * 100))
+      }
+      LabeledContent("Unusually busy slots") {
+        Text("\(metrics.unusuallyBusySlotCount)")
+      }
+      LabeledContent("Unusually light slots") {
+        Text("\(metrics.unusuallyLightSlotCount)")
+      }
+      LabeledContent("Weekday pressure signals") {
+        Text("\(metrics.weekdayPressureSignalCount)")
+      }
+
+      if !metrics.hasAnalytics {
+        Text("Analytics unavailable.")
+          .foregroundStyle(.secondary)
+        Text("Historical analytics unavailable; using live reservations only.")
+          .font(.caption)
+          .foregroundStyle(.tertiary)
+      } else if analyticsFacts.isEmpty {
+        Text("No analytics facts for the current live pattern.")
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(Array(analyticsFacts.prefix(5))) { fact in
+          VStack(alignment: .leading, spacing: 4) {
+            Text("\(fact.severity.rawValue.capitalized) · \(fact.title)")
+              .font(.subheadline.weight(.semibold))
+            Text(fact.detail)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+            if !fact.evidence.isEmpty {
+              Text(fact.evidence.joined(separator: " · "))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
             }

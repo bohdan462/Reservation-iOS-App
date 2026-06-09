@@ -145,6 +145,31 @@ struct HostIntelligenceEngine {
     briefingFacts.append(contentsOf: bookingIntelligence.facts)
     suggestedActions.append(contentsOf: bookingIntelligence.actions)
 
+    let analyticsIntelligence: HostAnalyticsIntelligenceResult
+    if context.settings.includeAnalyticsSignals {
+      analyticsIntelligence = HostAnalyticsIntelligenceSupport.analyze(
+        slotPressures: slotPressures,
+        analyticsSummary: context.analyticsSummary,
+        selectedDate: context.selectedDate,
+        now: context.now,
+        settings: context.settings
+      )
+      briefingFacts.append(contentsOf: analyticsIntelligence.facts)
+      suggestedActions.append(contentsOf: analyticsIntelligence.actions)
+    } else {
+      analyticsIntelligence = HostAnalyticsIntelligenceResult(
+        facts: [],
+        actions: [],
+        metrics: HostAnalyticsMetrics(
+          hasAnalytics: false,
+          unusuallyBusySlotCount: 0,
+          unusuallyLightSlotCount: 0,
+          weekdayPressureSignalCount: 0,
+          confidence: 0
+        )
+      )
+    }
+
     let rankedFacts = briefingService.rankHostFacts(briefingFacts)
     let pressureScore = calculatePressureScore(
       slotPressures: slotPressures,
@@ -168,7 +193,15 @@ struct HostIntelligenceEngine {
       bookingManualReviewCriticalCount: bookingIntelligence.manualReviewCriticalCount,
       bookingSuggestAlternateCount: bookingIntelligence.suggestAlternateCount,
       bookingAutoConfirmCount: bookingIntelligence.autoConfirmCount,
-      bookingRejectCount: bookingIntelligence.rejectCount
+      bookingRejectCount: bookingIntelligence.rejectCount,
+      analyticsBusyWarningCount: analyticsIntelligence.facts.filter {
+        $0.id.hasPrefix("analytics-busy-hour-") && $0.severity == .warning
+      }.count,
+      analyticsBusyCriticalCount: analyticsIntelligence.facts.filter {
+        $0.id.hasPrefix("analytics-busy-hour-") && $0.severity == .critical
+      }.count + analyticsIntelligence.facts.filter {
+        $0.id.hasPrefix("analytics-weekday-") && $0.severity == .warning
+      }.count
     )
     let serviceState = classifyServiceState(pressureScore: pressureScore)
     let templateBriefingText = briefingService.buildTemplateBriefingFallback(
@@ -1257,7 +1290,9 @@ struct HostIntelligenceEngine {
     bookingManualReviewCriticalCount: Int,
     bookingSuggestAlternateCount: Int,
     bookingAutoConfirmCount: Int,
-    bookingRejectCount: Int
+    bookingRejectCount: Int,
+    analyticsBusyWarningCount: Int,
+    analyticsBusyCriticalCount: Int
   ) -> Double {
     let maxRatio = slotPressures.compactMap(\.capacityRatio).max() ?? 0
     let criticalSlotCount = slotPressures.filter { $0.severity == .critical }.count
@@ -1287,6 +1322,8 @@ struct HostIntelligenceEngine {
       + Double(bookingSuggestAlternateCount) * 4
       + Double(bookingAutoConfirmCount) * 1
       + Double(bookingRejectCount) * 8
+      + Double(analyticsBusyWarningCount) * 4
+      + Double(analyticsBusyCriticalCount) * 6
 
     return min(max(raw, 0), 100)
   }

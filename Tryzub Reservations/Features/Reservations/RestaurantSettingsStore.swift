@@ -13,6 +13,7 @@ final class RestaurantSettingsStore: ObservableObject {
     @Published private(set) var weeklyHours: RestaurantHoursDTO?
     @Published private(set) var selectedDateAvailability: RestaurantDayAvailabilityDTO?
     @Published private(set) var analyticsSummary: ReservationAnalyticsSummaryDTO?
+    @Published private(set) var analyticsLoadedAt: Date?
 
     @Published var selectedAvailabilityDate = Date()
     @Published private(set) var selectedDateSlots: ReservationSlotsResponseDTO?
@@ -452,6 +453,7 @@ final class RestaurantSettingsStore: ObservableObject {
                 reason: .reservationAnalyticsSummary
             )
             analyticsSummary = summary
+            analyticsLoadedAt = Date()
             return summary
         } catch {
             analyticsError = error.localizedDescription

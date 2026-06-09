@@ -194,7 +194,7 @@ enum HostGuestIntelligenceSupport {
     if !allKnown.isEmpty {
       return allKnown
     }
-    // TODO: Pass full SwiftData cache via HostEngineInput.allKnownReservations for richer guest memory.
+    // Guest memory only — historical pressure uses backend aggregate analytics, not local cache breadth.
     return dayReservations
   }
 

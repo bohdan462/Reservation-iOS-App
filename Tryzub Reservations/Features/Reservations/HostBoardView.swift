@@ -27,6 +27,7 @@ struct HostBoardView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hostIntentStore: HostReservationOpenIntentStore
+    @EnvironmentObject private var restaurantSettingsStore: RestaurantSettingsStore
 
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
@@ -98,7 +99,22 @@ struct HostBoardView: View {
         let seatedStamp = controller.localSeatedAtByReservationID.count
         let tableStamp = hostIntelligenceController.tableStore.totalActiveCapacity
         let tableCount = hostIntelligenceController.tableStore.tables.count
-        return "\(selectedDateKey)-\(reservations.count)-\(syncStamp)-\(availabilityStamp)-\(seatedStamp)-\(tableCount)-\(tableStamp)-\(minute)"
+        let analyticsStamp = analyticsSummaryIdentity
+        return "\(selectedDateKey)-\(reservations.count)-\(syncStamp)-\(availabilityStamp)-\(seatedStamp)-\(tableCount)-\(tableStamp)-\(analyticsStamp)-\(minute)"
+    }
+
+    private var analyticsSummaryIdentity: String {
+        guard hostIntelligenceController.settings.includeAnalyticsSignals,
+              let summary = restaurantSettingsStore.analyticsSummary else {
+            return "analytics-none"
+        }
+        let loadedAt = restaurantSettingsStore.analyticsLoadedAt?.timeIntervalSince1970 ?? 0
+        return "analytics-\(summary.byHour.count)-\(summary.byWeekday.count)-\(summary.range?.from ?? "")-\(summary.range?.to ?? "")-\(loadedAt)"
+    }
+
+    private var cachedAnalyticsSummary: ReservationAnalyticsSummaryDTO? {
+        guard hostIntelligenceController.settings.includeAnalyticsSignals else { return nil }
+        return restaurantSettingsStore.analyticsSummary
     }
 
     var body: some View {
@@ -382,7 +398,7 @@ struct HostBoardView: View {
             selectedDate: selectedDate,
             reservations: reservations,
             availabilitySummary: availabilitySummary,
-            analyticsSummary: nil,
+            analyticsSummary: cachedAnalyticsSummary,
             restaurantSetup: controller.hasLoadedRestaurantSetup ? controller.restaurantSetup : nil,
             localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
             settings: hostIntelligenceController.settings,

@@ -9,6 +9,7 @@ import SwiftData
 struct DeveloperDiagnosticsView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var restaurantSettingsStore: RestaurantSettingsStore
     @ObservedObject private var requestLogStore = APIRequestLogStore.shared
 
     @Query private var reservations: [ReservationRecord]
@@ -215,7 +216,8 @@ struct DeveloperDiagnosticsView: View {
             reservations: todayRows,
             selectedDate: Date(),
             availabilitySummary: controller.availabilitySummary(for: Date.reservationDateString()),
-            analyticsSummary: nil,
+            analyticsSummary: restaurantSettingsStore.analyticsSummary,
+            analyticsLoadedAt: restaurantSettingsStore.analyticsLoadedAt,
             restaurantSetup: controller.hasLoadedRestaurantSetup ? controller.restaurantSetup : nil,
             localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
             settings: hostIntelligenceSettings.settings,

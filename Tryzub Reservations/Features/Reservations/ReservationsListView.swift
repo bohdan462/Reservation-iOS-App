@@ -51,6 +51,7 @@ private struct ReservationsTabShell: View {
     @Query
     private var serviceWindowReservations: [ReservationRecord]
 
+    @StateObject private var restaurantSettingsStore: RestaurantSettingsStore
     @State private var selectedTab: ReservationsAppTab = .host
 
     let environment: AppEnvironment
@@ -59,6 +60,9 @@ private struct ReservationsTabShell: View {
     init(environment: AppEnvironment, onLogout: @escaping () -> Void = {}) {
         self.environment = environment
         self.onLogout = onLogout
+        _restaurantSettingsStore = StateObject(
+            wrappedValue: RestaurantSettingsStore(apiClient: environment.apiClient)
+        )
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
         let toDate = bounds.to
@@ -132,6 +136,7 @@ private struct ReservationsTabShell: View {
         .restaurantPrivacyCover {
             RestaurantPrivacyCoverDataController.snapshot(from: serviceWindowReservations)
         }
+        .environmentObject(restaurantSettingsStore)
     }
 
     private var visibleNotices: [AppNotice] {
@@ -928,8 +933,8 @@ private struct ReservationMoreView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var privacyCoverSettings: RestaurantPrivacyCoverSettingsStore
+    @EnvironmentObject private var settingsStore: RestaurantSettingsStore
 
-    @StateObject private var settingsStore: RestaurantSettingsStore
     @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
     @StateObject private var hostTableConfigStore = HostTableConfigStore()
     @State private var showManualCreate = false
@@ -943,9 +948,6 @@ private struct ReservationMoreView: View {
     init(environment: AppEnvironment, onLogout: @escaping () -> Void = {}) {
         self.environment = environment
         self.onLogout = onLogout
-        _settingsStore = StateObject(
-            wrappedValue: RestaurantSettingsStore(apiClient: environment.apiClient)
-        )
     }
 
     var body: some View {

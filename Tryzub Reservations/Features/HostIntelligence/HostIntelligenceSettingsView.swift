@@ -36,8 +36,10 @@ struct HostIntelligenceSettingsView: View {
       Toggle("Include guest signals", isOn: binding(\.includeGuestSignals))
       Toggle("Prepare LLM packet", isOn: binding(\.includeLLMPacket))
       Toggle("Include analytics signals", isOn: binding(\.includeAnalyticsSignals))
-        .disabled(true)
-      Text("Analytics-based pressure signals are planned for a later phase.")
+      Text("Historical signals use backend aggregate analytics, not full local reservation history.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      Text("The host board uses cached analytics when loaded from Restaurant Settings. It does not fetch analytics during service.")
         .font(.caption)
         .foregroundStyle(.secondary)
     }
