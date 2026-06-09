@@ -44,6 +44,10 @@ final class HostIntelligenceSettingsStore: ObservableObject {
     }
   }
 
+  func reload() {
+    load()
+  }
+
   private func persist() {
     guard let data = try? JSONEncoder().encode(settings) else { return }
     UserDefaults.standard.set(data, forKey: defaultsKey)

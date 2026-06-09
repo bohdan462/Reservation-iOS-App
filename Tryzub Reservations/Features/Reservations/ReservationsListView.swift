@@ -927,6 +927,8 @@ private struct ReservationMoreView: View {
     @EnvironmentObject private var privacyCoverSettings: RestaurantPrivacyCoverSettingsStore
 
     @StateObject private var settingsStore: RestaurantSettingsStore
+    @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
+    @StateObject private var hostTableConfigStore = HostTableConfigStore()
     @State private var showManualCreate = false
     @State private var showFailedImports = false
     @State private var showLogoutConfirmation = false
@@ -988,6 +990,10 @@ private struct ReservationMoreView: View {
 
                         NavigationLink(value: ReservationMoreDestination.blockedTimeSlots) {
                             Label("Blocked Time Slots", systemImage: "nosign")
+                        }
+
+                        NavigationLink(value: ReservationMoreDestination.hostIntelligenceSettings) {
+                            Label("Host Intelligence Settings", systemImage: "brain.head.profile")
                         }
                     }
 
@@ -1109,6 +1115,11 @@ private struct ReservationMoreView: View {
             BusinessAnalyticsView(settingsStore: settingsStore)
         case .regularGuests:
             RegularGuestsView()
+        case .hostIntelligenceSettings:
+            HostIntelligenceSettingsView(
+                settingsStore: hostIntelligenceSettingsStore,
+                tableStore: hostTableConfigStore
+            )
         case .diagnostics:
             DeveloperDiagnosticsView(environment: environment)
                 .environmentObject(controller)
@@ -1133,6 +1144,7 @@ private enum ReservationMoreDestination: Hashable {
     case blockedTimeSlots
     case businessAnalytics
     case regularGuests
+    case hostIntelligenceSettings
     case diagnostics
 }
 

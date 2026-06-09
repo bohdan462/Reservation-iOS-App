@@ -65,12 +65,25 @@ struct HostIntelligenceEngine {
     suggestedActions.append(contentsOf: noTableFactsAndActions.actions)
     tableSignals.append(contentsOf: noTableFactsAndActions.tableSignals)
 
+    let tableIntelligence = analyzeTableIntelligence(
+      context: context,
+      noTableReservations: noTableReservations,
+      activeReservations: activeReservations
+    )
+    briefingFacts.append(contentsOf: tableIntelligence.facts)
+    suggestedActions.append(contentsOf: tableIntelligence.actions)
+    tableSignals.append(contentsOf: tableIntelligence.signals)
+
     let rankedFacts = briefingService.rankHostFacts(briefingFacts)
     let pressureScore = calculatePressureScore(
       slotPressures: slotPressures,
       briefingFacts: rankedFacts,
       noTableDueSoonCount: noTableDueSoon.count,
-      allergySignalCount: guestSignals.filter { $0.kind == .allergy }.count
+      allergySignalCount: guestSignals.filter { $0.kind == .allergy }.count,
+      tableCapacityMismatchCount: tableIntelligence.capacityMismatchCount,
+      noSuitableTableCount: tableIntelligence.noSuitableTableCount,
+      tableTurnRiskCount: tableIntelligence.turnRiskCount,
+      tableFitAvailableCount: tableIntelligence.fitAvailableCount
     )
     let serviceState = classifyServiceState(pressureScore: pressureScore)
     let templateBriefingText = briefingService.buildTemplateBriefingFallback(
@@ -112,6 +125,7 @@ struct HostIntelligenceEngine {
     let restaurantSetup: RestaurantSetup?
     let localSeatedAtByReservationID: [Int: Date]
     let settings: HostIntelligenceSettings
+    let tableConfigs: [RestaurantTableConfig]
   }
 
   private func buildServiceDayContext(from input: HostEngineInput) -> ServiceDayContext {
@@ -128,7 +142,8 @@ struct HostIntelligenceEngine {
       analyticsSummary: input.analyticsSummary,
       restaurantSetup: input.restaurantSetup,
       localSeatedAtByReservationID: input.localSeatedAtByReservationID,
-      settings: input.settings
+      settings: input.settings,
+      tableConfigs: input.tableConfigs
     )
   }
 
@@ -227,12 +242,32 @@ struct HostIntelligenceEngine {
     return max(projected, 0)
   }
 
+  private struct CapacityBasis {
+    let capacity: Int
+    let usesTableInventory: Bool
+  }
+
+  private func effectiveCapacityBasis(
+    settings: HostIntelligenceSettings,
+    tableConfigs: [RestaurantTableConfig]
+  ) -> CapacityBasis {
+    let activeCapacity = tableConfigs
+      .filter(\.isActive)
+      .reduce(0) { $0 + $1.capacity }
+    if activeCapacity > 0 {
+      return CapacityBasis(capacity: activeCapacity, usesTableInventory: true)
+    }
+    return CapacityBasis(capacity: settings.restaurantCapacity, usesTableInventory: false)
+  }
+
   private func calculateCapacityRatio(
     projectedGuests: Int,
-    settings: HostIntelligenceSettings
+    settings: HostIntelligenceSettings,
+    tableConfigs: [RestaurantTableConfig]
   ) -> Double? {
-    guard settings.restaurantCapacity > 0 else { return nil }
-    return Double(projectedGuests) / Double(settings.restaurantCapacity)
+    let basis = effectiveCapacityBasis(settings: settings, tableConfigs: tableConfigs)
+    guard basis.capacity > 0 else { return nil }
+    return Double(projectedGuests) / Double(basis.capacity)
   }
 
   private func classifyCapacityPressure(
@@ -601,9 +636,14 @@ struct HostIntelligenceEngine {
         localSeatedAtByReservationID: context.localSeatedAtByReservationID,
         settings: context.settings
       )
+      let capacityBasis = effectiveCapacityBasis(
+        settings: context.settings,
+        tableConfigs: context.tableConfigs
+      )
       let capacityRatio = calculateCapacityRatio(
         projectedGuests: projected,
-        settings: context.settings
+        settings: context.settings,
+        tableConfigs: context.tableConfigs
       )
       let severity = classifyCapacityPressure(
         ratio: capacityRatio,
@@ -635,10 +675,10 @@ struct HostIntelligenceEngine {
             category: .capacity,
             title: "Capacity pressure",
             detail: "Projected seated guests around \(displaySlotTime(slot)) are about \(Int((ratio * 100).rounded()))% of capacity.",
-            evidence: [
-              "projectedGuests=\(projected)",
-              "capacity=\(context.settings.restaurantCapacity)"
-            ],
+            evidence: capacityPressureEvidence(
+              projectedGuests: projected,
+              basis: capacityBasis
+            ),
             relatedReservationIDs: reservations.map(\.remoteID),
             suggestedActionTitle: "Watch walk-ins and table turns around this time."
           )
@@ -681,13 +721,445 @@ struct HostIntelligenceEngine {
     }
   }
 
+  // MARK: - Table Intelligence
+
+  private struct TableIntelligenceResult {
+    let facts: [HostBriefingFact]
+    let actions: [HostSuggestedAction]
+    let signals: [HostTableSignal]
+    let capacityMismatchCount: Int
+    let noSuitableTableCount: Int
+    let turnRiskCount: Int
+    let fitAvailableCount: Int
+  }
+
+  private func analyzeTableIntelligence(
+    context: ServiceDayContext,
+    noTableReservations: [ReservationRecord],
+    activeReservations: [ReservationRecord]
+  ) -> TableIntelligenceResult {
+    guard !context.tableConfigs.isEmpty else {
+      return TableIntelligenceResult(
+        facts: [],
+        actions: [],
+        signals: [],
+        capacityMismatchCount: 0,
+        noSuitableTableCount: 0,
+        turnRiskCount: 0,
+        fitAvailableCount: 0
+      )
+    }
+
+    let fit = detectNoTableFitRecommendations(
+      reservations: noTableReservations,
+      context: context
+    )
+    let mismatch = detectAssignedTableCapacityMismatch(
+      reservations: activeReservations,
+      context: context
+    )
+    let largeParty = detectLargePartyWithoutFit(
+      reservations: activeReservations,
+      context: context
+    )
+    let turnRisk = detectTableTurnRisk(
+      context: context
+    )
+
+    return TableIntelligenceResult(
+      facts: fit.facts + mismatch.facts + largeParty.facts + turnRisk.facts,
+      actions: fit.actions + mismatch.actions + largeParty.actions + turnRisk.actions,
+      signals: fit.signals + mismatch.signals + largeParty.signals + turnRisk.signals,
+      capacityMismatchCount: mismatch.count,
+      noSuitableTableCount: fit.noSuitableCount + largeParty.count,
+      turnRiskCount: turnRisk.count,
+      fitAvailableCount: fit.fitAvailableCount
+    )
+  }
+
+  private func detectNoTableFitRecommendations(
+    reservations: [ReservationRecord],
+    context: ServiceDayContext
+  ) -> (
+    facts: [HostBriefingFact],
+    actions: [HostSuggestedAction],
+    signals: [HostTableSignal],
+    fitAvailableCount: Int,
+    noSuitableCount: Int
+  ) {
+    var facts: [HostBriefingFact] = []
+    var actions: [HostSuggestedAction] = []
+    var signals: [HostTableSignal] = []
+    var fitAvailableCount = 0
+    var noSuitableCount = 0
+
+    for reservation in reservations {
+      let options = HostTableIntelligenceSupport.bestTableFitOptions(
+        for: reservation,
+        tableConfigs: context.tableConfigs,
+        limit: 1
+      )
+
+      if let best = options.first {
+        fitAvailableCount += 1
+        let tableLabel = HostTableIntelligenceSupport.displayTableNames(best.tableNames)
+        let detail: String
+        if best.isCombination {
+          detail = "Party of \(reservation.partySize) for \(reservation.guestName) has no table; \(tableLabel) can fit them."
+        } else {
+          detail = "Party of \(reservation.partySize) for \(reservation.guestName) has no table; \(tableLabel) can fit them."
+        }
+
+        facts.append(
+          HostBriefingFact(
+            id: "table-fit-\(reservation.remoteID)",
+            severity: .watch,
+            category: .table,
+            title: "Table fit available",
+            detail: detail,
+            evidence: [
+              "fitQuality=\(best.fitQuality.rawValue)",
+              "totalCapacity=\(best.totalCapacity)"
+            ],
+            relatedReservationIDs: [reservation.remoteID],
+            suggestedActionTitle: best.isCombination
+              ? "Review \(tableLabel)."
+              : "Assign \(tableLabel)."
+          )
+        )
+
+        actions.append(
+          HostSuggestedAction(
+            id: "table-fit-action-\(reservation.remoteID)",
+            severity: .watch,
+            kind: .assignTable,
+            title: best.isCombination ? "Review \(tableLabel)" : "Assign \(tableLabel)",
+            reason: detail,
+            relatedReservationIDs: [reservation.remoteID],
+            targetSlotTime: reservation.reservationTime,
+            targetTableName: tableLabel,
+            requiresStaffConfirmation: true
+          )
+        )
+
+        signals.append(
+          HostTableSignal(
+            id: "table-fit-signal-\(reservation.remoteID)",
+            tableName: best.tableNames.first,
+            kind: .noTableAssigned,
+            severity: .watch,
+            title: "Table fit available",
+            detail: detail,
+            relatedReservationIDs: [reservation.remoteID],
+            evidence: ["combination=\(best.isCombination)"]
+          )
+        )
+      } else {
+        noSuitableCount += 1
+        let severity: HostSeverity = reservation.partySize >= context.settings.criticalPartyThreshold
+          ? .critical
+          : .warning
+
+        facts.append(
+          HostBriefingFact(
+            id: "no-table-fit-\(reservation.remoteID)",
+            severity: severity,
+            category: .table,
+            title: "No suitable table",
+            detail: "Party of \(reservation.partySize) for \(reservation.guestName) has no configured table fit.",
+            evidence: ["partySize=\(reservation.partySize)"],
+            relatedReservationIDs: [reservation.remoteID],
+            suggestedActionTitle: "Review table plan manually."
+          )
+        )
+
+        actions.append(
+          HostSuggestedAction(
+            id: "no-table-fit-action-\(reservation.remoteID)",
+            severity: severity,
+            kind: .reviewReservation,
+            title: "Review table plan for \(reservation.guestName)",
+            reason: "No configured single table or pair can seat \(reservation.partySize) guests.",
+            relatedReservationIDs: [reservation.remoteID],
+            targetSlotTime: reservation.reservationTime,
+            targetTableName: nil,
+            requiresStaffConfirmation: true
+          )
+        )
+      }
+    }
+
+    return (facts, actions, signals, fitAvailableCount, noSuitableCount)
+  }
+
+  private func detectAssignedTableCapacityMismatch(
+    reservations: [ReservationRecord],
+    context: ServiceDayContext
+  ) -> (
+    facts: [HostBriefingFact],
+    actions: [HostSuggestedAction],
+    signals: [HostTableSignal],
+    count: Int
+  ) {
+    var facts: [HostBriefingFact] = []
+    var actions: [HostSuggestedAction] = []
+    var signals: [HostTableSignal] = []
+    var count = 0
+
+    for reservation in reservations where reservation.isOpenWork && reservation.hasTableAssignment {
+      guard let assignedName = reservation.assignedTableName else { continue }
+      let parsedNames = HostTableIntelligenceSupport.parseAssignedTableNames(assignedName)
+      guard let matchedTables = HostTableIntelligenceSupport.matchingTables(
+        for: parsedNames,
+        in: context.tableConfigs
+      ) else {
+        continue
+      }
+
+      let totalCapacity = matchedTables.reduce(0) { $0 + $1.capacity }
+      guard reservation.partySize > totalCapacity else { continue }
+
+      count += 1
+      let tableLabel = HostTableIntelligenceSupport.displayTableNames(
+        matchedTables.map(\.name)
+      )
+      let detail = "Party of \(reservation.partySize) is assigned to \(tableLabel), which seats \(totalCapacity)."
+
+      facts.append(
+        HostBriefingFact(
+          id: "table-mismatch-\(reservation.remoteID)",
+          severity: .critical,
+          category: .table,
+          title: "Assigned table too small",
+          detail: detail,
+          evidence: [
+            "partySize=\(reservation.partySize)",
+            "tableCapacity=\(totalCapacity)"
+          ],
+          relatedReservationIDs: [reservation.remoteID],
+          suggestedActionTitle: "Review table assignment."
+        )
+      )
+
+      actions.append(
+        HostSuggestedAction(
+          id: "table-mismatch-action-\(reservation.remoteID)",
+          severity: .critical,
+          kind: .reviewReservation,
+          title: "Review assignment for \(reservation.guestName)",
+          reason: detail,
+          relatedReservationIDs: [reservation.remoteID],
+          targetSlotTime: reservation.reservationTime,
+          targetTableName: tableLabel,
+          requiresStaffConfirmation: true
+        )
+      )
+
+      signals.append(
+        HostTableSignal(
+          id: "table-mismatch-signal-\(reservation.remoteID)",
+          tableName: tableLabel,
+          kind: .tableCapacityMismatch,
+          severity: .critical,
+          title: "Assigned table too small",
+          detail: detail,
+          relatedReservationIDs: [reservation.remoteID],
+          evidence: ["tableCapacity=\(totalCapacity)"]
+        )
+      )
+    }
+
+    return (facts, actions, signals, count)
+  }
+
+  private func detectLargePartyWithoutFit(
+    reservations: [ReservationRecord],
+    context: ServiceDayContext
+  ) -> (
+    facts: [HostBriefingFact],
+    actions: [HostSuggestedAction],
+    signals: [HostTableSignal],
+    count: Int
+  ) {
+    var facts: [HostBriefingFact] = []
+    var actions: [HostSuggestedAction] = []
+    var signals: [HostTableSignal] = []
+    var count = 0
+
+    for reservation in reservations where reservation.isExpectedGuest {
+      guard reservation.partySize >= context.settings.largePartyThreshold else { continue }
+      if reservation.isOpenWork && !reservation.hasTableAssignment {
+        continue
+      }
+      let options = HostTableIntelligenceSupport.bestTableFitOptions(
+        for: reservation,
+        tableConfigs: context.tableConfigs,
+        limit: 1
+      )
+      guard options.isEmpty else { continue }
+
+      count += 1
+      let severity: HostSeverity = reservation.partySize >= context.settings.criticalPartyThreshold
+        ? .critical
+        : .warning
+      let detail = "Party of \(reservation.partySize) for \(reservation.guestName) has no configured single-table or pair fit."
+
+      facts.append(
+        HostBriefingFact(
+          id: "large-party-no-fit-\(reservation.remoteID)",
+          severity: severity,
+          category: .largeParty,
+          title: "Large party without table fit",
+          detail: detail,
+          evidence: ["partySize=\(reservation.partySize)"],
+          relatedReservationIDs: [reservation.remoteID],
+          suggestedActionTitle: "Plan combined seating before confirming more bookings."
+        )
+      )
+
+      actions.append(
+        HostSuggestedAction(
+          id: "large-party-no-fit-action-\(reservation.remoteID)",
+          severity: severity,
+          kind: .reviewReservation,
+          title: "Plan seating for \(reservation.guestName)",
+          reason: detail,
+          relatedReservationIDs: [reservation.remoteID],
+          targetSlotTime: reservation.reservationTime,
+          targetTableName: nil,
+          requiresStaffConfirmation: true
+        )
+      )
+
+      signals.append(
+        HostTableSignal(
+          id: "large-party-no-fit-signal-\(reservation.remoteID)",
+          tableName: reservation.assignedTableName,
+          kind: .tableCapacityMismatch,
+          severity: severity,
+          title: "Large party without table fit",
+          detail: detail,
+          relatedReservationIDs: [reservation.remoteID],
+          evidence: ["partySize=\(reservation.partySize)"]
+        )
+      )
+    }
+
+    return (facts, actions, signals, count)
+  }
+
+  private func detectTableTurnRisk(
+    context: ServiceDayContext
+  ) -> (
+    facts: [HostBriefingFact],
+    actions: [HostSuggestedAction],
+    signals: [HostTableSignal],
+    count: Int
+  ) {
+    var facts: [HostBriefingFact] = []
+    var actions: [HostSuggestedAction] = []
+    var signals: [HostTableSignal] = []
+    var count = 0
+
+    let seated = context.reservations.filter { $0.statusValue == .seated }
+
+    for reservation in seated {
+      guard let tableName = reservation.assignedTableName else { continue }
+      guard let seatedAt = context.localSeatedAtByReservationID[reservation.remoteID] else {
+        continue
+      }
+
+      let turnMinutes = estimatedTurnMinutes(
+        partySize: reservation.partySize,
+        settings: context.settings
+      )
+      let estimatedRelease = seatedAt.addingTimeInterval(TimeInterval(turnMinutes * 60))
+      let normalizedTable = HostTableIntelligenceSupport.normalizeTableName(tableName)
+
+      let upcomingOnTable = context.reservations
+        .filter { other in
+          guard other.remoteID != reservation.remoteID else { return false }
+          guard other.isOpenWork else { return false }
+          guard let otherTable = other.assignedTableName else { return false }
+          guard HostTableIntelligenceSupport.normalizeTableName(otherTable) == normalizedTable else {
+            return false
+          }
+          guard let serviceDate = other.serviceDateTime else { return false }
+          return serviceDate > context.now
+        }
+        .sorted {
+          ($0.serviceDateTime ?? .distantFuture) < ($1.serviceDateTime ?? .distantFuture)
+        }
+
+      guard let nextReservation = upcomingOnTable.first,
+            let nextServiceDate = nextReservation.serviceDateTime else {
+        continue
+      }
+
+      guard estimatedRelease > nextServiceDate else { continue }
+
+      count += 1
+      let nextTime = nextReservation.displayTime
+      let detail = "\(tableName) may not turn before the \(nextTime) reservation."
+
+      facts.append(
+        HostBriefingFact(
+          id: "table-turn-risk-\(reservation.remoteID)-\(nextReservation.remoteID)",
+          severity: .warning,
+          category: .table,
+          title: "Table turn risk",
+          detail: detail,
+          evidence: [
+            "estimatedReleaseMinutes=\(turnMinutes)",
+            "nextReservationID=\(nextReservation.remoteID)"
+          ],
+          relatedReservationIDs: [reservation.remoteID, nextReservation.remoteID],
+          suggestedActionTitle: "Check table before seating the next party."
+        )
+      )
+
+      actions.append(
+        HostSuggestedAction(
+          id: "table-turn-risk-action-\(reservation.remoteID)-\(nextReservation.remoteID)",
+          severity: .warning,
+          kind: .alertServer,
+          title: "Check \(tableName) turn",
+          reason: detail,
+          relatedReservationIDs: [reservation.remoteID, nextReservation.remoteID],
+          targetSlotTime: nextReservation.reservationTime,
+          targetTableName: tableName,
+          requiresStaffConfirmation: true
+        )
+      )
+
+      signals.append(
+        HostTableSignal(
+          id: "table-turn-risk-signal-\(reservation.remoteID)-\(nextReservation.remoteID)",
+          tableName: tableName,
+          kind: .tableTurnRisk,
+          severity: .warning,
+          title: "Table turn risk",
+          detail: detail,
+          relatedReservationIDs: [reservation.remoteID, nextReservation.remoteID],
+          evidence: ["nextTime=\(nextTime)"]
+        )
+      )
+    }
+
+    return (facts, actions, signals, count)
+  }
+
   // MARK: - Scoring & Classification
 
   private func calculatePressureScore(
     slotPressures: [HostSlotPressure],
     briefingFacts: [HostBriefingFact],
     noTableDueSoonCount: Int,
-    allergySignalCount: Int
+    allergySignalCount: Int,
+    tableCapacityMismatchCount: Int,
+    noSuitableTableCount: Int,
+    tableTurnRiskCount: Int,
+    tableFitAvailableCount: Int
   ) -> Double {
     let maxRatio = slotPressures.compactMap(\.capacityRatio).max() ?? 0
     let criticalSlotCount = slotPressures.filter { $0.severity == .critical }.count
@@ -701,6 +1173,10 @@ struct HostIntelligenceEngine {
       + Double(criticalFactCount) * 10
       + Double(noTableDueSoonCount) * 5
       + Double(allergySignalCount) * 5
+      + Double(tableCapacityMismatchCount) * 12
+      + Double(noSuitableTableCount) * 10
+      + Double(tableTurnRiskCount) * 8
+      + Double(tableFitAvailableCount) * 2
 
     return min(max(raw, 0), 100)
   }
@@ -739,6 +1215,22 @@ struct HostIntelligenceEngine {
   }
 
   // MARK: - Helpers
+
+  private func capacityPressureEvidence(
+    projectedGuests: Int,
+    basis: CapacityBasis
+  ) -> [String] {
+    if basis.usesTableInventory {
+      return [
+        "projectedGuests=\(projectedGuests)",
+        "tableInventoryCapacity=\(basis.capacity)"
+      ]
+    }
+    return [
+      "projectedGuests=\(projectedGuests)",
+      "settingsCapacity=\(basis.capacity)"
+    ]
+  }
 
   private func activeReservationsForAnalysis(context: ServiceDayContext) -> [ReservationRecord] {
     context.reservations.filter(shouldCountReservationInAnalysis(_:))

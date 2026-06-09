@@ -305,15 +305,15 @@ struct HostIntelligenceSettings: Codable, Equatable {
 
 struct RestaurantTableConfig: Identifiable, Codable, Equatable {
     let id: UUID
-    let name: String
-    let capacity: Int
-    let section: String
-    let isActive: Bool
-    let combinableTableIDs: [UUID]
-    let preferredForLargeParties: Bool
-    let preferredForWheelchair: Bool
-    let preferredForQuietSeating: Bool
-    let sortOrder: Int
+    var name: String
+    var capacity: Int
+    var section: String
+    var isActive: Bool
+    var combinableTableIDs: [UUID]
+    var preferredForLargeParties: Bool
+    var preferredForWheelchair: Bool
+    var preferredForQuietSeating: Bool
+    var sortOrder: Int
 
     init(
         id: UUID = UUID(),
@@ -340,6 +340,37 @@ struct RestaurantTableConfig: Identifiable, Codable, Equatable {
     }
 }
 
+// MARK: - Table Intelligence
+
+enum HostTableFitQuality: String, Codable, CaseIterable {
+    case exact
+    case comfortable
+    case oversized
+    case tight
+    case unavailable
+}
+
+struct HostTableFitOption: Identifiable, Codable, Equatable {
+    let id: String
+    let reservationID: Int
+    let guestName: String
+    let partySize: Int
+    let tableNames: [String]
+    let tableIDs: [UUID]
+    let totalCapacity: Int
+    let isCombination: Bool
+    let section: String?
+    let fitQuality: HostTableFitQuality
+}
+
+struct HostTableCapacitySummary: Codable, Equatable {
+    let activeTableCount: Int
+    let inactiveTableCount: Int
+    let totalActiveCapacity: Int
+    let largestSingleTableCapacity: Int
+    let largestCombinationCapacity: Int
+}
+
 // MARK: - Engine Input
 
 /// Immutable input bundle for the deterministic Host Intelligence engine.
@@ -353,4 +384,5 @@ struct HostEngineInput {
     let restaurantSetup: RestaurantSetup?
     let localSeatedAtByReservationID: [Int: Date]
     let settings: HostIntelligenceSettings
+    let tableConfigs: [RestaurantTableConfig]
 }

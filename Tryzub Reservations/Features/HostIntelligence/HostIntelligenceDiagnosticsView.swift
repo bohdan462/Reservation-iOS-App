@@ -15,6 +15,7 @@ struct HostIntelligenceDiagnosticsView: View {
   let restaurantSetup: RestaurantSetup?
   let localSeatedAtByReservationID: [Int: Date]
   let settings: HostIntelligenceSettings
+  var tableConfigs: [RestaurantTableConfig] = []
 
   private var snapshot: HostDecisionSnapshot {
     let input = HostEngineInput(
@@ -25,7 +26,8 @@ struct HostIntelligenceDiagnosticsView: View {
       analyticsSummary: analyticsSummary,
       restaurantSetup: restaurantSetup,
       localSeatedAtByReservationID: localSeatedAtByReservationID,
-      settings: settings
+      settings: settings,
+      tableConfigs: tableConfigs
     )
     return HostIntelligenceEngine().evaluateHostDecisionSnapshot(input: input)
   }
@@ -38,6 +40,7 @@ struct HostIntelligenceDiagnosticsView: View {
       topFactsSection(decision)
       suggestedActionsSection(decision)
       slotPressureSection(decision)
+      tableInventorySection
       signalsSection(decision)
     }
   }
@@ -126,6 +129,46 @@ struct HostIntelligenceDiagnosticsView: View {
   }
 
   @ViewBuilder
+  private var tableInventorySection: some View {
+    Section("Table Inventory") {
+      let summary = HostTableIntelligenceSupport.buildTableCapacitySummary(
+        tableConfigs: tableConfigs
+      )
+
+      LabeledContent("Tables configured", value: tableConfigs.isEmpty ? "No" : "Yes")
+      LabeledContent("Active tables", value: "\(summary.activeTableCount)")
+      LabeledContent("Inactive tables", value: "\(summary.inactiveTableCount)")
+      LabeledContent("Total active capacity", value: "\(summary.totalActiveCapacity)")
+      LabeledContent("Largest single table", value: "\(summary.largestSingleTableCapacity)")
+      LabeledContent("Largest combination", value: "\(summary.largestCombinationCapacity)")
+      LabeledContent("Capacity source") {
+        Text(summary.totalActiveCapacity > 0 ? "Table inventory" : "Settings fallback")
+      }
+
+      let fitRecommendations = HostTableIntelligenceSupport.recommendedTableFits(
+        reservations: reservations,
+        tableConfigs: tableConfigs,
+        limit: 3
+      )
+      if !fitRecommendations.isEmpty {
+        ForEach(fitRecommendations) { option in
+          VStack(alignment: .leading, spacing: 4) {
+            Text("\(option.guestName) · party \(option.partySize)")
+              .font(.subheadline.weight(.semibold))
+            Text(
+              HostTableIntelligenceSupport.displayTableNames(option.tableNames)
+                + " · seats \(option.totalCapacity)"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 2)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
   private func signalsSection(_ decision: HostDecisionSnapshot) -> some View {
     Section("Signals") {
       LabeledContent("Guest signals") {
@@ -136,6 +179,15 @@ struct HostIntelligenceDiagnosticsView: View {
       }
       LabeledContent("Table signals") {
         Text("\(decision.tableSignals.count)")
+      }
+      LabeledContent("No-table signals") {
+        Text("\(decision.tableSignals.filter { $0.kind == .noTableAssigned }.count)")
+      }
+      LabeledContent("Table capacity mismatch") {
+        Text("\(decision.tableSignals.filter { $0.kind == .tableCapacityMismatch }.count)")
+      }
+      LabeledContent("Table turn risk") {
+        Text("\(decision.tableSignals.filter { $0.kind == .tableTurnRisk }.count)")
       }
       LabeledContent("Seated timing signals") {
         Text("\(decision.seatedTimingSignals.count)")

@@ -28,6 +28,7 @@ struct HostBoardView: View {
 
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
+    @StateObject private var hostIntelligenceController = HostIntelligenceController()
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
@@ -86,6 +87,16 @@ struct HostBoardView: View {
 
     private var isLoadingAvailabilitySummary: Bool {
         controller.isAvailabilitySummaryLoading(date: selectedDateKey)
+    }
+
+    private var hostIntelligenceRefreshKey: String {
+        let minute = Calendar.current.component(.minute, from: clockTick)
+        let syncStamp = controller.lastSyncedAt?.timeIntervalSince1970 ?? 0
+        let availabilityStamp = availabilitySummary?.loadedAt.timeIntervalSince1970 ?? 0
+        let seatedStamp = controller.localSeatedAtByReservationID.count
+        let tableStamp = hostIntelligenceController.tableStore.totalActiveCapacity
+        let tableCount = hostIntelligenceController.tableStore.tables.count
+        return "\(selectedDateKey)-\(reservations.count)-\(syncStamp)-\(availabilityStamp)-\(seatedStamp)-\(tableCount)-\(tableStamp)-\(minute)"
     }
 
     var body: some View {
@@ -195,6 +206,15 @@ struct HostBoardView: View {
                   isVisible else { return }
             controller.ensureAvailabilitySummary(date: selectedDateKey)
         }
+        .task(id: hostIntelligenceRefreshKey) {
+            guard isVisible else {
+                hostIntelligenceController.reset()
+                return
+            }
+            hostIntelligenceController.tableStore.reload()
+            hostIntelligenceController.settingsStore.reload()
+            hostIntelligenceController.evaluate(input: makeHostEngineInput(now: clockTick))
+        }
     }
 
     private var pendingActionTitle: String {
@@ -300,6 +320,39 @@ struct HostBoardView: View {
             onRefreshAvailability: selectedDate.reservationDateString() == Date.reservationDateString()
                 ? { controller.ensureAvailabilitySummary(date: selectedDateKey, force: true) }
                 : nil
+        )
+
+        hostIntelligenceSection
+    }
+
+    @ViewBuilder
+    private var hostIntelligenceSection: some View {
+        let snapshot = hostIntelligenceController.decisionSnapshot
+
+        HostIntelligenceCard(snapshot: snapshot)
+
+        if hasMeaningfulSlotPressure(snapshot) {
+            SlotPressureStripView(pressures: snapshot.slotPressures)
+        }
+    }
+
+    private func hasMeaningfulSlotPressure(_ snapshot: HostDecisionSnapshot) -> Bool {
+        snapshot.slotPressures.contains { pressure in
+            pressure.reservationCount > 0 || pressure.severity != .calm
+        }
+    }
+
+    private func makeHostEngineInput(now: Date) -> HostEngineInput {
+        HostEngineInput(
+            now: now,
+            selectedDate: selectedDate,
+            reservations: reservations,
+            availabilitySummary: availabilitySummary,
+            analyticsSummary: nil,
+            restaurantSetup: controller.hasLoadedRestaurantSetup ? controller.restaurantSetup : nil,
+            localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
+            settings: hostIntelligenceController.settings,
+            tableConfigs: hostIntelligenceController.tableStore.tables
         )
     }
 

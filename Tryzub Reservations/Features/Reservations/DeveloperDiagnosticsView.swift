@@ -18,6 +18,7 @@ struct DeveloperDiagnosticsView: View {
     @State private var testResults: [AdminFetchTestResult] = []
 
     @StateObject private var hostIntelligenceSettings = HostIntelligenceSettingsStore()
+    @StateObject private var hostTableConfigStore = HostTableConfigStore()
 
     let environment: AppEnvironment
 
@@ -217,7 +218,8 @@ struct DeveloperDiagnosticsView: View {
             analyticsSummary: nil,
             restaurantSetup: controller.hasLoadedRestaurantSetup ? controller.restaurantSetup : nil,
             localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
-            settings: hostIntelligenceSettings.settings
+            settings: hostIntelligenceSettings.settings,
+            tableConfigs: hostTableConfigStore.tables
         )
     }
 
