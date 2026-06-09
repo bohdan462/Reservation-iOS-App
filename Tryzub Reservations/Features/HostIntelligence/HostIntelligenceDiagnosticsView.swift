@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct HostIntelligenceDiagnosticsView: View {
   let reservations: [ReservationRecord]
@@ -20,6 +21,11 @@ struct HostIntelligenceDiagnosticsView: View {
   var briefingFailureReason: String? = nil
   var tableConfigs: [RestaurantTableConfig] = []
   var allKnownReservations: [ReservationRecord] = []
+
+  @State private var isShowingModelImporter = false
+  @State private var modelImportMessage: String?
+  @State private var modelImportError: String?
+  @State private var readinessRefreshToken = UUID()
 
   private var snapshot: HostDecisionSnapshot {
     let input = HostEngineInput(
@@ -419,6 +425,7 @@ struct HostIntelligenceDiagnosticsView: View {
       packet: packet,
       fallbackText: fallback
     )
+    let _ = readinessRefreshToken
     let localModelReadiness = HostLocalModelReadinessProvider.currentReadiness()
     let promptPreview = HostLLMPacketPromptBuilder.buildDebugPromptPreview(from: packet)
     let modelPresence = HostLocalModelFileLocator.modelPresenceDescription()
@@ -504,6 +511,15 @@ struct HostIntelligenceDiagnosticsView: View {
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
+
+      LocalModelGGUFImportControls(
+        isShowingModelImporter: $isShowingModelImporter,
+        modelImportMessage: $modelImportMessage,
+        modelImportError: $modelImportError,
+        onImportSuccess: {
+          readinessRefreshToken = UUID()
+        }
+      )
 
       Text("Local model prompt preview")
         .font(.subheadline.weight(.semibold))
@@ -716,6 +732,91 @@ struct HostIntelligenceDiagnosticsView: View {
   }
 }
 
+// MARK: - Local Model GGUF Import (developer diagnostics only)
+
+private extension UTType {
+  static let hostBriefingGGUF = UTType(filenameExtension: "gguf") ?? .data
+}
+
+private struct LocalModelGGUFImportControls: View {
+  @Binding var isShowingModelImporter: Bool
+  @Binding var modelImportMessage: String?
+  @Binding var modelImportError: String?
+  let onImportSuccess: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Local model import")
+        .font(.subheadline.weight(.semibold))
+
+      Text("Developer only. Copies a .gguf from Files into Application Support. No network.")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+
+      Button("Import GGUF from Files") {
+        modelImportMessage = nil
+        modelImportError = nil
+        isShowingModelImporter = true
+      }
+
+      if let modelImportMessage, !modelImportMessage.isEmpty {
+        Text(modelImportMessage)
+          .font(.caption)
+          .foregroundStyle(.green)
+          .textSelection(.enabled)
+      }
+
+      if let modelImportError, !modelImportError.isEmpty {
+        Text(modelImportError)
+          .font(.caption)
+          .foregroundStyle(.red)
+      }
+    }
+    .padding(.vertical, 4)
+    .fileImporter(
+      isPresented: $isShowingModelImporter,
+      allowedContentTypes: [.hostBriefingGGUF],
+      allowsMultipleSelection: false
+    ) { result in
+      handleImport(result)
+    }
+  }
+
+  private func handleImport(_ result: Result<[URL], Error>) {
+    switch result {
+    case .failure(let error):
+      modelImportError = error.localizedDescription
+      modelImportMessage = nil
+    case .success(let urls):
+      guard let sourceURL = urls.first else {
+        modelImportError = "No file was selected."
+        modelImportMessage = nil
+        return
+      }
+      importModel(from: sourceURL)
+    }
+  }
+
+  private func importModel(from sourceURL: URL) {
+    let didAccess = sourceURL.startAccessingSecurityScopedResource()
+    defer {
+      if didAccess {
+        sourceURL.stopAccessingSecurityScopedResource()
+      }
+    }
+
+    do {
+      let destination = try HostLocalModelInstaller.installModel(from: sourceURL)
+      modelImportMessage = "Model installed at \(destination.path)"
+      modelImportError = nil
+      onImportSuccess()
+    } catch {
+      modelImportError = error.localizedDescription
+      modelImportMessage = nil
+    }
+  }
+}
+
 // MARK: - Local Model Manual Test (developer diagnostics only)
 
 private struct LocalModelBriefingDiagnosticTest: View {
@@ -752,7 +853,7 @@ private struct LocalModelBriefingDiagnosticTest: View {
           .font(.caption2)
           .foregroundStyle(.tertiary)
       } else if !canRunTest, readiness.status != .ready {
-        Text("Install the GGUF model in Application Support to enable this test.")
+        Text("Import the GGUF from Files or install it in Application Support to enable this test.")
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
@@ -769,26 +870,63 @@ private struct LocalModelBriefingDiagnosticTest: View {
         LabeledContent("Prompt characters") {
           Text("\(result.promptCharacterCount)")
         }
+        if let promptTokens = result.runtimeDiagnostics?.promptTokenCount, promptTokens > 0 {
+          LabeledContent("Prompt tokens") {
+            Text("\(promptTokens)")
+          }
+        }
         LabeledContent("Output characters") {
           Text("\(result.outputCharacterCount)")
         }
         LabeledContent("Cold duration") {
-          Text(String(format: "%.2f s", result.coldDuration))
+          Text(LocalModelDiagnosticDuration.format(result.coldDuration))
         }
         LabeledContent("Warm duration") {
-          Text(String(format: "%.2f s", result.warmDuration))
+          Text(LocalModelDiagnosticDuration.format(result.warmDuration))
         }
-        LabeledContent("Source") {
+        LabeledContent("Cold source") {
+          Text(result.coldWriterResult.source.displayName)
+        }
+        LabeledContent("Warm source") {
           Text(result.writerResult.source.displayName)
         }
-        Text(result.writerResult.text)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .textSelection(.enabled)
+        LabeledContent("Fallback occurred") {
+          Text(result.fallbackOccurred ? "Yes" : "No")
+        }
+        if let modelSource = result.runtimeDiagnostics?.modelSource {
+          LabeledContent("Model source") {
+            Text(modelSource)
+          }
+        }
+        if let decodeCode = result.runtimeDiagnostics?.initialDecodeCode {
+          LabeledContent("Initial decode code") {
+            Text("\(decodeCode)")
+          }
+        }
+        if let decodeCode = result.runtimeDiagnostics?.generationDecodeCode {
+          LabeledContent("Generation decode code") {
+            Text("\(decodeCode)")
+          }
+        }
+        if let runtimeError = result.runtimeDiagnostics?.lastError, !runtimeError.isEmpty {
+          LabeledContent("Runtime error") {
+            Text(runtimeError)
+              .font(.caption2)
+              .foregroundStyle(.tertiary)
+          }
+        }
+        LabeledContent("Output text") {
+          Text(result.writerResult.text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        }
         if let reason = result.writerResult.failedReason, !reason.isEmpty {
-          Text(reason)
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
+          LabeledContent("Failure reason") {
+            Text(reason)
+              .font(.caption2)
+              .foregroundStyle(.tertiary)
+          }
         }
         LabeledContent("Validation") {
           Text(result.validation.isValid ? "Valid" : "Invalid")
@@ -798,10 +936,13 @@ private struct LocalModelBriefingDiagnosticTest: View {
             .font(.caption2)
             .foregroundStyle(.tertiary)
         }
-        if result.writerResult.source == .failedFallback {
-          Text("Fallback occurred — template text was used.")
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
+        if result.fallbackOccurred {
+          LabeledContent("Fallback text") {
+            Text(result.fallbackText)
+              .font(.caption2)
+              .foregroundStyle(.tertiary)
+              .textSelection(.enabled)
+          }
         }
       }
     }
@@ -817,33 +958,44 @@ private struct LocalModelBriefingDiagnosticTest: View {
       let prompt = HostLLMPacketPromptBuilder.buildPrompt(from: packet)
       let readinessStatus = HostLocalModelReadinessProvider.currentReadiness().status
       let writer = LocalModelHostBriefingWriter()
+      let clock = ContinuousClock()
 
-      let coldStart = Date()
-      _ = await writer.writeBriefing(packet: packet, fallbackText: fallbackText)
-      let coldDuration = Date().timeIntervalSince(coldStart)
+      let coldMark = clock.now
+      let coldWriterResult = await writer.writeBriefing(
+        packet: packet,
+        fallbackText: fallbackText
+      )
+      let coldDuration = LocalModelDiagnosticDuration.seconds(since: coldMark, on: clock)
 
-      let warmStart = Date()
+      let warmMark = clock.now
       let writerResult = await writer.writeBriefing(
         packet: packet,
         fallbackText: fallbackText
       )
-      let warmDuration = Date().timeIntervalSince(warmStart)
+      let warmDuration = LocalModelDiagnosticDuration.seconds(since: warmMark, on: clock)
 
       let validation = HostBriefingWriterValidator.validationResult(
         writerResult.text,
         packet: packet,
         fallbackText: fallbackText
       )
+      let runtimeDiagnostics = HostLlamaBriefingRuntimeDiagnostics.lastRun
+      let fallbackOccurred = coldWriterResult.source == .failedFallback
+        || writerResult.source == .failedFallback
 
       await MainActor.run {
         result = LocalModelBriefingDiagnosticResult(
+          coldWriterResult: coldWriterResult,
           writerResult: writerResult,
           validation: validation,
           coldDuration: coldDuration,
           warmDuration: warmDuration,
           promptCharacterCount: prompt.count,
           outputCharacterCount: writerResult.text.count,
-          readinessStatus: readinessStatus
+          readinessStatus: readinessStatus,
+          fallbackText: fallbackText,
+          fallbackOccurred: fallbackOccurred,
+          runtimeDiagnostics: runtimeDiagnostics
         )
         isRunning = false
       }
@@ -852,6 +1004,7 @@ private struct LocalModelBriefingDiagnosticTest: View {
 }
 
 private struct LocalModelBriefingDiagnosticResult {
+  let coldWriterResult: HostBriefingWriterResult
   let writerResult: HostBriefingWriterResult
   let validation: HostBriefingValidationResult
   let coldDuration: TimeInterval
@@ -859,6 +1012,24 @@ private struct LocalModelBriefingDiagnosticResult {
   let promptCharacterCount: Int
   let outputCharacterCount: Int
   let readinessStatus: HostLocalModelReadinessStatus
+  let fallbackText: String
+  let fallbackOccurred: Bool
+  let runtimeDiagnostics: HostLlamaRunDiagnostics?
+}
+
+private enum LocalModelDiagnosticDuration {
+  static func seconds(since mark: ContinuousClock.Instant, on clock: ContinuousClock) -> TimeInterval {
+    let duration = mark.duration(to: clock.now)
+    return Double(duration.components.seconds)
+      + Double(duration.components.attoseconds) / 1_000_000_000_000_000_000
+  }
+
+  static func format(_ seconds: TimeInterval) -> String {
+    if seconds < 0.01 {
+      return String(format: "%.0f ms", seconds * 1000)
+    }
+    return String(format: "%.2f s", seconds)
+  }
 }
 
 #Preview {

@@ -25,8 +25,17 @@ enum HostLocalModelFileLocator {
     return fileExists(at: url) ? url : nil
   }
 
+  static func applicationSupportModelDestinationURL() -> URL? {
+    guard let directory = applicationSupportModelDirectoryURL() else {
+      return nil
+    }
+    return directory.appendingPathComponent(expectedModelFileName)
+  }
+
   static func applicationSupportModelURL() -> URL? {
-    let candidate = URL(fileURLWithPath: applicationSupportCandidatePath())
+    guard let candidate = applicationSupportModelDestinationURL() else {
+      return nil
+    }
     return fileExists(at: candidate) ? candidate : nil
   }
 
@@ -68,10 +77,7 @@ enum HostLocalModelFileLocator {
   }
 
   static func expectedApplicationSupportModelPathDescription() -> String {
-    guard let directory = applicationSupportModelDirectoryURL() else {
-      return "Application Support unavailable"
-    }
-    return directory.appendingPathComponent(expectedModelFileName).path
+    applicationSupportModelDestinationURL()?.path ?? "Application Support unavailable"
   }
 
   static func modelLookupPathDescription() -> String {

@@ -9,6 +9,36 @@
 import Foundation
 import LlamaSwift
 
+private let hostLlamaQwenImEndToken = String("<") + "|im_end|>"
+
+// MARK: - Runtime diagnostics (developer diagnostics only)
+
+struct HostLlamaRunDiagnostics: Equatable {
+  var modelPath: String?
+  var modelSource: String?
+  var promptCharacterCount: Int = 0
+  var promptTokenCount: Int = 0
+  var contextWindow: UInt32 = 0
+  var batchCapacity: Int32 = 0
+  var contextBatchLimit: UInt32 = 0
+  var maxOutputTokens: Int32 = 0
+  var promptExceedsContext: Bool = false
+  var promptExceedsBatchCapacity: Bool = false
+  var initialDecodeCode: Int32?
+  var generationDecodeCode: Int32?
+  var lastError: String?
+}
+
+enum HostLlamaBriefingRuntimeDiagnostics {
+  nonisolated(unsafe) static var lastRun = HostLlamaRunDiagnostics()
+}
+
+#if DEBUG
+private func hostLlamaLogDebug(_ message: String) {
+  print("[HostLlama] \(message)")
+}
+#endif
+
 /// llama.cpp-backed runtime for presentation-only host briefing rewrites.
 final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
 
@@ -22,11 +52,9 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
 
   static let shared = HostLlamaBriefingRuntime()
 
-  private static let maxOutputTokens = 100
+  private static let maxOutputTokens: Int32 = 100
   private static let samplingTemperature = 0.1
-  private static let contextWindow = UInt32(2048)
-
-  private static let qwenImEndToken = String("<") + "|im_end|>"
+  private static let contextWindow: UInt32 = 2048
 
   private static let promptEchoStopMarkers = [
     "Write the host briefing now:",
@@ -77,19 +105,34 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
     }
 
     let inferencePrompt = Self.wrapPromptForQwenInstruct(prompt)
+    var diagnostics = HostLlamaRunDiagnostics(
+      modelPath: modelPath,
+      modelSource: HostLocalModelFileLocator.modelSourceLabel(),
+      promptCharacterCount: inferencePrompt.count,
+      contextWindow: Self.contextWindow,
+      maxOutputTokens: Self.maxOutputTokens
+    )
 
     let generated: String
     do {
       generated = try session.generate(
         prompt: inferencePrompt,
-        maxTokens: Int32(Self.maxOutputTokens),
-        echoStopMarkers: Self.promptEchoStopMarkers
+        maxTokens: Self.maxOutputTokens,
+        echoStopMarkers: Self.promptEchoStopMarkers,
+        diagnostics: &diagnostics
       )
     } catch let error as HostLocalModelRuntimeError {
+      diagnostics.lastError = error.errorDescription
+      HostLlamaBriefingRuntimeDiagnostics.lastRun = diagnostics
       throw error
     } catch {
-      throw HostLocalModelRuntimeError.generationFailed(error.localizedDescription)
+      let message = error.localizedDescription
+      diagnostics.lastError = message
+      HostLlamaBriefingRuntimeDiagnostics.lastRun = diagnostics
+      throw HostLocalModelRuntimeError.generationFailed(message)
     }
+
+    HostLlamaBriefingRuntimeDiagnostics.lastRun = diagnostics
 
     let sanitized = Self.sanitizeGeneratedBriefing(generated)
     let trimmed = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -122,21 +165,27 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
 
     text = text
       .replacingOccurrences(of: "<|im_start|>", with: "")
-      .replacingOccurrences(of: qwenImEndToken, with: "")
+      .replacingOccurrences(of: hostLlamaQwenImEndToken, with: "")
+      .replacingOccurrences(of: "</s>", with: "")
       .trimmingCharacters(in: .whitespacesAndNewlines)
 
     return text
   }
+
 }
 
 // MARK: - Llama session (C API wrapper)
 
 private final class LlamaLoadedSession: @unchecked Sendable {
+  /// Qwen2.5 GGUF metadata sets `tokenizer.ggml.add_bos_token = false`.
+  private static let addBOSForPrompt = false
+
   private let model: OpaquePointer
   private let context: OpaquePointer
   private let vocab: OpaquePointer
   private let sampler: UnsafeMutablePointer<llama_sampler>?
   private let ownsBackend: Bool
+  private let contextWindow: UInt32
 
   init(
     modelPath: String,
@@ -155,7 +204,7 @@ private final class LlamaLoadedSession: @unchecked Sendable {
 
     var contextParams = llama_context_default_params()
     contextParams.n_ctx = contextWindow
-    contextParams.n_batch = 512
+    contextParams.n_batch = contextWindow
 
     guard let loadedContext = llama_init_from_model(model, contextParams) else {
       llama_model_free(model)
@@ -164,6 +213,7 @@ private final class LlamaLoadedSession: @unchecked Sendable {
     }
     context = loadedContext
     vocab = llama_model_get_vocab(model)
+    self.contextWindow = contextWindow
 
     var samplerParams = llama_sampler_chain_default_params()
     let chain = llama_sampler_chain_init(samplerParams)
@@ -187,36 +237,67 @@ private final class LlamaLoadedSession: @unchecked Sendable {
   func generate(
     prompt: String,
     maxTokens: Int32,
-    echoStopMarkers: [String]
+    echoStopMarkers: [String],
+    diagnostics: inout HostLlamaRunDiagnostics
   ) throws -> String {
-    let promptTokens = try tokenize(prompt, addBOS: true)
+    let promptTokens = try tokenize(prompt, addBOS: Self.addBOSForPrompt)
     guard !promptTokens.isEmpty else {
       throw HostLocalModelRuntimeError.generationFailed("Prompt tokenization returned no tokens.")
     }
 
-    var batch = llama_batch_init(512, 0, 1)
-    defer { llama_batch_free(batch) }
+    let promptTokenCount = Int32(promptTokens.count)
+    let contextBatchLimit = llama_n_batch(context)
 
-    batch.n_tokens = Int32(promptTokens.count)
-    for index in 0..<promptTokens.count {
-      batch.token[index] = promptTokens[index]
-      batch.pos[index] = Int32(index)
-      batch.n_seq_id[index] = 1
-      if let seqIDs = batch.seq_id, let seqID = seqIDs[index] {
-        seqID[0] = 0
-      }
-      batch.logits[index] = 0
-    }
-    if batch.n_tokens > 0 {
-      batch.logits[Int(batch.n_tokens) - 1] = 1
+    diagnostics.promptTokenCount = Int(promptTokenCount)
+    diagnostics.batchCapacity = promptTokenCount
+    diagnostics.contextBatchLimit = contextBatchLimit
+    diagnostics.promptExceedsContext = Int(promptTokenCount) + Int(maxTokens) >= Int(contextWindow)
+    diagnostics.promptExceedsBatchCapacity = UInt32(promptTokenCount) > contextBatchLimit
+
+    guard Int(promptTokenCount) + Int(maxTokens) < Int(contextWindow) else {
+      throw HostLocalModelRuntimeError.generationFailed(
+        "Prompt is too long for local model context."
+      )
     }
 
-    guard llama_decode(context, batch) == 0 else {
-      throw HostLocalModelRuntimeError.generationFailed("Initial llama_decode failed.")
+    guard UInt32(promptTokenCount) <= contextBatchLimit else {
+      throw HostLocalModelRuntimeError.generationFailed(
+        "Prompt exceeds local model batch capacity (\(promptTokenCount) > \(contextBatchLimit))."
+      )
+    }
+
+    if let memory = llama_get_memory(context) {
+      llama_memory_clear(memory, true)
+    }
+
+    #if DEBUG
+    hostLlamaLogDebug(
+      "generate path=\(diagnostics.modelPath ?? "unknown") promptChars=\(diagnostics.promptCharacterCount) promptTokens=\(promptTokenCount) ctx=\(contextWindow) batchLimit=\(contextBatchLimit)"
+    )
+    let preview = String(prompt.prefix(300))
+    hostLlamaLogDebug("promptPreview=\(preview)")
+    #endif
+
+    var mutablePromptTokens = promptTokens
+    var batch = mutablePromptTokens.withUnsafeMutableBufferPointer { buffer in
+      llama_batch_get_one(buffer.baseAddress!, promptTokenCount)
+    }
+    setLogitsOnLastToken(&batch)
+
+    let initialCode = llama_decode(context, batch)
+    diagnostics.initialDecodeCode = initialCode
+
+    #if DEBUG
+    hostLlamaLogDebug("initialDecodeCode=\(initialCode)")
+    #endif
+
+    guard initialCode == 0 else {
+      throw HostLocalModelRuntimeError.generationFailed(
+        "Initial llama_decode failed with code \(initialCode)."
+      )
     }
 
     var generated = ""
-    var currentPosition = batch.n_tokens
     let eosToken = llama_vocab_eos(vocab)
 
     for _ in 0..<maxTokens {
@@ -240,7 +321,7 @@ private final class LlamaLoadedSession: @unchecked Sendable {
         nextToken = bestToken
       }
 
-      if nextToken == eosToken {
+      if shouldStopGeneration(token: nextToken, eosToken: eosToken, generated: generated) {
         break
       }
 
@@ -255,30 +336,62 @@ private final class LlamaLoadedSession: @unchecked Sendable {
         break
       }
 
-      batch.n_tokens = 1
-      batch.token[0] = nextToken
-      batch.pos[0] = currentPosition
-      batch.n_seq_id[0] = 1
-      if let seqIDs = batch.seq_id, let seqID = seqIDs[0] {
-        seqID[0] = 0
+      var next = nextToken
+      batch = withUnsafeMutablePointer(to: &next) { pointer in
+        llama_batch_get_one(pointer, 1)
       }
-      batch.logits[0] = 1
-      currentPosition += 1
+      if let logits = batch.logits {
+        logits[0] = 1
+      }
 
-      guard llama_decode(context, batch) == 0 else {
-        throw HostLocalModelRuntimeError.generationFailed("Token llama_decode failed.")
+      let decodeCode = llama_decode(context, batch)
+      if decodeCode != 0 {
+        diagnostics.generationDecodeCode = decodeCode
+        throw HostLocalModelRuntimeError.generationFailed(
+          "Token llama_decode failed with code \(decodeCode)."
+        )
       }
     }
 
     return generated
   }
 
+  private func shouldStopGeneration(
+    token: llama_token,
+    eosToken: llama_token,
+    generated: String
+  ) -> Bool {
+    if token == eosToken {
+      return true
+    }
+
+    let piece = (try? tokenPiece(for: token)) ?? ""
+    if piece.contains(hostLlamaQwenImEndToken) {
+      return true
+    }
+    if piece.contains("</s>") {
+      return true
+    }
+    if generated.contains(hostLlamaQwenImEndToken) {
+      return true
+    }
+    return false
+  }
+
+  private func setLogitsOnLastToken(_ batch: inout llama_batch) {
+    guard batch.n_tokens > 0, let logits = batch.logits else { return }
+    for index in 0..<Int(batch.n_tokens) {
+      logits[index] = 0
+    }
+    logits[Int(batch.n_tokens) - 1] = 1
+  }
+
   private func tokenize(_ text: String, addBOS: Bool) throws -> [llama_token] {
     let utf8Count = text.utf8.count
-    let maxTokenCount = utf8Count + 8
+    var maxTokenCount = max(utf8Count + 16, 256)
     var tokens = [llama_token](repeating: 0, count: maxTokenCount)
 
-    let tokenCount = text.withCString { cString in
+  var tokenCount = text.withCString { cString in
       llama_tokenize(
         vocab,
         cString,
@@ -288,6 +401,22 @@ private final class LlamaLoadedSession: @unchecked Sendable {
         addBOS,
         true
       )
+    }
+
+    if tokenCount < 0 {
+      maxTokenCount = max(Int(-tokenCount), maxTokenCount) + 16
+      tokens = [llama_token](repeating: 0, count: maxTokenCount)
+      tokenCount = text.withCString { cString in
+        llama_tokenize(
+          vocab,
+          cString,
+          Int32(utf8Count),
+          &tokens,
+          Int32(maxTokenCount),
+          addBOS,
+          true
+        )
+      }
     }
 
     guard tokenCount > 0 else {

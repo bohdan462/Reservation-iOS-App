@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		CA3502C02FD7A9F500F09B7F /* LlamaSwift in Frameworks */ = {isa = PBXBuildFile; productRef = CA1101C12FB51DE800C6335C /* LlamaSwift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		CA1101B02FB51DE600C6335C /* Tryzub Reservations.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Tryzub Reservations.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CA3502C02FD7A9F500F09B7F /* LlamaSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -95,12 +100,12 @@
 			);
 			mainGroup = CA1101A72FB51DE600C6335C;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				CA1101C02FB51DE800C6335C /* XCRemoteSwiftPackageReference "llama" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = CA1101B12FB51DE600C6335C /* Products */;
 			projectDirPath = "";
-			packageReferences = (
-				CA1101C02FB51DE800C6335C /* XCRemoteSwiftPackageReference "llama.swift" */,
-			);
 			projectRoot = "";
 			targets = (
 				CA1101AF2FB51DE600C6335C /* Tryzub Reservations */,
@@ -312,25 +317,6 @@
 		};
 /* End XCBuildConfiguration section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		CA1101C02FB51DE800C6335C /* XCRemoteSwiftPackageReference "llama.swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/mattt/llama.swift";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.9568.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		CA1101C12FB51DE800C6335C /* LlamaSwift */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = CA1101C02FB51DE800C6335C /* XCRemoteSwiftPackageReference "llama.swift" */;
-			productName = LlamaSwift;
-		};
-/* End XCSwiftPackageProductDependency section */
-
 /* Begin XCConfigurationList section */
 		CA1101AB2FB51DE600C6335C /* Build configuration list for PBXProject "Tryzub Reservations" */ = {
 			isa = XCConfigurationList;
@@ -351,6 +337,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		CA1101C02FB51DE800C6335C /* XCRemoteSwiftPackageReference "llama" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mattt/llama.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9568.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		CA1101C12FB51DE800C6335C /* LlamaSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CA1101C02FB51DE800C6335C /* XCRemoteSwiftPackageReference "llama" */;
+			productName = LlamaSwift;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = CA1101A82FB51DE600C6335C /* Project object */;
 }
