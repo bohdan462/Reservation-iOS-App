@@ -1,7 +1,7 @@
 # Local Model Intelligence
 
 **Branch:** `intelligence`  
-**Status:** Host briefing (optional) + guest message drafts (template default, UI shipped)
+**Status:** Host briefing (optional) + guest message drafts (template default, local model opt-in)
 
 ## Runtime
 
@@ -12,8 +12,8 @@
 | Ollama | **Not used** — no Ollama client or endpoint in this app |
 | Cloud LLM | **Not used** — no OpenAI/Anthropic or other remote inference |
 | Host briefing | Optional, staff-gated (`useEnhancedBriefing`, `useLocalModelOnHostBoard`) |
-| Guest message drafts | Foundation + **Reservation Detail UI** shipped; **template drafts default** |
-| Guest draft local model | Shell exists; **not enabled by default** — opt-in planned (Phase 4C) |
+| Guest message drafts | **Reservation Detail UI** shipped; **template drafts default** |
+| Guest draft local model | **Opt-in** via Host Intelligence → `useLocalModelForGuestMessageDrafts` (default **off**) |
 
 ## Intelligence boundaries
 
@@ -41,8 +41,9 @@ The local model **must not**:
 - **Send Text** → existing Messages composer (`GuestTextMessagePresenter`)
 - **Copy Email / Copy Text** fallback on pasteboard
 - **No auto-send**, **no reservation mutation** from draft generation or draft send prep
-- **Template drafts** are the current default (`GuestMessageDraftService(writer: .template)`)
-- **Local model draft mode** is planned as staff opt-in later — not default today
+- **Template drafts** are the default when the setting is off or the model is unavailable
+- **Local model draft mode** — Host Intelligence → **Use local model for guest message drafts** (default off; independent of Host board briefing toggle)
+- Unavailable model, parse failure, or unsafe output → **template fallback** with optional review note; staff still sends manually
 
 ### Legacy vs new messaging
 
@@ -148,7 +149,7 @@ Mail / Messages presenters
 
 1. Staff opens reservation detail
 2. Taps **Draft confirmation** (or reminder, etc.)
-3. `GuestCommunicationCoordinator` → template draft → review sheet
+3. `GuestCommunicationCoordinator` → template or enhanced draft (per setting) → review sheet
 4. Staff reviews subject / body / SMS
 5. Staff sends via **Mail** or **Messages**, or copies to pasteboard
 6. Staff records sent status manually if needed (legacy manual-email log path unchanged)

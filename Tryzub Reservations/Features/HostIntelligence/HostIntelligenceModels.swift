@@ -374,6 +374,8 @@ struct HostIntelligenceSettings: Codable, Equatable {
     var enhancedBriefingProvider: HostBriefingProviderKind = .template
     /// When false, Host board uses template briefing even if local model is selected.
     var useLocalModelOnHostBoard: Bool = false
+    /// When true, Reservation Detail may use on-device wording for guest message drafts (staff reviews before send).
+    var useLocalModelForGuestMessageDrafts: Bool = false
     /// When true, Host board may show separated operational prompts from deterministic facts.
     var useSeparatedBriefingPrompts: Bool = false
 }

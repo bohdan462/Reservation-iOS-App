@@ -70,6 +70,12 @@ struct HostIntelligenceSettingsView: View {
           .foregroundStyle(.secondary)
       }
 
+      Toggle("Use local model for guest message drafts", isOn: binding(\.useLocalModelForGuestMessageDrafts))
+
+      Text("Drafts are reviewed by staff before sending. Template fallback is always used if the model is unavailable.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
       Toggle("Show separated operational prompts", isOn: binding(\.useSeparatedBriefingPrompts))
 
       Text("Adds a Review Intelligence view that breaks deterministic Host Intelligence facts into Reservation Attention, Table Plan, Guest Notes, Timing, and Booking prompts. This does not use the local model.")

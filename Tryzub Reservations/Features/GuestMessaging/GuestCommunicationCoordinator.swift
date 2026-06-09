@@ -22,14 +22,14 @@ final class GuestCommunicationCoordinator: ObservableObject {
     @Published private(set) var isDrafting = false
     @Published private(set) var lastErrorMessage: String?
 
-    private let draftService: GuestMessageDraftService
+    var useLocalModelProvider: () -> Bool
 
-    init(draftService: GuestMessageDraftService) {
-        self.draftService = draftService
+    init(useLocalModelProvider: @escaping () -> Bool = { false }) {
+        self.useLocalModelProvider = useLocalModelProvider
     }
 
     static func templateOnly() -> GuestCommunicationCoordinator {
-        GuestCommunicationCoordinator(draftService: GuestMessageDraftService(writer: .template))
+        GuestCommunicationCoordinator(useLocalModelProvider: { false })
     }
 
     func clearStaffError() {
@@ -49,6 +49,9 @@ final class GuestCommunicationCoordinator: ObservableObject {
         lastErrorMessage = nil
         defer { isDrafting = false }
 
+        let draftService = GuestMessageDraftServiceFactory.make(
+            useLocalModel: useLocalModelProvider()
+        )
         let draft = await draftService.draft(
             kind: kind,
             reservation: reservation,

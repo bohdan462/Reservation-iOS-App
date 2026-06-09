@@ -157,6 +157,7 @@ private struct ReservationsTabShell: View {
 
     @StateObject private var restaurantSettingsStore: RestaurantSettingsStore
     @StateObject private var hostTableConfigStore: HostTableConfigStore
+    @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
     @StateObject private var guestIntelligenceStore: GuestIntelligenceStore
     @StateObject private var businessIntelligenceStore: BusinessIntelligenceStore
     @StateObject private var intelligenceSystemStatusStore: IntelligenceSystemStatusStore
@@ -256,6 +257,7 @@ private struct ReservationsTabShell: View {
         }
         .environmentObject(restaurantSettingsStore)
         .environmentObject(hostTableConfigStore)
+        .environmentObject(hostIntelligenceSettingsStore)
         .environmentObject(guestIntelligenceStore)
         .environmentObject(businessIntelligenceStore)
         .environmentObject(intelligenceSystemStatusStore)
@@ -1165,7 +1167,7 @@ private struct ReservationMoreView: View {
     @EnvironmentObject private var settingsStore: RestaurantSettingsStore
 
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
-    @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
+    @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
     @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var showManualCreate = false
     @State private var showFailedImports = false

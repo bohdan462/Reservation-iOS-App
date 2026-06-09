@@ -343,6 +343,7 @@ struct ReservationDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hostIntentStore: HostReservationOpenIntentStore
+    @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
     // Guest Insights reads cached reservations only; no network or mutation is involved.
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate),
@@ -384,6 +385,11 @@ struct ReservationDetailView: View {
             .background(Color(.systemGroupedBackground))
         }
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            guestCommunicationCoordinator.useLocalModelProvider = {
+                hostIntelligenceSettingsStore.settings.useLocalModelForGuestMessageDrafts
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Text(reservation.guestName)
@@ -1045,7 +1051,7 @@ struct ReservationDetailView: View {
         }
     }
 
-    // Guest message drafts: template-only. Coordinator prepares content; view owns sheet presentation.
+    // Guest message drafts: template default; local model when Host Intelligence setting is on.
     private func generateGuestMessageDraft(kind: GuestMessageDraftKind) {
         Task {
             guestCommunicationCoordinator.clearStaffError()
@@ -1806,5 +1812,6 @@ private extension String {
     .environmentObject(HiddenReservationsStore())
     .environmentObject(HostReservationOpenIntentStore())
     .environmentObject(HostTableConfigStore())
+    .environmentObject(HostIntelligenceSettingsStore())
 }
 #endif
