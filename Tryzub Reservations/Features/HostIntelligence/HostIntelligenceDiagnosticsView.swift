@@ -420,15 +420,22 @@ struct HostIntelligenceDiagnosticsView: View {
       fallbackText: fallback
     )
     let localModelReadiness = HostLocalModelReadinessProvider.currentReadiness()
-    let localModelShellResult = LocalModelHostBriefingWriter.shellResult(
+    let promptPreview = HostLLMPacketPromptBuilder.buildDebugPromptPreview(from: packet)
+    let modelPresence = HostLocalModelFileLocator.modelPresenceDescription()
+    let modelSource = HostLocalModelFileLocator.modelSourceLabel()
+    let localModelMissingPreview = LocalModelHostBriefingWriter.previewFallbackResult(
       fallbackText: fallback,
       packet: packet
     )
-    let localModelValidation = HostBriefingWriterValidator.validationResult(
-      localModelShellResult.text,
-      packet: packet,
-      fallbackText: fallback
-    )
+    let modelLookup = HostLocalModelFileLocator.modelLookupPathDescription()
+    let localModelExpectedBehavior: String = {
+      switch localModelReadiness.status {
+      case .ready:
+        return "Will attempt local inference"
+      case .modelMissing, .runtimeMissing, .unavailable:
+        return "Will use template fallback"
+      }
+    }()
 
     Section("Briefing Writer") {
       LabeledContent("Enhanced briefing") {
@@ -450,13 +457,22 @@ struct HostIntelligenceDiagnosticsView: View {
 
       Text("Local model readiness")
         .font(.subheadline.weight(.semibold))
-      LabeledContent("Status") {
+      LabeledContent("Current readiness") {
         Text(localModelReadiness.status.rawValue)
+      }
+      LabeledContent("Adapter shell present") {
+        Text(HostLocalModelRuntimeFactory.isAdapterShellPresent ? "Yes" : "No")
+      }
+      LabeledContent("Inference runtime linked") {
+        Text(HostLocalModelRuntimeFactory.isRuntimeIntegrated ? "Yes" : "No")
       }
       LabeledContent("Title") {
         Text(localModelReadiness.title)
       }
       Text(localModelReadiness.detail)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      Text("Model lookup path: \(modelLookup)")
         .font(.caption)
         .foregroundStyle(.secondary)
       if let runtimeName = localModelReadiness.runtimeName {
@@ -465,7 +481,7 @@ struct HostIntelligenceDiagnosticsView: View {
         }
       } else {
         LabeledContent("Runtime") {
-          Text("Not installed")
+          Text("Not linked")
         }
       }
       if let modelName = localModelReadiness.modelName {
@@ -477,11 +493,24 @@ struct HostIntelligenceDiagnosticsView: View {
           Text("Not installed")
         }
       }
+      LabeledContent("Model presence") {
+        Text(modelSource)
+      }
+      Text(modelPresence)
+        .font(.caption)
+        .foregroundStyle(.secondary)
       if settings.enhancedBriefingProvider == .localModel {
-        Text("Expected fallback: \(LocalModelHostBriefingWriter.runtimeMissingReason)")
+        Text(localModelExpectedBehavior)
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
+
+      Text("Local model prompt preview")
+        .font(.subheadline.weight(.semibold))
+      Text(promptPreview)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .textSelection(.enabled)
 
       Text("Template briefing")
         .font(.subheadline.weight(.semibold))
@@ -565,23 +594,15 @@ struct HostIntelligenceDiagnosticsView: View {
           .foregroundStyle(.tertiary)
       }
 
-      Text("Local model shell")
+      Text("Local model fallback preview")
         .font(.subheadline.weight(.semibold))
-      Text(localModelShellResult.text)
+      Text(localModelMissingPreview.text)
         .font(.caption)
         .foregroundStyle(.secondary)
-      LabeledContent("Shell source") {
-        Text(localModelShellResult.source.displayName)
+      LabeledContent("Preview source") {
+        Text(localModelMissingPreview.source.displayName)
       }
-      if let reason = localModelShellResult.failedReason {
-        Text(reason)
-          .font(.caption2)
-          .foregroundStyle(.tertiary)
-      }
-      LabeledContent("Shell validation") {
-        Text(localModelValidation.isValid ? "Valid" : "Invalid")
-      }
-      if let reason = localModelValidation.reason {
+      if let reason = localModelMissingPreview.failedReason {
         Text(reason)
           .font(.caption2)
           .foregroundStyle(.tertiary)

@@ -71,14 +71,42 @@ struct HostIntelligenceSettingsView: View {
   @ViewBuilder
   private var localModelReadinessNotice: some View {
     let readiness = HostLocalModelReadinessProvider.currentReadiness()
+    let modelPresence = HostLocalModelFileLocator.modelPresenceDescription()
+    let modelLookup = HostLocalModelFileLocator.modelLookupPathDescription()
 
     VStack(alignment: .leading, spacing: 6) {
+      LabeledContent("Current readiness") {
+        Text(readiness.status.rawValue)
+      }
+      LabeledContent("Adapter shell present") {
+        Text(HostLocalModelRuntimeFactory.isAdapterShellPresent ? "Yes" : "No")
+      }
+      LabeledContent("Inference runtime linked") {
+        Text(HostLocalModelRuntimeFactory.isRuntimeIntegrated ? "Yes" : "No")
+      }
       Text(readiness.title)
         .font(.subheadline.weight(.semibold))
       Text(readiness.detail)
         .font(.caption)
         .foregroundStyle(.secondary)
-      Text("Local model is not installed in this build. The app will use template fallback.")
+      Text(modelPresence)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      Text("Model lookup path: \(modelLookup)")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+      if readiness.status == .runtimeMissing {
+        Text("Local model runtime is not installed. The app will use template fallback.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else if readiness.status == .modelMissing {
+        Text("No model file is bundled in this build yet. The app will use template fallback.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
+      Text("The model rewrites approved Host Intelligence facts only. It does not make decisions.")
         .font(.caption)
         .foregroundStyle(.secondary)
     }

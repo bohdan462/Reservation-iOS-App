@@ -20,12 +20,14 @@ struct HostBriefingWriterResult: Equatable {
 enum HostBriefingWriterSource: String, Equatable {
   case template
   case localPlaceholder
+  case localModel
   case failedFallback
 
   var displayName: String {
     switch self {
     case .template: return "Template"
     case .localPlaceholder: return "Local placeholder"
+    case .localModel: return "Local model"
     case .failedFallback: return "Fallback"
     }
   }
@@ -123,30 +125,118 @@ struct LocalPlaceholderHostBriefingWriter: HostBriefingWriter {
   }
 }
 
-// MARK: - Local Model Writer Shell
+// MARK: - Local Model Writer
 
-/// Intentional shell for a future on-device provider. No model runtime is bundled yet.
-/// A real implementation must consume `HostLLMPacket` only, validate output, and fall back
-/// to the template briefing. It must never receive raw reservation records or unsanitized notes.
+/// On-device llama.cpp briefing writer. Consumes `HostLLMPacket` only via prompt builder.
+/// A real inference backend must validate output and fall back to the template briefing.
+/// It must never receive raw reservation records or unsanitized notes.
 struct LocalModelHostBriefingWriter: HostBriefingWriter {
-  static let runtimeMissingReason = "Local model runtime is not installed."
 
   func writeBriefing(
     packet: HostLLMPacket,
     fallbackText: String
   ) async -> HostBriefingWriterResult {
-    Self.shellResult(fallbackText: fallbackText, packet: packet)
+    let readiness = HostLocalModelReadinessProvider.currentReadiness()
+
+    switch readiness.status {
+    case .runtimeMissing:
+      return Self.fallbackResult(
+        fallbackText: fallbackText,
+        reason: HostLocalModelRuntimeError.runtimeUnavailable.errorDescription
+          ?? "Local model runtime is not installed."
+      )
+    case .modelMissing:
+      return Self.fallbackResult(
+        fallbackText: fallbackText,
+        reason: HostLocalModelRuntimeError.modelMissing.errorDescription
+          ?? "Local briefing model file is not installed."
+      )
+    case .unavailable:
+      return Self.fallbackResult(
+        fallbackText: fallbackText,
+        reason: HostLocalModelReadiness.unavailable.detail
+      )
+    case .ready:
+      break
+    }
+
+    let prompt = HostLLMPacketPromptBuilder.buildPrompt(from: packet)
+    let runtime = HostLocalModelRuntimeFactory.makeRuntime()
+
+    do {
+      let generated = try await runtime.generateBriefing(prompt: prompt)
+      let validation = HostBriefingWriterValidator.validationResult(
+        generated,
+        packet: packet,
+        fallbackText: fallbackText
+      )
+
+      if validation.isValid {
+        return HostBriefingWriterResult(
+          text: generated,
+          source: .localModel,
+          failedReason: nil
+        )
+      }
+
+      return Self.fallbackResult(
+        fallbackText: fallbackText,
+        reason: validation.reason ?? "Briefing validation failed."
+      )
+    } catch let error as HostLocalModelRuntimeError {
+      return Self.fallbackResult(
+        fallbackText: fallbackText,
+        reason: error.errorDescription ?? "Local model failed."
+      )
+    } catch {
+      return Self.fallbackResult(
+        fallbackText: fallbackText,
+        reason: error.localizedDescription
+      )
+    }
   }
 
-  static func shellResult(
+  static func previewFallbackResult(
     fallbackText: String,
     packet: HostLLMPacket
   ) -> HostBriefingWriterResult {
     _ = packet
-    return HostBriefingWriterResult(
+    let readiness = HostLocalModelReadinessProvider.currentReadiness()
+
+    switch readiness.status {
+    case .runtimeMissing:
+      return fallbackResult(
+        fallbackText: fallbackText,
+        reason: HostLocalModelRuntimeError.runtimeUnavailable.errorDescription
+          ?? "Local model runtime is not installed."
+      )
+    case .modelMissing:
+      return fallbackResult(
+        fallbackText: fallbackText,
+        reason: HostLocalModelRuntimeError.modelMissing.errorDescription
+          ?? "Local briefing model file is not installed."
+      )
+    case .unavailable:
+      return fallbackResult(
+        fallbackText: fallbackText,
+        reason: HostLocalModelReadiness.unavailable.detail
+      )
+    case .ready:
+      return fallbackResult(
+        fallbackText: fallbackText,
+        reason: "Preview only — inference not run from diagnostics."
+      )
+    }
+  }
+
+  private static func fallbackResult(
+    fallbackText: String,
+    reason: String
+  ) -> HostBriefingWriterResult {
+    HostBriefingWriterResult(
       text: fallbackText,
       source: .failedFallback,
-      failedReason: runtimeMissingReason
+      failedReason: reason
     )
   }
 }

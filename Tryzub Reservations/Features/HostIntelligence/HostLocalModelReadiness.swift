@@ -2,7 +2,7 @@
 //  HostLocalModelReadiness.swift
 //  Tryzub Reservations
 //
-//  Readiness state for a future on-device briefing model. No runtime is bundled yet.
+//  Readiness state for on-device briefing model. Lightweight — no model loading.
 //
 
 import Foundation
@@ -59,6 +59,39 @@ extension HostLocalModelReadiness {
 
 enum HostLocalModelReadinessProvider {
   static func currentReadiness() -> HostLocalModelReadiness {
-    .runtimeMissing
+    guard HostLocalModelRuntimeFactory.isRuntimeIntegrated else {
+      let adapterNote = HostLocalModelRuntimeFactory.isAdapterShellPresent
+        ? "Adapter shell is present, but inference runtime is not linked."
+        : "No local model adapter is present."
+      return HostLocalModelReadiness(
+        status: .runtimeMissing,
+        title: "Local model runtime missing",
+        detail: "\(adapterNote) \(HostLocalModelFileLocator.modelLookupPathDescription())",
+        modelName: HostLocalModelFileLocator.expectedModelFileName,
+        runtimeName: nil
+      )
+    }
+
+    let runtimeName = HostLocalModelRuntimeFactory.integratedRuntimeName
+    let presence = HostLocalModelFileLocator.modelPresenceDescription()
+    let source = HostLocalModelFileLocator.modelSourceLabel()
+
+    guard HostLocalModelFileLocator.firstAvailableModelURL() != nil else {
+      return HostLocalModelReadiness(
+        status: .modelMissing,
+        title: "Local model file missing",
+        detail: "\(presence) Expected file: \(HostLocalModelFileLocator.expectedModelFileName).",
+        modelName: HostLocalModelFileLocator.expectedModelFileName,
+        runtimeName: runtimeName
+      )
+    }
+
+    return HostLocalModelReadiness(
+      status: .ready,
+      title: "Local model ready",
+      detail: "\(presence) Source: \(source).",
+      modelName: HostLocalModelFileLocator.expectedModelFileName,
+      runtimeName: runtimeName
+    )
   }
 }

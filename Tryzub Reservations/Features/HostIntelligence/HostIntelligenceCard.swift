@@ -169,6 +169,8 @@ struct HostIntelligenceCard: View {
       return nil
     case .localPlaceholder:
       return "Enhanced briefing"
+    case .localModel:
+      return "Local model briefing"
     case .failedFallback:
       return "Using template fallback"
     }
