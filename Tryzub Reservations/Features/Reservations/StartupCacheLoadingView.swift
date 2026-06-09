@@ -12,51 +12,76 @@ struct StartupCacheLoadingView: View {
   let errorMessage: String?
   let onRetry: () -> Void
 
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var showsDelayedMessage = false
+  @State private var pulse = false
 
   var body: some View {
-    VStack(spacing: 20) {
-      Spacer()
+    ZStack {
+      StartupLoadingBackdrop()
 
-      VStack(spacing: 8) {
-        Text("Tryzub Reservations")
-          .font(.title2.weight(.semibold))
+      VStack(spacing: 22) {
+        Spacer()
 
-        Text(title)
-          .font(.headline)
+        VStack(spacing: 14) {
+          ZStack {
+            if !reduceMotion {
+              Circle()
+                .stroke(Color.accentColor.opacity(0.22), lineWidth: 1)
+                .frame(width: 54, height: 54)
+                .scaleEffect(pulse ? 1.18 : 0.92)
+                .opacity(pulse ? 0 : 0.55)
+            }
 
-        Text(subtitle)
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
-          .padding(.horizontal, 24)
-      }
+            HostPulseIcon(isActive: true, size: 14)
+          }
+          .frame(height: 56)
 
-      if let errorMessage {
-        Label(errorMessage, systemImage: "exclamationmark.triangle")
-          .font(.footnote.weight(.medium))
-          .foregroundStyle(.red)
-          .multilineTextAlignment(.center)
-          .padding(.horizontal, 24)
+          VStack(spacing: 6) {
+            Text("Tryzub")
+              .font(.title2.weight(.semibold))
+              .foregroundStyle(.primary.opacity(0.9))
 
-        Button("Retry", action: onRetry)
-          .buttonStyle(.borderedProminent)
-      } else {
-        ProgressView()
-          .controlSize(.regular)
-          .padding(.top, 4)
-
-        if showsDelayedMessage {
-          Text("Still connecting…")
-            .font(.caption)
-            .foregroundStyle(.tertiary)
+            Text(title)
+              .font(.subheadline.weight(.medium))
+              .foregroundStyle(.secondary)
+          }
         }
-      }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 24)
+        .startupGlassCard()
 
-      Spacer()
+        if let errorMessage {
+          Label(errorMessage, systemImage: "exclamationmark.triangle")
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(TryzubColors.danger)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 24)
+
+          Button("Retry", action: onRetry)
+            .buttonStyle(.borderedProminent)
+        } else {
+          ProgressView()
+            .controlSize(.regular)
+
+          if showsDelayedMessage {
+            Text("Still connecting…")
+              .font(.caption)
+              .foregroundStyle(.tertiary)
+          }
+        }
+
+        Spacer()
+      }
+      .padding(.horizontal, 24)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color(.systemGroupedBackground))
+    .onAppear {
+      guard !reduceMotion else { return }
+      withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+        pulse = true
+      }
+    }
     .task {
       guard errorMessage == nil, mode == .loadingFromNetwork else { return }
       try? await Task.sleep(for: .seconds(3))
@@ -68,22 +93,51 @@ struct StartupCacheLoadingView: View {
   private var title: String {
     switch mode {
     case .checkingSavedData:
-      return "Loading saved data"
+      return "Opening saved schedule"
     case .loadingSavedReservations:
-      return "Loading saved reservations"
-    case .loadingFromNetwork:
       return "Loading reservations"
+    case .loadingFromNetwork:
+      return "Syncing bookings"
     }
   }
+}
 
-  private var subtitle: String {
-    switch mode {
-    case .checkingSavedData:
-      return "Preparing the latest saved schedule."
-    case .loadingSavedReservations:
-      return "Opening the latest saved schedule."
-    case .loadingFromNetwork:
-      return "Checking the latest bookings."
+private struct StartupLoadingBackdrop: View {
+  var body: some View {
+    ZStack {
+      LinearGradient(
+        colors: [
+          Color(.systemGroupedBackground),
+          Color(.systemGroupedBackground).opacity(0.92),
+          Color.accentColor.opacity(0.06)
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+      )
+
+      Circle()
+        .fill(Color.accentColor.opacity(0.12))
+        .frame(width: 220, height: 220)
+        .blur(radius: 60)
+        .offset(y: -180)
+    }
+    .ignoresSafeArea()
+  }
+}
+
+private extension View {
+  @ViewBuilder
+  func startupGlassCard() -> some View {
+    if #available(iOS 26.0, *) {
+      self
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+    } else {
+      self
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+          RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+        }
     }
   }
 }

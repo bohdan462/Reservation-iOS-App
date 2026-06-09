@@ -773,6 +773,8 @@ struct ReservationChoiceChip: View {
             RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
                 .stroke(Color.primary.opacity(isSelected ? 0 : 0.10), lineWidth: 1)
         }
+        .scaleEffect(isSelected ? 1 : 0.96)
+        .animation(.snappy(duration: 0.32), value: isSelected)
     }
 }
 
@@ -812,10 +814,43 @@ struct ReservationServiceDateSelector: View {
     @Binding var selectedDate: Date
     var quickDayCount = 7
 
-    private var quickDates: [Date] {
-        (0..<quickDayCount).compactMap {
-            Calendar.current.date(byAdding: .day, value: $0, to: Date())
+    private var calendar: Calendar { .current }
+
+    private var selectedDateKey: String {
+        selectedDate.reservationDateString()
+    }
+
+    /// Keeps the selected service day visible — extends the strip when calendar picks beyond the default week.
+    private var displayDates: [Date] {
+        let today = calendar.startOfDay(for: Date())
+        let selected = calendar.startOfDay(for: selectedDate)
+        let defaultStrip = (0..<quickDayCount).compactMap {
+            calendar.date(byAdding: .day, value: $0, to: today)
         }
+
+        if defaultStrip.contains(where: { calendar.isDate($0, inSameDayAs: selected) }) {
+            return defaultStrip
+        }
+
+        let halfWindow = quickDayCount / 2
+        var start = calendar.date(byAdding: .day, value: -halfWindow, to: selected) ?? selected
+        if start < today {
+            start = today
+        }
+
+        var dates = (0..<quickDayCount).compactMap {
+            calendar.date(byAdding: .day, value: $0, to: start)
+        }
+
+        while !dates.contains(where: { calendar.isDate($0, inSameDayAs: selected) }) {
+            guard let last = dates.last,
+                  let next = calendar.date(byAdding: .day, value: 1, to: last) else {
+                break
+            }
+            dates.append(next)
+        }
+
+        return dates
     }
 
     var body: some View {
@@ -826,40 +861,19 @@ struct ReservationServiceDateSelector: View {
         }
     }
 
-    private var dateStrip: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 4) {
-                ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
-                    dateButton(for: date)
-                }
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    ForEach(quickDates, id: \.timeIntervalSinceReferenceDate) { date in
-                        dateButton(for: date)
-                    }
-                }
-                .padding(.vertical, 1)
-            }
-        }
+    private var displayDatesIdentity: String {
+        displayDates.map { $0.reservationDateString() }.joined(separator: "|")
     }
 
-    private func dateButton(for date: Date) -> some View {
-        Button {
-            selectedDate = date
-            ReservationHaptics.selection()
-        } label: {
-            ReservationChoiceChip(
-                title: chipTitle(for: date),
-                subtitle: chipSubtitle(for: date),
-                isSelected: Calendar.current.isDate(selectedDate, inSameDayAs: date),
-                minWidth: 56,
-                minHeight: 40,
-                fillsWidth: false
-            )
-        }
-        .buttonStyle(.plain)
+    private var dateStrip: some View {
+        ReservationServiceDateStrip(
+            displayDates: displayDates,
+            selectedDate: $selectedDate,
+            selectedDateKey: selectedDateKey,
+            displayDatesIdentity: displayDatesIdentity,
+            chipTitle: chipTitle(for:),
+            chipSubtitle: chipSubtitle(for:)
+        )
     }
 
     private func chipTitle(for date: Date) -> String {
@@ -876,6 +890,74 @@ struct ReservationServiceDateSelector: View {
         }
 
         return date.formatted(.dateTime.weekday(.abbreviated).day())
+    }
+}
+
+private struct ReservationServiceDateStrip: View {
+    let displayDates: [Date]
+    @Binding var selectedDate: Date
+    let selectedDateKey: String
+    let displayDatesIdentity: String
+    let chipTitle: (Date) -> String
+    let chipSubtitle: (Date) -> String?
+
+    private var calendar: Calendar { .current }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(displayDates, id: \.timeIntervalSinceReferenceDate) { date in
+                        dateButton(for: date)
+                            .id(date.reservationDateString())
+                    }
+                }
+                .scrollTargetLayout()
+                .padding(.vertical, 2)
+                .padding(.horizontal, 1)
+            }
+            .scrollTargetBehavior(.viewAligned)
+            .scrollBounceBehavior(.basedOnSize)
+            .onAppear {
+                scrollToSelected(using: proxy, animated: false)
+            }
+            .onChange(of: selectedDateKey) { _, _ in
+                scrollToSelected(using: proxy, animated: true)
+            }
+            .onChange(of: displayDatesIdentity) { _, _ in
+                scrollToSelected(using: proxy, animated: true)
+            }
+        }
+    }
+
+    private func scrollToSelected(using proxy: ScrollViewProxy, animated: Bool) {
+        if animated {
+            withAnimation(.snappy(duration: 0.38)) {
+                proxy.scrollTo(selectedDateKey, anchor: .center)
+            }
+        } else {
+            proxy.scrollTo(selectedDateKey, anchor: .center)
+        }
+    }
+
+    private func dateButton(for date: Date) -> some View {
+        Button {
+            guard !calendar.isDate(selectedDate, inSameDayAs: date) else { return }
+            withAnimation(.snappy(duration: 0.34)) {
+                selectedDate = date
+            }
+            ReservationHaptics.selection()
+        } label: {
+            ReservationChoiceChip(
+                title: chipTitle(date),
+                subtitle: chipSubtitle(date),
+                isSelected: calendar.isDate(selectedDate, inSameDayAs: date),
+                minWidth: 56,
+                minHeight: 40,
+                fillsWidth: false
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 

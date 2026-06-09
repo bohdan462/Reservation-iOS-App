@@ -43,24 +43,35 @@ struct Tryzub_ReservationsApp: App {
 private struct AppRootView: View {
     @ObservedObject var credentialStore: AppCredentialStore
     @ObservedObject var roleStore: AppRoleStore
+    @StateObject private var productIntroStore = TryzubProductIntroStore()
 
     var body: some View {
         Group {
-            if let credentials = credentialStore.credentials,
-               let role = roleStore.selectedRole {
+            if !productIntroStore.hasCompletedIntro {
+                TryzubProductIntroView {
+                    withAnimation(.easeOut(duration: 0.45)) {
+                        productIntroStore.complete()
+                    }
+                }
+                .transition(.opacity)
+            } else if let credentials = credentialStore.credentials,
+                      let role = roleStore.selectedRole {
                 ReservationsListView(
                     environment: makeEnvironment(credentials: credentials, role: role),
                     onLogout: logout
                 )
                 .id("\(role.rawValue)-\(credentials.username)")
                 .environmentObject(roleStore)
+                .transition(.opacity)
             } else {
                 AppLoginView(
                     credentialStore: credentialStore,
                     roleStore: roleStore
                 )
+                .transition(.opacity)
             }
         }
+        .animation(.easeInOut(duration: 0.45), value: productIntroStore.hasCompletedIntro)
         .onChange(of: credentialStore.credentials) { _, credentials in
             if credentials == nil {
                 roleStore.clear()
@@ -159,20 +170,14 @@ private struct AppLoginView: View {
                                     ProgressView()
                                 }
                                 Text(isSigningIn ? "Signing In" : "Sign In")
-                                    .fontWeight(.semibold)
+                                    .font(.subheadline.weight(.semibold))
                             }
-                            .frame(maxWidth: .infinity, minHeight: 44)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
+                        .buttonStyle(TryzubGlassBarButtonStyle(isEnabled: canSubmit))
                         .disabled(!canSubmit)
                     }
                     .padding(18)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                    }
+                    .tryzubMinimalSurface()
                 }
                 .frame(maxWidth: 430)
                 .padding(.horizontal, 22)
@@ -259,13 +264,7 @@ private enum LoginValidationError: Error {
 
 private extension View {
     func tryzubLoginFieldStyle() -> some View {
-        padding(.horizontal, 13)
-            .frame(minHeight: 48)
-            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-            }
+        tryzubLoginFieldChrome()
     }
 }
 

@@ -103,10 +103,12 @@ struct HostIntelligenceCard: View {
   private var cardTitleRow: some View {
     HStack(spacing: 8) {
       if staffFacingPresentation {
-        HostPulseIcon(isActive: pulseIsActive, size: 18)
+        HostPulseIcon(isActive: pulseIsActive, size: 11)
+      } else {
+        Text("Host Intelligence")
+          .font(.headline)
       }
-      Text(staffFacingPresentation ? "Host pulse" : "Host Intelligence")
-        .font(.headline)
+      Spacer(minLength: 0)
     }
   }
 
@@ -240,15 +242,8 @@ struct HostIntelligenceCard: View {
   @ViewBuilder
   private var reviewIntelligenceButton: some View {
     if showOperationalReview, onReviewTapped != nil {
-      Button {
+      Button(staffFacingPresentation ? "Review details" : "Review Intelligence") {
         onReviewTapped?()
-      } label: {
-        HStack(spacing: 6) {
-          if staffFacingPresentation {
-            HostPulseIcon(isActive: pulseIsActive, size: 14)
-          }
-          Text(staffFacingPresentation ? "Review details" : "Review Intelligence")
-        }
       }
       .font(.caption.weight(.semibold))
     }

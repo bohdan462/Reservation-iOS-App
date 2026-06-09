@@ -921,24 +921,23 @@ private struct HostBoardSummaryCard: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text("Arrival density")
-                        .font(.caption2.weight(.semibold))
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(TryzubColors.mutedText)
 
                     Spacer(minLength: 8)
 
-                    HStack(spacing: 10) {
-                        timelineLegend(label: "Peak", value: peakTimeText)
-                        timelineLegend(label: "Next", value: nextReservationText)
-                    }
+                    timelineLegend(label: "Peak", value: peakTimeText)
+
+                    timelineLegend(label: "Next", value: nextReservationText)
                 }
 
                 ReservationDensityWaveChart(
                     points: densityPoints,
                     highlightBucketStart: highlightBucketStart,
-                    height: 68
+                    height: 92
                 )
             }
         }
@@ -956,6 +955,8 @@ private struct HostBoardSummaryCard: View {
                 .font(.system(size: 22, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(stat.value == 0 ? TryzubColors.mutedText : TryzubColors.primaryText)
+                .contentTransition(.numericText())
+                .animation(.snappy(duration: 0.35), value: stat.value)
                 .lineLimit(1)
             Text(stat.label)
                 .font(.caption2.weight(.medium))
@@ -1223,18 +1224,25 @@ private struct HomeServiceHeader: View {
 //    }
 
     private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(ReservationUIStyle.serviceTitleColor)
                 .lineLimit(1)
 
-            HStack(spacing: 7) {
+            HStack(spacing: 8) {
                 Text(serviceDateText)
                     .lineLimit(1)
+                    .contentTransition(.interpolate)
+                    .animation(.snappy(duration: 0.35), value: selectedDate.reservationDateString())
+
+                Text("·")
+                    .foregroundStyle(.quaternary)
 
                 Text(syncText)
                     .lineLimit(1)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.25), value: syncText)
 
                 TryzubStaffStatusIndicator(
                     style: controller.staffStatusDotStyle,
@@ -1244,7 +1252,7 @@ private struct HomeServiceHeader: View {
             .font(.caption.weight(.medium))
             .foregroundStyle(.secondary)
         }
-        .frame(minWidth: 220, alignment: .leading)
+        .frame(minWidth: 168, alignment: .leading)
     }
 
     private var actionBar: some View {

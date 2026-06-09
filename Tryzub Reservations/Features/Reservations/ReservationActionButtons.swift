@@ -3,6 +3,7 @@
 //  Tryzub Reservations
 //
 
+import SwiftData
 import SwiftUI
 
 // MARK: - Staff Host Actions
@@ -755,8 +756,12 @@ struct TableAssignmentSheet: View {
     let onSave: (String) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @AppStorage(ReservationTableOptionsStore.storageKey) private var tableOptionsRawValue = ReservationTableOptionsStore.defaultRawValue
+    @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
+    @StateObject private var hostTableConfigStore = HostTableConfigStore()
+    @State private var assignmentContext: HostTableAssignmentContext?
     @State private var tableName: String
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -775,6 +780,10 @@ struct TableAssignmentSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     header
+
+                    HostTableAssignmentGuidanceView(context: assignmentContext) { proposal in
+                        tableName = proposal
+                    }
 
                     if let errorMessage {
                         Label(errorMessage, systemImage: "exclamationmark.triangle")
@@ -861,6 +870,9 @@ struct TableAssignmentSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .onAppear {
+            refreshAssignmentContext()
+        }
     }
 
     private var header: some View {
@@ -887,6 +899,32 @@ struct TableAssignmentSheet: View {
 
     private var tableSuggestions: [String] {
         ReservationTableOptionsStore.options(from: tableOptionsRawValue)
+    }
+
+    private func refreshAssignmentContext() {
+        let dateKey = reservation.reservationDate
+        let blockedValues = Set(
+            (controller.cachedRestaurantBlockedSlots(date: dateKey)?.data ?? [])
+                .map { $0.slotTime.count >= 5 ? String($0.slotTime.prefix(5)) : $0.slotTime }
+        )
+
+        assignmentContext = HostTableAssignmentContextSupport.build(
+            reservation: reservation,
+            dayReservations: fetchDayReservations(dateKey: dateKey),
+            blockedSlotValues: blockedValues,
+            tableConfigs: hostTableConfigStore.tables,
+            settings: hostIntelligenceSettingsStore.settings,
+            localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
+            manualTableSuggestions: tableSuggestions
+        )
+    }
+
+    private func fetchDayReservations(dateKey: String) -> [ReservationRecord] {
+        let predicate = #Predicate<ReservationRecord> { record in
+            record.reservationDate == dateKey && record.isHidden == false
+        }
+        let descriptor = FetchDescriptor<ReservationRecord>(predicate: predicate)
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     // Intent: Staff assigns a table through the caller's PATCH handler.

@@ -83,6 +83,10 @@ enum ReservationDensityCalculator {
     return floorToBucketStart(serviceDate, calendar: calendar)
   }
 
+  static func bucketStart(for date: Date, calendar: Calendar = .current) -> Date {
+    floorToBucketStart(date, calendar: calendar)
+  }
+
   // MARK: - Private
 
   private static func resolveBucketRange(
@@ -148,14 +152,37 @@ enum ReservationDensityCalculator {
   }
 
   private static func bucketLabel(for date: Date, calendar: Calendar) -> String {
-    ReservationFormatters.shortTime.string(from: date)
+    compactAxisLabel(for: date, calendar: calendar)
+  }
+
+  static func compactAxisLabel(for date: Date, calendar: Calendar) -> String {
+    let hour = calendar.component(.hour, from: date)
+    let minute = calendar.component(.minute, from: date)
+    let adjustedHour = hour % 12 == 0 ? 12 : hour % 12
+    if minute == 0 {
+      return "\(adjustedHour)"
+    }
+    return String(format: "%d:%02d", adjustedHour, minute)
   }
 }
 
 struct ReservationDensityWaveChart: View {
   let points: [ReservationDensityPoint]
   var highlightBucketStart: Date?
-  var height: CGFloat = 68
+  var height: CGFloat = 88
+
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var revealProgress: CGFloat = 0
+  @State private var peakPulse = false
+  @State private var gridOpacity: Double = 0.35
+
+  private let leftGutter: CGFloat = 18
+  private let bottomGutter: CGFloat = 14
+  private let topGutter: CGFloat = 2
+
+  private var chartSeriesKey: String {
+    points.map { "\($0.id):\($0.guestCount)" }.joined(separator: "|")
+  }
 
   private var hasPressure: Bool {
     points.contains { $0.guestCount > 0 }
@@ -163,6 +190,24 @@ struct ReservationDensityWaveChart: View {
 
   private var maxGuests: Int {
     max(points.map(\.guestCount).max() ?? 0, 1)
+  }
+
+  private var yTicks: [Int] {
+    Array(0...maxGuests)
+  }
+
+  private var xLabelIndices: [Int] {
+    guard !points.isEmpty else { return [] }
+    let count = points.count
+    let step: Int
+    if count <= 17 {
+      step = 1
+    } else if count <= 33 {
+      step = 2
+    } else {
+      step = 4
+    }
+    return stride(from: 0, to: count, by: step).map { $0 }
   }
 
   var body: some View {
@@ -177,115 +222,278 @@ struct ReservationDensityWaveChart: View {
       }
       .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
     } else {
-      VStack(alignment: .leading, spacing: 6) {
-        chartBody
-        axisLabels
-        Text("Guest density by 15-minute arrival window")
+      VStack(alignment: .leading, spacing: 4) {
+        chartWithAxes
+          .onAppear { playChartEntrance() }
+          .onChange(of: chartSeriesKey) { _, _ in playChartEntrance() }
+        Text("Guests per 15-minute arrival window")
           .font(.caption2)
           .foregroundStyle(TryzubColors.mutedText)
+          .opacity(0.35 + revealProgress * 0.65)
       }
     }
+  }
+
+  private func playChartEntrance() {
+    peakPulse = false
+    if reduceMotion {
+      revealProgress = 1
+      gridOpacity = 1
+      return
+    }
+
+    revealProgress = 0
+    gridOpacity = 0.35
+    withAnimation(.easeOut(duration: 0.95)) {
+      revealProgress = 1
+      gridOpacity = 1
+    }
+    withAnimation(.easeInOut(duration: 1.55).repeatForever(autoreverses: true)) {
+      peakPulse = true
+    }
+  }
+
+  private var chartWithAxes: some View {
+    HStack(alignment: .top, spacing: 4) {
+      yAxisLabels
+      VStack(spacing: 2) {
+        chartBody
+        xAxisLabels
+      }
+    }
+  }
+
+  private var yAxisLabels: some View {
+    let plotHeight = height.tryzubFiniteNonNegativeLayoutValue - bottomGutter - topGutter
+    return ZStack(alignment: .topLeading) {
+      ForEach(yTicks.reversed(), id: \.self) { tick in
+        Text("\(tick)")
+          .font(.system(size: 8, weight: .medium, design: .rounded))
+          .monospacedDigit()
+          .foregroundStyle(TryzubColors.mutedText.opacity(0.35 + revealProgress * 0.5))
+          .offset(y: yOffset(for: tick, plotHeight: plotHeight))
+      }
+    }
+    .frame(width: leftGutter - 2, height: height.tryzubFiniteNonNegativeLayoutValue, alignment: .topLeading)
+  }
+
+  private func yOffset(for tick: Int, plotHeight: CGFloat) -> CGFloat {
+    let fraction = CGFloat.tryzubSafeRatio(
+      numerator: CGFloat(maxGuests - tick),
+      denominator: CGFloat(max(maxGuests, 1))
+    )
+    return topGutter + plotHeight * fraction - 5
+  }
+
+  private var xAxisLabels: some View {
+    GeometryReader { proxy in
+      let plotWidth = max(proxy.size.width, 1)
+      ZStack(alignment: .topLeading) {
+        ForEach(xLabelIndices, id: \.self) { index in
+          Text(points[index].bucketLabel)
+            .font(.system(size: 8, weight: .medium, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(TryzubColors.mutedText.opacity(0.9))
+            .fixedSize()
+            .position(
+              x: xPosition(for: index, plotWidth: plotWidth, bucketCount: points.count),
+              y: 6
+            )
+        }
+      }
+    }
+    .frame(height: bottomGutter)
   }
 
   private var chartBody: some View {
     let chartMaxGuests = maxGuests
-    return Canvas { context, size in
-      guard points.count >= 1, size.width > 1, size.height > 1 else { return }
+    let plotHeight = height.tryzubFiniteNonNegativeLayoutValue - bottomGutter
 
-      let safeHeight = size.height.tryzubFiniteNonNegativeLayoutValue
-      let inset = EdgeInsets(top: 8, leading: 2, bottom: 4, trailing: 2)
-      let plotWidth = max(size.width - inset.leading - inset.trailing, 1)
-      let plotHeight = max(safeHeight - inset.top - inset.bottom, 1)
+    return GeometryReader { proxy in
+      let plotWidth = max(proxy.size.width, 1)
+      let linePoints = waveLinePoints(plotWidth: plotWidth, plotHeight: plotHeight, chartMaxGuests: chartMaxGuests)
 
-      func xPosition(for index: Int) -> CGFloat {
-        guard points.count > 1 else { return inset.leading + plotWidth / 2 }
-        return inset.leading + plotWidth * CGFloat(index) / CGFloat(points.count - 1)
-      }
-
-      func yPosition(for guestCount: Int) -> CGFloat {
-        let fraction = CGFloat.tryzubSafeRatio(
-          numerator: CGFloat(guestCount),
-          denominator: CGFloat(chartMaxGuests)
-        )
-        return inset.top + plotHeight * (1 - fraction)
-      }
-
-      var linePoints: [CGPoint] = []
-      linePoints.reserveCapacity(points.count)
-      for (index, point) in points.enumerated() {
-        linePoints.append(CGPoint(x: xPosition(for: index), y: yPosition(for: point.guestCount)))
-      }
-
-      if linePoints.count == 1, let point = linePoints.first {
-        let dotRect = CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)
-        context.fill(Path(ellipseIn: dotRect), with: .color(TryzubColors.primaryControl.opacity(0.9)))
-        return
-      }
-
-      var areaPath = smoothPath(through: linePoints)
-      areaPath.addLine(to: CGPoint(x: linePoints.last?.x ?? inset.leading, y: inset.top + plotHeight))
-      areaPath.addLine(to: CGPoint(x: linePoints.first?.x ?? inset.leading, y: inset.top + plotHeight))
-      areaPath.closeSubpath()
-
-      context.fill(
-        areaPath,
-        with: .linearGradient(
-          Gradient(colors: [
-            TryzubColors.primaryControl.opacity(0.22),
-            TryzubColors.primaryControl.opacity(0.04)
-          ]),
-          startPoint: CGPoint(x: 0, y: inset.top),
-          endPoint: CGPoint(x: 0, y: inset.top + plotHeight)
-        )
-      )
-
-      let strokePath = smoothPath(through: linePoints)
-      context.stroke(
-        strokePath,
-        with: .color(TryzubColors.primaryControl.opacity(0.9)),
-        style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
-      )
-
-      for (index, point) in points.enumerated() where point.guestCount > 0 {
-        let center = CGPoint(x: xPosition(for: index), y: yPosition(for: point.guestCount))
-        let radius: CGFloat
-        let fill: Color
-        if point.isPeak {
-          radius = 4.5
-          fill = TryzubColors.primaryControl
-        } else if let highlightBucketStart, highlightBucketStart == point.bucketStart {
-          radius = 4
-          fill = TryzubColors.primaryControl.opacity(0.85)
-        } else {
-          continue
+      ZStack {
+        Canvas { context, size in
+          drawGrid(
+            context: &context,
+            size: size,
+            chartMaxGuests: chartMaxGuests,
+            gridOpacity: gridOpacity
+          )
         }
-        let dot = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
-        context.fill(Path(ellipseIn: dot), with: .color(fill))
+
+        if linePoints.count == 1, let point = linePoints.first {
+          singlePointMarker(at: point)
+            .opacity(Double(revealProgress))
+        } else {
+          Canvas { context, size in
+            drawWave(
+              context: &context,
+              size: size,
+              chartMaxGuests: chartMaxGuests,
+              revealProgress: revealProgress
+            )
+          }
+          .mask(alignment: .leading) {
+            Rectangle()
+              .frame(width: plotWidth * revealProgress)
+          }
+
+          peakMarkers(
+            plotWidth: plotWidth,
+            plotHeight: plotHeight,
+            chartMaxGuests: chartMaxGuests
+          )
+          .opacity(Double(revealProgress))
+        }
       }
     }
-    .frame(height: height.tryzubFiniteNonNegativeLayoutValue)
+    .frame(height: plotHeight)
   }
 
-  private var axisLabels: some View {
-    HStack {
-      if let first = points.first {
-        Text(first.bucketLabel)
-          .font(.system(size: 9, weight: .medium))
-          .foregroundStyle(TryzubColors.mutedText)
-      }
-      Spacer(minLength: 8)
-      if let peak = ReservationDensityCalculator.peakPoint(in: points) {
-        Text("Peak \(peak.bucketLabel)")
-          .font(.system(size: 9, weight: .semibold))
-          .foregroundStyle(TryzubColors.primaryText)
-      }
-      Spacer(minLength: 8)
-      if let last = points.last {
-        Text(last.bucketLabel)
-          .font(.system(size: 9, weight: .medium))
-          .foregroundStyle(TryzubColors.mutedText)
+  private func waveLinePoints(
+    plotWidth: CGFloat,
+    plotHeight: CGFloat,
+    chartMaxGuests: Int
+  ) -> [CGPoint] {
+    points.enumerated().map { index, point in
+      CGPoint(
+        x: plotX(index, plotWidth: plotWidth, bucketCount: points.count),
+        y: plotY(for: point.guestCount, plotHeight: plotHeight, chartMaxGuests: chartMaxGuests)
+      )
+    }
+  }
+
+  private func plotX(_ index: Int, plotWidth: CGFloat, bucketCount: Int) -> CGFloat {
+    guard bucketCount > 1 else { return plotWidth / 2 }
+    return plotWidth * CGFloat(index) / CGFloat(bucketCount - 1)
+  }
+
+  private func plotY(for guestCount: Int, plotHeight: CGFloat, chartMaxGuests: Int) -> CGFloat {
+    let fraction = CGFloat.tryzubSafeRatio(
+      numerator: CGFloat(guestCount),
+      denominator: CGFloat(chartMaxGuests)
+    )
+    return plotHeight * (1 - fraction)
+  }
+
+  private func drawGrid(
+    context: inout GraphicsContext,
+    size: CGSize,
+    chartMaxGuests: Int,
+    gridOpacity: Double
+  ) {
+    guard points.count >= 1, size.width > 1, size.height > 1 else { return }
+
+    let plotWidth = size.width
+    let plotHeight = size.height.tryzubFiniteNonNegativeLayoutValue
+    let gridColor = TryzubColors.border.opacity(0.22 * gridOpacity)
+    let majorGridColor = TryzubColors.border.opacity(0.34 * gridOpacity)
+
+    for tick in 0...chartMaxGuests {
+      let y = plotY(for: tick, plotHeight: plotHeight, chartMaxGuests: chartMaxGuests)
+      var path = Path()
+      path.move(to: CGPoint(x: 0, y: y))
+      path.addLine(to: CGPoint(x: plotWidth, y: y))
+      context.stroke(
+        path,
+        with: .color(tick == 0 ? majorGridColor : gridColor),
+        style: StrokeStyle(lineWidth: tick == 0 ? 0.75 : 0.5)
+      )
+    }
+
+    for index in points.indices {
+      let x = plotX(index, plotWidth: plotWidth, bucketCount: points.count)
+      let isHour = Calendar.current.component(.minute, from: points[index].bucketStart) == 0
+      var path = Path()
+      path.move(to: CGPoint(x: x, y: 0))
+      path.addLine(to: CGPoint(x: x, y: plotHeight))
+      context.stroke(
+        path,
+        with: .color(isHour ? majorGridColor : gridColor),
+        style: StrokeStyle(lineWidth: isHour ? 0.65 : 0.45)
+      )
+    }
+  }
+
+  private func drawWave(
+    context: inout GraphicsContext,
+    size: CGSize,
+    chartMaxGuests: Int,
+    revealProgress: CGFloat
+  ) {
+    guard points.count >= 2, size.width > 1, size.height > 1 else { return }
+
+    let plotWidth = size.width
+    let plotHeight = size.height.tryzubFiniteNonNegativeLayoutValue
+    let linePoints = waveLinePoints(
+      plotWidth: plotWidth,
+      plotHeight: plotHeight,
+      chartMaxGuests: chartMaxGuests
+    )
+
+    var areaPath = smoothPath(through: linePoints)
+    areaPath.addLine(to: CGPoint(x: linePoints.last?.x ?? 0, y: plotHeight))
+    areaPath.addLine(to: CGPoint(x: linePoints.first?.x ?? 0, y: plotHeight))
+    areaPath.closeSubpath()
+
+    let fillOpacity = 0.18 + Double(revealProgress) * 0.12
+    context.fill(
+      areaPath,
+      with: .linearGradient(
+        Gradient(colors: [
+          TryzubColors.primaryControl.opacity(fillOpacity + 0.1),
+          TryzubColors.primaryControl.opacity(0.03)
+        ]),
+        startPoint: CGPoint(x: 0, y: 0),
+        endPoint: CGPoint(x: 0, y: plotHeight)
+      )
+    )
+
+    let strokePath = smoothPath(through: linePoints)
+    context.stroke(
+      strokePath,
+      with: .color(TryzubColors.primaryControl.opacity(0.72 + Double(revealProgress) * 0.2)),
+      style: StrokeStyle(lineWidth: 1.75, lineCap: .round, lineJoin: .round)
+    )
+  }
+
+  @ViewBuilder
+  private func singlePointMarker(at point: CGPoint) -> some View {
+    Circle()
+      .fill(TryzubColors.primaryControl)
+      .frame(width: 7, height: 7)
+      .position(point)
+      .scaleEffect(peakPulse ? 1.14 : 0.94)
+  }
+
+  @ViewBuilder
+  private func peakMarkers(
+    plotWidth: CGFloat,
+    plotHeight: CGFloat,
+    chartMaxGuests: Int
+  ) -> some View {
+    ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
+      if point.guestCount > 0,
+         point.isPeak || highlightBucketStart == point.bucketStart {
+        let center = CGPoint(
+          x: plotX(index, plotWidth: plotWidth, bucketCount: points.count),
+          y: plotY(for: point.guestCount, plotHeight: plotHeight, chartMaxGuests: chartMaxGuests)
+        )
+        let isPeak = point.isPeak
+
+        Circle()
+          .fill(isPeak ? TryzubColors.primaryControl : TryzubColors.primaryControl.opacity(0.85))
+          .frame(width: isPeak ? 7 : 6, height: isPeak ? 7 : 6)
+          .scaleEffect(isPeak && peakPulse && !reduceMotion ? 1.14 : 1)
+          .position(center)
       }
     }
+  }
+
+  private func xPosition(for index: Int, plotWidth: CGFloat, bucketCount: Int) -> CGFloat {
+    plotX(index, plotWidth: plotWidth, bucketCount: bucketCount)
   }
 
   private func smoothPath(through points: [CGPoint]) -> Path {

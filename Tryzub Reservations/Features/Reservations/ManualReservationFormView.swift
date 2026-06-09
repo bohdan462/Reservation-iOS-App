@@ -354,7 +354,11 @@ private struct ReservationFormContent: View {
     var onHideReservation: (() -> Void)?
 
     @EnvironmentObject private var controller: ReservationsController
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
+    @StateObject private var hostTableConfigStore = HostTableConfigStore()
+    @State private var slotContext: HostReservationSlotContext?
     @State private var isCustomTimePresented = false
     @State private var didApplyInitialSettings = false
     @State private var dayAvailability: RestaurantDayAvailabilityDTO?
@@ -391,15 +395,21 @@ private struct ReservationFormContent: View {
         .onAppear {
             applyInitialSettingsIfNeeded()
             ensureSlotLoad()
+            refreshSlotContext()
         }
         .onChange(of: draft.reservationDate.reservationDateString()) { _, _ in
             ensureSlotLoad()
         }
         .onChange(of: loadedSlotsDateKey) { _, _ in
             syncSelectedTimeToAvailableChoicesIfNeeded()
+            refreshSlotContext()
         }
         .onChange(of: loadedAvailabilityDateKey) { _, _ in
             syncSelectedTimeToAvailableChoicesIfNeeded()
+            refreshSlotContext()
+        }
+        .onChange(of: slotContextRefreshKey) { _, _ in
+            refreshSlotContext()
         }
         .onDisappear {
             slotLoadTask?.cancel()
@@ -442,6 +452,7 @@ private struct ReservationFormContent: View {
                 }
 
                 serviceChoicesGrid
+                slotContextBanner
 
                 if mode.showsEditControls {
                     formColumnPair {
@@ -456,6 +467,7 @@ private struct ReservationFormContent: View {
                 contactCard
                 dateCard
                 serviceChoicesGrid
+                slotContextBanner
 
                 if mode.showsEditControls {
                     editDetailsCard
@@ -754,6 +766,45 @@ private struct ReservationFormContent: View {
             repeating: GridItem(.flexible(), spacing: ReservationFormLayout.chipSpacing),
             count: count
         )
+    }
+
+    private var slotContextRefreshKey: String {
+        let dateKey = draft.reservationDate.reservationDateString()
+        let timeKey = ReservationFormatters.apiTime.string(from: draft.reservationTime)
+        let excludeID = reservation?.remoteID ?? 0
+        return "\(dateKey)|\(timeKey)|\(draft.partySize)|\(excludeID)|\(loadedSlotsDateKey ?? "")|\(blockedSlotValues.sorted().joined(separator: ","))"
+    }
+
+    private var slotContextBanner: some View {
+        HostReservationSlotContextBanner(context: slotContext)
+            .animation(.snappy(duration: 0.32), value: slotContext)
+    }
+
+    private func refreshSlotContext() {
+        let dateKey = draft.reservationDate.reservationDateString()
+        let dayReservations = fetchDayReservations(dateKey: dateKey)
+        let isClosed = activeSuggestedSlots?.isOpen == false || activeDayAvailability?.isOpen == false
+
+        slotContext = HostReservationSlotContextSupport.build(
+            serviceDate: draft.reservationDate,
+            serviceTime: draft.reservationTime,
+            partySize: draft.partySize,
+            excludingReservationID: reservation?.remoteID,
+            dayReservations: dayReservations,
+            blockedSlotValues: blockedSlotValues,
+            isServiceClosed: isClosed,
+            tableConfigs: hostTableConfigStore.tables,
+            settings: hostIntelligenceSettingsStore.settings,
+            nearbyTimeChoices: timeChoices
+        )
+    }
+
+    private func fetchDayReservations(dateKey: String) -> [ReservationRecord] {
+        let predicate = #Predicate<ReservationRecord> { record in
+            record.reservationDate == dateKey && record.isHidden == false
+        }
+        var descriptor = FetchDescriptor<ReservationRecord>(predicate: predicate)
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     private var editDetailsCard: some View {
