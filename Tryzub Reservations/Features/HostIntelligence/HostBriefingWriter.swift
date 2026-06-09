@@ -18,6 +18,20 @@ struct HostBriefingWriterResult: Equatable {
 }
 
 /// In-memory diagnostics for developer tools only. Not persisted.
+enum HostLocalModelInferenceTracker {
+  nonisolated(unsafe) private static var activeRequestCount = 0
+
+  static var isActive: Bool { activeRequestCount > 0 }
+
+  static func begin() {
+    activeRequestCount += 1
+  }
+
+  static func end() {
+    activeRequestCount = max(0, activeRequestCount - 1)
+  }
+}
+
 enum HostBriefingWriterDiagnostics {
   nonisolated(unsafe) static var lastGeneratedCandidate: String?
   nonisolated(unsafe) static var lastRepairedOutput: String?
@@ -213,8 +227,8 @@ struct LocalModelHostBriefingWriter: HostBriefingWriter {
       )
     }
 
-    // Low-risk single-fact packets use deterministic template to avoid model overstatement.
-    if Self.shouldUseTemplateForLowRiskSingleFact(packet) {
+    if HostBriefingHostBoardGate.shouldUseTemplateOnlyOnHostBoard(packet: packet)
+      || Self.shouldUseTemplateForLowRiskSingleFact(packet) {
       HostBriefingWriterDiagnostics.recordLowRiskSingleFactSkip()
       return HostBriefingWriterResult(
         text: fallbackText,
@@ -224,6 +238,9 @@ struct LocalModelHostBriefingWriter: HostBriefingWriter {
     }
 
     HostBriefingWriterDiagnostics.prepareForInference()
+    HostLocalModelInferenceTracker.begin()
+    defer { HostLocalModelInferenceTracker.end() }
+
     let readiness = HostLocalModelReadinessProvider.currentReadiness()
 
     switch readiness.status {
@@ -758,20 +775,91 @@ enum HostLLMPacketDebugFormatter {
   }
 }
 
+// MARK: - Host Board Context & Gate
+
+struct HostBriefingHostBoardContext: Equatable {
+  var isStartupNetworkPassInFlight: Bool
+  var isHistoryPrefetching: Bool
+  var isLocalModelInferenceActive: Bool
+  var startupUIReleasedAt: Date?
+  var now: Date
+}
+
+enum HostBriefingHostBoardGate {
+  static let stabilizationDelay: TimeInterval = 20
+
+  enum SkipReason: String {
+    case host_board_gate_off
+    case host_board_template_only
+    case startup_in_flight
+    case history_prefetch_in_flight
+    case local_model_in_flight
+    case stabilization_delay
+    case no_meaningful_facts
+  }
+
+  static func shouldUseTemplateOnlyOnHostBoard(packet: HostLLMPacket) -> Bool {
+    packet.isHostBoardTemplateOnlyPacket
+  }
+
+  static func shouldUseLocalModelOnHostBoard(
+    settings: HostIntelligenceSettings,
+    context: HostBriefingHostBoardContext,
+    packet: HostLLMPacket
+  ) -> Bool {
+    localModelSkipReason(settings: settings, context: context, packet: packet) == nil
+  }
+
+  static func localModelSkipReason(
+    settings: HostIntelligenceSettings,
+    context: HostBriefingHostBoardContext,
+    packet: HostLLMPacket
+  ) -> SkipReason? {
+    guard settings.useEnhancedBriefing else { return .host_board_gate_off }
+    guard settings.enhancedBriefingProvider == .localModel else { return .host_board_gate_off }
+    guard settings.useLocalModelOnHostBoard else { return .host_board_gate_off }
+    guard packet.hasMeaningfulBriefingFacts else { return .no_meaningful_facts }
+    if shouldUseTemplateOnlyOnHostBoard(packet: packet) { return .host_board_template_only }
+    if context.isStartupNetworkPassInFlight { return .startup_in_flight }
+    if context.isHistoryPrefetching { return .history_prefetch_in_flight }
+    if context.isLocalModelInferenceActive { return .local_model_in_flight }
+    guard let releasedAt = context.startupUIReleasedAt else { return .stabilization_delay }
+    if context.now.timeIntervalSince(releasedAt) < stabilizationDelay {
+      return .stabilization_delay
+    }
+    return nil
+  }
+}
+
+enum HostIntelligenceDiagnostics {
+  static func skipLocalModel(reason: String) {
+    #if DEBUG
+    print("[HOST_AI] skip local model reason=\(reason)")
+    #endif
+  }
+
+  static func skipBriefing(reason: String) {
+    #if DEBUG
+    print("[HOST_AI] skip briefing reason=\(reason)")
+    #endif
+  }
+}
+
 // MARK: - Factory
 
 enum HostBriefingWriterFactory {
   static func effectiveProvider(
     requested: HostBriefingProviderKind,
     settings: HostIntelligenceSettings,
-    forHostBoard: Bool
+    forHostBoard: Bool,
+    hostBoardAllowsLocalModel: Bool = true
   ) -> HostBriefingProviderKind {
     guard settings.useEnhancedBriefing else { return .template }
 
-    if forHostBoard,
-       requested == .localModel,
-       !settings.useLocalModelOnHostBoard {
-      return .template
+    if forHostBoard, requested == .localModel {
+      if !settings.useLocalModelOnHostBoard || !hostBoardAllowsLocalModel {
+        return .template
+      }
     }
 
     return requested

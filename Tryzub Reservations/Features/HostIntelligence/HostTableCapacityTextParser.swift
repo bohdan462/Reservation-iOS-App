@@ -13,6 +13,33 @@ struct HostTableCapacityParseResult: Equatable {
   let tableNames: [String]
 
   var invalidLineCount: Int { invalidLines.count }
+
+  var configurationSummary: HostTableCapacityConfigurationSummary? {
+    HostTableCapacityTextParser.configurationSummary(for: tables)
+  }
+}
+
+struct HostTableCapacityConfigurationSummary: Equatable {
+  let tableCount: Int
+  let minSeats: Int
+  let maxSeats: Int
+  let largestTableNames: [String]
+
+  var lines: [String] {
+    guard tableCount > 0 else { return [] }
+
+    var output = [
+      "\(tableCount) tables configured",
+      "Seat range: \(minSeats)–\(maxSeats)"
+    ]
+
+    if !largestTableNames.isEmpty {
+      let largestLabel = largestTableNames.joined(separator: ", ")
+      output.append("Largest: \(largestLabel)")
+    }
+
+    return output
+  }
 }
 
 enum HostTableCapacityTextParser {
@@ -50,6 +77,30 @@ enum HostTableCapacityTextParser {
 
   static func formattedExample() -> String {
     "A1: 4\nA2: 4\nA3: 2\nPatio: 6"
+  }
+
+  static func configurationSummary(
+    for tables: [RestaurantTableConfig]
+  ) -> HostTableCapacityConfigurationSummary? {
+    let active = tables.filter(\.isActive)
+    guard !active.isEmpty else { return nil }
+
+    let capacities = active.map(\.capacity)
+    guard let minSeats = capacities.min(), let maxSeats = capacities.max() else {
+      return nil
+    }
+
+    let largestTableNames = active
+      .filter { $0.capacity == maxSeats }
+      .map(\.name)
+      .uniquedPreservingOrder()
+
+    return HostTableCapacityConfigurationSummary(
+      tableCount: active.count,
+      minSeats: minSeats,
+      maxSeats: maxSeats,
+      largestTableNames: largestTableNames
+    )
   }
 
   // MARK: - Private

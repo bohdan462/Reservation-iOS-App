@@ -64,7 +64,7 @@ struct HostIntelligenceSettingsView: View {
         Toggle("Use local model on Host board", isOn: binding(\.useLocalModelOnHostBoard))
           .disabled(!settingsStore.settings.useEnhancedBriefing)
 
-        Text("Diagnostics can test the model. Host board use should remain off until output quality is verified.")
+        Text("Prepare and test the model in Developer Diagnostics only. Host board use should remain off until output quality is verified.")
           .font(.caption)
           .foregroundStyle(.secondary)
       }

@@ -26,6 +26,14 @@ protocol ReservationSyncServiceProtocol {
 struct ReservationSyncResult: Equatable {
     let rowCount: Int
     let serverTime: String?
+    /// Rows actually written to SwiftData; nil when not measured.
+    let rowsWritten: Int?
+
+    init(rowCount: Int, serverTime: String?, rowsWritten: Int? = nil) {
+        self.rowCount = rowCount
+        self.serverTime = serverTime
+        self.rowsWritten = rowsWritten
+    }
 }
 
 @MainActor
@@ -140,8 +148,55 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             updatedSince: nil,
             reason: reason
         )
-        try repository.replaceDateWindow(from: from, to: to, with: syncResponse.reservations, includeHidden: false)
+        ReservationSyncDiagnostics.cacheUpsertStarted(
+            scope: "window=\(from)...\(to)",
+            rowCount: syncResponse.reservations.count
+        )
+        let stats = try await repository.replaceDateWindowYielding(
+            from: from,
+            to: to,
+            with: syncResponse.reservations,
+            includeHidden: false
+        )
+        ReservationSyncDiagnostics.cacheUpsertFinished(
+            scope: "window=\(from)...\(to)",
+            written: stats.written,
+            skipped: stats.skipped,
+            removed: stats.removed
+        )
         return ReservationSyncResult(rowCount: syncResponse.reservations.count, serverTime: syncResponse.serverTime)
+    }
+
+    /// Background history enrichment: upsert-only, never replaces or deletes local rows.
+    @discardableResult
+    func prefetchHistoryWindow(
+        from: String,
+        to: String,
+        reason: ReservationAPIRequestReason
+    ) async throws -> ReservationSyncResult {
+        let syncResponse = try await fetchAllReservationPages(
+            perPage: 100,
+            date: nil,
+            from: from,
+            to: to,
+            status: nil,
+            search: nil,
+            includeHidden: false,
+            updatedSince: nil,
+            reason: reason
+        )
+        let stats = try await repository.upsertYielding(syncResponse.reservations)
+        ReservationSyncDiagnostics.cacheUpsertFinished(
+            scope: "history=\(from)...\(to)",
+            written: stats.written,
+            skipped: stats.skipped,
+            removed: 0
+        )
+        return ReservationSyncResult(
+            rowCount: syncResponse.reservations.count,
+            serverTime: syncResponse.serverTime,
+            rowsWritten: stats.written
+        )
     }
 
     // Intent: Quietly applies server-side reservation changes within the active window since the backend cursor.
@@ -260,6 +315,8 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         var latestServerTime: String?
 
         repeat {
+            try Task.checkCancellation()
+
             let response = try await client.fetchReservations(
                 page: currentPage,
                 perPage: cappedPerPage,
@@ -281,6 +338,10 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             }
             totalPages = max(response.totalPages, 1)
             currentPage += 1
+
+            if currentPage <= totalPages {
+                await Task.yield()
+            }
         } while currentPage <= totalPages
 
         return (allReservations, latestServerTime)

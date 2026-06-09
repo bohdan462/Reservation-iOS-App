@@ -87,7 +87,7 @@ struct HostIntelligenceIntentBanner: View {
           .background(Color(.tertiarySystemGroupedBackground), in: Circle())
 
         VStack(alignment: .leading, spacing: 4) {
-          Text("Host Intelligence")
+          Text("Host pulse")
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
 

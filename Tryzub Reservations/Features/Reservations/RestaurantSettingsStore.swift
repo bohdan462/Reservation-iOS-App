@@ -462,14 +462,23 @@ final class RestaurantSettingsStore: ObservableObject {
            lastAnalyticsRequestKey == requestKey,
            let analyticsSummary,
            isFresh(analyticsLoadedAt, interval: analyticsFreshnessInterval) {
+            ReservationSyncDiagnostics.analyticsRequestSkipped(key: requestKey)
             return analyticsSummary
         }
 
-        if analyticsLoading {
-            if analyticsInFlightKey == requestKey, let analyticsSummary {
+        if analyticsLoading, analyticsInFlightKey == requestKey {
+            while analyticsLoading, analyticsInFlightKey == requestKey {
+                await Task.yield()
+            }
+            if !force,
+               lastAnalyticsRequestKey == requestKey,
+               let analyticsSummary,
+               isFresh(analyticsLoadedAt, interval: analyticsFreshnessInterval) {
                 return analyticsSummary
             }
-            throw SettingsValidationError(message: "Analytics are already loading.")
+            if analyticsLoading {
+                throw SettingsValidationError(message: "Analytics are already loading.")
+            }
         }
 
         analyticsLoading = true
@@ -621,6 +630,7 @@ struct RestaurantSettingsView: View {
     @State private var successMessage: String?
     @State private var didLoadInitialDraft = false
     @State private var tableCapacityValidationMessage: String?
+    @State private var tableCapacitySummaryLines: [String] = []
     @AppStorage(ReservationTableOptionsStore.storageKey) private var tableOptionsRawValue = ReservationTableOptionsStore.defaultRawValue
     @AppStorage(HostTableCapacityTextParser.storageKey) private var tableCapacityRawValue = ""
 
@@ -692,11 +702,21 @@ struct RestaurantSettingsView: View {
                         placeholder: HostTableCapacityTextParser.formattedExample(),
                         minHeight: 92
                     )
-                    SettingsHelperText("Optional local seat counts for Host Intelligence suggestions. Example: A1: 4 A2: 4 Patio: 6. This does not change the backend. Assign Table still saves only \"A1\", \"A2\", etc.")
+                    SettingsHelperText("Local only. Used for Host Intelligence table-planning advice. Assign Table still saves only the table name. Example: A1:4, A2: 4, Patio: 6.")
                     if let tableCapacityValidationMessage {
                         Text(tableCapacityValidationMessage)
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.orange)
+                    }
+
+                    if !tableCapacitySummaryLines.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(tableCapacitySummaryLines, id: \.self) { line in
+                                Text(line)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
 
@@ -773,8 +793,10 @@ struct RestaurantSettingsView: View {
             } else {
                 tableCapacityValidationMessage = "Could not parse: \(invalidLine) (+\(result.invalidLines.count - 1) more)"
             }
+            tableCapacitySummaryLines = []
         } else {
             tableCapacityValidationMessage = nil
+            tableCapacitySummaryLines = result.configurationSummary?.lines ?? []
         }
 
         guard !result.tableNames.isEmpty else { return }

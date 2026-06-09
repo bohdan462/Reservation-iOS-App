@@ -72,6 +72,9 @@ private struct StartupRootView: View {
             }
         }
         .onAppear {
+            if controller.releaseStartupUIFromLocalCacheIfAvailable(context: modelContext) {
+                controller.startStartupNetworkPassInBackgroundIfNeeded(context: modelContext)
+            }
             controller.noteStartupWindowQueryDelivered(rowCount: startupWindowRows.count)
             if !showsStartupLoading {
                 controller.releaseStartupUI()
@@ -88,12 +91,14 @@ private struct StartupRootView: View {
     }
 
     private var showsStartupLoading: Bool {
+        if controller.hasReleasedStartupUI {
+            return false
+        }
+
         switch controller.startupPresentationState {
         case .checkingCache, .emptyCacheLoadingNetwork, .failedNoCache:
             return true
-        case .loadingSavedReservations:
-            return false
-        case .ready, .showingCachedDataRefreshing:
+        case .loadingSavedReservations, .ready, .showingCachedDataRefreshing:
             return false
         }
     }
@@ -289,6 +294,8 @@ private struct HomeDashboardView: View {
     @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     @Query
     private var reservations: [ReservationRecord]
+    @Query
+    private var guestInsightHistoryPool: [ReservationRecord]
 
     // MARK: - Local UI State
 
@@ -317,6 +324,15 @@ private struct HomeDashboardView: View {
                 SortDescriptor(\ReservationRecord.reservationTime)
             ]
         )
+        _guestInsightHistoryPool = Query(
+            filter: #Predicate<ReservationRecord> { reservation in
+                !reservation.isHidden
+            },
+            sort: [
+                SortDescriptor(\ReservationRecord.reservationDate),
+                SortDescriptor(\ReservationRecord.reservationTime)
+            ]
+        )
     }
 
     private var selectedDateReservations: [ReservationRecord] {
@@ -334,7 +350,7 @@ private struct HomeDashboardView: View {
             // Child view reads SwiftData cache and sends staff intent back to the controller.
             HostBoardView(
                 reservations: selectedDateReservations,
-                allKnownReservations: reservations,
+                allKnownReservations: guestInsightHistoryPool,
                 environment: environment,
                 selectedDate: $selectedDate,
                 failedImportCount: controller.importFailureCount,
@@ -411,6 +427,8 @@ private struct ReservationScheduleView: View {
     private var reservations: [ReservationRecord]
     @Query
     private var guestInsightHistoryPool: [ReservationRecord]
+    @Query
+    private var allCachedReservations: [ReservationRecord]
 
     // MARK: - Local UI State
 
@@ -459,6 +477,19 @@ private struct ReservationScheduleView: View {
                 SortDescriptor(\ReservationRecord.reservationTime)
             ]
         )
+        _allCachedReservations = Query(
+            filter: #Predicate<ReservationRecord> { reservation in
+                !reservation.isHidden
+            },
+            sort: [
+                SortDescriptor(\ReservationRecord.reservationDate, order: .reverse),
+                SortDescriptor(\ReservationRecord.reservationTime, order: .reverse)
+            ]
+        )
+    }
+
+    private var usesAllModeCache: Bool {
+        scope == .all && debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     // Schedule reads cached rows; sync freshness is handled by ReservationsController.
@@ -467,8 +498,15 @@ private struct ReservationScheduleView: View {
         let today = Date.reservationDateString()
         let trimmedSearchText = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        var rows = (scope == .all ? allModeRecords : reservations)
-            .filter { !hiddenReservations.isHidden($0) }
+        var rows: [ReservationRecord]
+        if usesAllModeCache {
+            rows = allCachedReservations
+        } else if scope == .all {
+            rows = allModeRecords
+        } else {
+            rows = reservations
+        }
+        rows = rows.filter { !hiddenReservations.isHidden($0) }
 
         switch scope {
         case .upcoming:
@@ -541,7 +579,9 @@ private struct ReservationScheduleView: View {
                     }
                 }
 
-                if controller.isSyncing && reservations.isEmpty {
+                if controller.isSyncing
+                    && !controller.hasReleasedStartupUI
+                    && reservations.isEmpty {
                     Section {
                         HStack {
                             Spacer()
@@ -628,7 +668,12 @@ private struct ReservationScheduleView: View {
             .refreshable {
                 guard isActive else { return }
                 if scope == .all {
-                    await loadAllPage(reset: true, caller: "refreshable_all")
+                    if usesAllModeCache {
+                        controller.scheduleHistoryPrefetchWhenReady(context: modelContext, force: true)
+                        await controller.requestScheduleRefresh(context: modelContext)
+                    } else {
+                        await loadAllPage(reset: true, caller: "refreshable_all")
+                    }
                 } else {
                     // Bookings manual refresh stays on the shared active-window path unless All is explicit.
                     await controller.requestScheduleRefresh(context: modelContext)
@@ -649,7 +694,12 @@ private struct ReservationScheduleView: View {
                         Task {
                             guard isActive else { return }
                             if scope == .all {
-                                await loadAllPage(reset: true, caller: "toolbar_all")
+                                if usesAllModeCache {
+                                    controller.scheduleHistoryPrefetchWhenReady(context: modelContext, force: true)
+                                    await controller.requestScheduleRefresh(context: modelContext)
+                                } else {
+                                    await loadAllPage(reset: true, caller: "toolbar_all")
+                                }
                             } else {
                                 // Bookings manual refresh stays on the shared active-window path unless All is explicit.
                                 await controller.requestScheduleRefresh(context: modelContext)
@@ -694,11 +744,8 @@ private struct ReservationScheduleView: View {
                     return
                 }
 
-                if newScope == .all, isActive, allModeLoadedPage == 0 {
-                    Task {
-                        await loadAllPage(reset: true, caller: "scope_change_all")
-                    }
-                }
+                guard isActive else { return }
+                controller.scheduleHistoryPrefetchWhenReady(context: modelContext)
             }
             .onChange(of: debouncedSearchText) { _, _ in
                 guard isActive, scope == .all else { return }
@@ -776,6 +823,13 @@ private struct ReservationScheduleView: View {
             return "Showing \(displayedReservations.count) on \(dateLabel)"
         }
 
+        if usesAllModeCache {
+            if controller.isHistoryPrefetching {
+                return "\(displayedReservations.count) reservations · syncing older history…"
+            }
+            return "\(displayedReservations.count) saved reservations"
+        }
+
         guard let allModeTotal else {
             return isLoadingAllPage ? "Loading history..." : "History not loaded"
         }
@@ -784,7 +838,11 @@ private struct ReservationScheduleView: View {
     }
 
     private var allModeHasMore: Bool {
-        scope == .all && scheduleDateFilter == nil && allModeLoadedPage > 0 && allModeLoadedPage < allModeTotalPages
+        !usesAllModeCache
+            && scope == .all
+            && scheduleDateFilter == nil
+            && allModeLoadedPage > 0
+            && allModeLoadedPage < allModeTotalPages
     }
 
     private func loadAllPage(reset: Bool, caller: String) async {
@@ -855,10 +913,15 @@ private struct ReservationScheduleView: View {
         }
     }
 
+    private var reservationLookupRows: [ReservationRecord] {
+        if usesAllModeCache { return allCachedReservations }
+        if scope == .all { return allModeRecords }
+        return reservations
+    }
+
     @ViewBuilder
     private func reservationDestination(remoteID: Int) -> some View {
-        let lookupRows = scope == .all ? allModeRecords : reservations
-        if let reservation = lookupRows.first(where: { $0.remoteID == remoteID }) {
+        if let reservation = reservationLookupRows.first(where: { $0.remoteID == remoteID }) {
             ReservationDetailView(reservation: reservation, environment: environment)
         } else {
             ContentUnavailableView(

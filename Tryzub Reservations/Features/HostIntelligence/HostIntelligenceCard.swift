@@ -13,6 +13,8 @@ struct HostIntelligenceCard: View {
   var briefingSource: HostBriefingWriterSource? = nil
   var compactOperationalPrompts: [HostOperationalBriefingPrompt] = []
   var showOperationalReview: Bool = false
+  /// When true, hides technical briefing captions and uses staff-facing labels.
+  var staffFacingPresentation: Bool = true
   var onReviewTapped: (() -> Void)? = nil
   var onActionTapped: ((HostSuggestedAction) -> Void)? = nil
 
@@ -28,8 +30,7 @@ struct HostIntelligenceCard: View {
 
   private var calmCard: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Text("Host Intelligence")
-        .font(.headline)
+      cardTitleRow
 
       Text(displayBriefingText)
         .font(.subheadline)
@@ -45,8 +46,7 @@ struct HostIntelligenceCard: View {
   private var activeCard: some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .firstTextBaseline) {
-        Text("Host Intelligence")
-          .font(.headline)
+        cardTitleRow
 
         Spacer(minLength: 8)
 
@@ -85,13 +85,27 @@ struct HostIntelligenceCard: View {
         }
       }
 
-      if signalCount > 0 {
+      if staffFacingPresentation, signalCount > 0 {
+        Text("\(signalCount) live signal\(signalCount == 1 ? "" : "s")")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      } else if !staffFacingPresentation, signalCount > 0 {
         Text("Based on \(signalCount) live signal\(signalCount == 1 ? "" : "s")")
           .font(.caption2)
           .foregroundStyle(.secondary)
       }
     }
     .cardStyle()
+  }
+
+  private var cardTitleRow: some View {
+    HStack(spacing: 8) {
+      if staffFacingPresentation {
+        HostPulseIcon(isActive: pulseIsActive, size: 18)
+      }
+      Text(staffFacingPresentation ? "Host pulse" : "Host Intelligence")
+        .font(.headline)
+    }
   }
 
   @ViewBuilder
@@ -173,7 +187,15 @@ struct HostIntelligenceCard: View {
     return snapshot.templateBriefingText
   }
 
+  private var pulseIsActive: Bool {
+    signalCount > 0
+      || !snapshot.briefingFacts.isEmpty
+      || !snapshot.suggestedActions.isEmpty
+      || snapshot.serviceState != .calm
+  }
+
   private var briefingSourceCaption: String? {
+    if staffFacingPresentation { return nil }
     guard let briefingSource else { return nil }
     switch briefingSource {
     case .template:
@@ -215,8 +237,15 @@ struct HostIntelligenceCard: View {
   @ViewBuilder
   private var reviewIntelligenceButton: some View {
     if showOperationalReview, onReviewTapped != nil {
-      Button("Review Intelligence") {
+      Button {
         onReviewTapped?()
+      } label: {
+        HStack(spacing: 6) {
+          if staffFacingPresentation {
+            HostPulseIcon(isActive: pulseIsActive, size: 14)
+          }
+          Text(staffFacingPresentation ? "Review signals" : "Review Intelligence")
+        }
       }
       .font(.caption.weight(.semibold))
     }

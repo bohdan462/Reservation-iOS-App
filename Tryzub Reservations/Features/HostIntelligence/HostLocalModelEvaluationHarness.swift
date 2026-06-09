@@ -86,6 +86,10 @@ enum HostLocalModelEvaluationHarness {
     fallbackText: String,
     settings: HostIntelligenceSettings
   ) async -> HostLocalModelEvaluationRun {
+    await MainActor.run {
+      HostLocalModelDiagnosticsCoordinator.shared.beginManualInference()
+    }
+
     let writer = LocalModelHostBriefingWriter()
     let clock = ContinuousClock()
     let start = clock.now
@@ -95,6 +99,14 @@ enum HostLocalModelEvaluationHarness {
       fallbackText: fallbackText
     )
     let duration = HostLocalModelEvaluationDuration.seconds(since: start, on: clock)
+
+    await MainActor.run {
+      let succeeded = writerResult.source == .localModel
+      HostLocalModelDiagnosticsCoordinator.shared.completeManualInference(
+        succeeded: succeeded,
+        failureMessage: writerResult.failedReason
+      )
+    }
 
     let validation = HostBriefingWriterValidator.validationResult(
       writerResult.text,

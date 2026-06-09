@@ -7,6 +7,20 @@
 
 import Foundation
 
+enum HostLocalModelSourceKind: String, Equatable {
+  case applicationSupport
+  case bundled
+  case missing
+
+  var displayName: String {
+    switch self {
+    case .applicationSupport: return "Application Support"
+    case .bundled: return "Bundled"
+    case .missing: return "Missing"
+    }
+  }
+}
+
 enum HostLocalModelFileLocator {
   static let expectedModelBaseName = "host-briefing-qwen2_5-0_5b-instruct-q4_k_m"
   static let expectedModelExtension = "gguf"
@@ -39,28 +53,46 @@ enum HostLocalModelFileLocator {
     return fileExists(at: candidate) ? candidate : nil
   }
 
+  /// Path used for on-device inference. Never loads directly from the app bundle.
+  static func inferenceModelURL() -> URL? {
+    applicationSupportModelURL()
+  }
+
+  /// Backward-compatible alias for inference path only.
   static func firstAvailableModelURL() -> URL? {
-    bundledModelURL() ?? applicationSupportModelURL()
+    inferenceModelURL()
+  }
+
+  static func resolvedModelSourceKind() -> HostLocalModelSourceKind {
+    if applicationSupportModelURL() != nil {
+      return .applicationSupport
+    }
+    if bundledModelURL() != nil {
+      return .bundled
+    }
+    return .missing
+  }
+
+  static func resolvedModelSourceDisplayName() -> String {
+    resolvedModelSourceKind().displayName
+  }
+
+  static func needsBundledModelPreparation() -> Bool {
+    applicationSupportModelURL() == nil && bundledModelURL() != nil
   }
 
   static func modelPresenceDescription() -> String {
-    if let bundled = bundledModelURL() {
-      return "Bundled model found at \(bundled.lastPathComponent)."
-    }
     if let appSupport = applicationSupportModelURL() {
-      return "Application Support model found at \(appSupport.path)."
+      return "Prepared model found in Application Support at \(appSupport.lastPathComponent)."
+    }
+    if let bundled = bundledModelURL() {
+      return "Bundled model resource is packaged (\(bundled.lastPathComponent)) but not prepared for inference."
     }
     return "No model file in app bundle or Application Support (\(expectedModelFileName))."
   }
 
   static func modelSourceLabel() -> String {
-    if bundledModelURL() != nil {
-      return "bundled"
-    }
-    if applicationSupportModelURL() != nil {
-      return "application support"
-    }
-    return "missing"
+    resolvedModelSourceKind().rawValue
   }
 
   static func applicationSupportModelDirectoryURL() -> URL? {

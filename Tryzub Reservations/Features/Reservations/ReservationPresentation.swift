@@ -441,6 +441,38 @@ extension ReservationRecord {
         }
     }
 
+    /// Earliest upcoming expected reservation for the selected service day.
+    /// Uses chronological order — not host-board attention sorting.
+    static func nextExpectedArrivalReservation(
+        from reservations: [ReservationRecord],
+        selectedDate: Date,
+        now: Date = Date()
+    ) -> ReservationRecord? {
+        let selectedDateKey = selectedDate.reservationDateString()
+        let isToday = selectedDateKey == Date.reservationDateString()
+
+        let candidates = sortedChronologically(
+            reservations.filter { reservation in
+                guard !reservation.isHidden,
+                      reservation.isOpenWork,
+                      reservation.reservationDate == selectedDateKey,
+                      reservation.serviceDateTime != nil else {
+                    return false
+                }
+                return true
+            }
+        )
+
+        if isToday {
+            return candidates.first { reservation in
+                guard let serviceDate = reservation.serviceDateTime else { return false }
+                return serviceDate >= now
+            }
+        }
+
+        return candidates.first
+    }
+
     static func sortedForHostBoard(_ reservations: [ReservationRecord], now: Date = Date()) -> [ReservationRecord] {
         reservations.sorted {
             let lhsTimingBucket = $0.operationalTimingState(now: now).sortBucket

@@ -71,13 +71,13 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
   var runtimeName: String { Self.runtimeDisplayName }
 
   var modelName: String? {
-    HostLocalModelFileLocator.firstAvailableModelURL()?.lastPathComponent
+    HostLocalModelFileLocator.inferenceModelURL()?.lastPathComponent
   }
 
   private init() {}
 
   func generateBriefing(prompt: String) async throws -> String {
-    guard let modelURL = HostLocalModelFileLocator.firstAvailableModelURL() else {
+    guard let modelURL = HostLocalModelFileLocator.inferenceModelURL() else {
       throw HostLocalModelRuntimeError.modelMissing
     }
 
@@ -88,6 +88,7 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
     }
 
     if session == nil {
+      HostLocalModelProgressReporter.reportLoadingRuntimeIfManual()
       do {
         session = try LlamaLoadedSession(
           modelPath: modelPath,
@@ -108,7 +109,7 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
     let inferencePrompt = Self.wrapPromptForQwenInstruct(prompt)
     var diagnostics = HostLlamaRunDiagnostics(
       modelPath: modelPath,
-      modelSource: HostLocalModelFileLocator.modelSourceLabel(),
+      modelSource: HostLocalModelFileLocator.resolvedModelSourceKind().rawValue,
       promptCharacterCount: inferencePrompt.count,
       contextWindow: Self.contextWindow,
       maxOutputTokens: Self.maxOutputTokens
@@ -116,6 +117,7 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
 
     let generated: String
     do {
+      HostLocalModelProgressReporter.reportGeneratingIfManual()
       generated = try session.generate(
         prompt: inferencePrompt,
         maxTokens: Self.maxOutputTokens,

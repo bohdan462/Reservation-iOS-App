@@ -237,6 +237,37 @@ struct HostLLMPacket: Codable, Equatable {
     let forbiddenBehaviors: [String]
     let writingRules: [String]
 
+    var hasMeaningfulBriefingFacts: Bool {
+        !topFacts.isEmpty
+    }
+
+    /// True when every fact is low-risk guest memory / preference / note / booking queue copy.
+    var isHostBoardTemplateOnlyPacket: Bool {
+        guard hasMeaningfulBriefingFacts else { return true }
+        if topFacts.contains(where: { $0.severity == .warning || $0.severity == .critical }) {
+            return false
+        }
+        let lowRisk: Set<HostFactCategory> = [.guest, .preference, .note, .bookingDecision]
+        return topFacts.allSatisfy { lowRisk.contains($0.category) }
+    }
+
+    /// Stable fingerprint for briefing deduplication — excludes volatile timestamps.
+    var briefingFingerprint: String {
+        let roundedPressure = (pressureScore * 10).rounded() / 10
+        let factParts = topFacts.map { fact in
+            [
+                fact.severity.rawValue,
+                fact.category.rawValue,
+                fact.title,
+                fact.detail,
+                fact.suggestedAction ?? "",
+                fact.evidence.joined(separator: ",")
+            ].joined(separator: "|")
+        }
+        let factsKey = factParts.joined(separator: ";")
+        return "\(serviceState.rawValue)|\(roundedPressure)|\(factsKey)"
+    }
+
     static var empty: HostLLMPacket {
         HostLLMPacket(
             generatedAtDescription: "",

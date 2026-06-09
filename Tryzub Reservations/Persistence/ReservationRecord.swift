@@ -70,6 +70,25 @@ class ReservationRecord: Identifiable {
         self.updatedAt = nil
     }
 
+    /// True when cached row already matches the server payload (skip rewrite).
+    func isContentEquivalent(to dto: ReservationDTO) -> Bool {
+        remoteID == dto.id
+            && sourceSubmissionID == (dto.sourceSubmissionId ?? 0)
+            && guestName == dto.guestName
+            && email == dto.email
+            && phone == dto.phone
+            && reservationDate == dto.reservationDate
+            && reservationTime == dto.reservationTime
+            && partySize == dto.partySize
+            && status == dto.status.rawValue
+            && guestNotes == dto.guestNotes?.nilIfEmpty
+            && tableName == dto.tableName?.nilIfEmpty
+            && staffNotes == dto.staffNotes?.nilIfEmpty
+            && apiUpdatedAt == dto.updatedAt
+            && confirmedAt == dto.confirmedAt
+            && isHidden == (dto.isHidden ?? false)
+    }
+
     func update(from dto: ReservationDTO) {
         remoteID = dto.id
         sourceSubmissionID = dto.sourceSubmissionId ?? 0

@@ -70,6 +70,31 @@ struct HostBoardView: View {
         return nil
     }
 
+    private var serviceDensityBounds: (open: Date?, close: Date?) {
+        let dateKey = selectedDate.reservationDateString()
+        func serviceDate(from timeValue: String?) -> Date? {
+            guard let timeValue else { return nil }
+            let trimmed = timeValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let time = trimmed.count >= 5 ? String(trimmed.prefix(5)) : trimmed
+            return ReservationFormatters.serverDateMinute.date(from: "\(dateKey) \(time)")
+        }
+
+        if let open = serviceDate(from: todayAvailability?.openTime),
+           let close = serviceDate(from: todayAvailability?.closeTime),
+           open <= close {
+            return (open, close)
+        }
+
+        if let window = serviceWindow {
+            let open = serviceDate(from: String(format: "%02d:00", window.lowerBound))
+            let close = serviceDate(from: String(format: "%02d:00", window.upperBound))
+            return (open, close)
+        }
+
+        return (nil, nil)
+    }
+
     private var isRunningForPreviews: Bool {
         ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
     }
@@ -103,16 +128,22 @@ struct HostBoardView: View {
     }
 
     private var hostIntelligenceRefreshKey: String {
-        let minute = Calendar.current.component(.minute, from: clockTick)
-        let syncStamp = controller.lastSyncedAt?.timeIntervalSince1970 ?? 0
+        let reservationStamp = reservations
+            .map { "\($0.remoteID):\($0.statusValue.rawValue):\($0.tableName ?? "")" }
+            .sorted()
+            .joined(separator: "|")
+        let historyStamp = controller.historyCacheEnrichmentGeneration
         let availabilityStamp = availabilitySummary?.loadedAt.timeIntervalSince1970 ?? 0
-        let seatedStamp = controller.localSeatedAtByReservationID.count
-        let tableStamp = hostIntelligenceController.tableStore.totalActiveCapacity
+        let seatedStamp = controller.localSeatedAtByReservationID
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value.timeIntervalSince1970)" }
+            .joined(separator: ",")
         let tableCount = hostIntelligenceController.tableStore.tables.count
+        let tableStamp = hostIntelligenceController.tableStore.totalActiveCapacity
         let analyticsStamp = analyticsSummaryIdentity
         let briefingStamp =
-          "\(hostIntelligenceController.settings.useEnhancedBriefing)-\(hostIntelligenceController.settings.enhancedBriefingProvider.rawValue)"
-        return "\(selectedDateKey)-\(reservations.count)-\(syncStamp)-\(availabilityStamp)-\(seatedStamp)-\(tableCount)-\(tableStamp)-\(analyticsStamp)-\(briefingStamp)-\(minute)"
+          "\(hostIntelligenceController.settings.useEnhancedBriefing)-\(hostIntelligenceController.settings.enhancedBriefingProvider.rawValue)-\(hostIntelligenceController.settings.useLocalModelOnHostBoard)"
+        return "\(selectedDateKey)-\(reservationStamp)-\(historyStamp)-\(availabilityStamp)-\(seatedStamp)-\(tableCount)-\(tableStamp)-\(analyticsStamp)-\(briefingStamp)"
     }
 
     private var analyticsSummaryIdentity: String {
@@ -134,11 +165,13 @@ struct HostBoardView: View {
             let safeWidth = proxy.size.width.tryzubFiniteNonNegativeLayoutValue
             let safeHeight = proxy.size.height.tryzubFiniteNonNegativeLayoutValue
             // Snapshot keeps time/status grouping out of the view layout code.
+            let densityBounds = serviceDensityBounds
             let snapshot = HostBoardSnapshot(
                 reservations: reservations,
                 selectedDate: selectedDate,
                 now: clockTick,
-                serviceWindow: serviceWindow
+                serviceOpen: densityBounds.open,
+                serviceClose: densityBounds.close
             )
 
             let closedPresentation = closedDayPresentation(for: snapshot)
@@ -226,6 +259,12 @@ struct HostBoardView: View {
             guard !isRunningForPreviews else { return }
             await runClockLoop()
         }
+        .onChange(of: selectedDateKey) { _, dateKey in
+            controller.noteHostBoardSelectedDate(dateKey)
+        }
+        .onAppear {
+            controller.noteHostBoardSelectedDate(selectedDateKey)
+        }
         .task(id: "\(isVisible)-\(deferNetworkLoads)-\(controller.startupPresentationState)-\(selectedDate.reservationDateString())") {
             // Lazy Home indicator load: availability/slots/blocked are screen-specific
             // and cached by the controller so tab switching does not refetch them.
@@ -251,7 +290,15 @@ struct HostBoardView: View {
             hostIntelligenceController.tableStore.reload()
             hostIntelligenceController.settingsStore.reload()
             hostIntelligenceController.evaluate(input: makeHostEngineInput(now: clockTick))
-            await hostIntelligenceController.refreshBriefing()
+            await hostIntelligenceController.refreshBriefing(
+                hostBoardContext: HostBriefingHostBoardContext(
+                    isStartupNetworkPassInFlight: controller.isStartupNetworkPassInFlight,
+                    isHistoryPrefetching: controller.isHistoryPrefetching,
+                    isLocalModelInferenceActive: HostLocalModelInferenceTracker.isActive,
+                    startupUIReleasedAt: controller.startupUIReleasedAt,
+                    now: clockTick
+                )
+            )
         }
     }
 
@@ -462,8 +509,8 @@ struct HostBoardView: View {
             noTableCount: snapshot.noTableCount,
             peakTimeText: snapshot.peakTimeText,
             nextReservationText: snapshot.nextReservationText,
-            timelineSlots: snapshot.timelineSlots,
-            highlightHour: snapshot.nextReservationHour,
+            densityPoints: snapshot.densityPoints,
+            highlightBucketStart: snapshot.nextReservationBucketStart,
             availabilitySummary: availabilitySummaryLine,
             isAvailabilityLoading: isLoadingAvailabilitySummary,
             onRefreshAvailability: selectedDate.reservationDateString() == Date.reservationDateString()
@@ -692,12 +739,18 @@ private struct HostBoardSnapshot {
     let expectedGuestCount: Int
     let peakTimeText: String
     let nextReservationText: String
-    let timelineSlots: [ServiceTimelineSlot]
-    let nextReservationHour: Int?
+    let densityPoints: [ReservationDensityPoint]
+    let nextReservationBucketStart: Date?
 
     // Active same-day reservations remain visible until staff changes status.
     // Time only chooses the "next" highlight; it does not auto-complete or hide rows.
-    init(reservations: [ReservationRecord], selectedDate: Date, now: Date, serviceWindow: ClosedRange<Int>? = nil) {
+    init(
+        reservations: [ReservationRecord],
+        selectedDate: Date,
+        now: Date,
+        serviceOpen: Date? = nil,
+        serviceClose: Date? = nil
+    ) {
         self.selectedDate = selectedDate
         self.now = now
         upcoming = ReservationRecord.sortedForHostBoard(
@@ -715,12 +768,11 @@ private struct HostBoardSnapshot {
         expectedGuestCount = upcoming.reduce(0) { $0 + $1.partySize } + seated.reduce(0) { $0 + $1.partySize }
 
         let isToday = selectedDate.reservationDateString() == Date.reservationDateString()
-        let nextReservation = isToday
-            ? upcoming.first { reservation in
-                guard let serviceDate = reservation.serviceDateTime else { return false }
-                return serviceDate >= now
-            } ?? upcoming.first
-            : upcoming.first
+        let nextReservation = ReservationRecord.nextExpectedArrivalReservation(
+            from: reservations,
+            selectedDate: selectedDate,
+            now: now
+        )
         nextReservationText = nextReservation.map { reservation in
             if isToday, let serviceDate = reservation.serviceDateTime {
                 let minutes = Int(ceil(abs(serviceDate.timeIntervalSince(now)) / 60))
@@ -734,28 +786,24 @@ private struct HostBoardSnapshot {
             }
             return reservation.displayTime
         } ?? "-"
-        peakTimeText = Self.peakTimeText(from: upcoming + seated)
-        timelineSlots = ServiceTimeline.slots(from: upcoming + seated, window: serviceWindow)
-        nextReservationHour = nextReservation.flatMap { Int($0.reservationTime.prefix(2)) }
+        let pressureReservations = upcoming + seated
+        densityPoints = ReservationDensityCalculator.points(
+            from: pressureReservations,
+            selectedDate: selectedDate,
+            serviceOpen: serviceOpen,
+            serviceClose: serviceClose
+        )
+        peakTimeText = Self.peakTimeText(from: densityPoints)
+        nextReservationBucketStart = nextReservation.flatMap {
+            ReservationDensityCalculator.bucketStart(for: $0)
+        }
     }
 
-    private static func peakTimeText(from reservations: [ReservationRecord]) -> String {
-        let counts = reservations.reduce(into: [String: Int]()) { result, record in
-            let hour = String(record.reservationTime.prefix(2))
-            result[hour, default: 0] += record.partySize
-        }
-
-        guard let peak = counts.sorted(by: {
-            if $0.value == $1.value {
-                return $0.key < $1.key
-            }
-            return $0.value > $1.value
-        }).first else {
+    private static func peakTimeText(from points: [ReservationDensityPoint]) -> String {
+        guard let peak = ReservationDensityCalculator.peakPoint(in: points) else {
             return "No peak yet"
         }
-
-        let display = ReservationPresentationTime.hourLabel(from: peak.key)
-        return "\(display) · \(peak.value) guests"
+        return "\(peak.bucketLabel) · \(peak.guestCount) guests"
     }
 
     private static func durationText(minutes: Int) -> String {
@@ -795,8 +843,8 @@ private struct HostBoardSummaryCard: View {
     let noTableCount: Int
     let peakTimeText: String
     let nextReservationText: String
-    let timelineSlots: [ServiceTimelineSlot]
-    let highlightHour: Int?
+    let densityPoints: [ReservationDensityPoint]
+    let highlightBucketStart: Date?
     var availabilitySummary: String?
     var isAvailabilityLoading = false
     var onRefreshAvailability: (() -> Void)?
@@ -861,7 +909,7 @@ private struct HostBoardSummaryCard: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Guests by time")
+                    Text("Arrival density")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(TryzubColors.mutedText)
 
@@ -873,7 +921,11 @@ private struct HostBoardSummaryCard: View {
                     }
                 }
 
-                ServiceLoadChart(slots: timelineSlots, highlightHour: highlightHour, height: 58)
+                ReservationDensityWaveChart(
+                    points: densityPoints,
+                    highlightBucketStart: highlightBucketStart,
+                    height: 68
+                )
             }
         }
         .padding(12)

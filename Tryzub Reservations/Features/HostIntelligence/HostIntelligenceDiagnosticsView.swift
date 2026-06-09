@@ -26,6 +26,7 @@ struct HostIntelligenceDiagnosticsView: View {
   @State private var modelImportMessage: String?
   @State private var modelImportError: String?
   @State private var readinessRefreshToken = UUID()
+  @ObservedObject private var modelCoordinator = HostLocalModelDiagnosticsCoordinator.shared
 
   private var snapshot: HostDecisionSnapshot {
     let input = HostEngineInput(
@@ -467,6 +468,17 @@ struct HostIntelligenceDiagnosticsView: View {
         }
       }
 
+      LocalModelDiagnosticsControls(
+        coordinator: modelCoordinator,
+        readiness: localModelReadiness,
+        settings: settings,
+        packet: packet,
+        fallbackText: fallback,
+        onModelPrepared: {
+          readinessRefreshToken = UUID()
+        }
+      )
+
       Text("Local model readiness")
         .font(.subheadline.weight(.semibold))
       LabeledContent("Current readiness") {
@@ -629,14 +641,6 @@ struct HostIntelligenceDiagnosticsView: View {
           .foregroundStyle(.tertiary)
       }
 
-      LocalModelBriefingDiagnosticTest(
-        packet: packet,
-        fallbackText: fallback,
-        settings: settings,
-        readiness: localModelReadiness,
-        testLabel: "Current service packet"
-      )
-
       LocalModelSamplePacketTests(
         settings: settings,
         readiness: localModelReadiness,
@@ -744,6 +748,161 @@ struct HostIntelligenceDiagnosticsView: View {
       parts.append("blocked")
     }
     return parts.joined(separator: " · ")
+  }
+}
+
+// MARK: - Local Model Diagnostics Controls (developer diagnostics only)
+
+private struct LocalModelDiagnosticsControls: View {
+  @ObservedObject var coordinator: HostLocalModelDiagnosticsCoordinator
+  let readiness: HostLocalModelReadiness
+  let settings: HostIntelligenceSettings
+  let packet: HostLLMPacket
+  let fallbackText: String
+  let onModelPrepared: () -> Void
+
+  @State private var isPreparing = false
+  @State private var isRunningTest = false
+  @State private var testResult: LocalModelBriefingDiagnosticResult?
+
+  private var canRunTest: Bool {
+    settings.enhancedBriefingProvider == .localModel
+      && readiness.status == .ready
+      && coordinator.isInferenceModelInstalled
+      && !isRunningTest
+      && !coordinator.loadingState.isBusy
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Text("Local model")
+        .font(.subheadline.weight(.semibold))
+
+      Text("Local model is included with this build but is optional. Prepare it here only for developer testing.")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+
+      Text("Host board uses deterministic assistance by default. Normal staff do not need to prepare the model.")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+
+      LabeledContent("Model status") {
+        Text(coordinator.modelStatusTitle)
+      }
+      LabeledContent("Model path source") {
+        Text(coordinator.modelPathSourceLabel)
+      }
+      Text(coordinator.modelStatusDetail)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+      if coordinator.canPrepareBundledModel {
+        Button("Prepare local model") {
+          prepareModel()
+        }
+        .disabled(isPreparing || coordinator.loadingState.isBusy)
+      } else if coordinator.isInferenceModelInstalled {
+        Text("Prepared model is installed in Application Support.")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+
+      Button("Test local model briefing") {
+        runTest()
+      }
+      .disabled(!canRunTest)
+
+      if settings.enhancedBriefingProvider != .localModel {
+        Text("Select Local model provider to enable manual tests.")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      } else if !coordinator.isInferenceModelInstalled {
+        Text("Prepare or import the GGUF into Application Support before testing.")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+
+      localModelProgressView
+
+      if let lastFailure = coordinator.lastFailureMessage, !lastFailure.isEmpty {
+        Text(lastFailure)
+          .font(.caption)
+          .foregroundStyle(.red)
+      }
+
+      if let testResult {
+        LocalModelBriefingDiagnosticResultView(result: testResult)
+      }
+    }
+    .padding(.vertical, 4)
+  }
+
+  @ViewBuilder
+  private var localModelProgressView: some View {
+    if coordinator.loadingState != .idle,
+       let message = coordinator.loadingState.statusMessage {
+      if let fraction = coordinator.loadingState.copyProgressFraction {
+        VStack(alignment: .leading, spacing: 6) {
+          ProgressView(value: fraction)
+          Text("\(message) \(Int((fraction * 100).rounded()))%")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      } else if case .failed = coordinator.loadingState {
+        EmptyView()
+      } else {
+        ProgressView(message)
+          .font(.caption)
+      }
+    }
+  }
+
+  private func prepareModel() {
+    guard !isPreparing else { return }
+    isPreparing = true
+    coordinator.resetFailure()
+
+    Task {
+      let succeeded = await coordinator.prepareLocalModel()
+      await MainActor.run {
+        isPreparing = false
+        if succeeded {
+          onModelPrepared()
+        }
+      }
+    }
+  }
+
+  private func runTest() {
+    guard canRunTest else { return }
+    isRunningTest = true
+    testResult = nil
+    coordinator.resetFailure()
+
+    Task {
+      await MainActor.run {
+        coordinator.beginManualInference()
+      }
+
+      let diagnosticResult = await LocalModelBriefingDiagnosticRunner.run(
+        packet: packet,
+        fallbackText: fallbackText,
+        testLabel: "Current service packet",
+        settings: settings
+      )
+
+      await MainActor.run {
+        testResult = diagnosticResult
+        isRunningTest = false
+        let succeeded = diagnosticResult.writerResult.source == .localModel
+          && diagnosticResult.validation.isValid
+        coordinator.completeManualInference(
+          succeeded: succeeded,
+          failureMessage: diagnosticResult.writerResult.failedReason
+            ?? diagnosticResult.validation.reason
+        )
+      }
+    }
   }
 }
 
@@ -919,7 +1078,7 @@ private struct LocalModelBriefingDiagnosticTest: View {
         .font(.caption2)
         .foregroundStyle(.tertiary)
 
-      Button("Test Local Model Briefing") {
+      Button("Test local model briefing") {
         runTest()
       }
       .disabled(!canRunTest)
@@ -929,7 +1088,7 @@ private struct LocalModelBriefingDiagnosticTest: View {
           .font(.caption2)
           .foregroundStyle(.tertiary)
       } else if !canRunTest, readiness.status != .ready {
-        Text("Import the GGUF from Files or install it in Application Support to enable this test.")
+        Text("Prepare or import the GGUF into Application Support to enable this test.")
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
@@ -1005,7 +1164,7 @@ private struct LocalModelSamplePacketTests: View {
           .font(.caption2)
           .foregroundStyle(.tertiary)
       } else if !canRunTests, readiness.status != .ready {
-        Text("Import the GGUF from Files or install it in Application Support to enable sample tests.")
+        Text("Prepare or import the GGUF into Application Support to enable sample tests.")
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
@@ -1117,16 +1276,28 @@ private struct LocalModelSamplePacketTests: View {
     result = nil
 
     Task {
+      await MainActor.run {
+        HostLocalModelDiagnosticsCoordinator.shared.beginManualInference()
+      }
+
       let diagnosticResult = await LocalModelBriefingDiagnosticRunner.run(
         packet: HostLLMPacketSampleFactory.packet(for: sample),
         fallbackText: HostLLMPacketSampleFactory.fallbackText(for: sample),
         testLabel: "Sample: \(sample.displayName)",
         settings: settings
       )
+
       await MainActor.run {
         result = diagnosticResult
         runningSampleName = nil
         isRunning = false
+        let succeeded = diagnosticResult.writerResult.source == .localModel
+          && diagnosticResult.validation.isValid
+        HostLocalModelDiagnosticsCoordinator.shared.completeManualInference(
+          succeeded: succeeded,
+          failureMessage: diagnosticResult.writerResult.failedReason
+            ?? diagnosticResult.validation.reason
+        )
       }
     }
   }

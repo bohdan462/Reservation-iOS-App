@@ -28,7 +28,7 @@ struct HostIntelligenceReviewView: View {
       }
       .padding()
     }
-    .navigationTitle("Host Intelligence")
+    .navigationTitle("Review signals")
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItem(placement: .confirmationAction) {
@@ -233,17 +233,7 @@ struct HostIntelligenceReviewView: View {
   }
 
   private var briefingSourceCaption: String? {
-    guard let briefingSource else { return nil }
-    switch briefingSource {
-    case .template:
-      return "Deterministic template briefing"
-    case .localPlaceholder:
-      return "Enhanced placeholder briefing"
-    case .localModel:
-      return "Local model briefing"
-    case .failedFallback:
-      return "Template fallback briefing"
-    }
+    nil
   }
 }
 

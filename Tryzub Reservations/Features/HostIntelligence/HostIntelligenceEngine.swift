@@ -146,6 +146,7 @@ struct HostIntelligenceEngine {
     suggestedActions.append(contentsOf: bookingIntelligence.actions)
     appendNewReservationsAttentionFacts(
       activeReservations: activeReservations,
+      guestSignals: guestSignals,
       existingFacts: briefingFacts,
       briefingFacts: &briefingFacts,
       suggestedActions: &suggestedActions
@@ -1427,6 +1428,7 @@ struct HostIntelligenceEngine {
 
   private func appendNewReservationsAttentionFacts(
     activeReservations: [ReservationRecord],
+    guestSignals: [HostGuestSignal],
     existingFacts: [HostBriefingFact],
     briefingFacts: inout [HostBriefingFact],
     suggestedActions: inout [HostSuggestedAction]

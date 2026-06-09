@@ -74,13 +74,16 @@ enum HostLocalModelReadinessProvider {
 
     let runtimeName = HostLocalModelRuntimeFactory.integratedRuntimeName
     let presence = HostLocalModelFileLocator.modelPresenceDescription()
-    let source = HostLocalModelFileLocator.modelSourceLabel()
+    let source = HostLocalModelFileLocator.resolvedModelSourceDisplayName()
 
-    guard HostLocalModelFileLocator.firstAvailableModelURL() != nil else {
+    guard HostLocalModelFileLocator.inferenceModelURL() != nil else {
+      let prepareHint = HostLocalModelFileLocator.needsBundledModelPreparation()
+        ? " Tap Prepare local model in diagnostics to copy the bundled file into Application Support."
+        : ""
       return HostLocalModelReadiness(
         status: .modelMissing,
-        title: "Local model file missing",
-        detail: "\(presence) Expected file: \(HostLocalModelFileLocator.expectedModelFileName).",
+        title: "Local model not prepared",
+        detail: "\(presence)\(prepareHint) Expected file: \(HostLocalModelFileLocator.expectedModelFileName).",
         modelName: HostLocalModelFileLocator.expectedModelFileName,
         runtimeName: runtimeName
       )

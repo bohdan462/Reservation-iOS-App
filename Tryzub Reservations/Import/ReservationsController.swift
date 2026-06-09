@@ -25,6 +25,17 @@ final class ReservationsController: ObservableObject {
     @Published private(set) var startupNetworkPassError: String?
     @Published private(set) var localCacheStoreHasReservations = false
     @Published private(set) var hasReleasedStartupUI = false
+    @Published private(set) var startupUIReleasedAt: Date?
+
+    /// Bumped once after background history prefetch writes new rows into SwiftData.
+    @Published private(set) var historyCacheEnrichmentGeneration = 0
+
+    /// True while background history prefetch is actively upserting cache rows.
+    @Published private(set) var isHistoryPrefetching = false
+
+    /// Selected service date on the Host board; used to defer history prefetch during date setup.
+    @Published private(set) var hostBoardSelectedDateKey: String?
+    private var hostBoardDateNavigationAt: Date?
 
     // Tracks the quiet host-board loop that keeps today's cache warm.
     @Published private(set) var isAutoRefreshing = false {
@@ -110,6 +121,10 @@ final class ReservationsController: ObservableObject {
 
     private let autoRefreshInterval: TimeInterval = 60
     private let autoRefreshFailureCooldown: TimeInterval = 180
+    private let historyPrefetchStabilizationDelay: TimeInterval = 25
+    private let historyPrefetchDateNavigationCooldown: TimeInterval = 5
+    private let historyPrefetchGuardPollInterval: TimeInterval = 5
+    private let historyPrefetchMaxGuardPollAttempts = 72
     private let manualRefreshCooldown: TimeInterval = 8
     private let scheduleFreshnessInterval: TimeInterval = 300
     private let reviewFreshnessInterval: TimeInterval = 120
@@ -155,6 +170,10 @@ final class ReservationsController: ObservableObject {
     }
 
     private var hasAttemptedInitialLoad = false
+    private var hasStartedStartupPresentation = false
+    private var startupNetworkPassTask: Task<Void, Never>?
+    private var historyPrefetchTask: Task<Void, Never>?
+    private var deferredRestaurantSetupTask: Task<Void, Never>?
     private let localSeatedTimestampsKey = "tryzub.localSeatedTimestamps"
 
     // MARK: - Initialization
@@ -177,14 +196,42 @@ final class ReservationsController: ObservableObject {
         errorMessage = nil
         noticeMessage = nil
         hasAttemptedInitialLoad = false
+        hasStartedStartupPresentation = false
+        startupNetworkPassTask?.cancel()
+        startupNetworkPassTask = nil
+        historyPrefetchTask?.cancel()
+        historyPrefetchTask = nil
+        deferredRestaurantSetupTask?.cancel()
+        deferredRestaurantSetupTask = nil
         startupPresentationState = .checkingCache
         startupNetworkPassError = nil
         localCacheStoreHasReservations = false
         hasReleasedStartupUI = false
+        startupUIReleasedAt = nil
+        isHistoryPrefetching = false
+    }
+
+    /// Synchronous local-only gate. Safe to call from view `onAppear` before async startup work.
+    @discardableResult
+    func releaseStartupUIFromLocalCacheIfAvailable(context: ModelContext) -> Bool {
+        guard !hasReleasedStartupUI else { return true }
+        guard Self.hasUsableCachedReservations(in: context) else { return false }
+
+        localCacheStoreHasReservations = true
+        markStartupUIReleased()
+        switch startupPresentationState {
+        case .checkingCache, .loadingSavedReservations:
+            startupPresentationState = .showingCachedDataRefreshing
+        case .emptyCacheLoadingNetwork, .failedNoCache, .showingCachedDataRefreshing, .ready:
+            break
+        }
+        hydrateCacheMetadataSync(context: context)
+        ReservationSyncDiagnostics.startupUIReleased(hasCache: true)
+        return true
     }
 
     func releaseStartupUI() {
-        hasReleasedStartupUI = true
+        markStartupUIReleased()
         guard startupPresentationState == .loadingSavedReservations else { return }
         startupPresentationState = isStartupNetworkPassInFlight
             ? .showingCachedDataRefreshing
@@ -202,6 +249,12 @@ final class ReservationsController: ObservableObject {
         availabilitySummaryTasksByDate.removeAll()
         staffStatusBoundaryTask?.cancel()
         staffStatusBoundaryTask = nil
+        startupNetworkPassTask?.cancel()
+        startupNetworkPassTask = nil
+        historyPrefetchTask?.cancel()
+        historyPrefetchTask = nil
+        deferredRestaurantSetupTask?.cancel()
+        deferredRestaurantSetupTask = nil
     }
 
     private func applyNetworkPathStatus(_ isSatisfied: Bool) {
@@ -253,44 +306,176 @@ final class ReservationsController: ObservableObject {
     func beginStartupPresentation(context: ModelContext) async {
         if case .failedNoCache = startupPresentationState {
             hasAttemptedInitialLoad = false
+            hasStartedStartupPresentation = false
+            startupNetworkPassTask?.cancel()
+            startupNetworkPassTask = nil
         }
 
-        startupPresentationState = .checkingCache
-        startupNetworkPassError = nil
-
-        await hydrateCacheMetadata(context: context)
-        let hasCache = Self.hasUsableCachedReservations(in: context)
-
-        if hasCache {
-            localCacheStoreHasReservations = true
-            hasReleasedStartupUI = true
-            startupPresentationState = .showingCachedDataRefreshing
-            Task { @MainActor in
-                _ = await self.performStartupNetworkPass(context: context)
+        guard !hasStartedStartupPresentation else {
+            if hasReleasedStartupUI {
+                startStartupNetworkPassInBackgroundIfNeeded(context: context)
             }
             return
         }
-
-        startupPresentationState = .emptyCacheLoadingNetwork
-        let refreshSucceeded = await performStartupNetworkPass(context: context)
+        hasStartedStartupPresentation = true
+        startupNetworkPassError = nil
 
         if Self.hasUsableCachedReservations(in: context) {
+            _ = releaseStartupUIFromLocalCacheIfAvailable(context: context)
+            startStartupNetworkPassInBackgroundIfNeeded(context: context)
+            return
+        }
+
+        localCacheStoreHasReservations = false
+        hasReleasedStartupUI = false
+        startupUIReleasedAt = nil
+        startupPresentationState = .emptyCacheLoadingNetwork
+        hydrateCacheMetadataSync(context: context)
+
+        let refreshSucceeded = await performStartupNetworkPass(context: context)
+        startDeferredRestaurantSetupIfNeeded()
+        if Self.hasUsableCachedReservations(in: context) {
+            markStartupUIReleased()
             startupPresentationState = .ready
+            scheduleHistoryPrefetchWhenReady(context: context)
             return
         }
 
         if refreshSucceeded {
+            markStartupUIReleased()
             startupPresentationState = .ready
+            scheduleHistoryPrefetchWhenReady(context: context)
             return
         }
 
+        hasReleasedStartupUI = false
+        startupUIReleasedAt = nil
         startupPresentationState = .failedNoCache(
             startupNetworkPassError ?? "Could not load reservations. Check your connection and try again."
         )
     }
 
-    // Intent: Runs the cold-start sync pass without blocking the launch splash.
-    // Network: GET active window, then GET restaurant-setup (serialized by the API client).
+    func startStartupNetworkPassInBackgroundIfNeeded(context: ModelContext) {
+        guard startupNetworkPassTask == nil else { return }
+        guard !isStartupNetworkPassInFlight else { return }
+
+        startupNetworkPassTask = Task(priority: .utility) { @MainActor in
+            _ = await self.performStartupNetworkPass(context: context)
+            self.startDeferredRestaurantSetupIfNeeded()
+            self.scheduleHistoryPrefetchWhenReady(context: context)
+            self.startupNetworkPassTask = nil
+        }
+    }
+
+    func noteHostBoardSelectedDate(_ dateKey: String) {
+        if hostBoardSelectedDateKey != dateKey {
+            hostBoardDateNavigationAt = Date()
+        }
+        hostBoardSelectedDateKey = dateKey
+    }
+
+    func isHostBoardDateNetworkBusy(_ dateKey: String) -> Bool {
+        isAvailabilitySummaryLoading(date: dateKey)
+            || reservationSlotsTasksByDate[dateKey] != nil
+            || blockedSlotsTasksByDate[dateKey] != nil
+    }
+
+    func canStartHistoryPrefetchNow(force: Bool = false) -> Bool {
+        guard hasReleasedStartupUI else { return false }
+        guard !isStartupNetworkPassInFlight else { return false }
+        guard !isHistoryPrefetching else { return false }
+        guard !HostLocalModelInferenceTracker.isActive else { return false }
+
+        if let releasedAt = startupUIReleasedAt {
+            guard Date().timeIntervalSince(releasedAt) >= historyPrefetchStabilizationDelay else {
+                return false
+            }
+        } else {
+            return false
+        }
+
+        if let dateKey = hostBoardSelectedDateKey,
+           isHostBoardDateNetworkBusy(dateKey) {
+            return false
+        }
+
+        if let navigationAt = hostBoardDateNavigationAt,
+           Date().timeIntervalSince(navigationAt) < historyPrefetchDateNavigationCooldown {
+            return false
+        }
+
+        return true
+    }
+
+    func scheduleHistoryPrefetchWhenReady(context: ModelContext, force: Bool = false) {
+        guard hasReleasedStartupUI else { return }
+        guard historyPrefetchTask == nil else { return }
+        if !force, !ReservationHistoryPrefetcher.shouldRun(force: false) {
+            ReservationSyncDiagnostics.historyPrefetchSkipped(reason: "fresh")
+            return
+        }
+
+        historyPrefetchTask = Task(priority: .utility) { @MainActor in
+            defer { self.historyPrefetchTask = nil }
+
+            if let releasedAt = self.startupUIReleasedAt {
+                let remaining = self.historyPrefetchStabilizationDelay - Date().timeIntervalSince(releasedAt)
+                if remaining > 0 {
+                    try? await Task.sleep(for: .seconds(remaining))
+                }
+            } else {
+                try? await Task.sleep(for: .seconds(self.historyPrefetchStabilizationDelay))
+            }
+            guard !Task.isCancelled else { return }
+
+            for _ in 0..<self.historyPrefetchMaxGuardPollAttempts {
+                guard !Task.isCancelled else { return }
+                if self.canStartHistoryPrefetchNow(force: force) {
+                    break
+                }
+                try? await Task.sleep(for: .seconds(self.historyPrefetchGuardPollInterval))
+            }
+
+            guard self.canStartHistoryPrefetchNow(force: force) else {
+                ReservationSyncDiagnostics.historyPrefetchSkipped(reason: "guards_blocked")
+                return
+            }
+
+            self.isHistoryPrefetching = true
+            defer { self.isHistoryPrefetching = false }
+
+            let rowsWritten = await ReservationHistoryPrefetcher.prefetchIfNeeded(
+                apiClient: self.environment.apiClient,
+                context: context,
+                force: force
+            )
+            if let rowsWritten, rowsWritten > 0 {
+                self.historyCacheEnrichmentGeneration += 1
+            }
+        }
+    }
+
+    func startHistoryPrefetchInBackgroundIfNeeded(context: ModelContext, force: Bool = false) {
+        scheduleHistoryPrefetchWhenReady(context: context, force: force)
+    }
+
+    private func markStartupUIReleased() {
+        guard !hasReleasedStartupUI else { return }
+        hasReleasedStartupUI = true
+        startupUIReleasedAt = Date()
+    }
+
+    private func startDeferredRestaurantSetupIfNeeded() {
+        guard deferredRestaurantSetupTask == nil else { return }
+        deferredRestaurantSetupTask = Task(priority: .utility) { @MainActor in
+            _ = try? await self.loadRestaurantSetup()
+            self.deferredRestaurantSetupTask = nil
+        }
+    }
+
+    // Intent: Runs the cold-start active_window refresh without blocking cache-first UI.
+    // On cache-hit launch this is background-only; `isSyncing` stays false after UI release.
+    // Network: GET active window (may take 15s+); restaurant setup is deferred separately.
     @discardableResult
     func performStartupNetworkPass(context: ModelContext) async -> Bool {
         guard !isStartupNetworkPassInFlight else { return false }
@@ -309,7 +494,6 @@ final class ReservationsController: ObservableObject {
                 ?? "Could not refresh reservations."
         }
 
-        _ = try? await loadRestaurantSetup(context: context)
         return refreshSucceeded
     }
 
@@ -323,13 +507,28 @@ final class ReservationsController: ObservableObject {
         return ((try? context.fetch(descriptor))?.isEmpty == false)
     }
 
+    private func shouldShowGlobalRefreshProgress(
+        mode: ReservationRefreshMode,
+        force: Bool
+    ) -> Bool {
+        switch mode {
+        case .manual:
+            return true
+        case .startup:
+            return !hasReleasedStartupUI
+        case .automatic:
+            return false
+        case .schedule, .review:
+            return force
+        }
+    }
+
     func noteStartupWindowQueryDelivered(rowCount: Int) {
         guard startupPresentationState == .loadingSavedReservations else { return }
-        guard rowCount > 0 else { return }
         releaseStartupUI()
     }
 
-    private func hydrateCacheMetadata(context: ModelContext) async {
+    private func hydrateCacheMetadataSync(context: ModelContext) {
         do {
             let repository = ReservationRepository(context: context)
             if let latestLocalSyncDate = try repository.latestLocalSyncDate() {
@@ -674,7 +873,7 @@ final class ReservationsController: ObservableObject {
             return mode == .automatic
         }
 
-        let showsGlobalProgress = force || mode == .startup || mode == .manual
+        let showsGlobalProgress = shouldShowGlobalRefreshProgress(mode: mode, force: force)
         if mode == .automatic {
             isAutoRefreshing = true
         } else if showsGlobalProgress {

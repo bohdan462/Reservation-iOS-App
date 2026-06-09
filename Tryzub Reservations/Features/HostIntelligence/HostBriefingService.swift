@@ -10,6 +10,8 @@ import Foundation
 
 struct HostBriefingService {
 
+  private let maxTemplateFacts = 3
+
   // MARK: - Public
 
   func rankHostFacts(_ facts: [HostBriefingFact]) -> [HostBriefingFact] {
@@ -17,8 +19,10 @@ struct HostBriefingService {
       if lhs.severity.rank != rhs.severity.rank {
         return lhs.severity.rank < rhs.severity.rank
       }
-      if categoryRank(lhs.category) != categoryRank(rhs.category) {
-        return categoryRank(lhs.category) < categoryRank(rhs.category)
+      let lhsCategoryRank = effectiveCategoryRank(for: lhs)
+      let rhsCategoryRank = effectiveCategoryRank(for: rhs)
+      if lhsCategoryRank != rhsCategoryRank {
+        return lhsCategoryRank < rhsCategoryRank
       }
       return lhs.title < rhs.title
     }
@@ -29,25 +33,15 @@ struct HostBriefingService {
     serviceState: HostServiceState
   ) -> String {
     let ranked = rankHostFacts(facts)
-    guard !ranked.isEmpty else {
+    let selected = selectTemplateFacts(from: ranked, maxCount: maxTemplateFacts)
+    guard !selected.isEmpty else {
       return stableMessage(for: serviceState)
     }
 
-    let topFacts = ranked.prefix(3)
-    var sentences: [String] = []
-
-    for fact in topFacts {
+    let sentences = selected.compactMap { fact -> String? in
       let detail = fact.detail.trimmingCharacters(in: .whitespacesAndNewlines)
-      if !detail.isEmpty {
-        sentences.append(detail.hasSuffix(".") ? detail : "\(detail).")
-      }
-      if let action = fact.suggestedActionTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-         !action.isEmpty,
-         !isRedundantTemplateAction(action, detail: detail)
-      {
-        let actionSentence = action.hasSuffix(".") ? action : "\(action)."
-        sentences.append(actionSentence)
-      }
+      guard !detail.isEmpty else { return nil }
+      return detail.hasSuffix(".") ? detail : "\(detail)."
     }
 
     let briefing = sentences.joined(separator: " ")
@@ -65,6 +59,74 @@ struct HostBriefingService {
     )
   }
 
+  // MARK: - Template Selection
+
+  private func selectTemplateFacts(
+    from ranked: [HostBriefingFact],
+    maxCount: Int
+  ) -> [HostBriefingFact] {
+    var selected: [HostBriefingFact] = []
+    var lowRiskByReservation: [Int: HostBriefingFact] = [:]
+    var returningReservationIDs = Set<Int>()
+    var returningGuestNames = Set<String>()
+
+    for fact in ranked {
+      guard selected.count < maxCount else { break }
+
+      if isReturningGuestFact(fact) {
+        let reservationIDs = fact.relatedReservationIDs
+        if reservationIDs.contains(where: returningReservationIDs.contains) {
+          continue
+        }
+        if let guestName = guestName(fromReturningFact: fact) {
+          let nameKey = guestName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+          if returningGuestNames.contains(nameKey) {
+            continue
+          }
+          returningGuestNames.insert(nameKey)
+        }
+        reservationIDs.forEach { returningReservationIDs.insert($0) }
+      }
+
+      if let reservationID = fact.relatedReservationIDs.first,
+         fact.relatedReservationIDs.count == 1,
+         collapsesPerReservationLowRisk(fact) {
+        if let existing = lowRiskByReservation[reservationID] {
+          if templateFactPriority(fact) >= templateFactPriority(existing) {
+            continue
+          }
+          selected.removeAll { $0.id == existing.id }
+        }
+        lowRiskByReservation[reservationID] = fact
+      }
+
+      selected.append(fact)
+    }
+
+    return selected
+  }
+
+  private func collapsesPerReservationLowRisk(_ fact: HostBriefingFact) -> Bool {
+    switch fact.category {
+    case .preference, .guest, .note:
+      return true
+    default:
+      return false
+    }
+  }
+
+  private func templateFactPriority(_ fact: HostBriefingFact) -> Int {
+    switch fact.category {
+    case .allergy: return 0
+    case .preference: return 1
+    case .guest:
+      return isReturningGuestFact(fact) ? 2 : 3
+    case .note: return 4
+    case .bookingDecision: return 5
+    default: return 100
+    }
+  }
+
   // MARK: - Private
 
   private func stableMessage(for serviceState: HostServiceState) -> String {
@@ -80,31 +142,34 @@ struct HostBriefingService {
     }
   }
 
-  private func isRedundantTemplateAction(_ action: String, detail: String) -> Bool {
-    let normalizedAction = action.lowercased()
-    let normalizedDetail = detail.lowercased()
-
-    if normalizedAction.contains("review new reservations before confirming") {
-      return normalizedDetail.contains("waiting for staff review")
-    }
-
-    if normalizedAction.contains("review seating preference before assigning") {
-      return normalizedDetail.contains("prefers ")
-    }
-
-    if normalizedAction.hasPrefix("assign ") {
+  private func isReturningGuestFact(_ fact: HostBriefingFact) -> Bool {
+    guard fact.category == .guest else { return false }
+    if fact.title == "Returning guest" || fact.title == "Regular guest" {
       return true
     }
+    return fact.evidence.contains { $0 == "returningGuest" || $0.hasPrefix("returningGuest") }
+  }
 
-    if normalizedAction.hasPrefix("review "), normalizedAction.contains(" before ") {
-      return normalizedDetail.contains(normalizedAction
-        .replacingOccurrences(of: "review ", with: "")
-        .replacingOccurrences(of: " before seating.", with: "")
-        .replacingOccurrences(of: " before assigning.", with: "")
-      )
+  private func guestName(fromReturningFact fact: HostBriefingFact) -> String? {
+    let detail = fact.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !detail.isEmpty else { return nil }
+    if let range = detail.range(of: " is returning") {
+      return String(detail[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
+    if let range = detail.range(of: " is a frequent returning guest") {
+      return String(detail[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    if let range = detail.range(of: " has been seen before") {
+      return String(detail[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    return nil
+  }
 
-    return false
+  private func effectiveCategoryRank(for fact: HostBriefingFact) -> Int {
+    if isReturningGuestFact(fact) {
+      return 9
+    }
+    return categoryRank(fact.category)
   }
 
   private func categoryRank(_ category: HostFactCategory) -> Int {

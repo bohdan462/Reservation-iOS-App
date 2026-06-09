@@ -82,7 +82,7 @@ enum HostOperationalBriefingPromptBuilder {
     mode: HostOperationalBriefingPromptMode
   ) -> [HostOperationalBriefingPrompt] {
     let candidates = expandedCategoryOrder.compactMap { category in
-      buildCategoryPrompt(category: category, snapshot: snapshot)
+      buildCategoryPrompt(category: category, snapshot: snapshot, mode: mode)
     }
 
     guard !candidates.isEmpty else { return [] }
@@ -108,7 +108,8 @@ enum HostOperationalBriefingPromptBuilder {
 
   private static func buildCategoryPrompt(
     category: HostOperationalBriefingPromptCategory,
-    snapshot: HostDecisionSnapshot
+    snapshot: HostDecisionSnapshot,
+    mode: HostOperationalBriefingPromptMode
   ) -> HostOperationalBriefingPrompt? {
     switch category {
     case .reservationAttention:
@@ -116,7 +117,7 @@ enum HostOperationalBriefingPromptBuilder {
     case .tablePlan:
       return buildTablePlanPrompt(snapshot: snapshot)
     case .guestNotes:
-      return buildGuestNotesPrompt(snapshot: snapshot)
+      return buildGuestNotesPrompt(snapshot: snapshot, mode: mode)
     case .timing:
       return buildTimingPrompt(snapshot: snapshot)
     case .booking:
@@ -195,44 +196,61 @@ enum HostOperationalBriefingPromptBuilder {
   }
 
   private static func buildGuestNotesPrompt(
-    snapshot: HostDecisionSnapshot
+    snapshot: HostDecisionSnapshot,
+    mode: HostOperationalBriefingPromptMode
   ) -> HostOperationalBriefingPrompt? {
     var lines: [String] = []
     var reservationIDs = Set<Int>()
 
-    let regularGuests = snapshot.guestSignals.filter {
+    let returningGuests = snapshot.guestSignals.filter {
       $0.kind == .regularGuest || $0.kind == .importantGuest || $0.kind == .vip
     }
-    if regularGuests.count == 1 {
-      lines.append("A returning guest is coming today; review guest context before seating.")
-    } else if regularGuests.count > 1 {
-      lines.append("\(regularGuests.count) returning guests are coming today.")
+    if mode == .expanded {
+      for signal in returningGuests {
+        if let line = HostGuestIntelligenceSupport.compactReturningGuestPromptLine(for: signal) {
+          lines.append(line)
+        }
+        reservationIDs.insert(signal.reservationID)
+      }
+    } else {
+      returningGuests.forEach { reservationIDs.insert($0.reservationID) }
     }
-    regularGuests.forEach { reservationIDs.insert($0.reservationID) }
 
     let allergies = snapshot.guestSignals.filter { $0.kind == .allergy }
-    if allergies.count == 1 {
-      lines.append("One allergy note should be reviewed before seating.")
-    } else if allergies.count > 1 {
-      lines.append("\(allergies.count) allergy notes should be reviewed before seating.")
+    if mode == .expanded {
+      if allergies.count == 1 {
+        lines.append("One allergy note should be reviewed before seating.")
+      } else if allergies.count > 1 {
+        lines.append("\(allergies.count) allergy notes should be reviewed before seating.")
+      }
+    } else if !allergies.isEmpty {
+      lines.append(
+        allergies.count == 1
+          ? "One allergy note should be reviewed before seating."
+          : "\(allergies.count) allergy notes should be reviewed before seating."
+      )
     }
     allergies.forEach { reservationIDs.insert($0.reservationID) }
 
     let specialOccasions = snapshot.guestSignals.filter { $0.kind == .specialOccasion }
-    if specialOccasions.count == 1 {
-      lines.append("One guest has a special occasion note. Review it before seating.")
-    } else if specialOccasions.count > 1 {
-      lines.append("\(specialOccasions.count) guests have special occasion notes. Review them before seating.")
+    if mode == .expanded {
+      if specialOccasions.count == 1 {
+        lines.append("One guest has a special occasion note. Review it before seating.")
+      } else if specialOccasions.count > 1 {
+        lines.append("\(specialOccasions.count) guests have special occasion notes. Review them before seating.")
+      }
     }
     specialOccasions.forEach { reservationIDs.insert($0.reservationID) }
 
     let preferences = snapshot.guestSignals.filter {
       $0.kind == .seatingPreference || $0.kind == .accessibility
     }
-    if preferences.count == 1 {
-      lines.append("One guest note should be reviewed before seating.")
-    } else if preferences.count > 1 {
-      lines.append("\(preferences.count) guest notes should be reviewed before seating.")
+    if mode == .expanded {
+      if preferences.count == 1 {
+        lines.append("One guest note should be reviewed before seating.")
+      } else if preferences.count > 1 {
+        lines.append("\(preferences.count) guest notes should be reviewed before seating.")
+      }
     }
     preferences.forEach { reservationIDs.insert($0.reservationID) }
 
@@ -242,13 +260,15 @@ enum HostOperationalBriefingPromptBuilder {
       serviceIssues.forEach { reservationIDs.insert($0.reservationID) }
     }
 
-    appendFactLines(
-      category: .guestNotes,
-      facts: snapshot.briefingFacts,
-      into: &lines,
-      reservationIDs: &reservationIDs,
-      maxLines: 1
-    )
+    if mode == .expanded {
+      appendFactLines(
+        category: .guestNotes,
+        facts: snapshot.briefingFacts,
+        into: &lines,
+        reservationIDs: &reservationIDs,
+        maxLines: 1
+      )
+    }
 
     return makePrompt(
       category: .guestNotes,
@@ -258,7 +278,7 @@ enum HostOperationalBriefingPromptBuilder {
           + serviceIssues.map(\.severity)
           + specialOccasions.map(\.severity)
           + preferences.map(\.severity)
-          + regularGuests.map(\.severity)
+          + returningGuests.map(\.severity)
       ),
       reservationIDs: Array(reservationIDs)
     )
