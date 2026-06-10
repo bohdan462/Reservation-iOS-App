@@ -88,8 +88,77 @@ struct RestaurantTablesResponseDTO: Decodable, Equatable {
     }
 }
 
+struct RestaurantTableUpsertDTO: Encodable, Equatable {
+    let restaurantKey: String
+    let tableKey: String
+    let label: String
+    let x: Int
+    let y: Int
+    let widthUnits: Int
+    let heightUnits: Int
+    let minCapacity: Int
+    let maxCapacity: Int
+    let sortOrder: Int
+    let isActive: Bool
+    let id: Int?
+    let section: String?
+
+    init(from table: RestaurantTableDTO) {
+        id = table.id > 0 ? table.id : nil
+        restaurantKey = table.restaurantKey
+        tableKey = table.tableKey
+        label = table.label
+        x = table.x
+        y = table.y
+        widthUnits = table.widthUnits
+        heightUnits = table.heightUnits
+        minCapacity = table.minCapacity
+        maxCapacity = table.maxCapacity
+        sortOrder = table.sortOrder
+        isActive = table.isActive
+        section = table.section
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case restaurantKey
+        case tableKey
+        case label
+        case x
+        case y
+        case widthUnits
+        case heightUnits
+        case minCapacity
+        case maxCapacity
+        case section
+        case sortOrder
+        case isActive
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(id, forKey: .id)
+        try container.encode(restaurantKey, forKey: .restaurantKey)
+        try container.encode(tableKey, forKey: .tableKey)
+        try container.encode(label, forKey: .label)
+        try container.encode(x, forKey: .x)
+        try container.encode(y, forKey: .y)
+        try container.encode(widthUnits, forKey: .widthUnits)
+        try container.encode(heightUnits, forKey: .heightUnits)
+        try container.encode(minCapacity, forKey: .minCapacity)
+        try container.encode(maxCapacity, forKey: .maxCapacity)
+        try container.encode(sortOrder, forKey: .sortOrder)
+        try container.encode(isActive, forKey: .isActive)
+        try container.encodeIfPresent(section, forKey: .section)
+    }
+}
+
 struct RestaurantTablesPutRequestDTO: Encodable, Equatable {
-    let tables: [RestaurantTableDTO]
+    let tables: [RestaurantTableUpsertDTO]
+
+    init(tables: [RestaurantTableDTO]) {
+        self.tables = tables.map(RestaurantTableUpsertDTO.init)
+    }
 }
 
 // MARK: - Assignments

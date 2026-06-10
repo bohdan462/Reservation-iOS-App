@@ -73,6 +73,55 @@ enum FloorPlanConflictCopy {
 
 }
 
+enum FloorPlanLayoutSaveCopy {
+    static let saving = "Saving layout…"
+    static let saved = "Layout saved"
+
+    static func failureMessage(for error: Error) -> String {
+        let text = combinedErrorText(for: error).lowercased()
+        if text.contains("overlap") {
+            return "Tables overlap. Move one table and try again."
+        }
+        if isConnectionError(error) {
+            return "Could not save layout. Check the connection and try again."
+        }
+        return "Could not save layout. Check the table positions and try again."
+    }
+
+    private static func combinedErrorText(for error: Error) -> String {
+        if let floorPlanError = error as? FloorPlanError {
+            return floorPlanError.errorDescription ?? ""
+        }
+        if let apiError = error as? ReservationAPIError {
+            var parts = [apiError.errorDescription ?? ""]
+            if let snippet = apiError.diagnostics?.responseBodySnippet {
+                parts.append(snippet)
+            }
+            return parts.joined(separator: " ")
+        }
+        return error.localizedDescription
+    }
+
+    private static func isConnectionError(_ error: Error) -> Bool {
+        if let apiError = error as? ReservationAPIError {
+            switch apiError {
+            case .missingCredentials, .unauthorized, .networkFailure, .cancelled:
+                return true
+            case .serverError(let statusCode, _):
+                return statusCode >= 500
+            default:
+                return false
+            }
+        }
+        if let floorPlanError = error as? FloorPlanError {
+            if case .network = floorPlanError {
+                return true
+            }
+        }
+        return false
+    }
+}
+
 private extension String {
     var nilIfBlank: String? {
         isEmpty ? nil : self

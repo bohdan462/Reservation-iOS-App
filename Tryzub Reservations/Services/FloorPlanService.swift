@@ -25,30 +25,24 @@ final class FloorPlanService: FloorPlanServiceProtocol {
     func getRestaurantTables() async throws -> [RestaurantTableDTO] {
         do {
             return try await client.fetchRestaurantTables(reason: .restaurantTables)
-        } catch let error as FloorPlanError {
-            throw error
         } catch {
-            throw FloorPlanError.network(error)
+            throw mapError(error)
         }
     }
 
     func putRestaurantTables(_ tables: [RestaurantTableDTO]) async throws -> [RestaurantTableDTO] {
         do {
             return try await client.putRestaurantTables(tables, reason: .restaurantTablesPut)
-        } catch let error as FloorPlanError {
-            throw error
         } catch {
-            throw FloorPlanError.network(error)
+            throw mapError(error)
         }
     }
 
     func getFloorPlan(date: String) async throws -> FloorPlanResponseDTO {
         do {
             return try await client.fetchFloorPlan(date: date, reason: .floorPlan)
-        } catch let error as FloorPlanError {
-            throw error
         } catch {
-            throw FloorPlanError.network(error)
+            throw mapError(error)
         }
     }
 
@@ -62,10 +56,34 @@ final class FloorPlanService: FloorPlanServiceProtocol {
                 request: PatchReservationTablesRequest(tableKeys: tableKeys),
                 reason: .reservationTablesPatch
             )
-        } catch let error as FloorPlanError {
-            throw error
         } catch {
-            throw FloorPlanError.network(error)
+            throw mapError(error)
         }
+    }
+
+    private func mapError(_ error: Error) -> FloorPlanError {
+        if let error = error as? FloorPlanError {
+            return error
+        }
+        if let apiError = error as? ReservationAPIError {
+            switch apiError {
+            case .wordpressError(_, let message, _, _):
+                return .serverMessage(message)
+            case .serverError(_, let diagnostics):
+                if let snippet = diagnostics?.responseBodySnippet?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !snippet.isEmpty {
+                    return .serverMessage(snippet)
+                }
+                return .serverMessage(apiError.errorDescription ?? "The reservation API returned an error.")
+            case .networkFailure(let urlError):
+                return .network(urlError)
+            case .decodingFailure(let decodingError, _):
+                return .decoding(decodingError)
+            default:
+                return .network(apiError)
+            }
+        }
+        return .network(error)
     }
 }

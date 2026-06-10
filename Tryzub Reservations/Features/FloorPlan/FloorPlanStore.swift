@@ -6,6 +6,13 @@
 import Foundation
 import SwiftData
 
+enum FloorPlanLayoutSaveState: Equatable {
+    case idle
+    case saving
+    case saved
+    case failed(String)
+}
+
 @MainActor
 final class FloorPlanStore: ObservableObject {
     @Published private(set) var viewState: FloorPlanViewState = .empty
@@ -14,6 +21,7 @@ final class FloorPlanStore: ObservableObject {
     @Published private(set) var conflict: FloorPlanConflictViewState?
     @Published private(set) var layoutTables: [RestaurantTableDTO] = []
     @Published private(set) var isSavingLayout = false
+    @Published private(set) var layoutSaveState: FloorPlanLayoutSaveState = .idle
     @Published private(set) var isAssigning = false
 
     private let service: any FloorPlanServiceProtocol
@@ -188,6 +196,10 @@ final class FloorPlanStore: ObservableObject {
         do {
             let tables = try await service.getRestaurantTables()
             layoutTables = tables.sorted { $0.sortOrder < $1.sortOrder }
+            FloorPlanTrace.event(
+                name: "layout_load_completed",
+                extra: "tables=\(tables.count)"
+            )
         } catch let error as FloorPlanError {
             errorMessage = staffMessage(for: error)
         } catch {
@@ -197,24 +209,43 @@ final class FloorPlanStore: ObservableObject {
         }
     }
 
+    func resetLayoutSaveState() {
+        layoutSaveState = .idle
+    }
+
     func saveLayout(_ tables: [RestaurantTableDTO]) async -> Bool {
         guard !isSavingLayout else { return false }
         isSavingLayout = true
-        errorMessage = nil
+        layoutSaveState = .saving
         defer { isSavingLayout = false }
+
+        let activeCount = tables.filter(\.isActive).count
+        FloorPlanTrace.event(
+            name: "layout_save_started",
+            extra: "tables=\(tables.count) active=\(activeCount)"
+        )
 
         do {
             let saved = try await service.putRestaurantTables(tables)
             layoutTables = saved.sorted { $0.sortOrder < $1.sortOrder }
             await refresh(date: selectedDate, force: true)
+            layoutSaveState = .saved
+            FloorPlanTrace.event(
+                name: "layout_save_completed",
+                extra: "tables=\(saved.count) active=\(saved.filter(\.isActive).count)"
+            )
             return true
-        } catch let error as FloorPlanError {
-            errorMessage = staffMessage(for: error)
-            return false
         } catch {
-            if !error.isCancellationLike {
-                errorMessage = error.localizedDescription
+            guard !error.isCancellationLike else {
+                layoutSaveState = .idle
+                return false
             }
+            let message = FloorPlanLayoutSaveCopy.failureMessage(for: error)
+            layoutSaveState = .failed(message)
+            FloorPlanTrace.event(
+                name: "layout_save_failed",
+                extra: "message=\(message)"
+            )
             return false
         }
     }
