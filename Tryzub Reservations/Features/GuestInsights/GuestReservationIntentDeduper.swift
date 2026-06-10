@@ -12,6 +12,11 @@ struct GuestReservationIntentDeduplicationResult {
     let collapsedDuplicateCount: Int
 }
 
+struct GuestReservationIntentSnapshotDeduplicationResult: Sendable {
+    let records: [GuestInsightRecordSnapshot]
+    let collapsedDuplicateCount: Int
+}
+
 // MARK: - Intent Deduper
 
 struct GuestReservationIntentDeduper {
@@ -55,9 +60,46 @@ struct GuestReservationIntentDeduper {
         }
     }
 
+    func collapse(
+        _ snapshots: [GuestInsightRecordSnapshot],
+        keeping selectedID: Int? = nil
+    ) -> GuestReservationIntentSnapshotDeduplicationResult {
+        let grouped = Dictionary(grouping: snapshots) { snapshot in
+            snapshot.intentKey ?? "record:\(snapshot.remoteID)"
+        }
+
+        var collapsedDuplicateCount = 0
+        var canonicalSnapshots: [GuestInsightRecordSnapshot] = []
+
+        for group in grouped.values {
+            guard group.count > 1 else {
+                canonicalSnapshots.append(contentsOf: group)
+                continue
+            }
+
+            collapsedDuplicateCount += group.count - 1
+            canonicalSnapshots.append(canonicalSnapshot(from: group, selectedID: selectedID))
+        }
+
+        return GuestReservationIntentSnapshotDeduplicationResult(
+            records: canonicalSnapshots,
+            collapsedDuplicateCount: collapsedDuplicateCount
+        )
+    }
+
+    func isDuplicateIntent(
+        _ snapshot: GuestInsightRecordSnapshot,
+        ofAny snapshots: [GuestInsightRecordSnapshot]
+    ) -> Bool {
+        guard let recordKey = snapshot.intentKey else { return false }
+        return snapshots.contains { candidate in
+            candidate.remoteID != snapshot.remoteID && candidate.intentKey == recordKey
+        }
+    }
+
     // MARK: - Booking Intent Key
 
-    private func intentKey(for record: ReservationRecord) -> String? {
+    func intentKey(for record: ReservationRecord) -> String? {
         guard let identityKey = identityKey(for: record) else { return nil }
         return [
             identityKey,
@@ -98,10 +140,43 @@ struct GuestReservationIntentDeduper {
 
     // MARK: - Canonical Record Selection
 
+    private func canonicalSnapshot(
+        from snapshots: [GuestInsightRecordSnapshot],
+        selectedID: Int?
+    ) -> GuestInsightRecordSnapshot {
+        snapshots.max { lhs, rhs in
+            canonicalRank(lhs, selectedID: selectedID) < canonicalRank(rhs, selectedID: selectedID)
+        } ?? snapshots[0]
+    }
+
     private func canonicalRecord(from records: [ReservationRecord], selectedID: Int?) -> ReservationRecord {
         records.max { lhs, rhs in
             canonicalRank(lhs, selectedID: selectedID) < canonicalRank(rhs, selectedID: selectedID)
         } ?? records[0]
+    }
+
+    private func canonicalRank(_ snapshot: GuestInsightRecordSnapshot, selectedID: Int?) -> Int {
+        var rank = 0
+
+        if snapshot.remoteID == selectedID {
+            rank += 10_000
+        }
+
+        if snapshot.supersededById == nil {
+            rank += 1_000
+        }
+
+        rank += statusRank(snapshot.statusValue) * 100
+
+        if snapshot.hasTableAssignment {
+            rank += 20
+        }
+
+        if snapshot.hasConfirmationEmailRecord {
+            rank += 10
+        }
+
+        return rank * 100_000 + max(0, 100_000 - min(snapshot.remoteID, 100_000))
     }
 
     private func canonicalRank(_ record: ReservationRecord, selectedID: Int?) -> Int {

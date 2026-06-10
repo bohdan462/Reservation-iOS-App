@@ -18,47 +18,74 @@ struct GuestInsightsController {
         selected reservation: ReservationRecord,
         allReservations: [ReservationRecord]
     ) -> GuestInsightReport {
-        let records = uniqueRecords([reservation] + allReservations)
-        let selectedIdentity = identityResolver.identity(for: reservation)
+        let built = GuestInsightRecordSnapshotBuilder.build(
+            selected: reservation,
+            pool: allReservations
+        )
+        return analyzeSnapshots(selected: built.selected, all: built.all)
+    }
+
+    func analyzeSnapshots(
+        selected reservation: GuestInsightRecordSnapshot,
+        all allSnapshots: [GuestInsightRecordSnapshot]
+    ) -> GuestInsightReport {
+        let records = uniqueSnapshots([reservation] + allSnapshots)
+        let selectedIdentity = reservation.identity
 
         let matchResults = records.compactMap { record in
-            identityResolver.match(record, against: selectedIdentity, selectedID: reservation.remoteID)
+            identityResolver.match(
+                record,
+                against: selectedIdentity,
+                selectedPattern: reservation,
+                selectedID: reservation.remoteID
+            )
         }
 
         let matchedResults = matchResults.filter {
-            $0.record.remoteID == reservation.remoteID
+            $0.remoteID == reservation.remoteID
                 || $0.confidence == .exact
                 || $0.confidence == .strong
         }
+        let matchedSnapshots = records.filter { record in
+            matchedResults.contains { $0.remoteID == record.remoteID }
+        }
         let dedupedMatchedRecords = intentDeduper.collapse(
-            matchedResults.map(\.record),
+            matchedSnapshots,
             keeping: reservation.remoteID
         )
         let matchedRecords = dedupedMatchedRecords.records
             .sorted(by: newestFirst)
         let matchedResultByID = Dictionary(
-            uniqueKeysWithValues: matchedResults.map { ($0.record.remoteID, $0) }
+            uniqueKeysWithValues: matchedResults.map { ($0.remoteID, $0) }
         )
 
-        let possibleResults = matchResults.filter {
-            $0.record.remoteID != reservation.remoteID
-                && $0.confidence == .possible
-                && !intentDeduper.isDuplicateIntent($0.record, ofAny: matchedRecords)
+        let possibleResults = matchResults.filter { result in
+            guard result.remoteID != reservation.remoteID,
+                  result.confidence == .possible,
+                  let snapshot = records.first(where: { $0.remoteID == result.remoteID }) else {
+                return false
+            }
+            return !intentDeduper.isDuplicateIntent(snapshot, ofAny: matchedRecords)
+        }
+        let possibleSnapshots = records.filter { record in
+            possibleResults.contains { $0.remoteID == record.remoteID }
         }
         let possibleResultByID = Dictionary(
-            uniqueKeysWithValues: possibleResults.map { ($0.record.remoteID, $0) }
+            uniqueKeysWithValues: possibleResults.map { ($0.remoteID, $0) }
         )
 
         let matchedItems = matchedRecords
-            .compactMap { matchedResultByID[$0.remoteID] }
-            .map(matchedReservation)
+            .compactMap { record -> GuestMatchedReservation? in
+                guard let result = matchedResultByID[record.remoteID] else { return nil }
+                return matchedReservation(result, snapshot: record)
+            }
             .sorted(by: newestFirst)
 
-        let possibleItems = intentDeduper.collapse(possibleResults.map(\.record)).records
-            .compactMap { record in
-                possibleResultByID[record.remoteID]
+        let possibleItems = intentDeduper.collapse(possibleSnapshots).records
+            .compactMap { record -> GuestMatchedReservation? in
+                guard let result = possibleResultByID[record.remoteID] else { return nil }
+                return matchedReservation(result, snapshot: record)
             }
-            .map(matchedReservation)
             .sorted {
                 if $0.confidence == $1.confidence {
                     return newestFirst($0, $1)
@@ -74,11 +101,15 @@ struct GuestInsightsController {
         let partySizeStats = partyStats(from: matchedRecords)
         let statusStats = statusStats(from: matchedRecords)
         let priorReliableVisitCount = GuestHistorySemantics.priorReliableVisitCount(
-            selected: reservation,
-            matchedRecords: matchedRecords
+            selectedRemoteID: reservation.remoteID,
+            selectedDate: reservation.reservationDate,
+            selectedTime: reservation.reservationTime,
+            matchedReservations: matchedItems
         )
         let lastPriorVisitDisplayDate = GuestHistorySemantics.lastPriorVisitDisplayDate(
-            selected: reservation,
+            selectedRemoteID: reservation.remoteID,
+            selectedDate: reservation.reservationDate,
+            selectedTime: reservation.reservationTime,
             matchedReservations: matchedItems
         )
         let visitOrdinal = GuestHistorySemantics.visitOrdinal(
@@ -109,7 +140,7 @@ struct GuestInsightsController {
 
         let primaryEmail = selectedIdentity.usefulEmail
         let primaryPhone = selectedIdentity.fullPhoneDigits.map { _ in reservation.formattedPhone }
-        let isLikelyManualGuest = identityResolver.isLikelyManualCallIn(reservation)
+        let isLikelyManualGuest = reservation.isLikelyManualCallIn
 
         return GuestInsightReport(
             selectedReservationID: reservation.remoteID,
@@ -149,17 +180,20 @@ struct GuestInsightsController {
 
     // MARK: - Matching Rules
 
-    private func matchedReservation(_ result: GuestIdentityMatch) -> GuestMatchedReservation {
+    private func matchedReservation(
+        _ result: GuestInsightIdentityMatch,
+        snapshot: GuestInsightRecordSnapshot
+    ) -> GuestMatchedReservation {
         GuestMatchedReservation(
-            reservationID: result.record.remoteID,
-            date: result.record.reservationDate,
-            time: result.record.reservationTime,
-            displayDate: result.record.displayDate,
-            displayTime: result.record.displayTime,
-            guestName: result.record.guestName,
-            partySize: result.record.partySize,
-            status: result.record.statusValue,
-            table: result.record.tableName?.nilIfBlank,
+            reservationID: result.remoteID,
+            date: snapshot.reservationDate,
+            time: snapshot.reservationTime,
+            displayDate: snapshot.displayDate,
+            displayTime: snapshot.displayTime,
+            guestName: snapshot.guestName,
+            partySize: snapshot.partySize,
+            status: snapshot.statusValue,
+            table: snapshot.tableName?.nilIfBlank,
             confidence: result.confidence,
             matchReasons: result.reasons
         )
@@ -167,7 +201,7 @@ struct GuestInsightsController {
 
     // MARK: - Booking History
 
-    private func bookingHistoryItem(_ record: ReservationRecord) -> GuestBookingHistoryItem {
+    private func bookingHistoryItem(_ record: GuestInsightRecordSnapshot) -> GuestBookingHistoryItem {
         GuestBookingHistoryItem(
             reservationID: record.remoteID,
             date: record.reservationDate,
@@ -177,7 +211,7 @@ struct GuestInsightsController {
             partySize: record.partySize,
             status: record.statusValue,
             table: record.tableName?.nilIfBlank,
-            source: identityResolver.isLikelyManualCallIn(record) ? .manual : .online,
+            source: record.isLikelyManualCallIn ? .manual : .online,
             hasGuestNotes: record.hasGuestNotes,
             hasStaffNotes: record.hasStaffNotes
         )
@@ -185,7 +219,7 @@ struct GuestInsightsController {
 
     // MARK: - Notes History
 
-    private func noteHistoryItems(from records: [ReservationRecord]) -> [GuestNoteHistoryItem] {
+    private func noteHistoryItems(from records: [GuestInsightRecordSnapshot]) -> [GuestNoteHistoryItem] {
         records.flatMap { record in
             var notes: [GuestNoteHistoryItem] = []
             if let guestNotes = record.guestNotes?.nilIfBlank {
@@ -225,7 +259,7 @@ struct GuestInsightsController {
 
     // MARK: - Preferences / Stats
 
-    private func timePreferences(from records: [ReservationRecord]) -> [GuestTimePreference] {
+    private func timePreferences(from records: [GuestInsightRecordSnapshot]) -> [GuestTimePreference] {
         let buckets = records.reduce(into: [String: Int]()) { result, record in
             guard let bucket = hourBucket(from: record.reservationTime) else { return }
             result[bucket, default: 0] += 1
@@ -248,7 +282,7 @@ struct GuestInsightsController {
             }
     }
 
-    private func weekdayPreferences(from records: [ReservationRecord]) -> [GuestWeekdayPreference] {
+    private func weekdayPreferences(from records: [GuestInsightRecordSnapshot]) -> [GuestWeekdayPreference] {
         let weekdays = records.reduce(into: [String: Int]()) { result, record in
             guard let date = Self.dateParser.date(from: record.reservationDate) else { return }
             result[Self.weekdayFormatter.string(from: date), default: 0] += 1
@@ -264,7 +298,7 @@ struct GuestInsightsController {
             }
     }
 
-    private func partyStats(from records: [ReservationRecord]) -> GuestPartySizeStats {
+    private func partyStats(from records: [GuestInsightRecordSnapshot]) -> GuestPartySizeStats {
         let partySizes = records.map(\.partySize)
         guard !partySizes.isEmpty else {
             return GuestPartySizeStats(
@@ -294,7 +328,7 @@ struct GuestInsightsController {
         )
     }
 
-    private func statusStats(from records: [ReservationRecord]) -> GuestStatusStats {
+    private func statusStats(from records: [GuestInsightRecordSnapshot]) -> GuestStatusStats {
         GuestStatusStats(
             new: records.filter { $0.statusValue == .new }.count,
             needsReview: records.filter { $0.statusValue == .needsReview }.count,
@@ -309,7 +343,7 @@ struct GuestInsightsController {
     // MARK: - Hospitality Summary
 
     private func summary(
-        from records: [ReservationRecord],
+        from records: [GuestInsightRecordSnapshot],
         noteHistory: [GuestNoteHistoryItem],
         preferredTimes: [GuestTimePreference],
         preferredWeekdays: [GuestWeekdayPreference],
@@ -335,8 +369,8 @@ struct GuestInsightsController {
     }
 
     private func hospitalitySnapshot(
-        from records: [ReservationRecord],
-        selectedIdentity: GuestResolvedIdentity,
+        from records: [GuestInsightRecordSnapshot],
+        selectedIdentity: GuestInsightIdentitySnapshot,
         noteHistory: [GuestNoteHistoryItem],
         partySizeStats: GuestPartySizeStats
     ) -> GuestHospitalitySnapshot {
@@ -367,7 +401,7 @@ struct GuestInsightsController {
     }
 
     private func bookingBehavior(
-        from records: [ReservationRecord],
+        from records: [GuestInsightRecordSnapshot],
         preferredTimes: [GuestTimePreference],
         preferredWeekdays: [GuestWeekdayPreference],
         partySizeStats: GuestPartySizeStats,
@@ -378,8 +412,8 @@ struct GuestInsightsController {
             mostCommonWeekday: preferredWeekdays.first?.weekday,
             mostCommonPartySize: partySizeStats.mostCommon,
             commonTable: commonTable(from: records),
-            onlineCount: records.filter { !identityResolver.isLikelyManualCallIn($0) }.count,
-            manualCount: records.filter { identityResolver.isLikelyManualCallIn($0) }.count,
+            onlineCount: records.filter { !$0.isLikelyManualCallIn }.count,
+            manualCount: records.filter(\.isLikelyManualCallIn).count,
             upcomingActiveCount: records.filter { record in
                 isUpcoming(record) && Self.activeStatuses.contains(record.statusValue)
             }.count,
@@ -392,10 +426,10 @@ struct GuestInsightsController {
 
     // Intent: Calm operational watchouts for staff, not judgmental guest scoring.
     private func warnings(
-        selectedIdentity: GuestResolvedIdentity,
+        selectedIdentity: GuestInsightIdentitySnapshot,
         isLikelyManualGuest: Bool,
         possibleMatches: [GuestMatchedReservation],
-        matchedRecords: [ReservationRecord],
+        matchedRecords: [GuestInsightRecordSnapshot],
         collapsedDuplicateCount: Int,
         noteHistory: [GuestNoteHistoryItem],
         summary: GuestInsightSummary,
@@ -511,7 +545,7 @@ struct GuestInsightsController {
 
     // MARK: - Date / Sorting Helpers
 
-    private func commonTable(from records: [ReservationRecord]) -> String? {
+    private func commonTable(from records: [GuestInsightRecordSnapshot]) -> String? {
         let counts = records.reduce(into: [String: Int]()) { result, record in
             guard let table = record.tableName?.nilIfBlank else { return }
             result[table, default: 0] += 1
@@ -525,7 +559,7 @@ struct GuestInsightsController {
         }.first?.key
     }
 
-    private func visitCount(inLastDays days: Int, records: [ReservationRecord]) -> Int {
+    private func visitCount(inLastDays days: Int, records: [GuestInsightRecordSnapshot]) -> Int {
         let cutoff = Date().addingTimeInterval(Double(-days * 24 * 60 * 60))
         return records.filter { record in
             guard let date = dateTime(from: record) else { return false }
@@ -533,7 +567,7 @@ struct GuestInsightsController {
         }.count
     }
 
-    private func isUpcoming(_ record: ReservationRecord) -> Bool {
+    private func isUpcoming(_ record: GuestInsightRecordSnapshot) -> Bool {
         guard let date = dateTime(from: record) else {
             return record.reservationDate >= Date.reservationDateString()
         }
@@ -541,12 +575,12 @@ struct GuestInsightsController {
         return date >= Date()
     }
 
-    private func dateTime(from record: ReservationRecord) -> Date? {
+    private func dateTime(from record: GuestInsightRecordSnapshot) -> Date? {
         let combined = "\(record.reservationDate) \(record.reservationTime)"
         return Self.dateTimeParser.date(from: combined)
     }
 
-    private func newestFirst(_ lhs: ReservationRecord, _ rhs: ReservationRecord) -> Bool {
+    private func newestFirst(_ lhs: GuestInsightRecordSnapshot, _ rhs: GuestInsightRecordSnapshot) -> Bool {
         if lhs.reservationDate == rhs.reservationDate {
             if lhs.reservationTime == rhs.reservationTime {
                 return lhs.remoteID > rhs.remoteID
@@ -556,7 +590,7 @@ struct GuestInsightsController {
         return lhs.reservationDate > rhs.reservationDate
     }
 
-    private func oldestFirst(_ lhs: ReservationRecord, _ rhs: ReservationRecord) -> Bool {
+    private func oldestFirst(_ lhs: GuestInsightRecordSnapshot, _ rhs: GuestInsightRecordSnapshot) -> Bool {
         if lhs.reservationDate == rhs.reservationDate {
             if lhs.reservationTime == rhs.reservationTime {
                 return lhs.remoteID < rhs.remoteID
@@ -586,9 +620,9 @@ struct GuestInsightsController {
         return lhs.date > rhs.date
     }
 
-    private func uniqueRecords(_ records: [ReservationRecord]) -> [ReservationRecord] {
+    private func uniqueSnapshots(_ records: [GuestInsightRecordSnapshot]) -> [GuestInsightRecordSnapshot] {
         var seen = Set<Int>()
-        var unique: [ReservationRecord] = []
+        var unique: [GuestInsightRecordSnapshot] = []
 
         for record in records where !seen.contains(record.remoteID) {
             seen.insert(record.remoteID)

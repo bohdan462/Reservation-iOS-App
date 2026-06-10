@@ -25,7 +25,12 @@ struct RegularGuestsController {
         let records = uniqueRecords(reservations.filter { !$0.isHidden })
         guard !records.isEmpty else { return [] }
 
-        let clusters = exactAndStrongClusters(from: records)
+        let clusters = UIPressureTrace.measure(
+            phase: "regular_guests_cluster",
+            extra: "records=\(records.count)"
+        ) {
+            indexedStrongClusters(from: records)
+        }
         return clusters
             .compactMap { summary(for: $0, allRecords: records) }
             .sorted(by: defaultSort)
@@ -79,21 +84,21 @@ struct RegularGuestsController {
 
     // MARK: - Guest Clustering
 
-    // Exact/strong matches form clusters. Weak matches stay separate as possible matches.
-    private func exactAndStrongClusters(from records: [ReservationRecord]) -> [[ReservationRecord]] {
-        var unionFind = UnionFind(indices: Array(records.indices))
+    // Exact/strong matches form clusters via identity buckets, not global O(n²) scans.
+    private func indexedStrongClusters(from records: [ReservationRecord]) -> [[ReservationRecord]] {
         let identities = records.map(identityResolver.identity)
+        let buckets = UIPressureTrace.measure(
+            phase: "regular_guests_index_build",
+            extra: "records=\(records.count)"
+        ) {
+            identityBuckets(for: records, identities: identities)
+        }
 
-        for lhsIndex in records.indices {
-            for rhsIndex in records.indices where rhsIndex > lhsIndex {
-                if let match = identityResolver.match(
-                    records[rhsIndex],
-                    against: identities[lhsIndex],
-                    selectedID: nil
-                ),
-                   match.isPrimaryHistoryMatch {
-                    unionFind.union(lhsIndex, rhsIndex)
-                }
+        var unionFind = UnionFind(indices: Array(records.indices))
+        for bucket in buckets.values where bucket.count > 1 {
+            let root = bucket[0]
+            for index in bucket.dropFirst() {
+                unionFind.union(root, index)
             }
         }
 
@@ -103,6 +108,34 @@ struct RegularGuestsController {
         }
 
         return grouped.values.map { $0.sorted(by: newestFirst) }
+    }
+
+    private func identityBuckets(
+        for records: [ReservationRecord],
+        identities: [GuestResolvedIdentity]
+    ) -> [String: [Int]] {
+        var buckets: [String: [Int]] = [:]
+
+        for index in records.indices {
+            let identity = identities[index]
+            var keys: [String] = []
+
+            if let phone = identity.fullPhoneDigits {
+                keys.append("phone:\(phone)")
+            }
+            if let email = identity.usefulEmail {
+                keys.append("email:\(email)")
+            }
+            if !identity.normalizedName.isEmpty, let last4 = identity.phoneLast4 {
+                keys.append("name-last4:\(identity.normalizedName):\(last4)")
+            }
+
+            for key in keys {
+                buckets[key, default: []].append(index)
+            }
+        }
+
+        return buckets
     }
 
     // MARK: - Summary Building

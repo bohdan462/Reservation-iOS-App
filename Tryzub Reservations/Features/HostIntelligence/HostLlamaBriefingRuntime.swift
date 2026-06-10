@@ -55,6 +55,7 @@ enum HostLlamaBriefingRuntimeDiagnostics {
 
 #if DEBUG
 private func hostLlamaLogDebug(_ message: String) {
+  guard HostLlamaLogSettings.verboseModelLogs else { return }
   print("[HostLlama] \(message)")
 }
 #endif

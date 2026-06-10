@@ -63,6 +63,10 @@ struct ManagerNarrativeWriter {
 
     if HostBriefingHostBoardGate.shouldUseTemplateOnlyOnHostBoard(packet: hostPacket)
       || LocalModelHostBriefingWriter.shouldUseTemplateForLowRiskSingleFact(hostPacket) {
+      let skipReason = HostBriefingHostBoardGate.hasOperationalTension(packet: hostPacket)
+        ? "host_board_template_only"
+        : "independent_simple_facts"
+      HostAILifecycleTrace.modelSkipped(reason: skipReason)
       ManagerNarrativeWriterDiagnostics.recordSuccess(raw: fallback.compactBriefingText)
       return fallback
     }
@@ -74,6 +78,7 @@ struct ManagerNarrativeWriter {
         packet: hostPacket
        ) {
       HostIntelligenceDiagnostics.skipLocalModel(reason: skipReason.rawValue)
+      HostAILifecycleTrace.modelSkipped(reason: skipReason.rawValue)
       ManagerNarrativeWriterDiagnostics.recordFailure(
         raw: nil,
         reason: skipReason.rawValue
@@ -99,9 +104,31 @@ struct ManagerNarrativeWriter {
 
     let prompt = ManagerNarrativePromptBuilder.buildPrompt(from: narrativePacket)
     let runtime = HostLocalModelRuntimeFactory.makeRuntime()
+    let packetKey = hostPacket.briefingFingerprint
+    let inferenceStarted = ContinuousClock.now
+    let themes = HostBriefingHostBoardGate.operationalCategories(for: hostPacket)
+      .map(\.traceLabel)
+      .sorted()
 
     do {
+      HostAILifecycleTrace.modelStarted(
+        packetKey: packetKey,
+        promptChars: prompt.count,
+        promptTokens: HostAILifecycleTrace.estimatedPromptTokens(for: prompt),
+        facts: narrativePacket.headlineFacts.count,
+        actions: narrativePacket.availableActions.count,
+        themes: themes,
+        visibleSurface: narrativePacket.surface.rawValue
+      )
       let generated = try await runtime.generateBriefing(prompt: prompt)
+      let inferenceDurationMs = Int(
+        inferenceStarted.duration(to: .now).pressureTraceTimeInterval * 1000
+      )
+      HostAILifecycleTrace.modelCompleted(
+        durationMs: inferenceDurationMs,
+        outputChars: generated.count
+      )
+      HostBoardModelDecisionTrace.recordModelDuration(inferenceDurationMs)
       let normalizedResult = normalizeModelOutput(generated)
       guard let normalized = normalizedResult.text else {
         return fallbackWithReason(
@@ -122,11 +149,20 @@ struct ManagerNarrativeWriter {
         failedReason: nil
       )
 
+      let validationStarted = ContinuousClock.now
       let validation = ManagerNarrativeValidator.validationResult(
         parsed,
         packet: narrativePacket,
         hostPacket: hostPacket,
         fallback: fallback
+      )
+      let validationDurationMs = Int(
+        validationStarted.duration(to: .now).pressureTraceTimeInterval * 1000
+      )
+      HostAILifecycleTrace.validationCompleted(
+        durationMs: validationDurationMs,
+        result: validation.isValid ? "valid" : "rejected",
+        reason: validation.isValid ? nil : validation.reason
       )
 
       if validation.isValid {
@@ -136,12 +172,19 @@ struct ManagerNarrativeWriter {
         } else {
           HostIntelligenceDiagnostics.modelOutputUsed(source: "local_model")
         }
+        HostAILifecycleTrace.modelOutputUsed(
+          source: usedRepair ? "repairedLocalModel" : "localModel",
+          durationMs: inferenceDurationMs + validationDurationMs
+        )
+        HostBoardModelDecisionTrace.recordRejectionReason(nil)
         return parsed
       }
 
-      HostIntelligenceDiagnostics.modelOutputRejected(
-        reason: validation.reason ?? "validation_failed"
-      )
+      let rejectionReason = validation.reason ?? "validation_failed"
+      HostIntelligenceDiagnostics.modelOutputRejected(reason: rejectionReason)
+      HostAILifecycleTrace.modelOutputRejected(reason: rejectionReason)
+      HostAILifecycleTrace.templateFallbackUsed(reason: rejectionReason)
+      HostBoardModelDecisionTrace.recordRejectionReason(rejectionReason)
       ManagerNarrativeWriterDiagnostics.recordFailure(
         raw: generated,
         reason: validation.reason
@@ -163,13 +206,25 @@ struct ManagerNarrativeWriter {
   }
 
   private func normalizeModelOutput(_ generated: String) -> NormalizedModelOutput {
-    if ManagerNarrativeValidator.containsLeakedModelLabels(in: generated),
-       let repaired = ManagerNarrativeValidator.repairStaffCopy(generated),
+    var candidate = generated.trimmingCharacters(in: .whitespacesAndNewlines)
+    var usedPrefixRepair = false
+
+    if let stripped = ManagerNarrativeValidator.stripRolePrefixIfNeeded(candidate) {
+      candidate = stripped.text
+      usedPrefixRepair = stripped.stripped
+    }
+
+    if ManagerNarrativeValidator.containsLeakedModelLabels(in: candidate),
+       let repaired = ManagerNarrativeValidator.repairStaffCopy(candidate),
        !ManagerNarrativeValidator.containsLeakedModelLabels(in: repaired) {
       return NormalizedModelOutput(text: repaired, usedRepair: true, failureReason: nil)
     }
 
-    if ManagerNarrativeValidator.containsLeakedModelLabels(in: generated) {
+    if usedPrefixRepair, !ManagerNarrativeValidator.containsLeakedModelLabels(in: candidate) {
+      return NormalizedModelOutput(text: candidate, usedRepair: true, failureReason: nil)
+    }
+
+    if ManagerNarrativeValidator.containsLeakedModelLabels(in: candidate) {
       HostIntelligenceDiagnostics.modelOutputRejected(reason: "raw_labels")
       ManagerNarrativeWriterDiagnostics.recordFailure(
         raw: generated,
@@ -182,7 +237,7 @@ struct ManagerNarrativeWriter {
       )
     }
 
-    return NormalizedModelOutput(text: generated, usedRepair: false, failureReason: nil)
+    return NormalizedModelOutput(text: candidate, usedRepair: usedPrefixRepair, failureReason: nil)
   }
 
   private func fallbackWithReason(

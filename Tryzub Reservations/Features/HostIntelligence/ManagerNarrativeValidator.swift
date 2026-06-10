@@ -155,6 +155,22 @@ enum ManagerNarrativeValidator {
     "seat the guest", "auto-send", "auto send"
   ]
 
+  private static let announcementTonePhrases = [
+    "attention all staff",
+    "dear staff",
+    "hello team",
+    "good evening team",
+    "good morning team"
+  ]
+
+  private static let tableAvailablePhrases = [
+    " is available",
+    "table is free",
+    "table is now available",
+    "table can be used",
+    "table has opened"
+  ]
+
   static func containsLeakedModelLabels(in narrative: ManagerNarrative) -> Bool {
     for field in [narrative.headline, narrative.whyItMatters, narrative.checkNext].compactMap({ $0 }) {
       if containsLeakedModelLabels(in: field) {
@@ -184,9 +200,29 @@ enum ManagerNarrativeValidator {
     return false
   }
 
+  static func stripRolePrefixIfNeeded(_ text: String) -> (text: String, stripped: Bool)? {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    let lower = trimmed.lowercased()
+    for prefix in ["manager:", "host:"] {
+      if lower.hasPrefix(prefix) {
+        let stripped = String(trimmed.dropFirst(prefix.count))
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !stripped.isEmpty else { return nil }
+        return (stripped, true)
+      }
+    }
+    return (trimmed, false)
+  }
+
   static func repairStaffCopy(_ raw: String) -> String? {
     var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return nil }
+
+    if let stripped = stripRolePrefixIfNeeded(text) {
+      text = stripped.text
+    }
 
     let lines = text
       .components(separatedBy: .newlines)
@@ -278,6 +314,9 @@ enum ManagerNarrativeValidator {
     }
 
     for field in [headline, narrative.whyItMatters, narrative.checkNext].compactMap({ $0 }) {
+      if let failure = validateOperationalClaims(field, hostPacket: hostPacket) {
+        return failure
+      }
       if let failure = validateField(field, packet: packet, hostPacket: hostPacket) {
         return failure
       }
@@ -487,6 +526,101 @@ enum ManagerNarrativeValidator {
     default:
       return true
     }
+  }
+
+  static func validateOperationalClaims(
+    _ text: String,
+    hostPacket: HostLLMPacket
+  ) -> ManagerNarrativeValidationResult? {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    let lower = trimmed.lowercased()
+
+    if announcementTonePhrases.contains(where: { lower.contains($0) }) {
+      return ManagerNarrativeValidationResult(isValid: false, reason: "announcement_tone")
+    }
+
+    if lower.hasPrefix("manager:") || lower.contains("manager: ") {
+      return ManagerNarrativeValidationResult(isValid: false, reason: "manager_prefix")
+    }
+
+    if lower.contains("please check your reservation")
+        || lower.contains("your reservation is")
+        || lower.contains("you are late") {
+      return ManagerNarrativeValidationResult(isValid: false, reason: "second_person_guest_facing")
+    }
+
+    if tableAvailablePhrases.contains(where: { lower.contains($0) }) {
+      return ManagerNarrativeValidationResult(isValid: false, reason: "unsupported_table_available_claim")
+    }
+
+    for fact in hostPacket.topFacts {
+      guard let guestName = guestName(from: fact) else { continue }
+      let guestLower = guestName.lowercased()
+      guard lower.contains(guestLower) else { continue }
+
+      let evidence = fact.evidence.joined(separator: " ").lowercased()
+      let titleLower = fact.title.lowercased()
+      let seatedGuest = evidence.contains("seated=true")
+        || evidence.contains("missedcompletion=true")
+        || evidence.contains("seatedcompletiongrace=true")
+        || titleLower.contains("possible missed completion")
+        || titleLower.contains("marked seated")
+      let unseatedLate = evidence.contains("notable=true")
+        || evidence.contains("unresolvedlatecleanup=true")
+        || evidence.contains("seated=false")
+        || titleLower.contains("late reservation still has no table")
+        || titleLower.contains("resolve late reservation")
+
+      if seatedGuest {
+        if lower.contains("\(guestLower) is late")
+            || lower.contains("\(guestLower) has no table")
+            || lower.contains("\(guestLower) still has no table") {
+          return ManagerNarrativeValidationResult(
+            isValid: false,
+            reason: "unsupported_no_table_claim_for_seated_reservation"
+          )
+        }
+        if lower.contains("\(guestLower) is late and has no table") {
+          return ManagerNarrativeValidationResult(
+            isValid: false,
+            reason: "unsupported_late_claim_for_seated_reservation"
+          )
+        }
+      }
+
+      if unseatedLate {
+        if lower.contains("\(guestLower) has been seated")
+            || lower.contains("\(guestLower) is seated")
+            || lower.contains("\(guestLower) was seated") {
+          return ManagerNarrativeValidationResult(
+            isValid: false,
+            reason: "unsupported_seated_claim_for_unseated_reservation"
+          )
+        }
+      }
+    }
+
+    return nil
+  }
+
+  private static func guestName(from fact: HostLLMFact) -> String? {
+    let detail = fact.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let comma = detail.firstIndex(of: ",") {
+      let name = String(detail[..<comma]).trimmingCharacters(in: .whitespacesAndNewlines)
+      return name.isEmpty ? nil : name
+    }
+    if detail.contains(" still has no table") {
+      let name = detail.replacingOccurrences(of: " still has no table assigned", with: "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      return name.isEmpty ? nil : name
+    }
+    if detail.contains(" has been marked seated") {
+      let name = detail.components(separatedBy: " has been marked seated").first?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      return name?.isEmpty == false ? name : nil
+    }
+    return nil
   }
 
   private static func containsBlockedTechnicalLanguage(_ lower: String) -> Bool {

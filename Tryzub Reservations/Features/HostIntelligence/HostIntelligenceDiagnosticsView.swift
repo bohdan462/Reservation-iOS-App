@@ -21,12 +21,21 @@ struct HostIntelligenceDiagnosticsView: View {
   var briefingFailureReason: String? = nil
   var tableConfigs: [RestaurantTableConfig] = []
   var allKnownReservations: [ReservationRecord] = []
+  var guestIntelligenceStore: GuestIntelligenceStore? = nil
 
   @State private var isShowingModelImporter = false
   @State private var modelImportMessage: String?
   @State private var modelImportError: String?
   @State private var readinessRefreshToken = UUID()
   @ObservedObject private var modelCoordinator = HostLocalModelDiagnosticsCoordinator.shared
+
+  private var selectedDateKey: String {
+    selectedDate.reservationDateString()
+  }
+
+  private var guestSummariesForEngine: [Int: GuestIntelligenceSummaryDTO] {
+    guestIntelligenceStore?.summariesByReservationID(for: selectedDateKey) ?? [:]
+  }
 
   private var snapshot: HostDecisionSnapshot {
     let input = HostEngineInput(
@@ -39,7 +48,8 @@ struct HostIntelligenceDiagnosticsView: View {
       localSeatedAtByReservationID: localSeatedAtByReservationID,
       settings: settings,
       tableConfigs: tableConfigs,
-      allKnownReservations: allKnownReservations
+      allKnownReservations: allKnownReservations,
+      guestIntelligenceSummariesByReservationID: guestSummariesForEngine
     )
     return HostIntelligenceEngine().evaluateHostDecisionSnapshot(input: input)
   }
@@ -414,11 +424,188 @@ struct HostIntelligenceDiagnosticsView: View {
   }
 
   @ViewBuilder
-  private func hostBoardModelDecisionSection(packet: HostLLMPacket) -> some View {
+  private func guestIntelligenceDiagnosticsSection(
+    decision: HostDecisionSnapshot
+  ) -> some View {
+    let dateKey = selectedDate.reservationDateString()
+    let sampleReservationID = decision.briefingFacts
+      .flatMap(\.relatedReservationIDs)
+      .first
+      ?? decision.suggestedActions
+      .flatMap(\.relatedReservationIDs)
+      .first
+    let storeSnapshot = guestIntelligenceStore?.diagnosticsSnapshot(
+      dateKey: dateKey,
+      reservationID: sampleReservationID
+    )
+    Text("Guest intelligence")
+      .font(.subheadline.weight(.semibold))
+
+    LabeledContent("Selected date key") {
+      Text(dateKey)
+    }
+
+    LabeledContent("Guest intelligence in engine input") {
+      Text(guestSummariesForEngine.isEmpty ? "No" : "Yes")
+    }
+    LabeledContent("Guest summaries passed") {
+      Text("\(guestSummariesForEngine.count)")
+    }
+
+    if let storeSnapshot {
+      LabeledContent("Date summary loaded") {
+        Text(storeSnapshot.dateSummaryLoaded ? "Yes" : "No")
+      }
+      LabeledContent("Summaries count") {
+        Text("\(storeSnapshot.summariesCount)")
+      }
+      LabeledContent("Profile cache count") {
+        Text("\(storeSnapshot.profileCacheCount)")
+      }
+      if let serverProfileStatus = storeSnapshot.serverProfileStatus {
+        LabeledContent("Server profile") {
+          Text(serverProfileStatus)
+        }
+      }
+      if let sampleReservationID,
+         let reservation = allKnownReservations.first(where: { $0.remoteID == sampleReservationID })
+          ?? reservations.first(where: { $0.remoteID == sampleReservationID }) {
+        let localReport = GuestInsightsController().analyze(
+          selected: reservation,
+          allReservations: allKnownReservations.isEmpty ? reservations : allKnownReservations
+        )
+        let reservationDiagnostics = guestIntelligenceStore?.reservationDiagnostics(
+          reservationID: sampleReservationID,
+          dateKey: dateKey,
+          localReport: localReport,
+          guestName: reservation.guestName
+        )
+
+        LabeledContent("Reservation ID") {
+          Text("\(sampleReservationID)")
+        }
+        LabeledContent("Summary for reservation \(sampleReservationID)") {
+          Text(reservationDiagnostics?.summaryExists == true ? "Yes" : "No")
+        }
+        if let reservationDiagnostics {
+          LabeledContent("Date summary loaded") {
+            Text(reservationDiagnostics.dateSummaryLoaded ? "Yes" : "No")
+          }
+          if let dateSummarySource = reservationDiagnostics.dateSummarySource {
+            LabeledContent("Date summary source") {
+              Text(dateSummarySource)
+            }
+          }
+          LabeledContent("Profile loaded") {
+            Text(reservationDiagnostics.profileLoaded ? "Yes" : "No")
+          }
+          if let serverProfileStatus = reservationDiagnostics.serverProfileStatus {
+            LabeledContent("Server profile") {
+              Text(serverProfileStatus)
+            }
+          }
+          if let profileSource = reservationDiagnostics.profileSource {
+            LabeledContent("Profile source") {
+              Text(profileSource)
+            }
+          }
+          LabeledContent("Backend seen before") {
+            Text(reservationDiagnostics.backendSeenBefore ? "Yes" : "No")
+          }
+          if let backendPriorCount = reservationDiagnostics.backendPriorCount {
+            LabeledContent("Backend prior count") {
+              Text("\(backendPriorCount)")
+            }
+          }
+          if let backendLastSeen = reservationDiagnostics.backendLastSeen {
+            LabeledContent("Backend last seen") {
+              Text(backendLastSeen)
+            }
+          }
+          LabeledContent("Local prior count") {
+            Text("\(reservationDiagnostics.localPriorCount)")
+          }
+          if let mergedSource = reservationDiagnostics.mergedSource {
+            LabeledContent("Merged source") {
+              Text(mergedSource)
+            }
+          }
+          if let finalDisplayedHistory = reservationDiagnostics.finalDisplayedHistory {
+            LabeledContent("Final displayed history") {
+              Text(finalDisplayedHistory)
+            }
+          }
+          if let metricsSource = reservationDiagnostics.metricsSource {
+            LabeledContent("Metrics source") {
+              Text(metricsSource)
+            }
+          }
+          if let bookingHistoryScope = reservationDiagnostics.bookingHistoryScope {
+            LabeledContent("Booking history scope") {
+              Text(bookingHistoryScope)
+            }
+          }
+          if let semanticTraceKey = reservationDiagnostics.semanticTraceKey {
+            LabeledContent("Semantic trace key") {
+              Text(semanticTraceKey)
+                .font(.caption2)
+            }
+          }
+          if let lastTraceEmittedAt = reservationDiagnostics.lastTraceEmittedAt {
+            LabeledContent("Last trace emitted at") {
+              Text(lastTraceEmittedAt.formatted(date: .omitted, time: .standard))
+            }
+          }
+          if let profileError = reservationDiagnostics.profileError, !profileError.isEmpty {
+            LabeledContent("Profile error") {
+              Text(profileError)
+            }
+          }
+          if let profilePackVersion = reservationDiagnostics.profilePackVersion {
+            LabeledContent("Profile pack version") {
+              Text(profilePackVersion)
+            }
+          }
+          if let profilePackPreviewRows = reservationDiagnostics.profilePackPreviewRows {
+            LabeledContent("Profile preview rows") {
+              Text("\(profilePackPreviewRows)")
+            }
+          }
+          if let profilePackHasNotes = reservationDiagnostics.profilePackHasNotes {
+            LabeledContent("Profile pack has notes") {
+              Text(profilePackHasNotes ? "Yes" : "No")
+            }
+          }
+          if let profilePackHasHostPacket = reservationDiagnostics.profilePackHasHostPacket {
+            LabeledContent("Profile pack has host packet") {
+              Text(profilePackHasHostPacket ? "Yes" : "No")
+            }
+          }
+          if let profilePackSectionPresence = reservationDiagnostics.profilePackSectionPresence {
+            LabeledContent("Profile pack sections") {
+              Text(profilePackSectionPresence)
+                .font(.caption2)
+            }
+          }
+        }
+      }
+    } else {
+      Text("Live GuestIntelligenceStore not attached to diagnostics.")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+    }
+  }
+
+  @ViewBuilder
+  private func hostBoardModelDecisionSection(
+    packet: HostLLMPacket,
+    decision: HostDecisionSnapshot
+  ) -> some View {
     let categories = HostBriefingHostBoardGate.operationalCategories(for: packet)
     let categoryLabels = categories.map(\.traceLabel).sorted().joined(separator: ", ")
     let complexityScore = HostBriefingHostBoardGate.complexityScore(for: packet)
     let liveTrace = HostBoardModelDecisionTrace.latest
+    let operationalMetrics = operationalDiagnostics(for: decision)
 
     Text("Host Board model decision")
       .font(.subheadline.weight(.semibold))
@@ -431,6 +618,12 @@ struct HostIntelligenceDiagnosticsView: View {
         LabeledContent("Skip reason") {
           Text(skipReason)
         }
+      }
+      LabeledContent("AI-worthy") {
+        Text(liveTrace.aiWorthy ? "Yes" : "No")
+      }
+      LabeledContent("AI-worthy reason") {
+        Text(liveTrace.aiWorthyReason)
       }
       LabeledContent("Packet categories") {
         Text(liveTrace.packetCategories.isEmpty ? "—" : liveTrace.packetCategories)
@@ -446,8 +639,18 @@ struct HostIntelligenceDiagnosticsView: View {
           Text(runAt.formatted(date: .omitted, time: .standard))
         }
       }
+      if let durationMs = liveTrace.lastModelDurationMs {
+        LabeledContent("Last model duration") {
+          Text("\(durationMs) ms")
+        }
+      }
       LabeledContent("Last visible source") {
         Text(liveTrace.lastVisibleSource)
+      }
+      if let rejection = liveTrace.lastRejectionReason, !rejection.isEmpty {
+        LabeledContent("Last rejection reason") {
+          Text(rejection)
+        }
       }
     } else {
       Text("No live Host Board model run recorded yet this session.")
@@ -461,13 +664,67 @@ struct HostIntelligenceDiagnosticsView: View {
     LabeledContent("Snapshot complexity score") {
       Text("\(complexityScore)")
     }
+    LabeledContent("Operational tension") {
+      Text(operationalMetrics.hasOperationalTension ? "Yes" : "No")
+    }
+    LabeledContent("Long-seated count") {
+      Text("\(operationalMetrics.longSeatedCount)")
+    }
+    if let longest = operationalMetrics.longestSeatedTable {
+      LabeledContent("Longest seated table") {
+        Text(longest)
+      }
+    }
+    LabeledContent("Possible missed completion count") {
+      Text("\(operationalMetrics.missedCompletionCount)")
+    }
+    LabeledContent("Late/no-table count") {
+      Text("\(operationalMetrics.lateNoTableCount)")
+    }
     LabeledContent("Would use local model") {
       Text(
-        HostBriefingHostBoardGate.shouldPreferDeterministicHostSummary(packet: packet)
-          ? "No — template-only packet"
-          : "Yes — complex enough"
+        HostBriefingHostBoardGate.hasOperationalTension(packet: packet)
+          ? "Yes — operational tension"
+          : "No — independent simple facts"
       )
     }
+  }
+
+  private struct OperationalDiagnosticsMetrics: Equatable {
+    var longSeatedCount: Int
+    var missedCompletionCount: Int
+    var lateNoTableCount: Int
+    var longestSeatedTable: String?
+    var hasOperationalTension: Bool
+  }
+
+  private func operationalDiagnostics(for decision: HostDecisionSnapshot) -> OperationalDiagnosticsMetrics {
+    let facts = decision.briefingFacts
+    let longSeatedFacts = facts.filter { $0.id.hasPrefix("long-seated-fact-") }
+    let missedCompletionCount = longSeatedFacts.count
+    let lateNoTableCount = facts.filter { $0.id.hasPrefix("overdue-no-table-") }.count
+    let longest = longSeatedFacts
+      .compactMap { fact -> (minutes: Int, label: String)? in
+        guard let minutes = fact.evidence
+          .first(where: { $0.hasPrefix("elapsedMinutes=") })?
+          .replacingOccurrences(of: "elapsedMinutes=", with: ""),
+          let value = Int(minutes) else {
+          return nil
+        }
+        let guest = fact.detail.components(separatedBy: " has been marked seated").first ?? fact.detail
+        return (value, guest)
+      }
+      .max(by: { $0.minutes < $1.minutes })
+    let hasTension = facts.contains {
+      $0.evidence.contains { $0.lowercased().hasPrefix("operationaltension=") }
+    }
+    return OperationalDiagnosticsMetrics(
+      longSeatedCount: longSeatedFacts.count,
+      missedCompletionCount: missedCompletionCount,
+      lateNoTableCount: lateNoTableCount,
+      longestSeatedTable: longest.map(\.label),
+      hasOperationalTension: hasTension
+    )
   }
 
   @ViewBuilder
@@ -530,7 +787,8 @@ struct HostIntelligenceDiagnosticsView: View {
         }
       }
 
-      hostBoardModelDecisionSection(packet: packet)
+      hostBoardModelDecisionSection(packet: packet, decision: decision)
+      guestIntelligenceDiagnosticsSection(decision: decision)
 
       LocalModelDiagnosticsControls(
         coordinator: modelCoordinator,

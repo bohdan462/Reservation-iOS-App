@@ -322,6 +322,10 @@ protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
         date: String,
         reason: ReservationAPIRequestReason
     ) async throws -> GuestIntelligenceDayResponseDTO
+    func fetchGuestIntelligenceProfile(
+        reservationID: Int,
+        reason: ReservationAPIRequestReason
+    ) async throws -> GuestIntelligenceProfilePackDTO
     func fetchIntelligenceSystemStatus(
         from: String,
         to: String,
@@ -923,6 +927,19 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return try decodeGuestIntelligenceDay(from: data, request: request)
     }
 
+    // Intent: Reads server-backed guest profile for one reservation when date summary is missing.
+    // Network: GET /guest-intelligence/reservation/{id}.
+    func fetchGuestIntelligenceProfile(
+        reservationID: Int,
+        reason: ReservationAPIRequestReason = .guestIntelligence
+    ) async throws -> GuestIntelligenceProfilePackDTO {
+        let url = try apiURL(path: "guest-intelligence/reservation/\(reservationID)")
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+
+        return try decodeGuestIntelligenceProfile(from: data, request: request)
+    }
+
     // Intent: Reads intelligence pipeline health and contract checks for a date range.
     // Network: GET /intelligence/system-status.
     func fetchIntelligenceSystemStatus(
@@ -1051,6 +1068,38 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
             }
 
             return try decoder.decode(BusinessIntelligenceSummaryDTO.self, from: data)
+        } catch let error as ReservationAPIError {
+            throw error
+        } catch {
+            throw intelligenceDecodingFailure(error, data: data, request: request)
+        }
+    }
+
+    private func decodeGuestIntelligenceProfile(
+        from data: Data,
+        request: URLRequest
+    ) throws -> GuestIntelligenceProfilePackDTO {
+        do {
+            if let envelope = try? decoder.decode(GuestIntelligenceProfileAPIResponse.self, from: data) {
+                if envelope.success == false {
+                    throw intelligenceEnvelopeFailure()
+                }
+                if let pack = envelope.data {
+                    return pack
+                }
+            }
+
+            if let legacy = try? decoder.decode(GuestIntelligenceProfileLegacyAPIResponse.self, from: data) {
+                if legacy.success == false {
+                    throw intelligenceEnvelopeFailure()
+                }
+                if let summary = legacy.data {
+                    return GuestIntelligenceProfilePackDTO.fromLegacySummary(summary)
+                }
+            }
+
+            let summary = try decoder.decode(GuestIntelligenceSummaryDTO.self, from: data)
+            return GuestIntelligenceProfilePackDTO.fromLegacySummary(summary)
         } catch let error as ReservationAPIError {
             throw error
         } catch {

@@ -152,6 +152,102 @@ struct GuestIdentityResolver {
         return nil
     }
 
+    func identity(for snapshot: GuestInsightRecordSnapshot) -> GuestInsightIdentitySnapshot {
+        snapshot.identity
+    }
+
+    func match(
+        _ snapshot: GuestInsightRecordSnapshot,
+        against selected: GuestInsightIdentitySnapshot,
+        selectedPattern: GuestInsightRecordSnapshot,
+        selectedID: Int?
+    ) -> GuestInsightIdentityMatch? {
+        if snapshot.remoteID == selectedID {
+            return GuestInsightIdentityMatch(
+                remoteID: snapshot.remoteID,
+                confidence: .exact,
+                reasons: ["Current reservation"]
+            )
+        }
+
+        let candidate = snapshot.identity
+        var exactReasons: [String] = []
+
+        if let selectedPhone = selected.fullPhoneDigits,
+           let candidatePhone = candidate.fullPhoneDigits,
+           selectedPhone == candidatePhone {
+            exactReasons.append("Same phone")
+        }
+
+        if let selectedEmail = selected.usefulEmail,
+           let candidateEmail = candidate.usefulEmail,
+           selectedEmail == candidateEmail {
+            exactReasons.append("Same email")
+        }
+
+        if !exactReasons.isEmpty {
+            return GuestInsightIdentityMatch(
+                remoteID: snapshot.remoteID,
+                confidence: .exact,
+                reasons: exactReasons
+            )
+        }
+
+        let sameName = !selected.normalizedName.isEmpty
+            && selected.normalizedName == candidate.normalizedName
+
+        if sameName,
+           let selectedLast4 = selected.phoneLast4,
+           let candidateLast4 = candidate.phoneLast4,
+           selectedLast4 == candidateLast4 {
+            return GuestInsightIdentityMatch(
+                remoteID: snapshot.remoteID,
+                confidence: .strong,
+                reasons: ["Same name and phone ending"]
+            )
+        }
+
+        if sameName,
+           emailLocalPartsLookSimilar(selected.emailLocalPart, candidate.emailLocalPart) {
+            return GuestInsightIdentityMatch(
+                remoteID: snapshot.remoteID,
+                confidence: .strong,
+                reasons: ["Same name and similar email"]
+            )
+        }
+
+        if sameName,
+           let selectedDomain = selected.emailDomain,
+           let candidateDomain = candidate.emailDomain,
+           selectedDomain == candidateDomain,
+           !isCommonEmailProviderDomain(selectedDomain) {
+            return GuestInsightIdentityMatch(
+                remoteID: snapshot.remoteID,
+                confidence: .strong,
+                reasons: ["Same name and private email domain"]
+            )
+        }
+
+        if sameName, reservationPatternLooksSimilar(selectedPattern, snapshot) {
+            return GuestInsightIdentityMatch(
+                remoteID: snapshot.remoteID,
+                confidence: .possible,
+                reasons: ["Similar full name", "Similar booking pattern"]
+            )
+        }
+
+        if sameName,
+           nameTokens(selected.normalizedName).count >= 2 {
+            return GuestInsightIdentityMatch(
+                remoteID: snapshot.remoteID,
+                confidence: .possible,
+                reasons: ["Similar full name"]
+            )
+        }
+
+        return nil
+    }
+
     // MARK: - Placeholder / Contact Normalization
 
     func isLikelyManualCallIn(_ record: ReservationRecord) -> Bool {
@@ -325,6 +421,17 @@ struct GuestIdentityResolver {
         let samePartySize = lhs.partySize == rhs.partySize
         let sameHour = hour(from: lhs.reservationTime) == hour(from: rhs.reservationTime)
         let sameWeekday = weekdayName(from: lhs) == weekdayName(from: rhs)
+
+        return [samePartySize, sameHour, sameWeekday].filter { $0 }.count >= 2
+    }
+
+    private func reservationPatternLooksSimilar(
+        _ selected: GuestInsightRecordSnapshot,
+        _ candidate: GuestInsightRecordSnapshot
+    ) -> Bool {
+        let samePartySize = selected.partySize == candidate.partySize
+        let sameHour = hour(from: selected.reservationTime) == hour(from: candidate.reservationTime)
+        let sameWeekday = selected.weekdayName == candidate.weekdayName
 
         return [samePartySize, sameHour, sameWeekday].filter { $0 }.count >= 2
     }

@@ -9,6 +9,8 @@ import SwiftUI
 // MARK: - Regulars / Guest Memory View
 
 struct RegularGuestsView: View {
+    @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
+
     // Reads cached reservations only; Guest Memory does not call network or mutate data.
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate),
@@ -169,6 +171,7 @@ struct RegularGuestsView: View {
                                 selectedReservation: representative,
                                 allReservations: reservations
                             )
+                            .environmentObject(guestIntelligenceStore)
                         } label: {
                             RegularGuestRow(summary: summary)
                         }

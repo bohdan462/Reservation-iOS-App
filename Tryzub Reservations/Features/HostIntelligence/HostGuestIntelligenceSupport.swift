@@ -27,6 +27,7 @@ enum HostGuestIntelligenceSupport {
     allDayReservations: [ReservationRecord],
     allKnownReservations: [ReservationRecord],
     guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO] = [:],
+    guestProfilePacksByReservationID: [Int: GuestIntelligenceProfilePackDTO] = [:],
     settings: HostIntelligenceSettings
   ) -> [HostGuestSignal] {
     guard settings.includeGuestSignals else { return [] }
@@ -41,15 +42,18 @@ enum HostGuestIntelligenceSupport {
     var reportCache: [Int: GuestInsightReport] = [:]
 
     for reservation in activeReservations {
+      let summary = guestIntelligenceSummariesByReservationID[reservation.remoteID]
+      let profilePack = guestProfilePacksByReservationID[reservation.remoteID]
       let report = cachedGuestInsightReport(
         for: reservation,
         historyPool: historyPool,
+        hasServerIntel: summary != nil || profilePack != nil,
         cache: &reportCache
       )
 
       // Backend note/risk flags use API summaries; returning-guest copy always follows
       // the same local phone/email history rules as Guest Insights and Detail.
-      if let summary = guestIntelligenceSummariesByReservationID[reservation.remoteID] {
+      if let summary {
         appendUnique(
           &signals,
           &seenKeys,
@@ -108,7 +112,10 @@ enum HostGuestIntelligenceSupport {
       appendUnique(&signals, &seenKeys, possibleDuplicateSignal(for: reservation, report: report))
     }
 
-    return dedupeReturningGuestSignals(signals)
+    return enrichSignalsWithProfilePackets(
+      dedupeReturningGuestSignals(signals),
+      packs: guestProfilePacksByReservationID
+    )
   }
 
   static func buildGuestBriefingFacts(
@@ -263,10 +270,9 @@ enum HostGuestIntelligenceSupport {
     allKnown: [ReservationRecord],
     dayReservations: [ReservationRecord]
   ) -> [ReservationRecord] {
-    if !allKnown.isEmpty {
-      return allKnown
-    }
-    // Guest memory only — historical pressure uses backend aggregate analytics, not local cache breadth.
+    // Host Board selected-day evaluation uses the day pool only. Full history is server-backed
+    // via guest intelligence summaries/profile packs; local analyze stays bounded to same-day rows.
+    _ = allKnown
     return dayReservations
   }
 
@@ -439,14 +445,24 @@ enum HostGuestIntelligenceSupport {
   private static func cachedGuestInsightReport(
     for reservation: ReservationRecord,
     historyPool: [ReservationRecord],
+    hasServerIntel: Bool,
     cache: inout [Int: GuestInsightReport]
   ) -> GuestInsightReport {
     if let cached = cache[reservation.remoteID] {
       return cached
     }
+    let analyzePool: [ReservationRecord]
+    if hasServerIntel {
+      analyzePool = []
+    } else {
+      analyzePool = GuestInsightLocalPool.boundedPool(
+        selected: reservation,
+        windowRecords: historyPool
+      )
+    }
     let analyzed = insightsController.analyze(
       selected: reservation,
-      allReservations: historyPool
+      allReservations: analyzePool
     )
     cache[reservation.remoteID] = analyzed
     return analyzed
@@ -996,6 +1012,15 @@ enum HostGuestIntelligenceSupport {
   static func compactReturningGuestPromptLine(for signal: HostGuestSignal) -> String? {
     guard signal.kind == .regularGuest || signal.kind == .importantGuest else { return nil }
 
+    if signal.evidence.contains("host_profile_safe_history") {
+      var parts = [signal.message]
+      let prefs = profilePreferenceLines(from: signal.evidence)
+      if !prefs.isEmpty {
+        parts.append(prefs.joined(separator: "; "))
+      }
+      return parts.joined(separator: " · ")
+    }
+
     var parts = ["Seen before: \(signal.guestName)"]
     if let visitCount = visitCount(from: signal.evidence),
        let ordinal = ordinalVisitText(for: visitCount) {
@@ -1004,7 +1029,76 @@ enum HostGuestIntelligenceSupport {
     if let lastVisit = lastVisit(from: signal.evidence) {
       parts.append("last \(lastVisit)")
     }
+    let prefs = profilePreferenceLines(from: signal.evidence)
+    if !prefs.isEmpty {
+      parts.append(prefs.joined(separator: "; "))
+    }
     return parts.joined(separator: " · ")
+  }
+
+  private static func profilePreferenceLines(from evidence: [String]) -> [String] {
+    evidence.compactMap { item in
+      guard item.hasPrefix("host_profile_pref=") else { return nil }
+      let value = String(item.dropFirst("host_profile_pref=".count))
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      return value.isEmpty ? nil : value
+    }
+  }
+
+  private static func enrichSignalsWithProfilePackets(
+    _ signals: [HostGuestSignal],
+    packs: [Int: GuestIntelligenceProfilePackDTO]
+  ) -> [HostGuestSignal] {
+    guard !packs.isEmpty else { return signals }
+    return signals.map { signal in
+      guard let packet = packs[signal.reservationID]?.hostProfilePacket else { return signal }
+      return enrichSignal(signal, with: packet)
+    }
+  }
+
+  private static func enrichSignal(
+    _ signal: HostGuestSignal,
+    with packet: GuestIntelligenceHostProfilePacketDTO
+  ) -> HostGuestSignal {
+    var message = signal.message
+    var evidence = signal.evidence
+
+    switch signal.kind {
+    case .regularGuest, .importantGuest:
+      if let line = packet.safeHistoryLine?.trimmingCharacters(in: .whitespacesAndNewlines),
+         !line.isEmpty {
+        message = line
+        evidence.append("host_profile_safe_history")
+      } else if let line = packet.lastSeenLine?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !line.isEmpty,
+                !message.lowercased().contains("last") {
+        message = "\(message) \(line)."
+      }
+      if let prefs = packet.preferenceLines?.filter({ !$0.isEmpty }), !prefs.isEmpty {
+        evidence.append(contentsOf: prefs.prefix(2).map { "host_profile_pref=\($0)" })
+      }
+    case .specialOccasion, .noteReminder:
+      if let line = packet.serviceLines?.first(where: { !$0.isEmpty }) {
+        message = line
+        evidence.append("host_profile_service")
+      }
+    case .noShowRisk, .cancellationRisk:
+      if let line = packet.riskLines?.first(where: { !$0.isEmpty }) {
+        evidence.append("host_profile_risk=\(line)")
+      }
+    default:
+      break
+    }
+
+    return HostGuestSignal(
+      id: signal.id,
+      reservationID: signal.reservationID,
+      guestName: signal.guestName,
+      kind: signal.kind,
+      severity: signal.severity,
+      message: message,
+      evidence: evidence
+    )
   }
 
   private static func fact(from signal: HostGuestSignal) -> HostBriefingFact {

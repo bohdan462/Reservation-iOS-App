@@ -38,6 +38,11 @@ final class HostIntelligenceController: ObservableObject {
   private var lastBriefingSource: HostBriefingWriterSource?
   private var lastBriefingFailureReason: String?
   private var lastManagerNarrative: ManagerNarrative?
+  private var briefingRefreshGeneration = 0
+  private var lastValidModelBriefingCacheKey: String?
+  private var lastValidModelNarrative: ManagerNarrative?
+  private var lastValidModelBriefingText: String?
+  private var lastVisibleSourceLabel: String?
 
   init(
     settingsStore: HostIntelligenceSettingsStore? = nil,
@@ -103,7 +108,9 @@ final class HostIntelligenceController: ObservableObject {
     let selectedDateKey = input.selectedDate.reservationDateString()
     let dateChanged = !latestSelectedDateKey.isEmpty && latestSelectedDateKey != selectedDateKey
     if dateChanged {
+      briefingRefreshGeneration += 1
       clearAttentionPreservation()
+      clearValidModelBriefingCache()
       decisionSnapshot = .empty
       applyTemplateBriefing(from: .empty)
       localEvaluationComplete = false
@@ -139,10 +146,20 @@ final class HostIntelligenceController: ObservableObject {
       settings: settingsStore.settings,
       tableConfigs: input.tableConfigs,
       allKnownReservations: input.allKnownReservations,
-      guestIntelligenceSummariesByReservationID: input.guestIntelligenceSummariesByReservationID
+      guestIntelligenceSummariesByReservationID: input.guestIntelligenceSummariesByReservationID,
+      guestProfilePacksByReservationID: input.guestProfilePacksByReservationID
     )
 
-    let candidate = engine.evaluateHostDecisionSnapshot(input: enriched)
+    let guestSignalMode = input.guestIntelligenceSummariesByReservationID.isEmpty
+      && input.guestProfilePacksByReservationID.isEmpty
+      ? "local_bounded"
+      : "server"
+    let candidate = UIPressureTrace.measure(
+      phase: "host_engine_evaluate",
+      extra: "dayReservations=\(input.reservations.count) historyPoolUsed=\(input.allKnownReservations.count) guestSignals=\(guestSignalMode)"
+    ) {
+      engine.evaluateHostDecisionSnapshot(input: enriched)
+    }
     let shouldBlockEmptyReplacement = !stability.allowsEmptyReplacement
       && !candidate.hasAttentionContent
       && lastAttentionSnapshot?.hasAttentionContent == true
@@ -186,6 +203,10 @@ final class HostIntelligenceController: ObservableObject {
 
   /// Presentation-only rewrite of the approved LLM packet. Does not change engine output.
   func refreshBriefing(hostBoardContext: HostBriefingHostBoardContext? = nil) async {
+    briefingRefreshGeneration += 1
+    let refreshGeneration = briefingRefreshGeneration
+    let refreshDateKey = latestSelectedDateKey
+
     let preserveLocalPresentation = localEvaluationComplete
       && (decisionSnapshot.hasAttentionContent || !decisionSnapshot.briefingFacts.isEmpty)
     if preserveLocalPresentation {
@@ -255,7 +276,11 @@ final class HostIntelligenceController: ObservableObject {
 
     if hostBoardContext != nil,
        HostBriefingHostBoardGate.shouldUseTemplateOnlyOnHostBoard(packet: packet) {
-      HostIntelligenceDiagnostics.skipLocalModel(reason: HostBriefingHostBoardGate.SkipReason.host_board_template_only.rawValue)
+      let skipReason = HostBriefingHostBoardGate.hasOperationalTension(packet: packet)
+        ? HostBriefingHostBoardGate.SkipReason.host_board_template_only.rawValue
+        : "independent_simple_facts"
+      HostIntelligenceDiagnostics.skipLocalModel(reason: skipReason)
+      HostAILifecycleTrace.modelSkipped(reason: skipReason)
       storeBriefingResult(
         cacheKey: cacheKey,
         fingerprint: fingerprint,
@@ -296,7 +321,49 @@ final class HostIntelligenceController: ObservableObject {
         hostBoardContext: hostBoardContext,
         settings: settings
       )
+      guard refreshGeneration == briefingRefreshGeneration,
+            refreshDateKey == latestSelectedDateKey else {
+        HostAILifecycleTrace.modelResultIgnored(reason: "date_changed")
+        return
+      }
+
       let briefingSource = mapBriefingSource(narrativeResult.source)
+      if briefingSource == .localModel || briefingSource == .repairedLocalModel {
+        lastValidModelBriefingCacheKey = cacheKey
+        lastValidModelNarrative = narrativeResult
+        lastValidModelBriefingText = narrativeResult.compactBriefingText
+        storeBriefingResult(
+          cacheKey: cacheKey,
+          fingerprint: fingerprint,
+          text: narrativeResult.compactBriefingText,
+          source: briefingSource,
+          failureReason: nil,
+          narrative: narrativeResult,
+          templateFallback: templateNarrative,
+          visibleSource: visibleSourceLabel(for: briefingSource),
+          modelRunAt: Date()
+        )
+        return
+      }
+
+      if cacheKey == lastValidModelBriefingCacheKey,
+         let previousNarrative = lastValidModelNarrative,
+         let previousText = lastValidModelBriefingText {
+        let previousSource = mapBriefingSource(previousNarrative.source)
+        storeBriefingResult(
+          cacheKey: cacheKey,
+          fingerprint: fingerprint,
+          text: previousText,
+          source: previousSource,
+          failureReason: narrativeResult.failedReason,
+          narrative: previousNarrative,
+          templateFallback: templateNarrative,
+          visibleSource: visibleSourceLabel(for: previousSource),
+          modelRunAt: Date()
+        )
+        return
+      }
+
       storeBriefingResult(
         cacheKey: cacheKey,
         fingerprint: fingerprint,
@@ -306,9 +373,7 @@ final class HostIntelligenceController: ObservableObject {
         narrative: narrativeResult,
         templateFallback: templateNarrative,
         visibleSource: visibleSourceLabel(for: briefingSource),
-        modelRunAt: briefingSource == .localModel || briefingSource == .repairedLocalModel
-          ? Date()
-          : nil
+        modelRunAt: nil
       )
       return
     }
@@ -550,6 +615,16 @@ final class HostIntelligenceController: ObservableObject {
     briefingFailureReason = failureReason
     managerNarrative = narrative
     if let visibleSource {
+      if let lastVisibleSourceLabel,
+         lastVisibleSourceLabel != visibleSource {
+        let changeReason = cacheKey == lastBriefingCacheKey ? "revalidation" : "packet_changed"
+        HostAILifecycleTrace.visibleSourceChanged(
+          from: lastVisibleSourceLabel,
+          to: visibleSource,
+          reason: changeReason
+        )
+      }
+      lastVisibleSourceLabel = visibleSource
       HostBoardModelDecisionTrace.recordVisibleSource(visibleSource, modelRunAt: modelRunAt)
     }
     if decisionSnapshot.hasAttentionContent {
@@ -565,7 +640,15 @@ final class HostIntelligenceController: ObservableObject {
     lastManagerNarrative = narrative
   }
 
+  private func clearValidModelBriefingCache() {
+    lastValidModelBriefingCacheKey = nil
+    lastValidModelNarrative = nil
+    lastValidModelBriefingText = nil
+    lastVisibleSourceLabel = nil
+  }
+
   private func clearBriefingCache() {
+    clearValidModelBriefingCache()
     lastBriefingCacheKey = nil
     lastBriefingPacketFingerprint = nil
     lastBriefingGeneratedAt = nil

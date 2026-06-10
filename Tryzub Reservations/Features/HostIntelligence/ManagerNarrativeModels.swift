@@ -320,7 +320,10 @@ enum ManagerNarrativeWritingRules {
     "Do not say anything was confirmed, sent, assigned, cancelled, or changed.",
     "Do not mention AI or local model.",
     "Use at most 2 short sentences of plain prose.",
-    "Lead with the most urgent reservation first."
+    "Lead with the most urgent reservation first.",
+    "Never start with Manager: or Host:.",
+    "Never use announcement tone or guest-facing you/your language.",
+    "Never use quotation marks."
   ]
 }
 

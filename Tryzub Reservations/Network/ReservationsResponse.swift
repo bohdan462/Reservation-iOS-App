@@ -119,6 +119,16 @@ struct BusinessIntelligenceSummaryResponse: Decodable {
     let data: BusinessIntelligenceSummaryDTO?
 }
 
+struct GuestIntelligenceProfileAPIResponse: Decodable {
+    let success: Bool?
+    let data: GuestIntelligenceReservationProfileDTO?
+}
+
+struct GuestIntelligenceProfileLegacyAPIResponse: Decodable {
+    let success: Bool?
+    let data: GuestIntelligenceSummaryDTO?
+}
+
 struct GuestIntelligenceDayAPIResponse: Decodable {
     let success: Bool?
     let data: GuestIntelligenceDayResponseDTO?

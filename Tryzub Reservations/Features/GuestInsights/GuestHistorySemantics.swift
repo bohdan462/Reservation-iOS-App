@@ -118,30 +118,312 @@ enum GuestHistorySemantics {
     let supplementalLines: [DetailInsightLine]
   }
 
+  enum MergedHistorySource: String, Equatable {
+    case localReliablePriorVisits = "local_reliable_prior"
+    case backendSeenBefore = "backend_seen_before"
+    case backendFirstTime = "backend_first_time"
+    case unknownNotLoaded = "unknown_not_loaded"
+    case unknownNoSummary = "unknown_no_summary"
+    case localIncomplete = "local_incomplete"
+  }
+
+  enum GuestInsightsMetricsSource: String, Equatable {
+    case backendSummary = "backend_summary"
+    case localCache = "local_cache"
+    case merged = "merged"
+  }
+
+  enum GuestInsightsBookingHistoryScope: String, Equatable {
+    case localCacheOnly = "local_cache_only"
+    case serverPreviewAvailable = "server_preview_available"
+    case serverAndLocal = "server_and_local"
+  }
+
+  struct GuestInsightsMetricsPresentation: Equatable {
+    let title: String
+    let value: String
+    let caption: String
+    let source: GuestInsightsMetricsSource
+  }
+
+  struct GuestInsightsBookingHistoryPresentation: Equatable {
+    let scope: GuestInsightsBookingHistoryScope
+    let sectionTitle: String
+    let scopeNote: String?
+  }
+
+  struct GuestInsightsMergedContext: Equatable {
+    let historyTitle: String
+    let historyDetail: String
+    let mergedSource: MergedHistorySource
+    let mergedRegularity: GuestRegularityLevel?
+    let metrics: GuestInsightsMetricsPresentation
+    let bookingHistory: GuestInsightsBookingHistoryPresentation
+    let serverLastSeenDisplay: String?
+    let traceKey: String
+  }
+
+  static func detailTraceSource(for source: MergedHistorySource) -> String {
+    switch source {
+    case .backendSeenBefore:
+      return "server_guest_intelligence"
+    case .localReliablePriorVisits:
+      return "local_reliable_prior"
+    default:
+      return source.rawValue
+    }
+  }
+
+  static func insightsMergedContext(
+    guestName: String,
+    localReport: GuestInsightReport,
+    serverSummary: GuestIntelligenceSummaryDTO?,
+    serverAnswered: Bool,
+    profileStamp: String,
+    profilePack: GuestIntelligenceProfilePackDTO? = nil
+  ) -> GuestInsightsMergedContext {
+    let merged = mergedHistoryLine(
+      guestName: guestName,
+      localReport: localReport,
+      serverSummary: serverSummary,
+      serverAnswered: serverAnswered,
+      profilePack: profilePack
+    )
+    let backendSeenBefore = isBackendSeenBefore(
+      serverSummary: serverSummary,
+      profilePack: profilePack
+    )
+    return GuestInsightsMergedContext(
+      historyTitle: merged.title,
+      historyDetail: merged.detail,
+      mergedSource: merged.source,
+      mergedRegularity: mergedRegularityLevel(
+        localReport: localReport,
+        serverSummary: serverSummary,
+        serverAnswered: serverAnswered,
+        profilePack: profilePack
+      ),
+      metrics: insightsMetricsPresentation(
+        localReport: localReport,
+        serverSummary: serverSummary,
+        serverAnswered: serverAnswered,
+        mergedSource: merged.source,
+        profilePack: profilePack
+      ),
+      bookingHistory: bookingHistoryPresentation(
+        localReport: localReport,
+        serverSummary: serverSummary,
+        profilePack: profilePack
+      ),
+      serverLastSeenDisplay: serverLastSeenDisplay(
+        serverSummary,
+        mergedSource: merged.source,
+        profilePack: profilePack
+      ),
+      traceKey: semanticMergeDedupeKey(
+        surface: "insights",
+        reservationID: localReport.selectedReservationID,
+        mergedSource: merged.source,
+        backendSeenBefore: backendSeenBefore,
+        localPriorCount: localReport.priorReliableVisitCount,
+        profilePack: profilePack
+      )
+    )
+  }
+
+  static func insightsMetricsPresentation(
+    localReport: GuestInsightReport,
+    serverSummary: GuestIntelligenceSummaryDTO?,
+    serverAnswered: Bool,
+    mergedSource: MergedHistorySource,
+    profilePack: GuestIntelligenceProfilePackDTO? = nil
+  ) -> GuestInsightsMetricsPresentation {
+    if localReport.hasReliableRepeatGuestHistory {
+      return GuestInsightsMetricsPresentation(
+        title: "Clean visits",
+        value: "\(localReport.visitOrdinal)",
+        caption: localReport.regularityLevel.displayName,
+        source: .localCache
+      )
+    }
+
+    if let packMetric = profilePackKnownVisitDisplay(profilePack) {
+      return GuestInsightsMetricsPresentation(
+        title: "Known visits",
+        value: packMetric.value,
+        caption: packMetric.caption,
+        source: .backendSummary
+      )
+    }
+
+    if let serverSummary, isServerReturning(serverSummary) {
+      if let knownVisits = reliableKnownVisitDisplay(serverSummary) {
+        return GuestInsightsMetricsPresentation(
+          title: "Known visits",
+          value: knownVisits.value,
+          caption: knownVisits.caption,
+          source: .backendSummary
+        )
+      }
+
+      return GuestInsightsMetricsPresentation(
+        title: "Known history",
+        value: "Seen before",
+        caption: "Count not confirmed",
+        source: .backendSummary
+      )
+    }
+
+    if mergedSource == .backendFirstTime {
+      return GuestInsightsMetricsPresentation(
+        title: "Clean visits",
+        value: "1",
+        caption: "First time",
+        source: .backendSummary
+      )
+    }
+
+    if mergedSource == .unknownNotLoaded {
+      return GuestInsightsMetricsPresentation(
+        title: "Known visits",
+        value: "—",
+        caption: "Loading server history",
+        source: .merged
+      )
+    }
+
+    if mergedSource == .unknownNoSummary || mergedSource == .localIncomplete {
+      return GuestInsightsMetricsPresentation(
+        title: "Known visits",
+        value: "—",
+        caption: "History not confirmed",
+        source: .merged
+      )
+    }
+
+    return GuestInsightsMetricsPresentation(
+      title: "Clean visits",
+      value: "\(localReport.visitOrdinal)",
+      caption: localReport.regularityLevel.displayName,
+      source: .localCache
+    )
+  }
+
+  static func bookingHistoryPresentation(
+    localReport: GuestInsightReport,
+    serverSummary: GuestIntelligenceSummaryDTO?,
+    profilePack: GuestIntelligenceProfilePackDTO? = nil
+  ) -> GuestInsightsBookingHistoryPresentation {
+    if let profilePack, !profilePack.matchedVisitPreview.isEmpty {
+      return GuestInsightsBookingHistoryPresentation(
+        scope: .serverPreviewAvailable,
+        sectionTitle: "Server Guest History",
+        scopeNote: "Earlier visits from backend intelligence."
+      )
+    }
+
+    let serverReturning = isBackendSeenBefore(
+      serverSummary: serverSummary,
+      profilePack: profilePack
+    )
+    let localShowsCurrentOnly = localReport.priorReliableVisitCount == 0
+
+    if serverReturning, localShowsCurrentOnly {
+      return GuestInsightsBookingHistoryPresentation(
+        scope: .localCacheOnly,
+        sectionTitle: "Cached Booking History",
+        scopeNote: "Earlier visit found from server history. Only locally cached bookings are shown below."
+      )
+    }
+
+    return GuestInsightsBookingHistoryPresentation(
+      scope: .localCacheOnly,
+      sectionTitle: "Booking History",
+      scopeNote: nil
+    )
+  }
+
+  static func localCachedHistoryPresentation(
+    localReport: GuestInsightReport,
+    profilePack: GuestIntelligenceProfilePackDTO?
+  ) -> GuestInsightsBookingHistoryPresentation? {
+    guard profilePack?.matchedVisitPreview.isEmpty == false else { return nil }
+    guard !localReport.bookingHistory.isEmpty else { return nil }
+    return GuestInsightsBookingHistoryPresentation(
+      scope: .serverAndLocal,
+      sectionTitle: "Local Cached History",
+      scopeNote: "Only reservations stored on this device are shown here."
+    )
+  }
+
+  static func serverLastSeenDisplay(
+    _ summary: GuestIntelligenceSummaryDTO?,
+    mergedSource: MergedHistorySource,
+    profilePack: GuestIntelligenceProfilePackDTO? = nil
+  ) -> String? {
+    guard mergedSource == .backendSeenBefore
+      || mergedSource == .localReliablePriorVisits
+      || isProfilePackReturning(profilePack) else {
+      return nil
+    }
+    let raw = profilePack?.history?.lastSeenDate ?? summary?.lastVisitDate
+    guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !raw.isEmpty else {
+      return nil
+    }
+    if let date = ReservationFormatters.reservationDateKey.date(from: raw) {
+      return ReservationFormatters.mediumDate.string(from: date)
+    }
+    return raw
+  }
+
+  static func reliableBackendPriorCount(_ summary: GuestIntelligenceSummaryDTO?) -> Int? {
+    guard let summary,
+          hasReliableServerClassificationIdentity(summary.identityConfidence) else {
+      return nil
+    }
+    let priorClean = summary.cleanVisitCount
+    guard priorClean > 0 else { return nil }
+    return priorClean
+  }
+
+  private static func reliableKnownVisitDisplay(
+    _ summary: GuestIntelligenceSummaryDTO
+  ) -> (value: String, caption: String)? {
+    guard hasReliableServerClassificationIdentity(summary.identityConfidence) else {
+      return nil
+    }
+
+    let priorClean = summary.cleanVisitCount
+    if priorClean >= 2 {
+      return ("\(priorClean + 1)", "Includes prior visits")
+    }
+    if priorClean == 1 {
+      return ("2+", "Includes prior visit")
+    }
+
+    let matched = summary.matchedVisitCount
+    if matched >= 2 {
+      return ("2+", "Includes prior visits")
+    }
+
+    return nil
+  }
+
   static func detailInsightPresentation(
     reservation: ReservationRecord,
     localReport: GuestInsightReport,
-    serverSummary: GuestIntelligenceSummaryDTO?
+    serverSummary: GuestIntelligenceSummaryDTO?,
+    serverAnswered: Bool,
+    profilePack: GuestIntelligenceProfilePackDTO? = nil
   ) -> DetailInsightPresentation {
-    let history: (title: String, detail: String)
-    if localReport.hasReliableRepeatGuestHistory {
-      history = compactHistoryLine(
-        priorReliableVisitCount: localReport.priorReliableVisitCount,
-        lastPriorVisitDisplayDate: localReport.lastPriorVisitDisplayDate
-      )
-    } else if let serverSummary,
-              serverSummary.classification == .returning
-                || serverSummary.classification == .regular
-                || serverSummary.classification == .frequentRegular,
-              hasReliableServerReturningIdentity(serverSummary.identityConfidence) {
-      history = (
-        "Seen before",
-        serverBackedSeenBeforeMessage(guestName: reservation.guestName)
-      )
-    } else {
-      history = localReport.guestHistoryLine
-    }
-
+    let merged = mergedHistoryLine(
+      guestName: reservation.guestName,
+      localReport: localReport,
+      serverSummary: serverSummary,
+      serverAnswered: serverAnswered,
+      profilePack: profilePack
+    )
     var supplemental: [DetailInsightLine] = []
 
     if hasOccasionNoteText(for: reservation)
@@ -179,13 +461,244 @@ enum GuestHistorySemantics {
     }
 
     return DetailInsightPresentation(
-      historyTitle: history.title,
-      historyDetail: history.detail,
+      historyTitle: merged.title,
+      historyDetail: merged.detail,
       supplementalLines: supplemental
     )
   }
 
-  private static func hasReliableServerReturningIdentity(
+  static func mergedHistoryLine(
+    guestName: String,
+    localReport: GuestInsightReport,
+    serverSummary: GuestIntelligenceSummaryDTO?,
+    serverAnswered: Bool,
+    profilePack: GuestIntelligenceProfilePackDTO? = nil
+  ) -> (title: String, detail: String, source: MergedHistorySource) {
+    // 1. Reservation profile pack — server-backed history evidence.
+    if isProfilePackReturning(profilePack) {
+      let detail = profilePackSeenBeforeDetail(
+        guestName: guestName,
+        profilePack: profilePack
+      )
+      return ("Seen before", detail, .backendSeenBefore)
+    }
+
+    // 2. Date summary item.
+    if let serverSummary, isServerReturning(serverSummary) {
+      return (
+        "Seen before",
+        serverBackedSeenBeforeMessage(guestName: guestName),
+        .backendSeenBefore
+      )
+    }
+
+    // 3. Bounded local analysis with reliable identity.
+    if localReport.hasReliableRepeatGuestHistory {
+      let line = compactHistoryLine(
+        priorReliableVisitCount: localReport.priorReliableVisitCount,
+        lastPriorVisitDisplayDate: localReport.lastPriorVisitDisplayDate
+      )
+      return (line.title, line.detail, .localReliablePriorVisits)
+    }
+
+    if serverAnswered,
+       let serverSummary,
+       serverSummary.classification == .new,
+       hasReliableServerClassificationIdentity(serverSummary.identityConfidence) {
+      return ("First time", "No prior visits found.", .backendFirstTime)
+    }
+
+    if !serverAnswered {
+      return ("Guest history", "Guest history not loaded yet.", .unknownNotLoaded)
+    }
+
+    if serverAnswered, serverSummary == nil {
+      return ("Guest history", "No guest history summary for this reservation.", .unknownNoSummary)
+    }
+
+    return ("Guest history", "No prior visit history on file.", .localIncomplete)
+  }
+
+  /// Server/profile merge source without local cache — used for stable pre-analysis stamps.
+  static func serverBackedMergeSource(
+    serverSummary: GuestIntelligenceSummaryDTO?,
+    serverAnswered: Bool,
+    profilePack: GuestIntelligenceProfilePackDTO?
+  ) -> MergedHistorySource {
+    if isProfilePackReturning(profilePack) {
+      return .backendSeenBefore
+    }
+    if let serverSummary, isServerReturning(serverSummary) {
+      return .backendSeenBefore
+    }
+    if serverAnswered,
+       let serverSummary,
+       serverSummary.classification == .new,
+       hasReliableServerClassificationIdentity(serverSummary.identityConfidence) {
+      return .backendFirstTime
+    }
+    if !serverAnswered {
+      return .unknownNotLoaded
+    }
+    if serverAnswered, serverSummary == nil {
+      return .unknownNoSummary
+    }
+    return .localIncomplete
+  }
+
+  /// Stable merge trace/dedupe key — excludes load timestamps and transient flags.
+  static func semanticMergeDedupeKey(
+    surface: String,
+    reservationID: Int,
+    mergedSource: MergedHistorySource,
+    backendSeenBefore: Bool,
+    localPriorCount: Int,
+    profilePack: GuestIntelligenceProfilePackDTO?
+  ) -> String {
+    let previewRows = profilePack?.matchedVisitPreview.count ?? 0
+    let knownVisits = profilePack?.visitAnalytics?.knownVisitCount ?? -1
+    let packSeenBefore = profilePack?.history?.seenBefore == true
+      || profilePack?.hostProfilePacket?.seenBefore == true
+    let packVersion = profilePack?.profilePackVersion ?? "none"
+    return [
+      surface,
+      "\(reservationID)",
+      mergedSource.rawValue,
+      "\(backendSeenBefore)",
+      "\(localPriorCount)",
+      "\(previewRows)",
+      "\(knownVisits)",
+      "\(packSeenBefore)",
+      packVersion
+    ].joined(separator: "-")
+  }
+
+  static func mergedRegularityLevel(
+    localReport: GuestInsightReport,
+    serverSummary: GuestIntelligenceSummaryDTO?,
+    serverAnswered: Bool,
+    profilePack: GuestIntelligenceProfilePackDTO? = nil
+  ) -> GuestRegularityLevel? {
+    if isProfilePackReturning(profilePack) {
+      if let prior = profilePack?.history?.priorVisitCount
+        ?? profilePack?.visitAnalytics?.priorVisitCount,
+         prior >= 3 {
+        return .regular
+      }
+      return .seenBefore
+    }
+    if localReport.hasReliableRepeatGuestHistory {
+      return localReport.regularityLevel
+    }
+    guard let serverSummary, isServerReturning(serverSummary) else {
+      if serverAnswered, serverSummary?.classification == .new {
+        return .firstTime
+      }
+      return nil
+    }
+
+    switch serverSummary.classification {
+    case .frequentRegular:
+      return .frequentRegular
+    case .regular:
+      return .regular
+    case .returning:
+      return .seenBefore
+    case .new, .unknown, .needsReview:
+      return nil
+    }
+  }
+
+  static func isServerReturning(_ summary: GuestIntelligenceSummaryDTO) -> Bool {
+    guard hasReliableServerClassificationIdentity(summary.identityConfidence) else {
+      return false
+    }
+    switch summary.classification {
+    case .returning, .regular, .frequentRegular:
+      return true
+    case .new, .unknown, .needsReview:
+      return false
+    }
+  }
+
+  static func isBackendSeenBefore(
+    serverSummary: GuestIntelligenceSummaryDTO?,
+    profilePack: GuestIntelligenceProfilePackDTO?
+  ) -> Bool {
+    if isProfilePackReturning(profilePack) {
+      return true
+    }
+    if let serverSummary, isServerReturning(serverSummary) {
+      return true
+    }
+    return false
+  }
+
+  static func isProfilePackReturning(_ profilePack: GuestIntelligenceProfilePackDTO?) -> Bool {
+    guard let profilePack else { return false }
+    if profilePack.history?.seenBefore == true {
+      return true
+    }
+    if profilePack.hostProfilePacket?.seenBefore == true {
+      return true
+    }
+    if !profilePack.matchedVisitPreview.isEmpty {
+      return true
+    }
+    if let known = profilePack.visitAnalytics?.knownVisitCount, known > 1 {
+      return true
+    }
+    if let summary = profilePack.resolvedSummary, isServerReturning(summary) {
+      return true
+    }
+    return false
+  }
+
+  private static func profilePackSeenBeforeDetail(
+    guestName: String,
+    profilePack: GuestIntelligenceProfilePackDTO?
+  ) -> String {
+    if let safeCopy = profilePack?.history?.safeCopy?
+      .trimmingCharacters(in: .whitespacesAndNewlines),
+       !safeCopy.isEmpty {
+      return safeCopy
+    }
+    if let historyLine = profilePack?.hostProfilePacket?.safeHistoryLine?
+      .trimmingCharacters(in: .whitespacesAndNewlines),
+       !historyLine.isEmpty {
+      return historyLine
+    }
+    return serverBackedSeenBeforeMessage(guestName: guestName)
+  }
+
+  private static func profilePackKnownVisitDisplay(
+    _ profilePack: GuestIntelligenceProfilePackDTO?
+  ) -> (value: String, caption: String)? {
+    guard isProfilePackReturning(profilePack) else { return nil }
+
+    if let known = profilePack?.visitAnalytics?.knownVisitCount, known >= 2 {
+      return ("\(known)", "Includes prior visits")
+    }
+
+    let prior = profilePack?.history?.priorVisitCount
+      ?? profilePack?.visitAnalytics?.priorVisitCount
+      ?? profilePack?.resolvedSummary?.cleanVisitCount
+      ?? 0
+
+    if prior >= 2 {
+      return ("\(prior + 1)", "Includes prior visits")
+    }
+    if prior == 1 {
+      return ("2+", "Includes prior visit")
+    }
+    if !(profilePack?.matchedVisitPreview.isEmpty ?? true) {
+      return ("2+", "Includes prior visit")
+    }
+
+    return ("Seen before", "Count not confirmed")
+  }
+
+  private static func hasReliableServerClassificationIdentity(
     _ confidence: GuestIdentityConfidenceDTO
   ) -> Bool {
     switch confidence {
@@ -194,6 +707,12 @@ enum GuestHistorySemantics {
     case .possible, .weak, .unknown:
       return false
     }
+  }
+
+  private static func hasReliableServerReturningIdentity(
+    _ confidence: GuestIdentityConfidenceDTO
+  ) -> Bool {
+    hasReliableServerClassificationIdentity(confidence)
   }
 
   static func guestNoteAlertTitle(for reservation: ReservationRecord) -> String {
@@ -265,11 +784,36 @@ enum GuestHistorySemantics {
     selected: ReservationRecord,
     matchedReservations: [GuestMatchedReservation]
   ) -> Int {
+    priorReliableVisitCount(
+      selectedRemoteID: selected.remoteID,
+      selectedDate: selected.reservationDate,
+      selectedTime: selected.reservationTime,
+      matchedReservations: matchedReservations
+    )
+  }
+
+  static func priorReliableVisitCount(
+    selectedRemoteID: Int,
+    selectedDate: String,
+    selectedTime: String,
+    matchedReservations: [GuestMatchedReservation]
+  ) -> Int {
     matchedReservations.filter { item in
-      item.reservationID != selected.remoteID
-        && isPrior(date: item.date, time: item.time, to: selected)
+      item.reservationID != selectedRemoteID
+        && isPrior(date: item.date, time: item.time, toDate: selectedDate, toTime: selectedTime)
         && isCleanVisit(item.status)
     }.count
+  }
+
+  static func isPrior(
+    date: String,
+    time: String,
+    toDate selectedDate: String,
+    toTime selectedTime: String
+  ) -> Bool {
+    if date < selectedDate { return true }
+    if date > selectedDate { return false }
+    return time < selectedTime
   }
 
   static func visitOrdinal(priorReliableVisitCount: Int) -> Int {
@@ -284,10 +828,24 @@ enum GuestHistorySemantics {
     selected: ReservationRecord,
     matchedReservations: [GuestMatchedReservation]
   ) -> String? {
+    lastPriorVisitDisplayDate(
+      selectedRemoteID: selected.remoteID,
+      selectedDate: selected.reservationDate,
+      selectedTime: selected.reservationTime,
+      matchedReservations: matchedReservations
+    )
+  }
+
+  static func lastPriorVisitDisplayDate(
+    selectedRemoteID: Int,
+    selectedDate: String,
+    selectedTime: String,
+    matchedReservations: [GuestMatchedReservation]
+  ) -> String? {
     matchedReservations
       .filter { item in
-        item.reservationID != selected.remoteID
-          && isPrior(date: item.date, time: item.time, to: selected)
+        item.reservationID != selectedRemoteID
+          && isPrior(date: item.date, time: item.time, toDate: selectedDate, toTime: selectedTime)
           && isCleanVisit(item.status)
       }
       .sorted { lhs, rhs in

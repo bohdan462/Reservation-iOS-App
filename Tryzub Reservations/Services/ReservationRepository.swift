@@ -66,8 +66,16 @@ final class ReservationRepository: ReservationRepositoryProtocol {
         guard !reservations.isEmpty else { return }
 
         let existingRecords = try records(remoteIDs: reservations.map(\.id))
-        upsert(reservations, into: existingRecords)
-        try context.save()
+        let upsertStarted = ContinuousClock.now
+        let stats = upsertWithStats(reservations, into: existingRecords)
+        UIPressureTrace.phase(
+            "repository_upsert",
+            duration: upsertStarted.duration(to: .now).pressureTraceTimeInterval,
+            extra: "rows=\(reservations.count) changed=\(stats.written)"
+        )
+        guard stats.written > 0 else { return }
+
+        try measuredContextSave(changed: stats.written)
         ReservationSyncDiagnostics.repositoryUpsert(
             scope: "upsert",
             input: reservations,
@@ -206,8 +214,16 @@ final class ReservationRepository: ReservationRepositoryProtocol {
         guard !reservations.isEmpty else { return ReservationUpsertStats(written: 0, skipped: 0) }
 
         let existingRecords = try records(remoteIDs: reservations.map(\.id))
+        let upsertStarted = ContinuousClock.now
         let stats = try await upsertRecordsYielding(reservations, into: existingRecords)
-        try context.save()
+        UIPressureTrace.phase(
+            "repository_upsert",
+            duration: upsertStarted.duration(to: .now).pressureTraceTimeInterval,
+            extra: "rows=\(reservations.count) changed=\(stats.written)"
+        )
+        guard stats.written > 0 else { return stats }
+
+        try measuredContextSave(changed: stats.written)
         return stats
     }
 
@@ -285,20 +301,45 @@ final class ReservationRepository: ReservationRepositoryProtocol {
     }
 
     private func upsert(_ reservations: [ReservationDTO], into existingRecords: [ReservationRecord]) {
+        _ = upsertWithStats(reservations, into: existingRecords)
+    }
+
+    @discardableResult
+    private func upsertWithStats(
+        _ reservations: [ReservationDTO],
+        into existingRecords: [ReservationRecord]
+    ) -> ReservationUpsertStats {
         var existingByRemoteID: [Int: ReservationRecord] = [:]
         for record in existingRecords {
             existingByRemoteID[record.remoteID] = record
         }
 
+        var written = 0
+        var skipped = 0
+
         for dto in reservations {
             if let existing = existingByRemoteID[dto.id] {
                 if existing.isContentEquivalent(to: dto) {
+                    skipped += 1
                     continue
                 }
                 existing.update(from: dto)
+                written += 1
             } else {
                 context.insert(ReservationRecord(from: dto))
+                written += 1
             }
+        }
+
+        return ReservationUpsertStats(written: written, skipped: skipped)
+    }
+
+    private func measuredContextSave(changed: Int) throws {
+        try UIPressureTrace.measure(
+            phase: "context_save",
+            extra: "changed=\(changed)"
+        ) {
+            try context.save()
         }
     }
 }

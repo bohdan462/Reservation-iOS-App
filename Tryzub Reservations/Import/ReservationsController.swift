@@ -170,7 +170,7 @@ final class ReservationsController: ObservableObject {
     private let reviewFreshnessInterval: TimeInterval = 120
     private let importFailureCountFreshnessInterval: TimeInterval = 300
     private let offlineNoticeCooldown: TimeInterval = 60
-    private let availabilitySummaryFreshnessInterval: TimeInterval = 180
+    private let availabilitySummaryFreshnessInterval: TimeInterval = 300
     private let restaurantSetupFreshnessInterval: TimeInterval = 300
     private let dateOperationsFreshnessInterval: TimeInterval = 180
     private let noncriticalStartupDeferralInterval: TimeInterval = 8
@@ -2192,6 +2192,53 @@ final class ReservationsController: ObservableObject {
         dayAvailabilityCacheByDate[date]?.value ?? availabilitySummaryByDate[date]?.availability
     }
 
+    /// Unified summary bundle timestamp when the full availability summary exists.
+    func availabilitySummaryLoadedAt(for date: String) -> Date? {
+        availabilitySummaryByDate[date]?.loadedAt
+    }
+
+    /// Timestamp for restaurant day availability only when that endpoint (or summary bundle) was loaded.
+    func restaurantDayAvailabilityLoadedAt(for date: String) -> Date? {
+        if availabilitySummaryByDate[date] != nil {
+            return availabilitySummaryByDate[date]?.loadedAt
+        }
+        return dayAvailabilityCacheByDate[date]?.loadedAt
+    }
+
+    /// Timestamp for reservation slots only when that endpoint (or summary bundle) was loaded.
+    func reservationSlotsLoadedAt(for date: String) -> Date? {
+        if availabilitySummaryByDate[date] != nil {
+            return availabilitySummaryByDate[date]?.loadedAt
+        }
+        return reservationSlotsCacheByDate[date]?.loadedAt
+    }
+
+    /// Timestamp for blocked slots only when that endpoint (or summary bundle) was loaded.
+    func blockedSlotsLoadedAt(for date: String) -> Date? {
+        if availabilitySummaryByDate[date] != nil {
+            return availabilitySummaryByDate[date]?.loadedAt
+        }
+        return blockedSlotsCacheByDate[date]?.loadedAt
+    }
+
+    func hasBlockedSlotsCache(for date: String) -> Bool {
+        availabilitySummaryByDate[date] != nil || blockedSlotsCacheByDate[date] != nil
+    }
+
+    func invalidateAvailabilityCache(for date: String) {
+        availabilitySummaryByDate[date] = nil
+        dayAvailabilityCacheByDate[date] = nil
+        reservationSlotsCacheByDate[date] = nil
+        blockedSlotsCacheByDate[date] = nil
+        availabilitySummaryErrorsByDate[date] = nil
+        FreshnessTrace.log(
+            key: "reservation_slots",
+            date: date,
+            action: "invalidate",
+            reason: "mutation"
+        )
+    }
+
     func cachedRestaurantBlockedSlots(date: String) -> RestaurantBlockedSlotsResponseDTO? {
         if let cached = blockedSlotsCacheByDate[date]?.value {
             return cached
@@ -3598,6 +3645,8 @@ final class ReservationsController: ObservableObject {
     }
 
     private func markScopesTouched(after reservation: ReservationDTO) {
+        invalidateAvailabilityCache(for: reservation.reservationDate)
+
         let today = Date.reservationDateString()
         if reservation.reservationDate == today {
             markScopeRecentlyTouched(.today(date: today))
@@ -3621,6 +3670,8 @@ final class ReservationsController: ObservableObject {
     }
 
     private func markScopesTouched(afterDeletingReservationDate reservationDate: String) {
+        invalidateAvailabilityCache(for: reservationDate)
+
         if reservationDate == Date.reservationDateString() {
             markScopeStale(.today(date: reservationDate))
         }

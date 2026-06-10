@@ -345,12 +345,8 @@ struct ReservationDetailView: View {
     @EnvironmentObject private var hostIntentStore: HostReservationOpenIntentStore
     @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
     @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
-    // Guest Insights reads cached reservations only; no network or mutation is involved.
-    @Query(sort: [
-        SortDescriptor(\ReservationRecord.reservationDate),
-        SortDescriptor(\ReservationRecord.reservationTime)
-    ])
-    private var allCachedReservations: [ReservationRecord]
+    // Guest Insights uses the active reservation window, not the full SwiftData cache.
+    @Query private var windowCachedReservations: [ReservationRecord]
 
     // MARK: - Local UI State
 
@@ -366,8 +362,38 @@ struct ReservationDetailView: View {
     @State private var guestManageLinkMessage: String?
     @State private var isGeneratingGuestManageLink = false
     @State private var guestConfirmationMailDraft: GuestConfirmationMailPresenter.Draft?
-    @State private var guestInsightReport: GuestInsightReport?
+    @StateObject private var guestInsightAnalysisCoordinator = GuestInsightsAnalysisCoordinator()
     @StateObject private var guestCommunicationCoordinator = GuestCommunicationCoordinator.templateOnly()
+
+    init(reservation: ReservationRecord, environment: AppEnvironment) {
+        self.reservation = reservation
+        self.environment = environment
+        let bounds = activeReservationWindowQueryBounds()
+        let fromDate = bounds.from
+        let toDate = bounds.to
+        _windowCachedReservations = Query(
+            filter: #Predicate<ReservationRecord> { record in
+                !record.isHidden
+                    && record.reservationDate >= fromDate
+                    && record.reservationDate <= toDate
+            },
+            sort: [
+                SortDescriptor(\ReservationRecord.reservationDate),
+                SortDescriptor(\ReservationRecord.reservationTime)
+            ]
+        )
+    }
+
+    private var guestInsightHistoryPool: [ReservationRecord] {
+        GuestInsightLocalPool.boundedPool(
+            selected: reservation,
+            windowRecords: windowCachedReservations
+        )
+    }
+
+    private var guestInsightReport: GuestInsightReport? {
+        guestInsightAnalysisCoordinator.report
+    }
     @State private var draftReviewContext: GuestMessageDraftReviewContext?
     @State private var guestMessageMailDraft: GuestConfirmationMailPresenter.Draft?
     @State private var guestMessageTextDraft: GuestTextMessageDraft?
@@ -391,6 +417,7 @@ struct ReservationDetailView: View {
             guestCommunicationCoordinator.useLocalModelProvider = {
                 hostIntelligenceSettingsStore.settings.useLocalModelForGuestMessageDrafts
             }
+            guestIntelligenceStore.markDetailOpened(reservationID: reservation.remoteID)
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -504,18 +531,41 @@ struct ReservationDetailView: View {
         } message: {
             Text("This hides the server reservation from normal lists while keeping it in backend history.")
         }
-        .task(id: guestInsightCacheKey) {
-            // Cache-only hospitality analysis. Compute outside body so detail
-            // rendering and row mutations do not repeatedly scan all records.
-            guestInsightReport = GuestInsightsController().analyze(
-                selected: reservation,
-                allReservations: allCachedReservations
+        .onChange(of: windowCachedReservations.count) { _, count in
+            UIPressureTrace.phase(
+                "swiftdata_query_refresh",
+                duration: 0,
+                extra: "source=detail/windowCachedReservations count=\(count)"
             )
         }
-        .task(id: reservation.reservationDate) {
-            guestIntelligenceStore.scheduleLoad(
+        .task(id: guestInsightCacheKey) {
+            guestInsightAnalysisCoordinator.scheduleAnalysis(
+                selected: reservation,
+                pool: guestInsightHistoryPool
+            )
+        }
+        .task(id: guestIntelligenceFetchKey) {
+            guestIntelligenceStore.ensureSummary(
+                reservationID: reservation.remoteID,
+                dateKey: reservation.reservationDate
+            )
+            await guestIntelligenceStore.loadProfile(
+                reservationID: reservation.remoteID,
+                dateKey: reservation.reservationDate
+            )
+        }
+        .task(id: guestMergeTraceKey) {
+            guard let guestInsightReport else { return }
+            guestIntelligenceStore.recordMergePresentation(
+                surface: "detail",
+                reservationID: reservation.remoteID,
+                guestName: reservation.guestName,
+                localReport: guestInsightReport,
                 dateKey: reservation.reservationDate,
-                isSelectedDate: false
+                semanticStamp: guestIntelligenceStore.semanticProfileStamp(
+                    for: reservation.remoteID,
+                    dateKey: reservation.reservationDate
+                )
             )
         }
     }
@@ -730,7 +780,7 @@ struct ReservationDetailView: View {
     }
 
     private var sameDayReservations: [ReservationRecord] {
-        allCachedReservations.filter {
+        windowCachedReservations.filter {
             $0.reservationDate == reservation.reservationDate && !$0.isHidden
         }
     }
@@ -761,44 +811,121 @@ struct ReservationDetailView: View {
 
     @ViewBuilder
     private var guestInsightsSection: some View {
-        if let guestInsightReport {
-            NavigationLink {
-                GuestInsightsView(
-                    selectedReservation: reservation,
-                    allReservations: allCachedReservations
-                )
-            } label: {
-                GuestInsightsPreviewCard(
-                    report: guestInsightReport,
-                    presentation: guestDetailInsightPresentation(report: guestInsightReport)
-                )
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            DetailSectionCard(title: "Guest insights", systemImage: "person.text.rectangle") {
-                TryzubLoadingRow(title: "Loading guest insights...")
+        DetailSectionCard(title: "Guest insights", systemImage: "person.text.rectangle") {
+            VStack(alignment: .leading, spacing: 10) {
+                if let guestProfilePreview {
+                    Text(guestProfilePreview.title)
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(Array(guestProfilePreview.lines.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                    }
+                } else if guestIntelligenceStore.isLoadingProfile(reservationID: reservation.remoteID) {
+                    TryzubLoadingRow(title: "Loading server guest history...")
+                }
+
+                if let guestInsightReport {
+                    NavigationLink {
+                        GuestInsightsView(
+                            selectedReservation: reservation,
+                            allReservations: guestInsightHistoryPool
+                        )
+                        .environmentObject(guestIntelligenceStore)
+                    } label: {
+                        GuestInsightsPreviewCard(
+                            report: guestInsightReport,
+                            presentation: guestDetailInsightPresentation(report: guestInsightReport),
+                            profilePreview: guestProfilePreview,
+                            mergedRegularity: mergedRegularityLevel(for: guestInsightReport)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else if guestInsightAnalysisCoordinator.isAnalyzingLocalCache {
+                    TryzubLoadingRow(title: "Calculating local cache insights...")
+                }
             }
         }
+    }
+
+    private var guestProfilePreview: GuestInsightsProfilePresentation.DetailPreview? {
+        GuestInsightsProfilePresentation.detailPreview(
+            guestName: reservation.guestName,
+            pack: guestIntelligenceStore.profilePack(for: reservation.remoteID)
+        )
     }
 
     private func guestDetailInsightPresentation(
         report: GuestInsightReport
     ) -> GuestHistorySemantics.DetailInsightPresentation {
-        let serverSummary = guestIntelligenceStore
-            .summariesByReservationID(for: reservation.reservationDate)[reservation.remoteID]
+        let serverSummary = guestIntelligenceStore.summary(
+            for: reservation.remoteID,
+            dateKey: reservation.reservationDate
+        )
+        let serverAnswered = guestIntelligenceStore.hasServerAnswer(
+            for: reservation.remoteID,
+            dateKey: reservation.reservationDate
+        )
         return GuestHistorySemantics.detailInsightPresentation(
             reservation: reservation,
             localReport: report,
-            serverSummary: serverSummary
+            serverSummary: serverSummary,
+            serverAnswered: serverAnswered,
+            profilePack: guestIntelligenceStore.profilePack(for: reservation.remoteID)
+        )
+    }
+
+    private var guestIntelligenceFetchKey: String {
+        "\(reservation.remoteID)-\(reservation.reservationDate)-\(guestIntelligenceStore.cacheStamp(for: reservation.reservationDate))-\(guestIntelligenceStore.profileCacheStamp(for: reservation.remoteID))"
+    }
+
+    private var guestMergeTraceKey: String? {
+        guard let guestInsightReport else { return nil }
+        let serverSummary = guestIntelligenceStore.summary(
+            for: reservation.remoteID,
+            dateKey: reservation.reservationDate
+        )
+        let serverAnswered = guestIntelligenceStore.hasServerAnswer(
+            for: reservation.remoteID,
+            dateKey: reservation.reservationDate
+        )
+        return GuestHistorySemantics.insightsMergedContext(
+            guestName: reservation.guestName,
+            localReport: guestInsightReport,
+            serverSummary: serverSummary,
+            serverAnswered: serverAnswered,
+            profileStamp: guestIntelligenceStore.semanticProfileStamp(
+                for: reservation.remoteID,
+                dateKey: reservation.reservationDate
+            ),
+            profilePack: guestIntelligenceStore.profilePack(for: reservation.remoteID)
+        ).traceKey
+    }
+
+    private func mergedRegularityLevel(for report: GuestInsightReport) -> GuestRegularityLevel? {
+        let serverSummary = guestIntelligenceStore.summary(
+            for: reservation.remoteID,
+            dateKey: reservation.reservationDate
+        )
+        let serverAnswered = guestIntelligenceStore.hasServerAnswer(
+            for: reservation.remoteID,
+            dateKey: reservation.reservationDate
+        )
+        return GuestHistorySemantics.mergedRegularityLevel(
+            localReport: report,
+            serverSummary: serverSummary,
+            serverAnswered: serverAnswered,
+            profilePack: guestIntelligenceStore.profilePack(for: reservation.remoteID)
         )
     }
 
     private var guestInsightCacheKey: ReservationDetailGuestInsightCacheKey {
         ReservationDetailGuestInsightCacheKey(
             selectedReservation: reservation,
-            reservations: allCachedReservations,
-            guestIntelligenceStamp: guestIntelligenceStore.cacheStamp(for: reservation.reservationDate)
+            reservations: guestInsightHistoryPool,
+            guestIntelligenceStamp: "\(guestIntelligenceStore.cacheStamp(for: reservation.reservationDate))-\(guestIntelligenceStore.profileCacheStamp(for: reservation.remoteID))"
         )
     }
 
@@ -1254,6 +1381,8 @@ private struct ReservationServiceLoadCard: View {
 private struct GuestInsightsPreviewCard: View {
     let report: GuestInsightReport
     let presentation: GuestHistorySemantics.DetailInsightPresentation
+    let profilePreview: GuestInsightsProfilePresentation.DetailPreview?
+    let mergedRegularity: GuestRegularityLevel?
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -1273,13 +1402,24 @@ private struct GuestInsightsPreviewCard: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text(presentation.historyTitle)
-                    .font(.subheadline.weight(.semibold))
+                if let profilePreview {
+                    Text(profilePreview.title)
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(Array(profilePreview.lines.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                    }
+                } else {
+                    Text(presentation.historyTitle)
+                        .font(.subheadline.weight(.semibold))
 
-                Text(presentation.historyDetail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    Text(presentation.historyDetail)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
 
                 ForEach(Array(presentation.supplementalLines.enumerated()), id: \.offset) { _, line in
                     VStack(alignment: .leading, spacing: 2) {
@@ -1293,8 +1433,8 @@ private struct GuestInsightsPreviewCard: View {
                 }
 
                 FlowLayout(spacing: 7) {
-                    if report.hasReliableRepeatGuestHistory {
-                        GuestRegularityBadge(level: report.regularityLevel)
+                    if let mergedRegularity {
+                        GuestRegularityBadge(level: mergedRegularity)
                     }
                     if !report.staffMentionHistory.isEmpty {
                         DetailPill(label: "Staff notes", systemImage: "note.text", tint: .secondary)

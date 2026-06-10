@@ -38,6 +38,7 @@ struct HostBoardView: View {
     @State private var boardSnapshot: HostBoardSnapshot?
     @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var isShowingHostIntelligenceReview = false
+    @StateObject private var hostBoardViewStateStore = HostBoardViewStateStore()
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
@@ -154,8 +155,13 @@ struct HostBoardView: View {
     }
 
     /// Local deterministic Host facts: reservations, date, seated times, settings.
+    /// History cache enrichment is intentionally excluded; guest intelligence uses `hostIntelligenceEnrichmentKey`.
     private var hostIntelligenceEvaluationKey: String {
-        "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceSeatedStamp)-\(controller.historyCacheEnrichmentGeneration)-\(hostIntelligenceOperationalMinuteStamp)-\(hostIntelligenceSettingsStore.settings.hostDecisionFingerprint)-\(hostTableConfigStore.tableConfigFingerprint)"
+        "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceSeatedStamp)-\(hostIntelligenceOperationalMinuteStamp)-\(hostIntelligenceSettingsStore.settings.hostDecisionFingerprint)-\(hostTableConfigStore.tableConfigFingerprint)"
+    }
+
+    private var hostHistoryEnrichmentGenerationKey: String {
+        "\(controller.historyCacheEnrichmentGeneration)"
     }
 
     /// Enrichment-only inputs that may update narrative later without blocking local facts.
@@ -163,7 +169,10 @@ struct HostBoardView: View {
         let availabilityStamp = availabilitySummary?.loadedAt.timeIntervalSince1970 ?? 0
         let guestIntelStamp = guestIntelligenceStore.cacheStamp(for: selectedDateKey)
         let analyticsStamp = analyticsSummaryIdentity
-        return "\(selectedDateKey)-\(availabilityStamp)-\(guestIntelStamp)-\(analyticsStamp)"
+        let profilePackStamp = guestIntelligenceStore.profilePackCacheStamp(
+            for: reservations.map(\.remoteID)
+        )
+        return "\(selectedDateKey)-\(availabilityStamp)-\(guestIntelStamp)-\(analyticsStamp)-\(profilePackStamp)"
     }
 
     private var hostBoardOperationalLoading: Bool {
@@ -340,40 +349,52 @@ struct HostBoardView: View {
             controller.noteHostBoardSelectedDate(selectedDateKey)
             controller.refreshHomeServicePresentation(hostOperationalLoading: hostBoardOperationalLoading)
         }
+        .onChange(of: hostBoardViewStateBuildKey, initial: true) { _, _ in
+            refreshHostBoardViewState(reason: "semantic_key_changed")
+        }
         .task(id: "\(isVisible)-\(deferNetworkLoads)-\(controller.canStartNoncriticalStartupLoads)-\(selectedDateKey)") {
-            // Lazy Home indicator load: availability/slots/blocked are screen-specific
-            // and cached by the controller so tab switching does not refetch them.
             guard !isRunningForPreviews else { return }
-            guard !deferNetworkLoads, !shouldDeferStartupOptionalLoads else { return }
-            guard isVisible else {
-                controller.cancelAvailabilitySummary(date: selectedDateKey)
-                return
-            }
-            guard !Task.isCancelled,
-                  !deferNetworkLoads,
-                  !shouldDeferStartupOptionalLoads,
-                  isVisible else { return }
-            controller.scheduleAvailabilitySummary(date: selectedDateKey)
+            HostBoardOrchestrationFacade.prepareAvailability(
+                controller: controller,
+                date: selectedDateKey,
+                isVisible: isVisible,
+                shouldDefer: deferNetworkLoads || shouldDeferStartupOptionalLoads
+            )
         }
         .task(id: "\(isVisible)-\(selectedDateKey)-guest-intelligence-\(deferNetworkLoads)-\(controller.canStartNoncriticalStartupLoads)") {
-            // Non-blocking guest intelligence: first Host pulse uses local fallback.
-            // Defer flags stay in the task id so load runs once startup optional loads release.
             guard !isRunningForPreviews else { return }
-            guard isVisible else {
-                guestIntelligenceStore.cancelScheduledLoad()
-                return
-            }
-            guard !deferNetworkLoads, !shouldDeferStartupOptionalLoads else { return }
-            guestIntelligenceStore.scheduleLoad(dateKey: selectedDateKey)
+            HostBoardOrchestrationFacade.scheduleGuestIntelligence(
+                store: guestIntelligenceStore,
+                dateKey: selectedDateKey,
+                isVisible: isVisible,
+                shouldDefer: deferNetworkLoads || shouldDeferStartupOptionalLoads
+            )
         }
         .task(id: hostIntelligenceEvaluationKey) {
             guard isVisible else {
                 hostIntelligenceController.reset()
                 return
             }
+            HostReevalTrace.log(
+                trigger: "selected_day_reservation_change",
+                immediate: true
+            )
             hostIntelligenceController.evaluate(
                 input: makeHostEngineInput(now: clockTick),
                 stability: hostEvaluationStabilityContext
+            )
+        }
+        .task(id: hostHistoryEnrichmentGenerationKey) {
+            guard isVisible else { return }
+            HostReevalTrace.log(
+                trigger: "history_generation",
+                debounced: true
+            )
+        }
+        .onChange(of: hostIntelligenceEnrichmentKey) { _, _ in
+            HostReevalTrace.log(
+                trigger: "guest_intelligence_summary",
+                immediate: true
             )
         }
         .task(id: hostIntelligenceEnrichmentKey) {
@@ -432,39 +453,49 @@ struct HostBoardView: View {
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
+    private var hostBoardViewStateBuildKey: String {
+        let availabilityStamp = [
+            controller.restaurantDayAvailabilityLoadedAt(for: selectedDateKey),
+            controller.reservationSlotsLoadedAt(for: selectedDateKey)
+        ].compactMap { $0 }.max()?.timeIntervalSince1970 ?? 0
+        return [
+            selectedDateKey,
+            "\(hostIntelligenceReservationStamp)",
+            "\(availabilityStamp)",
+            hostIntelligenceController.briefingText,
+            hostIntelligenceController.decisionSnapshot.templateBriefingText,
+            hostIntelligenceController.briefingSource.rawValue,
+            "\(hostBoardOperationalLoading)",
+            "\(hostIntelligenceController.renderState)",
+            "\(hostIntelligenceController.isEnrichmentLoading)",
+            "\(failedImportCount)"
+        ].joined(separator: "|")
+    }
+
     private var availabilitySummaryLine: String? {
         guard selectedDate.reservationDateString() == Date.reservationDateString() else { return nil }
+        return hostBoardViewStateStore.viewState?.availabilityLine
+    }
 
-        if let availabilitySummaryError {
-            return availabilitySummaryError
+    private func refreshHostBoardViewState(reason: String) {
+        hostBoardViewStateStore.rebuildIfNeeded(key: hostBoardViewStateBuildKey, reason: reason) {
+            HostBoardViewStateBuilder.build(
+                selectedDate: selectedDate,
+                reservations: reservations,
+                failedImportCount: failedImportCount,
+                availabilityState: ReservationAvailabilityFacade.dayState(
+                    controller: controller,
+                    date: selectedDateKey
+                ),
+                hostIntelligenceEnabled: hostIntelligenceSettingsStore.settings.isEnabled,
+                briefingText: hostIntelligenceController.briefingText,
+                templateBriefingText: hostIntelligenceController.decisionSnapshot.templateBriefingText,
+                briefingSource: hostIntelligenceController.briefingSource,
+                operationalLoading: hostBoardOperationalLoading,
+                hostRenderState: hostIntelligenceController.renderState,
+                isEnrichmentLoading: hostIntelligenceController.isEnrichmentLoading
+            )
         }
-
-        if isLoadingAvailabilitySummary && todayAvailability == nil && todaySlots == nil {
-            return "Loading"
-        }
-
-        if let availability = todayAvailability, !availability.isOpen {
-            return "Closed today"
-        }
-        if let slots = todaySlots, !slots.isOpen {
-            return "Closed today"
-        }
-
-        var parts: [String] = []
-        if let availability = todayAvailability,
-           let open = shortAvailabilityTime(availability.openTime),
-           let close = shortAvailabilityTime(availability.closeTime) {
-            parts.append("\(open)–\(close)")
-        }
-        if let slots = todaySlots {
-            let openTimeCount = slots.slots.count
-            let label = openTimeCount == 1 ? "1 open time" : "\(openTimeCount) open times"
-            parts.append(label)
-        }
-        if todayBlockedSlots.count > 0 {
-            parts.append("\(todayBlockedSlots.count) blocked")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private func shortAvailabilityTime(_ value: String?) -> String? {
@@ -717,11 +748,12 @@ struct HostBoardView: View {
             localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
             settings: hostIntelligenceSettingsStore.settings,
             tableConfigs: hostTableConfigStore.tables,
-            allKnownReservations: allKnownReservations.isEmpty
-                ? reservations
-                : allKnownReservations,
+            allKnownReservations: reservations,
             guestIntelligenceSummariesByReservationID: guestIntelligenceStore.summariesByReservationID(
                 for: selectedDateKey
+            ),
+            guestProfilePacksByReservationID: guestIntelligenceStore.profilePacks(
+                for: reservations.map(\.remoteID)
             )
         )
     }

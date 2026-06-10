@@ -868,6 +868,7 @@ enum HostBoardOperationalCategory: String, CaseIterable {
   case lateNoTable
   case unresolvedLateCleanup
   case longSeated
+  case operationalTension
   case futureTablePlanning
   case guestNoteOccasion
   case seenBeforeRegular
@@ -879,6 +880,7 @@ enum HostBoardOperationalCategory: String, CaseIterable {
     case .lateNoTable: return "overdue"
     case .unresolvedLateCleanup: return "cleanup"
     case .longSeated: return "longSeated"
+    case .operationalTension: return "operationalTension"
     case .futureTablePlanning: return "futurePlanning"
     case .guestNoteOccasion: return "guestNote"
     case .seenBeforeRegular: return "seenBefore"
@@ -895,8 +897,12 @@ enum HostBoardModelDecisionTrace {
     var skipReason: String?
     var packetCategories: String
     var complexityScore: Int
+    var aiWorthy: Bool
+    var aiWorthyReason: String
     var lastLiveModelRunAt: Date?
     var lastVisibleSource: String
+    var lastModelDurationMs: Int?
+    var lastRejectionReason: String?
     var enrichmentLoading: Bool
   }
 
@@ -912,18 +918,28 @@ enum HostBoardModelDecisionTrace {
   ) {
     let categories = HostBriefingHostBoardGate.operationalCategories(for: packet)
     let categoryLabels = categories.map(\.traceLabel).sorted().joined(separator: ",")
+    let aiWorthy = HostBriefingHostBoardGate.hasOperationalTension(packet: packet)
+    let gateReason = HostBriefingHostBoardGate.gateReason(
+      allowed: allowed,
+      skipReason: skipReason,
+      packet: packet
+    )
     latest = Snapshot(
       decision: allowed ? "Used" : "Skipped",
       skipReason: skipReason?.rawValue,
       packetCategories: categoryLabels,
       complexityScore: HostBriefingHostBoardGate.complexityScore(for: packet),
+      aiWorthy: aiWorthy,
+      aiWorthyReason: gateReason,
       lastLiveModelRunAt: modelRunAt ?? latest?.lastLiveModelRunAt,
       lastVisibleSource: visibleSource ?? latest?.lastVisibleSource ?? "template",
+      lastModelDurationMs: latest?.lastModelDurationMs,
+      lastRejectionReason: latest?.lastRejectionReason,
       enrichmentLoading: enrichmentLoading
     )
     HostBriefingHostBoardGate.logGateDecision(
       allowed: allowed,
-      reason: allowed ? "complex_packet" : (skipReason?.rawValue ?? "unknown"),
+      reason: gateReason,
       packet: packet,
       enrichmentLoading: enrichmentLoading
     )
@@ -935,6 +951,18 @@ enum HostBoardModelDecisionTrace {
     if let modelRunAt {
       snapshot.lastLiveModelRunAt = modelRunAt
     }
+    latest = snapshot
+  }
+
+  static func recordModelDuration(_ durationMs: Int) {
+    guard var snapshot = latest else { return }
+    snapshot.lastModelDurationMs = durationMs
+    latest = snapshot
+  }
+
+  static func recordRejectionReason(_ reason: String?) {
+    guard var snapshot = latest else { return }
+    snapshot.lastRejectionReason = reason
     latest = snapshot
   }
 }
@@ -962,10 +990,60 @@ enum HostBriefingHostBoardGate {
       || shouldPreferDeterministicHostSummary(packet: packet)
   }
 
-  /// Single operational theme packets are clearer as deterministic template copy.
+  /// Template-only unless the packet has real operational tension.
   static func shouldPreferDeterministicHostSummary(packet: HostLLMPacket) -> Bool {
     guard packet.hasMeaningfulBriefingFacts else { return true }
-    return operationalCategories(for: packet).count < minimumOperationalCategoriesForModel
+    return !hasOperationalTension(packet: packet)
+  }
+
+  static func hasOperationalTension(packet: HostLLMPacket) -> Bool {
+    if packet.topFacts.contains(where: { fact in
+      fact.evidence.contains { $0.lowercased().hasPrefix("operationaltension=") }
+    }) {
+      return true
+    }
+
+    let categories = operationalCategories(for: packet)
+    if categories.contains(.operationalTension) {
+      return true
+    }
+    if categories.contains(.lateNoTable), categories.contains(.longSeated) {
+      return true
+    }
+    if categories.contains(.lateNoTable), categories.contains(.unresolvedLateCleanup) {
+      return true
+    }
+    if categories.contains(.lateNoTable),
+       categories.contains(.capacityTableMismatch) || categories.contains(.servicePressure) {
+      return true
+    }
+    if categories.contains(.capacityTableMismatch), categories.contains(.servicePressure) {
+      return true
+    }
+
+    let operationalThemes: Set<HostBoardOperationalCategory> = [
+      .lateNoTable,
+      .unresolvedLateCleanup,
+      .longSeated,
+      .operationalTension,
+      .capacityTableMismatch,
+      .servicePressure
+    ]
+    return categories.intersection(operationalThemes).count >= 2
+  }
+
+  static func gateReason(
+    allowed: Bool,
+    skipReason: SkipReason?,
+    packet: HostLLMPacket
+  ) -> String {
+    if allowed {
+      return hasOperationalTension(packet: packet) ? "operational_tension" : "complex_packet"
+    }
+    if skipReason == .host_board_template_only {
+      return "independent_simple_facts"
+    }
+    return skipReason?.rawValue ?? "unknown"
   }
 
   static func operationalCategories(for packet: HostLLMPacket) -> Set<HostBoardOperationalCategory> {
@@ -1061,15 +1139,21 @@ enum HostBriefingHostBoardGate {
       return
     }
 
+    if evidence.contains("operationaltension=true")
+        || title.contains("check table status before resolving") {
+      categories.insert(.operationalTension)
+    }
     if evidence.contains("notable=true") || title.contains("late reservation still has no table") {
       categories.insert(.lateNoTable)
     }
     if evidence.contains("unresolvedlatecleanup=true") || title.contains("resolve late reservation") {
       categories.insert(.unresolvedLateCleanup)
     }
-    if title.contains("long seated table")
+    if title.contains("possible missed completion")
+        || title.contains("check table status")
+        || evidence.contains("missedcompletion=true")
         || evidence.contains("seatedcompletiongrace=true")
-        || (fact.category == .timing && evidence.contains("elapsedminutes=")) {
+        || (fact.category == .timing && evidence.contains("elapsedminutes=") && evidence.contains("seated=true")) {
       categories.insert(.longSeated)
     }
 

@@ -61,6 +61,7 @@ struct HostIntelligenceEngine {
         allDayReservations: context.reservations,
         allKnownReservations: context.allKnownReservations,
         guestIntelligenceSummariesByReservationID: context.guestIntelligenceSummariesByReservationID,
+        guestProfilePacksByReservationID: context.guestProfilePacksByReservationID,
         settings: context.settings
       )
       briefingFacts.append(
@@ -76,6 +77,7 @@ struct HostIntelligenceEngine {
     let longSeated = detectLongSeatedWarnings(context: context)
     tableSignals.append(contentsOf: longSeated.tableSignals)
     briefingFacts.append(contentsOf: longSeated.briefingFacts)
+    suggestedActions.append(contentsOf: longSeated.actions)
 
     let longSeatedReservationIDs = Set(
       longSeated.briefingFacts.flatMap(\.relatedReservationIDs)
@@ -148,6 +150,13 @@ struct HostIntelligenceEngine {
     briefingFacts.append(contentsOf: cancellationIntelligence.facts)
     suggestedActions.append(contentsOf: cancellationIntelligence.actions)
     tableSignals.append(contentsOf: cancellationIntelligence.tableSignals)
+
+    briefingFacts.append(
+      contentsOf: detectOperationalTension(
+        context: context,
+        overdueReservationIDs: cancellationIntelligence.overdueReservationIDs
+      )
+    )
 
     let bookingIntelligence = HostBookingDecisionSupport.analyze(
       activeReservations: activeReservations,
@@ -278,6 +287,7 @@ struct HostIntelligenceEngine {
     let tableConfigs: [RestaurantTableConfig]
     let allKnownReservations: [ReservationRecord]
     let guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO]
+    let guestProfilePacksByReservationID: [Int: GuestIntelligenceProfilePackDTO]
   }
 
   private func buildServiceDayContext(from input: HostEngineInput) -> ServiceDayContext {
@@ -297,7 +307,8 @@ struct HostIntelligenceEngine {
       settings: input.settings,
       tableConfigs: input.tableConfigs,
       allKnownReservations: input.allKnownReservations,
-      guestIntelligenceSummariesByReservationID: input.guestIntelligenceSummariesByReservationID
+      guestIntelligenceSummariesByReservationID: input.guestIntelligenceSummariesByReservationID,
+      guestProfilePacksByReservationID: input.guestProfilePacksByReservationID
     )
   }
 
@@ -679,37 +690,50 @@ struct HostIntelligenceEngine {
     }
   }
 
+  private struct LongSeatedEntry {
+    let reservation: ReservationRecord
+    let elapsedMinutes: Int
+    let tableName: String?
+  }
+
   private func detectLongSeatedWarnings(
     context: ServiceDayContext
-  ) -> (tableSignals: [HostTableSignal], briefingFacts: [HostBriefingFact]) {
+  ) -> (
+    tableSignals: [HostTableSignal],
+    briefingFacts: [HostBriefingFact],
+    actions: [HostSuggestedAction]
+  ) {
     guard HostOperationalNoTableSoonSupport.isToday(context.selectedDate, now: context.now) else {
-      return ([], [])
+      return ([], [], [])
     }
 
     var tableSignals: [HostTableSignal] = []
     var briefingFacts: [HostBriefingFact] = []
+    var actions: [HostSuggestedAction] = []
 
-    for reservation in context.reservations where reservation.statusValue == .seated {
-      guard let seatedAt = context.localSeatedAtByReservationID[reservation.remoteID] else {
-        continue
-      }
+    for entry in longSeatedEntries(context: context) {
+      let reservation = entry.reservation
+      let elapsedMinutes = entry.elapsedMinutes
+      let durationDisplay = Self.seatedDurationDisplay(minutes: elapsedMinutes)
+      let tableName = entry.tableName
+      let tableDetail = tableName.map { " at \($0)" } ?? ""
+      let factDetail =
+        "\(reservation.guestName) has been marked seated\(tableDetail) for \(durationDisplay). Confirm whether the table is still occupied or should be completed."
 
-      let elapsedMinutes = Int(context.now.timeIntervalSince(seatedAt) / 60)
-      guard elapsedMinutes >= context.settings.longSeatedWarningMinutes else { continue }
-
-      let tableName = reservation.assignedTableName
       tableSignals.append(
         HostTableSignal(
           id: "long-seated-\(reservation.remoteID)",
           tableName: tableName,
           kind: .longSeated,
           severity: .warning,
-          title: "Long seated table",
-          detail: "\(reservation.guestName) has been seated for \(elapsedMinutes) minutes.",
+          title: "Possible missed completion",
+          detail: factDetail,
           relatedReservationIDs: [reservation.remoteID],
           evidence: [
             "elapsedMinutes=\(elapsedMinutes)",
-            "threshold=\(context.settings.longSeatedWarningMinutes)"
+            "threshold=\(context.settings.longSeatedWarningMinutes)",
+            "missedCompletion=true",
+            "seated=true"
           ]
         )
       )
@@ -719,19 +743,142 @@ struct HostIntelligenceEngine {
           id: "long-seated-fact-\(reservation.remoteID)",
           severity: .warning,
           category: .timing,
-          title: "Long seated table",
-          detail: "\(reservation.guestName) has been seated for \(elapsedMinutes) minutes.",
+          title: "Possible missed completion",
+          detail: factDetail,
           evidence: [
             "elapsedMinutes=\(elapsedMinutes)",
-            "threshold=\(context.settings.longSeatedWarningMinutes)"
+            "threshold=\(context.settings.longSeatedWarningMinutes)",
+            "missedCompletion=true",
+            "seated=true"
           ],
           relatedReservationIDs: [reservation.remoteID],
-          suggestedActionTitle: "Check whether the table can turn."
+          suggestedActionTitle: longSeatedActionTitle(
+            guestName: reservation.guestName,
+            tableName: tableName
+          )
+        )
+      )
+
+      actions.append(
+        HostSuggestedAction(
+          id: "check-long-seated-\(reservation.remoteID)",
+          severity: .warning,
+          kind: .completeReservation,
+          title: longSeatedActionTitle(
+            guestName: reservation.guestName,
+            tableName: tableName
+          ),
+          reason: "\(reservation.guestName) has been marked seated for \(durationDisplay).",
+          relatedReservationIDs: [reservation.remoteID],
+          targetSlotTime: reservation.reservationTime,
+          targetTableName: tableName,
+          requiresStaffConfirmation: true
         )
       )
     }
 
-    return (tableSignals, briefingFacts)
+    return (tableSignals, briefingFacts, actions)
+  }
+
+  private func longSeatedEntries(context: ServiceDayContext) -> [LongSeatedEntry] {
+    context.reservations.compactMap { reservation in
+      guard reservation.statusValue == .seated,
+            let seatedAt = context.localSeatedAtByReservationID[reservation.remoteID] else {
+        return nil
+      }
+      let elapsedMinutes = Int(context.now.timeIntervalSince(seatedAt) / 60)
+      guard elapsedMinutes >= context.settings.longSeatedWarningMinutes else { return nil }
+      return LongSeatedEntry(
+        reservation: reservation,
+        elapsedMinutes: elapsedMinutes,
+        tableName: reservation.assignedTableName
+      )
+    }
+    .sorted { $0.elapsedMinutes > $1.elapsedMinutes }
+  }
+
+  private func longSeatedActionTitle(guestName: String, tableName: String?) -> String {
+    if let tableName, !tableName.isEmpty {
+      return "Check whether \(tableName) is still occupied"
+    }
+    return "Check whether \(guestName)'s table is still occupied"
+  }
+
+  private func detectOperationalTension(
+    context: ServiceDayContext,
+    overdueReservationIDs: Set<Int>
+  ) -> [HostBriefingFact] {
+    guard HostOperationalNoTableSoonSupport.isToday(context.selectedDate, now: context.now) else {
+      return []
+    }
+
+    let longSeated = longSeatedEntries(context: context)
+    guard !longSeated.isEmpty else { return [] }
+
+    let lateNoTableReservations = context.reservations.filter {
+      overdueReservationIDs.contains($0.remoteID)
+    }
+    guard let lateReservation = lateNoTableReservations.first else { return [] }
+
+    let longSummary = operationalTensionLongSeatedSummary(entries: longSeated)
+    let detail =
+      "\(lateReservation.guestName) still has no table assigned; \(longSummary)."
+
+    return [
+      HostBriefingFact(
+        id: "operational-tension-late-long-seated",
+        severity: .critical,
+        category: .overdue,
+        title: "Check table status before resolving \(lateReservation.guestName).",
+        detail: detail,
+        evidence: [
+          "operationalTension=true",
+          "lateNoTable=true",
+          "longSeatedCount=\(longSeated.count)",
+          "seated=false"
+        ],
+        relatedReservationIDs: [lateReservation.remoteID]
+          + longSeated.map(\.reservation.remoteID),
+        suggestedActionTitle: "Review table plan for late \(lateReservation.guestName)"
+      )
+    ]
+  }
+
+  private func operationalTensionLongSeatedSummary(entries: [LongSeatedEntry]) -> String {
+    guard let longest = entries.first else { return "multiple tables may need completion review" }
+
+    let durationPhrase = Self.seatedDurationPhrase(minutes: longest.elapsedMinutes)
+    if entries.count >= 3 {
+      let topNames = entries.prefix(2).map(\.reservation.guestName)
+      return "\(topNames.joined(separator: " and ")) and multiple other tables have been marked seated for over \(durationPhrase)"
+    }
+    if entries.count == 2 {
+      let names = entries.map(\.reservation.guestName)
+      return "\(names.joined(separator: " and ")) have been marked seated for over \(durationPhrase)"
+    }
+    return "\(longest.reservation.guestName) has been marked seated for over \(durationPhrase)"
+  }
+
+  private static func seatedDurationDisplay(minutes: Int) -> String {
+    let minutes = max(minutes, 1)
+    if minutes < 60 {
+      return "\(minutes)m"
+    }
+    let hours = minutes / 60
+    let remainingMinutes = minutes % 60
+    if remainingMinutes == 0 {
+      return "\(hours)h"
+    }
+    return "\(hours)h \(remainingMinutes)m"
+  }
+
+  private static func seatedDurationPhrase(minutes: Int) -> String {
+    let minutes = max(minutes, 60)
+    let hours = minutes / 60
+    if hours <= 1 {
+      return "one hour"
+    }
+    return "\(hours) hours"
   }
 
   /// Seated table-turn / completion grace only. Never applies to unseated bookings.
@@ -778,16 +925,20 @@ struct HostIntelligenceEngine {
         )
       )
 
+      let tableName = reservation.assignedTableName
       actions.append(
         HostSuggestedAction(
           id: "seated-completion-grace-action-\(reservation.remoteID)",
           severity: .watch,
           kind: .completeReservation,
-          title: "Review completion for \(reservation.guestName)",
-          reason: detail,
+          title: longSeatedActionTitle(
+            guestName: reservation.guestName,
+            tableName: tableName
+          ),
+          reason: "\(reservation.guestName) has been marked seated for \(Self.seatedDurationDisplay(minutes: elapsedMinutes)).",
           relatedReservationIDs: [reservation.remoteID],
           targetSlotTime: reservation.reservationTime,
-          targetTableName: reservation.assignedTableName,
+          targetTableName: tableName,
           requiresStaffConfirmation: true
         )
       )

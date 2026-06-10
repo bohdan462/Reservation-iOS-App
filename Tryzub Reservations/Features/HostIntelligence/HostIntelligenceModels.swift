@@ -623,6 +623,8 @@ struct HostEngineInput {
     let allKnownReservations: [ReservationRecord]
     /// Backend guest intelligence summaries for the selected service date, keyed by reservation ID.
     let guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO]
+    /// Loaded reservation profile packs (Detail/Guest Insights), keyed by reservation ID.
+    let guestProfilePacksByReservationID: [Int: GuestIntelligenceProfilePackDTO]
 
     init(
         now: Date,
@@ -635,7 +637,8 @@ struct HostEngineInput {
         settings: HostIntelligenceSettings,
         tableConfigs: [RestaurantTableConfig],
         allKnownReservations: [ReservationRecord],
-        guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO] = [:]
+        guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO] = [:],
+        guestProfilePacksByReservationID: [Int: GuestIntelligenceProfilePackDTO] = [:]
     ) {
         self.now = now
         self.selectedDate = selectedDate
@@ -648,5 +651,6 @@ struct HostEngineInput {
         self.tableConfigs = tableConfigs
         self.allKnownReservations = allKnownReservations
         self.guestIntelligenceSummariesByReservationID = guestIntelligenceSummariesByReservationID
+        self.guestProfilePacksByReservationID = guestProfilePacksByReservationID
     }
 }

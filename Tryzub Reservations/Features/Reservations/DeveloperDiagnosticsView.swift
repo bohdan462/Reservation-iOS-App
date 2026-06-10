@@ -19,6 +19,7 @@ struct DeveloperDiagnosticsView: View {
     @State private var testResults: [AdminFetchTestResult] = []
 
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
+    @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
     @StateObject private var hostIntelligenceSettings = HostIntelligenceSettingsStore()
 
     let environment: AppEnvironment
@@ -222,7 +223,8 @@ struct DeveloperDiagnosticsView: View {
             localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
             settings: hostIntelligenceSettings.settings,
             tableConfigs: hostTableConfigStore.tables,
-            allKnownReservations: reservations
+            allKnownReservations: reservations,
+            guestIntelligenceStore: guestIntelligenceStore
         )
     }
 

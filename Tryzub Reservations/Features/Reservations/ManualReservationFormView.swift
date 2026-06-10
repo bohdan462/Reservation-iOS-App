@@ -84,11 +84,19 @@ struct ManualReservationFormView: View {
     private func createReservation() async {
         guard validateRequiredFields() else { return }
 
+        FormTrace.event(surface: "manual_add", name: "submit_started")
         isSaving = true
         errorMessage = nil
+        let saveStarted = ContinuousClock.now
 
         defer {
             isSaving = false
+            let saveMs = Int(saveStarted.duration(to: .now).pressureTraceTimeInterval * 1000)
+            FormTrace.event(
+                surface: "manual_add",
+                name: "submit_completed",
+                extra: "durationMs=\(saveMs)"
+            )
         }
 
         do {
@@ -369,19 +377,43 @@ private struct ReservationFormContent: View {
     @StateObject private var guestPhoneLookupStore = GuestLookupStore()
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
+    @StateObject private var manualReservationFacade = ManualReservationFacade()
     @State private var suppressedGuestPhoneSuggestionID: String?
     @State private var slotContext: HostReservationSlotContext?
     @State private var isCustomTimePresented = false
     @State private var didApplyInitialSettings = false
-    @State private var dayAvailability: RestaurantDayAvailabilityDTO?
-    @State private var loadedAvailabilityDateKey: String?
-    @State private var suggestedSlots: ReservationSlotsResponseDTO?
-    @State private var blockedSlotValues: Set<String> = []
-    @State private var isLoadingPublicSlots = false
-    @State private var publicSlotsError: String?
-    @State private var loadedSlotsDateKey: String?
-    @State private var slotLoadTask: Task<Void, Never>?
     @State private var hasAttemptedSave = false
+    @State private var cachedDayReservationsDateKey: String?
+    @State private var cachedDayReservations: [ReservationRecord] = []
+    @State private var slotContextRefreshTask: Task<Void, Never>?
+
+    private var dayAvailability: RestaurantDayAvailabilityDTO? {
+        manualReservationFacade.dayAvailability
+    }
+
+    private var suggestedSlots: ReservationSlotsResponseDTO? {
+        manualReservationFacade.suggestedSlots
+    }
+
+    private var blockedSlotValues: Set<String> {
+        manualReservationFacade.blockedSlotValues
+    }
+
+    private var isLoadingPublicSlots: Bool {
+        manualReservationFacade.isLoadingPublicSlots
+    }
+
+    private var publicSlotsError: String? {
+        manualReservationFacade.publicSlotsError
+    }
+
+    private var loadedSlotsDateKey: String? {
+        manualReservationFacade.viewState?.selectedDateKey
+    }
+
+    private var loadedAvailabilityDateKey: String? {
+        manualReservationFacade.viewState?.selectedDateKey
+    }
 
     private var isWideForm: Bool {
         horizontalSizeClass == .regular
@@ -407,7 +439,7 @@ private struct ReservationFormContent: View {
         }
         .onAppear {
             applyInitialSettingsIfNeeded()
-            ensureSlotLoad()
+            prepareAvailabilityState()
             refreshSlotContext()
             refreshGuestPhoneLookup()
         }
@@ -427,8 +459,15 @@ private struct ReservationFormContent: View {
             guard shouldAutoApplyGuestPhoneSuggestion(match) else { return }
             applyGuestPhoneSuggestion(match)
         }
-        .onChange(of: draft.reservationDate.reservationDateString()) { _, _ in
-            ensureSlotLoad()
+        .onChange(of: draft.reservationDate.reservationDateString()) { _, newDateKey in
+            cachedDayReservationsDateKey = nil
+            cachedDayReservations = []
+            prepareAvailabilityState()
+            FormTrace.event(
+                surface: "manual_add",
+                name: "date_changed",
+                extra: "date=\(newDateKey)"
+            )
         }
         .onChange(of: loadedSlotsDateKey) { _, _ in
             syncSelectedTimeToAvailableChoicesIfNeeded()
@@ -442,8 +481,9 @@ private struct ReservationFormContent: View {
             refreshSlotContext()
         }
         .onDisappear {
-            slotLoadTask?.cancel()
-            slotLoadTask = nil
+            slotContextRefreshTask?.cancel()
+            slotContextRefreshTask = nil
+            manualReservationFacade.cancelLoads()
         }
         .safeAreaInset(edge: .bottom) {
             primaryActionButton
@@ -790,6 +830,12 @@ private struct ReservationFormContent: View {
                 }
             }
 
+            if let statusLine = manualReservationFacade.viewState?.statusLine {
+                Text(statusLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if let publicSlotsError {
                 Text(publicSlotsError)
                     .font(.subheadline)
@@ -916,22 +962,44 @@ private struct ReservationFormContent: View {
     }
 
     private func refreshSlotContext() {
+        slotContextRefreshTask?.cancel()
         let dateKey = draft.reservationDate.reservationDateString()
-        let dayReservations = fetchDayReservations(dateKey: dateKey)
+        let serviceTime = draft.reservationTime
+        let partySize = draft.partySize
+        let excludeID = reservation?.remoteID
+        let blocked = blockedSlotValues
         let isClosed = activeSuggestedSlots?.isOpen == false || activeDayAvailability?.isOpen == false
+        let tables = hostTableConfigStore.tables
+        let settings = hostIntelligenceSettingsStore.settings
+        let nearbyChoices = timeChoices
 
-        slotContext = HostReservationSlotContextSupport.build(
-            serviceDate: draft.reservationDate,
-            serviceTime: draft.reservationTime,
-            partySize: draft.partySize,
-            excludingReservationID: reservation?.remoteID,
-            dayReservations: dayReservations,
-            blockedSlotValues: blockedSlotValues,
-            isServiceClosed: isClosed,
-            tableConfigs: hostTableConfigStore.tables,
-            settings: hostIntelligenceSettingsStore.settings,
-            nearbyTimeChoices: timeChoices
-        )
+        slotContextRefreshTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(75))
+            guard !Task.isCancelled else { return }
+
+            let dayReservations: [ReservationRecord]
+            if cachedDayReservationsDateKey == dateKey {
+                dayReservations = cachedDayReservations
+            } else {
+                let fetched = fetchDayReservations(dateKey: dateKey)
+                cachedDayReservationsDateKey = dateKey
+                cachedDayReservations = fetched
+                dayReservations = fetched
+            }
+
+            slotContext = HostReservationSlotContextSupport.build(
+                serviceDate: draft.reservationDate,
+                serviceTime: serviceTime,
+                partySize: partySize,
+                excludingReservationID: excludeID,
+                dayReservations: dayReservations,
+                blockedSlotValues: blocked,
+                isServiceClosed: isClosed,
+                tableConfigs: tables,
+                settings: settings,
+                nearbyTimeChoices: nearbyChoices
+            )
+        }
     }
 
     private func fetchDayReservations(dateKey: String) -> [ReservationRecord] {
@@ -1282,82 +1350,13 @@ private struct ReservationFormContent: View {
         )
     }
 
-    // Loads slots in an unstructured Task so SwiftUI view churn (navigation
-    // updates, controller refreshes) cannot cancel an in-flight request and leave
-    // the spinner stuck. Skips reloading once a date has loaded successfully.
-    private func ensureSlotLoad() {
-        let dateKey = draft.reservationDate.reservationDateString()
-        if let cachedSlots = controller.cachedReservationSlots(date: dateKey) {
-            suggestedSlots = cachedSlots
-            loadedSlotsDateKey = dateKey
-        }
-        if let cachedAvailability = controller.cachedRestaurantDayAvailability(date: dateKey) {
-            dayAvailability = cachedAvailability
-            loadedAvailabilityDateKey = dateKey
-        }
-        if loadedSlotsDateKey == dateKey || loadedAvailabilityDateKey == dateKey {
-            if let cachedBlocked = controller.cachedRestaurantBlockedSlots(date: dateKey) {
-                blockedSlotValues = Set(cachedBlocked.data.map { ManualReservationFormPresenter.shortSlotValue($0.slotTime) })
-            }
-        }
-
-        if loadedSlotsDateKey == dateKey && loadedAvailabilityDateKey == dateKey { return }
-        slotLoadTask?.cancel()
-        slotLoadTask = Task {
-            await loadPublicSlotSuggestions(dateKey: dateKey)
-            slotLoadTask = nil
-        }
-    }
-
-    private func loadPublicSlotSuggestions(dateKey: String) async {
-        isLoadingPublicSlots = true
-        publicSlotsError = nil
-        defer { isLoadingPublicSlots = false }
-
-        do {
-            let availability = try await controller.loadRestaurantDayAvailability(date: dateKey)
-            guard draft.reservationDate.reservationDateString() == dateKey else { return }
-            dayAvailability = availability
-            loadedAvailabilityDateKey = dateKey
-
-            guard availability.isOpen else {
-                suggestedSlots = nil
-                loadedSlotsDateKey = dateKey
-                blockedSlotValues = []
-                return
-            }
-
-            do {
-                // Public slots are suggestions. If backend availability says the
-                // date is open but slot suggestions fail, staff can still use a
-                // custom manual time after local validation.
-                let slots = try await controller.loadReservationSlots(date: dateKey)
-                guard draft.reservationDate.reservationDateString() == dateKey else { return }
-                suggestedSlots = slots
-                loadedSlotsDateKey = dateKey
-            } catch {
-                guard draft.reservationDate.reservationDateString() == dateKey else { return }
-                if error.isCancellationLike {
-                    return
-                }
-                suggestedSlots = nil
-                loadedSlotsDateKey = dateKey
-                publicSlotsError = "Public slot suggestions are unavailable. Custom time is still allowed."
-            }
-
-            if let blocked = try? await controller.loadRestaurantBlockedSlots(date: dateKey),
-               draft.reservationDate.reservationDateString() == dateKey {
-                blockedSlotValues = Set(blocked.data.map { ManualReservationFormPresenter.shortSlotValue($0.slotTime) })
-            }
-        } catch {
-            guard draft.reservationDate.reservationDateString() == dateKey else { return }
-            // Cancellation (date change / dismiss) is not a real failure; leave the
-            // loaded-date guard unset so the next appear retries.
-            if !error.isCancellationLike {
-                publicSlotsError = "Could not verify public availability for this date."
-                blockedSlotValues = []
-            }
-        }
+    private func prepareAvailabilityState() {
+        manualReservationFacade.prepare(
+            date: draft.reservationDate,
+            controller: controller,
+            canSubmit: availabilityBlockingMessage == nil,
+            blockingWarning: availabilityBlockingMessage
+        )
     }
 }
 

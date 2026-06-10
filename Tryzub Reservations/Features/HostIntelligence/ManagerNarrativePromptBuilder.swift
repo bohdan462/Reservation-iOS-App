@@ -24,6 +24,12 @@ enum ManagerNarrativePromptBuilder {
       Do not mention AI, models, or validation.
       Do not use bullet points, numbering, or category tags like [critical/overdue].
       Do not use labels like HEADLINE, WHY, or CHECK.
+      Do not start with Manager: or Host: or any role prefix.
+      Do not use announcement tone such as Attention all staff members.
+      Do not use second-person guest-facing language like you or your reservation.
+      Do not use quotation marks.
+      Write direct staff notes for coworkers, not broadcasts to guests.
+      Example style: Daniil is still unresolved with no table assigned. Nick, Max, and Sheila have been marked seated for over three hours, so check whether any table should be completed before seating or closing Daniil.
       Output plain staff-facing prose only.
       """
     )
