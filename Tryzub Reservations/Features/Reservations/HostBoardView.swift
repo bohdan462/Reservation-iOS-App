@@ -35,6 +35,7 @@ struct HostBoardView: View {
 
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
+    @State private var boardSnapshot: HostBoardSnapshot?
     @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var isShowingHostIntelligenceReview = false
 
@@ -166,7 +167,8 @@ struct HostBoardView: View {
     }
 
     private var hostBoardOperationalLoading: Bool {
-        isLoadingAvailabilitySummary
+        guard selectedDateKey == Date.reservationDateString() else { return false }
+        return isLoadingAvailabilitySummary
             || guestIntelligenceStore.isLoading(dateKey: selectedDateKey)
     }
 
@@ -208,18 +210,20 @@ struct HostBoardView: View {
         return restaurantSettingsStore.analyticsSummary
     }
 
+    private var boardSnapshotBuildKey: String {
+        "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceOperationalMinuteStamp)-\(hostTableConfigStore.tableConfigFingerprint)"
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let safeWidth = proxy.size.width.tryzubFiniteNonNegativeLayoutValue
             let safeHeight = proxy.size.height.tryzubFiniteNonNegativeLayoutValue
-            // Snapshot keeps time/status grouping out of the view layout code.
-            let densityBounds = serviceDensityBounds
-            let snapshot = HostBoardSnapshot(
+            let snapshot = boardSnapshot ?? HostBoardSnapshot(
                 reservations: reservations,
                 selectedDate: selectedDate,
                 now: clockTick,
-                serviceOpen: densityBounds.open,
-                serviceClose: densityBounds.close,
+                serviceOpen: serviceDensityBounds.open,
+                serviceClose: serviceDensityBounds.close,
                 largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
             )
 
@@ -310,6 +314,25 @@ struct HostBoardView: View {
             guard !isRunningForPreviews else { return }
             await runClockLoop()
         }
+        .task(id: boardSnapshotBuildKey) {
+            guard !isRunningForPreviews else { return }
+            let started = ContinuousClock.now
+            let densityBounds = serviceDensityBounds
+            let built = HostBoardSnapshot(
+                reservations: reservations,
+                selectedDate: selectedDate,
+                now: clockTick,
+                serviceOpen: densityBounds.open,
+                serviceClose: densityBounds.close,
+                largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
+            )
+            boardSnapshot = built
+            UIPressureTrace.phase(
+                "host_snapshot_build",
+                duration: started.duration(to: .now).pressureTraceTimeInterval,
+                extra: "date=\(selectedDateKey) reservations=\(reservations.count)"
+            )
+        }
         .onChange(of: selectedDateKey) { _, dateKey in
             controller.noteHostBoardSelectedDate(dateKey)
         }
@@ -362,6 +385,7 @@ struct HostBoardView: View {
                     isLocalModelInferenceActive: HostLocalModelInferenceTracker.isActive,
                     isReservationRefreshInFlight: controller.isReservationNetworkRefreshInFlight,
                     isAvailabilitySummaryLoading: controller.isAvailabilitySummaryLoading(date: selectedDateKey),
+                    isGuestIntelligenceLoading: guestIntelligenceStore.isLoading(dateKey: selectedDateKey),
                     hostBoardDateNavigationAt: controller.hostBoardDateNavigationAt,
                     startupUIReleasedAt: controller.startupUIReleasedAt,
                     now: clockTick

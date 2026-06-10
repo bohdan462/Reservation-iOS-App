@@ -45,6 +45,157 @@ enum GuestHistorySemantics {
     return true
   }
 
+  static func hasExplicitAllergyLanguage(in text: String) -> Bool {
+    let lower = text.lowercased()
+    return explicitAllergyKeywords.contains { keyword in
+      lower.contains(keyword)
+    }
+  }
+
+  static func hasDietaryPreferenceLanguage(in text: String) -> Bool {
+    let lower = text.lowercased()
+    return dietaryPreferenceKeywords.contains { keyword in
+      lower.contains(keyword)
+    }
+  }
+
+  static func backendAllergyFlagIsActionable(
+    _ flag: Bool,
+    reservation: ReservationRecord
+  ) -> Bool {
+    guard backendNoteFlagIsActionable(flag, reservation: reservation) else { return false }
+    let text = combinedNoteText(for: reservation)
+    guard !text.isEmpty else { return false }
+    if hasDietaryPreferenceLanguage(in: text), !hasExplicitAllergyLanguage(in: text) {
+      return false
+    }
+    return hasExplicitAllergyLanguage(in: text)
+  }
+
+  static func serverBackedSeenBeforeMessage(guestName: String) -> String {
+    "\(guestName) appears to have visited before."
+  }
+
+  static func occasionNoteTitle(for reservation: ReservationRecord) -> String {
+    let lower = combinedNoteText(for: reservation).lowercased()
+    if lower.contains("birthday") { return "Birthday note" }
+    if lower.contains("anniversary") { return "Anniversary note" }
+    if lower.contains("bachelor party") || lower.contains("bachelorette") {
+      return "Occasion note"
+    }
+    if lower.contains("graduation") || lower.contains("celebration") {
+      return "Occasion note"
+    }
+    return "Guest note"
+  }
+
+  static func occasionNoteMessage(
+    guestName: String,
+    reservation: ReservationRecord
+  ) -> String {
+    let text = combinedNoteText(for: reservation)
+    let lower = text.lowercased()
+    if lower.contains("birthday") {
+      return "\(guestName) mentioned a birthday."
+    }
+    if lower.contains("anniversary") {
+      return "\(guestName) mentioned an anniversary."
+    }
+    if text.count <= 80, !text.isEmpty {
+      return text
+    }
+    return "\(guestName) has a guest note attached."
+  }
+
+  struct DetailInsightLine: Equatable {
+    let title: String
+    let detail: String
+  }
+
+  struct DetailInsightPresentation: Equatable {
+    let historyTitle: String
+    let historyDetail: String
+    let supplementalLines: [DetailInsightLine]
+  }
+
+  static func detailInsightPresentation(
+    reservation: ReservationRecord,
+    localReport: GuestInsightReport,
+    serverSummary: GuestIntelligenceSummaryDTO?
+  ) -> DetailInsightPresentation {
+    let history: (title: String, detail: String)
+    if localReport.hasReliableRepeatGuestHistory {
+      history = compactHistoryLine(
+        priorReliableVisitCount: localReport.priorReliableVisitCount,
+        lastPriorVisitDisplayDate: localReport.lastPriorVisitDisplayDate
+      )
+    } else if let serverSummary,
+              serverSummary.classification == .returning
+                || serverSummary.classification == .regular
+                || serverSummary.classification == .frequentRegular,
+              hasReliableServerReturningIdentity(serverSummary.identityConfidence) {
+      history = (
+        "Seen before",
+        serverBackedSeenBeforeMessage(guestName: reservation.guestName)
+      )
+    } else {
+      history = localReport.guestHistoryLine
+    }
+
+    var supplemental: [DetailInsightLine] = []
+
+    if hasOccasionNoteText(for: reservation)
+      || serverSummary?.hasSpecialOccasionNote == true {
+      supplemental.append(
+        DetailInsightLine(
+          title: occasionNoteTitle(for: reservation),
+          detail: occasionNoteMessage(guestName: reservation.guestName, reservation: reservation)
+        )
+      )
+    }
+
+    let noteText = combinedNoteText(for: reservation)
+    if hasDietaryPreferenceLanguage(in: noteText),
+       !hasExplicitAllergyLanguage(in: noteText),
+       !supplemental.contains(where: { $0.title == occasionNoteTitle(for: reservation) }) {
+      supplemental.append(
+        DetailInsightLine(
+          title: "Dietary note",
+          detail: noteText.count <= 80
+            ? noteText
+            : "\(reservation.guestName) has dietary notes."
+        )
+      )
+    }
+
+    if hasExplicitAllergyLanguage(in: noteText)
+      || backendAllergyFlagIsActionable(serverSummary?.hasAllergyNote == true, reservation: reservation) {
+      supplemental.append(
+        DetailInsightLine(
+          title: "Allergy note",
+          detail: "\(reservation.guestName) has allergy-related notes."
+        )
+      )
+    }
+
+    return DetailInsightPresentation(
+      historyTitle: history.title,
+      historyDetail: history.detail,
+      supplementalLines: supplemental
+    )
+  }
+
+  private static func hasReliableServerReturningIdentity(
+    _ confidence: GuestIdentityConfidenceDTO
+  ) -> Bool {
+    switch confidence {
+    case .exact, .strong:
+      return true
+    case .possible, .weak, .unknown:
+      return false
+    }
+  }
+
   static func guestNoteAlertTitle(for reservation: ReservationRecord) -> String {
     "Check guest note"
   }
@@ -230,6 +381,16 @@ enum GuestHistorySemantics {
   // MARK: - Private
 
   private static let specialOccasionKeywords = [
-    "birthday", "anniversary", "engagement", "graduation", "celebration", "special occasion"
+    "birthday", "anniversary", "engagement", "graduation", "celebration", "special occasion",
+    "bachelor party", "bachelorette", "bachelorette party"
+  ]
+
+  private static let explicitAllergyKeywords = [
+    "allergy", "allergic", "anaphylaxis", "peanut allergy", "shellfish allergy", "severe allergy"
+  ]
+
+  private static let dietaryPreferenceKeywords = [
+    "vegetarian", "vegan", "pescatarian", "dairy-free", "dairy free", "gluten-free", "gluten free",
+    "celiac"
   ]
 }

@@ -59,8 +59,28 @@ enum HostGuestIntelligenceSupport {
             settings: settings
           )
         )
+        if !signals.contains(where: {
+          $0.reservationID == reservation.remoteID && $0.kind == .allergy
+        }) {
+          appendUnique(&signals, &seenKeys, dietarySignal(for: reservation))
+        }
+        let hadReturningSignal = signals.contains {
+          $0.reservationID == reservation.remoteID
+            && ($0.kind == .regularGuest || $0.kind == .importantGuest)
+        }
         appendUnique(&signals, &seenKeys, regularGuestSignal(for: reservation, report: report))
         appendUnique(&signals, &seenKeys, importantGuestSignal(for: reservation, report: report))
+        if !hadReturningSignal,
+           !signals.contains(where: {
+             $0.reservationID == reservation.remoteID
+               && ($0.kind == .regularGuest || $0.kind == .importantGuest)
+           }) {
+          appendUnique(
+            &signals,
+            &seenKeys,
+            serverBackedSeenBeforeSignal(for: reservation, summary: summary)
+          )
+        }
         if !report.hasReliableContactIdentity {
           appendUnique(
             &signals,
@@ -75,6 +95,7 @@ enum HostGuestIntelligenceSupport {
       }
 
       appendUnique(&signals, &seenKeys, allergySignal(for: reservation))
+      appendUnique(&signals, &seenKeys, dietarySignal(for: reservation))
       appendUnique(&signals, &seenKeys, regularGuestSignal(for: reservation, report: report))
       appendUnique(&signals, &seenKeys, importantGuestSignal(for: reservation, report: report))
       appendUnique(&signals, &seenKeys, contentsOf: seatingPreferenceSignals(for: reservation))
@@ -98,7 +119,7 @@ enum HostGuestIntelligenceSupport {
     let individualKinds: Set<HostGuestSignalKind> = [
       .allergy, .accessibility, .previousServiceIssue, .noShowRisk,
       .cancellationRisk, .possibleDuplicate, .regularGuest, .importantGuest,
-      .manualCallIn, .specialOccasion
+      .manualCallIn, .specialOccasion, .noteReminder
     ]
 
     var seenReturningReservationIDs = Set<Int>()
@@ -200,6 +221,17 @@ enum HostGuestIntelligenceSupport {
           title: "Check guest note",
           reason: signal.message
         )
+      case .noteReminder:
+        let actionTitle = signal.evidence.contains("dietaryNote")
+          ? "Dietary note"
+          : "Check guest note"
+        return suggestedAction(
+          id: "guest-action-note-\(signal.reservationID)",
+          signal: signal,
+          kind: .alertServer,
+          title: actionTitle,
+          reason: signal.message
+        )
       case .regularGuest, .importantGuest:
         return suggestedAction(
           id: "guest-action-returning-\(signal.reservationID)",
@@ -247,7 +279,7 @@ enum HostGuestIntelligenceSupport {
   ) -> [HostGuestSignal] {
     var signals: [HostGuestSignal] = []
 
-    if GuestHistorySemantics.backendNoteFlagIsActionable(
+    if GuestHistorySemantics.backendAllergyFlagIsActionable(
       summary.hasAllergyNote,
       reservation: reservation
     ) {
@@ -324,7 +356,10 @@ enum HostGuestIntelligenceSupport {
           guestName: reservation.guestName,
           kind: .specialOccasion,
           severity: .watch,
-          message: GuestHistorySemantics.guestNoteAlertReason(for: reservation),
+          message: GuestHistorySemantics.occasionNoteMessage(
+            guestName: reservation.guestName,
+            reservation: reservation
+          ),
           evidence: backendEvidence(summary: summary, extra: ["specialOccasionFlag"])
         )
       )
@@ -573,13 +608,11 @@ enum HostGuestIntelligenceSupport {
   // MARK: - Per-Guest Signals
 
   private static func allergySignal(for reservation: ReservationRecord) -> HostGuestSignal? {
-    let combined = combinedNotes(for: reservation)
-    guard !combined.isEmpty else { return nil }
-
-    let matched = matchedKeywords(in: combined, keywords: allergyKeywords, negations: allergyNegationPhrases)
-    guard !matched.isEmpty else { return nil }
-
     let rawNotes = rawCombinedNotes(for: reservation)
+    guard GuestHistorySemantics.hasExplicitAllergyLanguage(in: rawNotes) else { return nil }
+
+    let combined = combinedNotes(for: reservation)
+    let matched = matchedKeywords(in: combined, keywords: explicitAllergyKeywords, negations: allergyNegationPhrases)
     let message: String
     if let snippet = HostGuestNoteSnippetExtractor.allergySnippet(from: rawNotes) {
       message = "\(reservation.guestName) has \(snippet) noted."
@@ -594,7 +627,60 @@ enum HostGuestIntelligenceSupport {
       kind: .allergy,
       severity: .critical,
       message: message,
-      evidence: matched
+      evidence: matched.isEmpty ? ["explicitAllergyLanguage"] : matched
+    )
+  }
+
+  private static func dietarySignal(for reservation: ReservationRecord) -> HostGuestSignal? {
+    let rawNotes = rawCombinedNotes(for: reservation)
+    guard GuestHistorySemantics.hasDietaryPreferenceLanguage(in: rawNotes) else { return nil }
+    guard !GuestHistorySemantics.hasExplicitAllergyLanguage(in: rawNotes) else { return nil }
+
+    let text = rawNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+    let message: String
+    if text.count <= 80 {
+      message = text
+    } else {
+      message = "\(reservation.guestName) has dietary notes."
+    }
+
+    return HostGuestSignal(
+      id: "guest-dietary-\(reservation.remoteID)",
+      reservationID: reservation.remoteID,
+      guestName: reservation.guestName,
+      kind: .noteReminder,
+      severity: .watch,
+      message: message,
+      evidence: ["dietaryNote"]
+    )
+  }
+
+  private static func serverBackedSeenBeforeSignal(
+    for reservation: ReservationRecord,
+    summary: GuestIntelligenceSummaryDTO
+  ) -> HostGuestSignal? {
+    guard hasReliableReturningIdentity(summary.identityConfidence) else { return nil }
+
+    switch summary.classification {
+    case .returning, .regular, .frequentRegular:
+      break
+    case .new, .unknown, .needsReview:
+      return nil
+    }
+
+    return HostGuestSignal(
+      id: "guest-seen-before-server-\(reservation.remoteID)",
+      reservationID: reservation.remoteID,
+      guestName: reservation.guestName,
+      kind: .regularGuest,
+      severity: .info,
+      message: GuestHistorySemantics.serverBackedSeenBeforeMessage(
+        guestName: reservation.guestName
+      ),
+      evidence: backendEvidence(
+        summary: summary,
+        extra: ["serverSeenBeforeFallback", "returningGuest"]
+      )
     )
   }
 
@@ -754,7 +840,10 @@ enum HostGuestIntelligenceSupport {
         guestName: reservation.guestName,
         kind: .specialOccasion,
         severity: .watch,
-        message: GuestHistorySemantics.guestNoteAlertReason(for: reservation),
+        message: GuestHistorySemantics.occasionNoteMessage(
+          guestName: reservation.guestName,
+          reservation: reservation
+        ),
         evidence: matched
       )
     ]
@@ -997,11 +1086,22 @@ enum HostGuestIntelligenceSupport {
   }
 
   private static func title(for kind: HostGuestSignalKind, signal: HostGuestSignal? = nil) -> String {
+    if kind == .noteReminder,
+       signal?.evidence.contains("dietaryNote") == true {
+      return "Dietary note"
+    }
+
+    if kind == .specialOccasion, let message = signal?.message.lowercased() {
+      if message.contains("birthday") { return "Birthday note" }
+      if message.contains("anniversary") { return "Anniversary note" }
+      return "Occasion note"
+    }
+
     switch kind {
     case .allergy: return "Allergy note"
     case .regularGuest, .importantGuest: return "Seen before"
     case .vip: return "Seen before"
-    case .specialOccasion: return "Guest note"
+    case .specialOccasion: return "Occasion note"
     case .seatingPreference: return "Seating preference"
     case .accessibility: return "Accessibility need"
     case .cancellationRisk: return "Cancellation risk"
@@ -1227,9 +1327,8 @@ enum HostGuestIntelligenceSupport {
     }
   }
 
-  private static let allergyKeywords = [
-    "allergy", "allergic", "shellfish", "shrimp", "crab", "lobster",
-    "nuts", "peanut", "gluten", "dairy", "celiac"
+  private static let explicitAllergyKeywords = [
+    "allergy", "allergic", "anaphylaxis", "peanut allergy", "shellfish allergy", "severe allergy"
   ]
 
   private static let allergyNegationPhrases = [
@@ -1246,7 +1345,8 @@ enum HostGuestIntelligenceSupport {
   ]
 
   private static let specialOccasionKeywords = [
-    "birthday", "anniversary", "celebration", "engagement", "date night"
+    "birthday", "anniversary", "celebration", "engagement", "date night",
+    "bachelor party", "bachelorette", "bachelorette party", "graduation"
   ]
 
   private static let serviceIssueKeywords = [

@@ -71,12 +71,6 @@ enum HostCancellationIntelligenceSupport {
     facts.append(contentsOf: overdueResults.facts)
     var overdueIDs = overdueResults.overdueReservationIDs
 
-    facts.append(contentsOf: detectPastDueCompleteCandidates(
-      activeReservations: activeReservations,
-      now: now,
-      actions: &actions
-    ))
-
     let lateLargeParty = detectLateLargePartyRisk(
       activeReservations: activeReservations,
       now: now,
@@ -94,6 +88,13 @@ enum HostCancellationIntelligenceSupport {
     facts.append(contentsOf: lateNoTable.facts)
     overdueIDs.formUnion(lateNoTable.overdueReservationIDs)
 
+    facts.append(contentsOf: detectUnresolvedLateCleanupCandidates(
+      activeReservations: activeReservations,
+      now: now,
+      excludedReservationIDs: overdueIDs,
+      actions: &actions
+    ))
+
     return HostCancellationIntelligenceResult(
       facts: facts,
       actions: actions,
@@ -105,7 +106,10 @@ enum HostCancellationIntelligenceSupport {
         $0.category == .overdue && ($0.severity == .warning || $0.severity == .critical)
       }.count,
       lateLargePartyCount: lateLargeParty.count,
-      pastDueCompleteCount: facts.filter { $0.id.hasPrefix("past-due-complete-") }.count,
+      pastDueCompleteCount: facts.filter {
+        $0.id.hasPrefix("unresolved-late-cleanup-")
+          || $0.id.hasPrefix("seated-completion-grace-")
+      }.count,
       cancellationOpportunityCount: actions.filter { $0.kind == .reviewCancellationOpportunity }.count
     )
   }
@@ -397,43 +401,53 @@ enum HostCancellationIntelligenceSupport {
     return (facts, overdueIDs)
   }
 
-  private static func detectPastDueCompleteCandidates(
+  /// Unseated confirmed/new/needs-review reservations past the arrival window.
+  /// Staff may seat, mark no-show, or use Complete to close stale bookings.
+  private static func detectUnresolvedLateCleanupCandidates(
     activeReservations: [ReservationRecord],
     now: Date,
+    excludedReservationIDs: Set<Int>,
     actions: inout [HostSuggestedAction]
   ) -> [HostBriefingFact] {
     var facts: [HostBriefingFact] = []
 
     for reservation in activeReservations where reservation.canMarkPastDueComplete {
+      guard !excludedReservationIDs.contains(reservation.remoteID) else { continue }
       guard reservation.isPastDueCompleteEligible(now: now) else { continue }
 
       let minutesLate = minutesLate(for: reservation, now: now) ?? 0
-      let detail =
-        "\(reservation.guestName) is past the completion grace window."
+      let statusLabel = reservation.statusValue.displayName.lowercased()
+      let detail = unresolvedLateCleanupDetail(
+        reservation: reservation,
+        minutesLate: minutesLate,
+        statusLabel: statusLabel
+      )
 
       facts.append(
         HostBriefingFact(
-          id: "past-due-complete-\(reservation.remoteID)",
+          id: "unresolved-late-cleanup-\(reservation.remoteID)",
           severity: .watch,
           category: .overdue,
-          title: "Past-due completion review",
+          title: "Resolve late reservation",
           detail: detail,
           evidence: [
             "minutesLate=\(minutesLate)",
-            "graceMinutes=\(ReservationRecord.pastDueCompleteGraceMinutes)"
+            "unresolvedLateCleanup=true",
+            "status=\(reservation.statusValue.rawValue)",
+            "seated=false"
           ],
           relatedReservationIDs: [reservation.remoteID],
-          suggestedActionTitle: "Review whether to mark completed."
+          suggestedActionTitle: "Seat, mark no-show, or close this unresolved booking."
         )
       )
 
       actions.append(
         HostSuggestedAction(
-          id: "past-due-complete-action-\(reservation.remoteID)",
+          id: "unresolved-late-cleanup-action-\(reservation.remoteID)",
           severity: .watch,
-          kind: .completeReservation,
-          title: "Review completion for \(reservation.guestName)",
-          reason: detail,
+          kind: .reviewReservation,
+          title: "Resolve late reservation",
+          reason: "Seat, mark no-show, or close this unresolved booking.",
           relatedReservationIDs: [reservation.remoteID],
           targetSlotTime: reservation.reservationTime,
           targetTableName: reservation.assignedTableName,
@@ -443,6 +457,21 @@ enum HostCancellationIntelligenceSupport {
     }
 
     return facts
+  }
+
+  private static func unresolvedLateCleanupDetail(
+    reservation: ReservationRecord,
+    minutesLate: Int,
+    statusLabel: String
+  ) -> String {
+    if !reservation.hasTableAssignment {
+      return "\(reservation.guestName) is \(minutesLate) minutes late, still \(statusLabel), and has no table assigned."
+    }
+    if let tableName = reservation.assignedTableName?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !tableName.isEmpty {
+      return "\(reservation.guestName) is \(minutesLate) minutes late, still \(statusLabel), table \(tableName) assigned, and was not seated."
+    }
+    return "\(reservation.guestName) is \(minutesLate) minutes late, still \(statusLabel), and was not seated."
   }
 
   private static func detectLateLargePartyRisk(

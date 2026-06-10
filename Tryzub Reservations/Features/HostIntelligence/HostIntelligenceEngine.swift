@@ -77,6 +77,16 @@ struct HostIntelligenceEngine {
     tableSignals.append(contentsOf: longSeated.tableSignals)
     briefingFacts.append(contentsOf: longSeated.briefingFacts)
 
+    let longSeatedReservationIDs = Set(
+      longSeated.briefingFacts.flatMap(\.relatedReservationIDs)
+    )
+    let seatedCompletionGrace = detectSeatedCompletionGrace(
+      context: context,
+      excludedReservationIDs: longSeatedReservationIDs
+    )
+    briefingFacts.append(contentsOf: seatedCompletionGrace.facts)
+    suggestedActions.append(contentsOf: seatedCompletionGrace.actions)
+
     let noTableFactsAndActions = noTableDueSoonFactsAndActions(
       reservations: noTableDueSoon,
       now: context.now,
@@ -126,6 +136,14 @@ struct HostIntelligenceEngine {
     briefingFacts.append(contentsOf: filteredNoTable.facts)
     suggestedActions.append(contentsOf: filteredNoTable.actions)
     tableSignals.append(contentsOf: filteredNoTable.tableSignals)
+
+    let futurePlanning = HostOperationalFutureTablePlanningSupport.planningOutputs(
+      reservations: context.reservations,
+      selectedDate: context.selectedDate,
+      now: context.now
+    )
+    briefingFacts.append(contentsOf: futurePlanning.facts)
+    suggestedActions.append(contentsOf: futurePlanning.actions)
 
     briefingFacts.append(contentsOf: cancellationIntelligence.facts)
     suggestedActions.append(contentsOf: cancellationIntelligence.actions)
@@ -234,7 +252,8 @@ struct HostIntelligenceEngine {
         deduplicatedActions(suggestedActions),
         reservations: activeReservations,
         now: context.now,
-        settings: context.settings
+        settings: context.settings,
+        preferredReservationIDs: rankedFacts.first?.relatedReservationIDs ?? []
       ),
       guestSignals: guestSignals,
       tableSignals: tableSignals,
@@ -663,6 +682,10 @@ struct HostIntelligenceEngine {
   private func detectLongSeatedWarnings(
     context: ServiceDayContext
   ) -> (tableSignals: [HostTableSignal], briefingFacts: [HostBriefingFact]) {
+    guard HostOperationalNoTableSoonSupport.isToday(context.selectedDate, now: context.now) else {
+      return ([], [])
+    }
+
     var tableSignals: [HostTableSignal] = []
     var briefingFacts: [HostBriefingFact] = []
 
@@ -681,7 +704,7 @@ struct HostIntelligenceEngine {
           tableName: tableName,
           kind: .longSeated,
           severity: .warning,
-          title: "Long-seated table",
+          title: "Long seated table",
           detail: "\(reservation.guestName) has been seated for \(elapsedMinutes) minutes.",
           relatedReservationIDs: [reservation.remoteID],
           evidence: [
@@ -696,7 +719,7 @@ struct HostIntelligenceEngine {
           id: "long-seated-fact-\(reservation.remoteID)",
           severity: .warning,
           category: .timing,
-          title: "Long-seated party",
+          title: "Long seated table",
           detail: "\(reservation.guestName) has been seated for \(elapsedMinutes) minutes.",
           evidence: [
             "elapsedMinutes=\(elapsedMinutes)",
@@ -709,6 +732,68 @@ struct HostIntelligenceEngine {
     }
 
     return (tableSignals, briefingFacts)
+  }
+
+  /// Seated table-turn / completion grace only. Never applies to unseated bookings.
+  private func detectSeatedCompletionGrace(
+    context: ServiceDayContext,
+    excludedReservationIDs: Set<Int>
+  ) -> (facts: [HostBriefingFact], actions: [HostSuggestedAction]) {
+    guard HostOperationalNoTableSoonSupport.isToday(context.selectedDate, now: context.now) else {
+      return ([], [])
+    }
+
+    var facts: [HostBriefingFact] = []
+    var actions: [HostSuggestedAction] = []
+
+    for reservation in context.reservations where reservation.statusValue == .seated {
+      guard !excludedReservationIDs.contains(reservation.remoteID) else { continue }
+      guard let seatedAt = context.localSeatedAtByReservationID[reservation.remoteID] else {
+        continue
+      }
+
+      let turnMinutes = estimatedTurnMinutes(
+        partySize: reservation.partySize,
+        settings: context.settings
+      )
+      let elapsedMinutes = Int(context.now.timeIntervalSince(seatedAt) / 60)
+      guard elapsedMinutes >= turnMinutes else { continue }
+
+      let detail = "\(reservation.guestName) is past the completion grace window."
+
+      facts.append(
+        HostBriefingFact(
+          id: "seated-completion-grace-\(reservation.remoteID)",
+          severity: .watch,
+          category: .timing,
+          title: "Review completion",
+          detail: detail,
+          evidence: [
+            "elapsedMinutes=\(elapsedMinutes)",
+            "turnMinutes=\(turnMinutes)",
+            "seatedCompletionGrace=true"
+          ],
+          relatedReservationIDs: [reservation.remoteID],
+          suggestedActionTitle: "Review whether the table can turn."
+        )
+      )
+
+      actions.append(
+        HostSuggestedAction(
+          id: "seated-completion-grace-action-\(reservation.remoteID)",
+          severity: .watch,
+          kind: .completeReservation,
+          title: "Review completion for \(reservation.guestName)",
+          reason: detail,
+          relatedReservationIDs: [reservation.remoteID],
+          targetSlotTime: reservation.reservationTime,
+          targetTableName: reservation.assignedTableName,
+          requiresStaffConfirmation: true
+        )
+      )
+    }
+
+    return (facts, actions)
   }
 
   // MARK: - Slot Pressures
@@ -1510,13 +1595,15 @@ struct HostIntelligenceEngine {
     _ actions: [HostSuggestedAction],
     reservations: [ReservationRecord],
     now: Date,
-    settings: HostIntelligenceSettings
+    settings: HostIntelligenceSettings,
+    preferredReservationIDs: [Int] = []
   ) -> [HostSuggestedAction] {
     briefingService.rankSuggestedActions(
       actions,
       reservations: reservations,
       now: now,
-      settings: settings
+      settings: settings,
+      preferredReservationIDs: preferredReservationIDs
     )
   }
 

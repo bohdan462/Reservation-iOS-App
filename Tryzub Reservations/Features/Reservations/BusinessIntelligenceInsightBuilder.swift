@@ -9,7 +9,33 @@ import Foundation
 
 enum BusinessIntelligenceInsightBuilder {
 
-    static func build(
+    static func headline(
+        summary: BusinessIntelligenceSummaryDTO,
+        systemStatus: IntelligenceSystemStatusDTO?
+    ) -> String? {
+        let needsReview = summary.risk.needsReviewCount ?? systemStatus?.managerSummary.itemsNeedingReview ?? 0
+        let noTable = summary.risk.noTableCount ?? 0
+        let peak = BusinessIntelligenceFormatting.peakWindowLabel(summary: summary)
+
+        if needsReview > 0, noTable > 0 {
+            return "Review \(needsReview) bookings, including \(noTable) still without tables."
+        }
+        if needsReview > 0 {
+            return "\(needsReview) bookings need management review."
+        }
+        if noTable > 0 {
+            return "\(noTable) upcoming reservations still need tables."
+        }
+        if let peak {
+            return "Main pressure builds around \(peak)."
+        }
+        if let totalGuests = summary.summary.totalGuests, totalGuests > 0 {
+            return "\(totalGuests) guests in this range with steady demand."
+        }
+        return nil
+    }
+
+    static func supportingLines(
         summary: BusinessIntelligenceSummaryDTO,
         systemStatus: IntelligenceSystemStatusDTO?
     ) -> [String] {
@@ -17,7 +43,7 @@ enum BusinessIntelligenceInsightBuilder {
         let estimatedRelationships = usesEstimatedGuestRelationships(summary)
 
         if let peakLabel = BusinessIntelligenceFormatting.peakWindowLabel(summary: summary) {
-            lines.append("\(peakLabel) is the busiest time.")
+            lines.append("Peak window: \(peakLabel).")
         }
 
         if let repeatRate = summary.guestRelationships.repeatGuestRate, repeatRate > 0 {
@@ -31,23 +57,45 @@ enum BusinessIntelligenceInsightBuilder {
 
         let needsReview = summary.risk.needsReviewCount ?? systemStatus?.managerSummary.itemsNeedingReview
         let noTable = summary.risk.noTableCount
-        if let needsReview, needsReview > 0 {
-            if let noTable, noTable > 0 {
-                lines.append("\(needsReview) need attention, including \(noTable) without a table.")
-            } else {
-                lines.append("\(needsReview) need attention.")
-            }
+        if let needsReview, needsReview > 0, let noTable, noTable > 0 {
+            lines.append("Check booking pipeline and table plan before peak service.")
         } else if let noTable, noTable > 0 {
-            lines.append("\(noTable) upcoming reservations still need tables.")
-        }
-
-        if lines.isEmpty,
-           let totalGuests = summary.summary.totalGuests,
-           totalGuests > 0 {
-            lines.append("\(totalGuests) guests in this range.")
+            lines.append("Confirm table plan before the busiest arrivals.")
         }
 
         return Array(lines.prefix(2))
+    }
+
+    static func build(
+        summary: BusinessIntelligenceSummaryDTO,
+        systemStatus: IntelligenceSystemStatusDTO?
+    ) -> [String] {
+        if let headline = headline(summary: summary, systemStatus: systemStatus) {
+            return [headline] + supportingLines(summary: summary, systemStatus: systemStatus).prefix(1)
+        }
+        return supportingLines(summary: summary, systemStatus: systemStatus)
+    }
+
+    static func chartCaption(summary: BusinessIntelligenceSummaryDTO) -> String? {
+        let peak = BusinessIntelligenceFormatting.peakWindowLabel(summary: summary)
+        let weekdayPeak = summary.breakdowns.byWeekday
+            .map { row -> (label: String, guests: Int) in
+                let guests = row.guestsCount ?? row.reservationsCount ?? 0
+                let label = row.weekdayLabel ?? "Day"
+                return (label, guests)
+            }
+            .max(by: { $0.guests < $1.guests })
+
+        switch (peak, weekdayPeak?.guests ?? 0 > 0 ? weekdayPeak : nil) {
+        case let (peak?, weekday?) where weekday.guests > 0:
+            return "Main pressure: \(peak) · Peak: \(weekday.label)"
+        case let (peak?, nil):
+            return "Main pressure: \(peak)"
+        case let (nil, weekday?) where weekday.guests > 0:
+            return "Peak: \(weekday.label)"
+        default:
+            return nil
+        }
     }
 
     static func dataQualityNote(for summary: BusinessIntelligenceSummaryDTO) -> String? {

@@ -213,6 +213,7 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
     // Intent: Quietly applies server-side reservation changes within the active window since the backend cursor.
     // Network: GET /managed-reservations?from=...&to=...&updated_since=...
     func syncActiveWindowChanges(from: String, to: String, since: String, reason: ReservationAPIRequestReason) async throws -> ReservationSyncResult {
+        let networkStarted = ContinuousClock.now
         let syncResponse = try await fetchAllReservationPages(
             perPage: 100,
             date: nil,
@@ -224,12 +225,30 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             updatedSince: since,
             reason: reason
         )
+        UIPressureTrace.phase(
+            "startup_delta_network",
+            duration: networkStarted.duration(to: .now).pressureTraceTimeInterval,
+            extra: "reason=\(reason.rawValue) total=\(syncResponse.reservations.count)"
+        )
+
+        UIPressureTrace.phase(
+            "decode",
+            duration: 0,
+            extra: "total=\(syncResponse.reservations.count) decoded=\(syncResponse.reservations.count)"
+        )
 
         // Delta responses are partial.
         // Upsert returned rows only.
         // Never replace/delete a local scope from an updated_since response.
         if !syncResponse.reservations.isEmpty {
-            try repository.upsert(syncResponse.reservations)
+            try UIPressureTrace.measure(
+                phase: "repository_upsert",
+                extra: "rows=\(syncResponse.reservations.count)"
+            ) {
+                try repository.upsert(syncResponse.reservations)
+            }
+        } else {
+            UIPressureTrace.phase("repository_upsert", duration: 0, extra: "rows=0 skipped=true")
         }
 
         return ReservationSyncResult(

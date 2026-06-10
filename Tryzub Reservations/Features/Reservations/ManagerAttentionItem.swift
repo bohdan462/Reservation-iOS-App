@@ -105,7 +105,7 @@ enum ManagerAttentionItemBuilder {
         compactPresentation: compactPresentation,
         briefingText: briefingText
       ),
-      actionTitle: staffTapLabel(for: action.kind),
+      actionTitle: tapLabel(for: action),
       destinationHint: destinationHint(for: action.kind),
       relatedReservationIDs: action.relatedReservationIDs,
       sourceAction: action
@@ -113,7 +113,10 @@ enum ManagerAttentionItemBuilder {
   }
 
   static func tapLabel(for action: HostSuggestedAction) -> String {
-    staffTapLabel(for: action.kind)
+    if action.id.hasPrefix("unresolved-late-cleanup-action-") {
+      return "Resolve booking"
+    }
+    return staffTapLabel(for: action.kind)
   }
 
   private static func priority(for severity: HostSeverity) -> ManagerAttentionPriority {

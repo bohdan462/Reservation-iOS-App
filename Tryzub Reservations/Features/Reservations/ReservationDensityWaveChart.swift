@@ -62,7 +62,27 @@ struct ReservationDensityWaveChart: View {
 
   private var xLabelIndices: [Int] {
     guard !buckets.isEmpty else { return [] }
-    return Array(buckets.indices)
+
+    var indices: [Int] = []
+    var lastLabeledHour: Int?
+    let calendar = Calendar.current
+
+    for index in buckets.indices {
+      let bucket = buckets[index]
+      let hour = calendar.component(.hour, from: bucket.bucketStart)
+      let minute = calendar.component(.minute, from: bucket.bucketStart)
+      guard minute == 0 else { continue }
+      guard hour != lastLabeledHour else { continue }
+      indices.append(index)
+      lastLabeledHour = hour
+    }
+
+    if indices.count >= 2 {
+      return indices
+    }
+
+    let fallbackStride = max(buckets.count / 5, 1)
+    return Array(stride(from: 0, to: buckets.count, by: fallbackStride))
   }
 
   private var selectedBucket: ArrivalFlowBucket? {

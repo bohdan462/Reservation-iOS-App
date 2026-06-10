@@ -16,6 +16,7 @@ final class GuestIntelligenceStore: ObservableObject {
     private var loadingDateKeys: Set<String> = []
     private var loadDebounceTask: Task<Void, Never>?
     private var pendingDateKey: String?
+    private(set) var selectedDateKey: String?
     private let apiClient: any ReservationsAPIClientProtocol
     private let freshnessInterval: TimeInterval = 180
     private let loadDebounceInterval: TimeInterval = 1.0
@@ -69,15 +70,21 @@ final class GuestIntelligenceStore: ObservableObject {
         }
 
         if let previous = pendingDateKey, previous != key {
+            DateLoadTrace.cancelled(date: previous, reason: "date_changed")
             StartupPolicyTrace.guestIntelligenceCancelled(date: previous, reason: "date_changed")
         }
 
+        let delayMs = Int(ceil(loadDebounceInterval * 1000))
+        DateLoadTrace.scheduled(date: key, type: "guest_intelligence", delayMs: delayMs)
         StartupPolicyTrace.guestIntelligenceScheduled(
             date: key,
             selected: isSelectedDate,
             delaySeconds: Int(ceil(loadDebounceInterval))
         )
 
+        if isSelectedDate {
+            selectedDateKey = key
+        }
         pendingDateKey = key
         loadDebounceTask?.cancel()
         loadDebounceTask = Task { [weak self] in
@@ -92,6 +99,7 @@ final class GuestIntelligenceStore: ObservableObject {
 
     func cancelScheduledLoad(reason: String = "visibility") {
         if let previous = pendingDateKey {
+            DateLoadTrace.cancelled(date: previous, reason: reason)
             StartupPolicyTrace.guestIntelligenceCancelled(date: previous, reason: reason)
         }
         pendingDateKey = nil
@@ -111,16 +119,31 @@ final class GuestIntelligenceStore: ObservableObject {
         loadingDateKeys.insert(key)
         defer { loadingDateKeys.remove(key) }
 
+        let started = ContinuousClock.now
+
         do {
             let response = try await apiClient.fetchGuestIntelligence(
                 date: key,
                 reason: .guestIntelligence
             )
+            guard selectedDateKey == key else {
+                DateLoadTrace.ignoredResponse(date: key, reason: "not_selected")
+                return
+            }
             responsesByDateKey[key] = response
             loadedAtByDateKey[key] = Date()
             errorByDateKey.removeValue(forKey: key)
+            let durationMs = Int(started.duration(to: .now).pressureTraceTimeInterval * 1000)
+            DateLoadTrace.completed(date: key, type: "guest_intelligence", durationMs: durationMs)
         } catch {
-            guard !error.isCancellationLike else { return }
+            guard !error.isCancellationLike else {
+                DateLoadTrace.cancelled(date: key, reason: "cancelled")
+                return
+            }
+            guard selectedDateKey == key else {
+                DateLoadTrace.ignoredResponse(date: key, reason: "not_selected")
+                return
+            }
             errorByDateKey[key] = IntelligenceStoreMessaging.displayMessage(for: error)
         }
     }

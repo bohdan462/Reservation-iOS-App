@@ -166,6 +166,7 @@ enum HostBriefingWriterSource: String, Equatable {
   case template
   case localPlaceholder
   case localModel
+  case repairedLocalModel
   case failedFallback
 
   var displayName: String {
@@ -173,6 +174,7 @@ enum HostBriefingWriterSource: String, Equatable {
     case .template: return "Template"
     case .localPlaceholder: return "Local placeholder"
     case .localModel: return "Local model"
+    case .repairedLocalModel: return "Repaired local model"
     case .failedFallback: return "Fallback"
     }
   }
@@ -839,9 +841,14 @@ struct HostBriefingHostBoardContext: Equatable {
   var isLocalModelInferenceActive: Bool
   var isReservationRefreshInFlight: Bool
   var isAvailabilitySummaryLoading: Bool
+  var isGuestIntelligenceLoading: Bool = false
   var hostBoardDateNavigationAt: Date?
   var startupUIReleasedAt: Date?
   var now: Date
+
+  var isEnrichmentLoading: Bool {
+    isAvailabilitySummaryLoading || isGuestIntelligenceLoading
+  }
 }
 
 @MainActor
@@ -857,17 +864,91 @@ enum HostLocalModelWarmthTracker {
   }
 }
 
+enum HostBoardOperationalCategory: String, CaseIterable {
+  case lateNoTable
+  case unresolvedLateCleanup
+  case longSeated
+  case futureTablePlanning
+  case guestNoteOccasion
+  case seenBeforeRegular
+  case capacityTableMismatch
+  case servicePressure
+
+  var traceLabel: String {
+    switch self {
+    case .lateNoTable: return "overdue"
+    case .unresolvedLateCleanup: return "cleanup"
+    case .longSeated: return "longSeated"
+    case .futureTablePlanning: return "futurePlanning"
+    case .guestNoteOccasion: return "guestNote"
+    case .seenBeforeRegular: return "seenBefore"
+    case .capacityTableMismatch: return "tableMismatch"
+    case .servicePressure: return "pressure"
+    }
+  }
+}
+
+@MainActor
+enum HostBoardModelDecisionTrace {
+  struct Snapshot: Equatable {
+    var decision: String
+    var skipReason: String?
+    var packetCategories: String
+    var complexityScore: Int
+    var lastLiveModelRunAt: Date?
+    var lastVisibleSource: String
+    var enrichmentLoading: Bool
+  }
+
+  private(set) static var latest: Snapshot?
+
+  static func record(
+    allowed: Bool,
+    skipReason: HostBriefingHostBoardGate.SkipReason?,
+    packet: HostLLMPacket,
+    enrichmentLoading: Bool,
+    visibleSource: String? = nil,
+    modelRunAt: Date? = nil
+  ) {
+    let categories = HostBriefingHostBoardGate.operationalCategories(for: packet)
+    let categoryLabels = categories.map(\.traceLabel).sorted().joined(separator: ",")
+    latest = Snapshot(
+      decision: allowed ? "Used" : "Skipped",
+      skipReason: skipReason?.rawValue,
+      packetCategories: categoryLabels,
+      complexityScore: HostBriefingHostBoardGate.complexityScore(for: packet),
+      lastLiveModelRunAt: modelRunAt ?? latest?.lastLiveModelRunAt,
+      lastVisibleSource: visibleSource ?? latest?.lastVisibleSource ?? "template",
+      enrichmentLoading: enrichmentLoading
+    )
+    HostBriefingHostBoardGate.logGateDecision(
+      allowed: allowed,
+      reason: allowed ? "complex_packet" : (skipReason?.rawValue ?? "unknown"),
+      packet: packet,
+      enrichmentLoading: enrichmentLoading
+    )
+  }
+
+  static func recordVisibleSource(_ source: String, modelRunAt: Date? = nil) {
+    guard var snapshot = latest else { return }
+    snapshot.lastVisibleSource = source
+    if let modelRunAt {
+      snapshot.lastLiveModelRunAt = modelRunAt
+    }
+    latest = snapshot
+  }
+}
+
 enum HostBriefingHostBoardGate {
   static let stabilizationDelay: TimeInterval = 20
+  static let minimumOperationalCategoriesForModel = 2
 
   enum SkipReason: String {
     case host_board_gate_off
     case host_board_template_only
-    case model_cold
+    case model_not_ready
     case startup_in_flight
-    case history_prefetch_in_flight
     case reservation_refresh_in_flight
-    case availability_loading
     case date_navigation
     case local_model_in_flight
     case stabilization_delay
@@ -881,11 +962,31 @@ enum HostBriefingHostBoardGate {
       || shouldPreferDeterministicHostSummary(packet: packet)
   }
 
-  /// Single-category or simple operational packets are clearer as deterministic template copy.
+  /// Single operational theme packets are clearer as deterministic template copy.
   static func shouldPreferDeterministicHostSummary(packet: HostLLMPacket) -> Bool {
     guard packet.hasMeaningfulBriefingFacts else { return true }
-    let categories = Set(packet.topFacts.map(\.category))
-    return categories.count < 2
+    return operationalCategories(for: packet).count < minimumOperationalCategoriesForModel
+  }
+
+  static func operationalCategories(for packet: HostLLMPacket) -> Set<HostBoardOperationalCategory> {
+    var categories = Set<HostBoardOperationalCategory>()
+    for fact in packet.topFacts {
+      classifyOperationalCategory(for: fact, into: &categories)
+    }
+    return categories
+  }
+
+  static func complexityScore(for packet: HostLLMPacket) -> Int {
+    let categories = operationalCategories(for: packet)
+    var score = categories.count * 10
+    score += min(packet.topFacts.count, 5)
+    if packet.topFacts.contains(where: { $0.severity == .critical }) {
+      score += 5
+    }
+    if packet.topFacts.contains(where: { $0.severity == .warning }) {
+      score += 3
+    }
+    return score
   }
 
   @MainActor
@@ -908,11 +1009,11 @@ enum HostBriefingHostBoardGate {
     guard settings.useLocalModelOnHostBoard else { return .host_board_gate_off }
     guard packet.hasMeaningfulBriefingFacts else { return .no_meaningful_facts }
     if shouldUseTemplateOnlyOnHostBoard(packet: packet) { return .host_board_template_only }
-    if !HostLocalModelWarmthTracker.isWarm { return .model_cold }
+    if HostLocalModelReadinessProvider.currentReadiness().status != .ready {
+      return .model_not_ready
+    }
     if context.isStartupNetworkPassInFlight { return .startup_in_flight }
     if context.isReservationRefreshInFlight { return .reservation_refresh_in_flight }
-    if context.isHistoryPrefetching { return .history_prefetch_in_flight }
-    if context.isAvailabilitySummaryLoading { return .availability_loading }
     if let navigationAt = context.hostBoardDateNavigationAt,
        context.now.timeIntervalSince(navigationAt) < dateNavigationCooldown {
       return .date_navigation
@@ -923,6 +1024,72 @@ enum HostBriefingHostBoardGate {
       return .stabilization_delay
     }
     return nil
+  }
+
+  static func logGateDecision(
+    allowed: Bool,
+    reason: String,
+    packet: HostLLMPacket,
+    enrichmentLoading: Bool
+  ) {
+    #if DEBUG
+    let categories = operationalCategories(for: packet)
+    let categoryTrace = categories.map(\.traceLabel).sorted().joined(separator: ",")
+    print(
+      "[HOST_AI_GATE] surface=hostBoard allowed=\(allowed) reason=\(reason) enrichmentLoading=\(enrichmentLoading)"
+    )
+    if !categoryTrace.isEmpty {
+      print(
+        "[HOST_AI_GATE] categories=\(categoryTrace) count=\(categories.count) complexityScore=\(complexityScore(for: packet))"
+      )
+    }
+    #endif
+  }
+
+  private static func classifyOperationalCategory(
+    for fact: HostLLMFact,
+    into categories: inout Set<HostBoardOperationalCategory>
+  ) {
+    let evidence = fact.evidence.joined(separator: " ").lowercased()
+    let title = fact.title.lowercased()
+    let detail = fact.detail.lowercased()
+
+    let isFuturePlanning = evidence.contains("selecteddate=") && detail.contains("before service")
+      || (fact.category == .table && title.contains("still need tables") && detail.contains("before service"))
+    if isFuturePlanning {
+      categories.insert(.futureTablePlanning)
+      return
+    }
+
+    if evidence.contains("notable=true") || title.contains("late reservation still has no table") {
+      categories.insert(.lateNoTable)
+    }
+    if evidence.contains("unresolvedlatecleanup=true") || title.contains("resolve late reservation") {
+      categories.insert(.unresolvedLateCleanup)
+    }
+    if title.contains("long seated table")
+        || evidence.contains("seatedcompletiongrace=true")
+        || (fact.category == .timing && evidence.contains("elapsedminutes=")) {
+      categories.insert(.longSeated)
+    }
+
+    switch fact.category {
+    case .allergy, .note, .preference:
+      categories.insert(.guestNoteOccasion)
+    case .guest:
+      if title.contains("seen before") || title.contains("regular")
+          || title.contains("returning") || title.contains("vip") {
+        categories.insert(.seenBeforeRegular)
+      } else {
+        categories.insert(.guestNoteOccasion)
+      }
+    case .table, .capacity, .largeParty:
+      categories.insert(.capacityTableMismatch)
+    case .arrivalWave, .analytics:
+      categories.insert(.servicePressure)
+    default:
+      break
+    }
   }
 }
 
@@ -951,24 +1118,38 @@ enum HostIntelligenceDiagnostics {
     #endif
   }
 
+  static func modelOutputUsed(source: String) {
+    #if DEBUG
+    print("[HOST_AI] model_output_used source=\(source)")
+    #endif
+  }
+
+  static func modelOutputRejected(reason: String) {
+    #if DEBUG
+    print("[HOST_AI] model_output_rejected reason=\(reason)")
+    #endif
+  }
+
+  static func repairedOutputUsed(labelsRemoved: Bool) {
+    #if DEBUG
+    print("[HOST_AI] repaired_output_used labelsRemoved=\(labelsRemoved)")
+    #endif
+  }
+
   private static func localModelSkipLabel(for reason: String) -> String {
     switch reason {
     case "host_board_gate_off":
       return "enhanced briefing off, provider not local model, or Host board local model disabled"
     case "host_board_template_only":
       return "host board template-only because simple operational facts are clearer as deterministic copy"
-    case "model_cold":
-      return "local model is not warm yet"
+    case "model_not_ready", "model_cold":
+      return "local model is not ready yet"
     case "startup_in_flight":
       return "startup reservation refresh still in flight"
     case "reservation_refresh_in_flight":
       return "reservation refresh still in flight"
-    case "availability_loading":
-      return "availability summary still loading"
     case "date_navigation":
       return "host date navigation still settling"
-    case "history_prefetch_in_flight":
-      return "history prefetch still in flight"
     case "local_model_in_flight":
       return "another local model inference is active"
     case "stabilization_delay":

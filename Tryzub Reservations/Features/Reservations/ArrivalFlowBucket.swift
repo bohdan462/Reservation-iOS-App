@@ -180,10 +180,8 @@ enum ArrivalFlowBucketBuilder {
   private static func axisLabel(for date: Date, calendar: Calendar) -> String {
     let hour = calendar.component(.hour, from: date)
     let minute = calendar.component(.minute, from: date)
-    if minute == 0 {
-      return "\(hour)"
-    }
-    return String(format: "%d:%02d", hour, minute)
+    guard minute == 0 else { return "" }
+    return String(format: "%02d:00", hour)
   }
 
   private static func resolveBucketRange(

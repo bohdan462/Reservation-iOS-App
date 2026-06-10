@@ -105,6 +105,11 @@ enum StartupPolicyTrace {
         emit("startupBackgroundWork=\(state)")
     }
 
+    static func headerInitialTrust(checked: Bool, persistedFresh: Bool) {
+        guard isEnabled else { return }
+        emit("header initialTrust=checked persistedFresh=\(persistedFresh) checked=\(checked)")
+    }
+
     private static func emit(_ body: String) {
         logger.debug("[STARTUP_POLICY] \(body, privacy: .public)")
     }

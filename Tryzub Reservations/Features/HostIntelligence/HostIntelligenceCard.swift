@@ -189,6 +189,25 @@ struct HostIntelligenceCard: View {
   }
 
   private var stateTitle: String {
+    if snapshot.briefingFacts.contains(where: { $0.id.hasPrefix("future-no-table-planning-") }) {
+      return "Planning"
+    }
+
+    if snapshot.briefingFacts.contains(where: {
+      $0.severity == .critical || $0.category == .overdue
+    }) {
+      return "Attention"
+    }
+
+    if !snapshot.briefingFacts.isEmpty || !snapshot.suggestedActions.isEmpty {
+      switch snapshot.serviceState {
+      case .critical: return "Very busy"
+      case .busy: return "Busy"
+      case .building: return "Check"
+      case .calm: return "Check"
+      }
+    }
+
     switch snapshot.serviceState {
     case .calm: return "Quiet"
     case .building: return "Picking up"
@@ -297,7 +316,7 @@ struct HostIntelligenceCard: View {
       return nil
     case .localPlaceholder:
       return "Enhanced briefing"
-    case .localModel:
+    case .localModel, .repairedLocalModel:
       return "Local model briefing"
     case .failedFallback:
       return "Using template fallback"

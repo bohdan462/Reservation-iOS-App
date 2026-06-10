@@ -195,8 +195,14 @@ final class ReservationsController: ObservableObject {
         isSyncing || isAutoRefreshing || activeWindowRefreshTask != nil
     }
 
+    /// User-visible reservation refresh only. Background startup delta and automatic
+    /// active-window sync must not block Home interactions.
     var isReservationNetworkRefreshInFlight: Bool {
-        hasActiveReservationRefresh
+        isSyncing
+    }
+
+    private var isBackgroundReservationFreshnessCheckInFlight: Bool {
+        hasReleasedStartupUI && activeWindowRefreshTask != nil
     }
 
     var isNetworkDegraded: Bool {
@@ -461,12 +467,41 @@ final class ReservationsController: ObservableObject {
                 allowStartupDelta: false
             )
         case .delta:
+            if hasReleasedStartupUI {
+                startBackgroundStartupDelta(context: context)
+                return true
+            }
             return await performActiveWindowRefresh(
                 context: context,
                 mode: .startup,
                 force: false,
                 allowStartupDelta: true
             )
+        }
+    }
+
+    private func startBackgroundStartupDelta(context: ModelContext) {
+        recordRefreshDecision(scope: activeWindowScope(), mode: .startup, outcome: "delta_background")
+        StartupTrace.activeWindow(
+            controllerID: controllerInstanceID,
+            trigger: "startupPolicy",
+            scope: activeWindowScope().description,
+            action: "network_delta_background",
+            startupPassID: currentStartupPassID,
+            uiReleased: hasReleasedStartupUI,
+            startupPassActive: isStartupNetworkPassInFlight,
+            force: false,
+            mode: "startup"
+        )
+        Task(priority: .utility) { @MainActor in
+            _ = await self.performActiveWindowRefresh(
+                context: context,
+                mode: .startup,
+                force: false,
+                allowStartupDelta: true
+            )
+            self.noteFreshnessChecked(reason: "startup_delta_background")
+            self.refreshHomeServicePresentation()
         }
     }
 
@@ -847,6 +882,7 @@ final class ReservationsController: ObservableObject {
         } catch {
             // Cache metadata is optional for presentation; startup refresh may still proceed.
         }
+        adoptPersistedFreshnessTrustIfAvailable()
     }
 
     private func loadPersistedSyncMetadata() {
@@ -878,14 +914,21 @@ final class ReservationsController: ObservableObject {
 
     private func adoptPersistedFreshnessTrustIfAvailable() {
         let scope = activeWindowScope()
-        guard isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval),
+        let persistedFresh = isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval)
+        guard persistedFresh,
               let checkedAt = syncStateByScope[scope]?.lastSuccessAt else {
+            #if DEBUG
+            StartupPolicyTrace.headerInitialTrust(checked: false, persistedFresh: persistedFresh)
+            #endif
             return
         }
         lastFreshnessCheckedAt = checkedAt
         if cacheTrustSource == .unknown {
             cacheTrustSource = .freshnessCheck
         }
+        #if DEBUG
+        StartupPolicyTrace.headerInitialTrust(checked: true, persistedFresh: true)
+        #endif
     }
 
     private func noteFreshnessChecked(reason: String) {
@@ -2168,13 +2211,23 @@ final class ReservationsController: ObservableObject {
             return
         }
 
+        if let previous = availabilitySummaryPendingDate, previous != date {
+            DateLoadTrace.cancelled(date: previous, reason: "date_changed")
+        }
+
+        let delayMs = Int(availabilitySummaryDebounceInterval * 1000)
+        DateLoadTrace.scheduled(date: date, type: "availability", delayMs: delayMs)
+
         availabilitySummaryPendingDate = date
         availabilitySummaryDebounceTask?.cancel()
         availabilitySummaryDebounceTask = Task { [weak self] in
             guard let self else { return }
             try? await Task.sleep(for: .seconds(self.availabilitySummaryDebounceInterval))
             guard !Task.isCancelled else { return }
-            guard self.availabilitySummaryPendingDate == date else { return }
+            guard self.availabilitySummaryPendingDate == date else {
+                DateLoadTrace.cancelled(date: date, reason: "date_changed")
+                return
+            }
             self.ensureAvailabilitySummary(date: date, force: force)
             self.availabilitySummaryDebounceTask = nil
         }
@@ -2208,6 +2261,7 @@ final class ReservationsController: ObservableObject {
         }
         availabilitySummaryDebounceTask?.cancel()
         availabilitySummaryDebounceTask = nil
+        DateLoadTrace.cancelled(date: date, reason: "date_changed")
 
         guard let task = availabilitySummaryTasksByDate[date] else { return }
         task.cancel()
@@ -2223,13 +2277,41 @@ final class ReservationsController: ObservableObject {
         defer {
             availabilitySummaryLoadingDates.remove(date)
             availabilitySummaryTasksByDate[date] = nil
+            refreshHomeServicePresentation()
         }
+
+        let started = ContinuousClock.now
 
         do {
             // Serialize availability reads so they do not race the active-window sync.
+            let networkStarted = ContinuousClock.now
             let loadedAvailability = try await loadRestaurantDayAvailability(date: date)
+            UIPressureTrace.phase(
+                "date_availability_network",
+                duration: networkStarted.duration(to: .now).pressureTraceTimeInterval,
+                extra: "date=\(date)"
+            )
+            guard !Task.isCancelled else {
+                DateLoadTrace.cancelled(date: date, reason: "cancelled")
+                return
+            }
+            guard hostBoardSelectedDateKey == date else {
+                DateLoadTrace.ignoredResponse(date: date, reason: "not_selected")
+                return
+            }
+
             let loadedSlots = try await loadReservationSlots(date: date)
+            guard hostBoardSelectedDateKey == date else {
+                DateLoadTrace.ignoredResponse(date: date, reason: "not_selected")
+                return
+            }
+
             let loadedBlocked = try await loadRestaurantBlockedSlots(date: date)
+            guard hostBoardSelectedDateKey == date else {
+                DateLoadTrace.ignoredResponse(date: date, reason: "not_selected")
+                return
+            }
+
             availabilitySummaryByDate[date] = ReservationAvailabilitySummary(
                 availability: loadedAvailability,
                 slots: loadedSlots,
@@ -2237,8 +2319,15 @@ final class ReservationsController: ObservableObject {
                 loadedAt: Date()
             )
             availabilitySummaryErrorsByDate[date] = nil
+            let durationMs = Int(started.duration(to: .now).pressureTraceTimeInterval * 1000)
+            DateLoadTrace.completed(date: date, type: "availability", durationMs: durationMs)
         } catch {
             if error.isCancellationLike {
+                DateLoadTrace.cancelled(date: date, reason: "cancelled")
+                return
+            }
+            guard hostBoardSelectedDateKey == date else {
+                DateLoadTrace.ignoredResponse(date: date, reason: "not_selected")
                 return
             }
             availabilitySummaryErrorsByDate[date] = error.isOfflineLike
@@ -3631,7 +3720,7 @@ final class ReservationsController: ObservableObject {
         let resolved: StartupBackgroundWorkState
         if !hasReleasedStartupUI {
             resolved = .checkingSavedData
-        } else if isStartupNetworkPassInFlight {
+        } else if isStartupNetworkPassInFlight || isBackgroundReservationFreshnessCheckInFlight {
             resolved = .checkingFreshness
         } else if isLoadingRestaurantSetup {
             resolved = .updatingServiceSetup
@@ -3648,6 +3737,7 @@ final class ReservationsController: ObservableObject {
 
     private func isLoadingHostTodayAvailabilityBundle() -> Bool {
         guard let dateKey = hostBoardSelectedDateKey else { return false }
+        guard dateKey == Date.reservationDateString() else { return false }
         return isAvailabilitySummaryLoading(date: dateKey)
     }
 

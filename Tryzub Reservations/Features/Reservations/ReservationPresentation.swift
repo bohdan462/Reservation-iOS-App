@@ -251,10 +251,25 @@ extension ReservationRecord {
         }
     }
 
+    func operationalTimingDisplayText(now: Date = Date()) -> String? {
+        if let insightText = operationalTimingState(now: now).insightText {
+            return insightText
+        }
+        guard isActiveReservationStatus,
+              reservationDate > Date.reservationDateString() else {
+            return nil
+        }
+        return "Upcoming"
+    }
+
     func operationalTimingState(now: Date = Date()) -> ReservationOperationalTimingState {
         guard !isHidden,
               isActiveReservationStatus,
               let serviceDate = serviceDateTime else {
+            return .none
+        }
+
+        guard reservationDate == Date.reservationDateString() else {
             return .none
         }
 

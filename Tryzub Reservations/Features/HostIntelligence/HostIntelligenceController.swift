@@ -245,6 +245,14 @@ final class HostIntelligenceController: ObservableObject {
       return
     }
 
+    if let hostBoardContext {
+      recordHostBoardGateDecision(
+        context: hostBoardContext,
+        settings: settings,
+        packet: packet
+      )
+    }
+
     if hostBoardContext != nil,
        HostBriefingHostBoardGate.shouldUseTemplateOnlyOnHostBoard(packet: packet) {
       HostIntelligenceDiagnostics.skipLocalModel(reason: HostBriefingHostBoardGate.SkipReason.host_board_template_only.rawValue)
@@ -254,7 +262,8 @@ final class HostIntelligenceController: ObservableObject {
         text: fallback,
         source: .template,
         failureReason: nil,
-        narrative: templateNarrative
+        narrative: templateNarrative,
+        visibleSource: "template"
       )
       return
     }
@@ -287,14 +296,19 @@ final class HostIntelligenceController: ObservableObject {
         hostBoardContext: hostBoardContext,
         settings: settings
       )
+      let briefingSource = mapBriefingSource(narrativeResult.source)
       storeBriefingResult(
         cacheKey: cacheKey,
         fingerprint: fingerprint,
         text: narrativeResult.compactBriefingText,
-        source: mapBriefingSource(narrativeResult.source),
+        source: briefingSource,
         failureReason: narrativeResult.failedReason,
         narrative: narrativeResult,
-        templateFallback: templateNarrative
+        templateFallback: templateNarrative,
+        visibleSource: visibleSourceLabel(for: briefingSource),
+        modelRunAt: briefingSource == .localModel || briefingSource == .repairedLocalModel
+          ? Date()
+          : nil
       )
       return
     }
@@ -477,6 +491,34 @@ final class HostIntelligenceController: ObservableObject {
       .joined(separator: ";")
   }
 
+  private func recordHostBoardGateDecision(
+    context: HostBriefingHostBoardContext,
+    settings: HostIntelligenceSettings,
+    packet: HostLLMPacket
+  ) {
+    let skipReason = HostBriefingHostBoardGate.localModelSkipReason(
+      settings: settings,
+      context: context,
+      packet: packet
+    )
+    HostBoardModelDecisionTrace.record(
+      allowed: skipReason == nil,
+      skipReason: skipReason,
+      packet: packet,
+      enrichmentLoading: context.isEnrichmentLoading
+    )
+  }
+
+  private func visibleSourceLabel(for source: HostBriefingWriterSource) -> String {
+    switch source {
+    case .template: return "template"
+    case .localModel: return "localModel"
+    case .repairedLocalModel: return "repairedLocalModel"
+    case .failedFallback: return "template"
+    case .localPlaceholder: return "template"
+    }
+  }
+
   private func storeBriefingResult(
     cacheKey: String,
     fingerprint: String,
@@ -484,7 +526,9 @@ final class HostIntelligenceController: ObservableObject {
     source: HostBriefingWriterSource,
     failureReason: String?,
     narrative: ManagerNarrative,
-    templateFallback: ManagerNarrative? = nil
+    templateFallback: ManagerNarrative? = nil,
+    visibleSource: String? = nil,
+    modelRunAt: Date? = nil
   ) {
     if narrative.source == .localModel,
        ManagerNarrativeValidator.containsLeakedModelLabels(in: narrative)
@@ -505,6 +549,9 @@ final class HostIntelligenceController: ObservableObject {
     briefingSource = source
     briefingFailureReason = failureReason
     managerNarrative = narrative
+    if let visibleSource {
+      HostBoardModelDecisionTrace.recordVisibleSource(visibleSource, modelRunAt: modelRunAt)
+    }
     if decisionSnapshot.hasAttentionContent {
       lastAttentionNarrative = narrative
       lastAttentionBriefingText = text
@@ -533,6 +580,7 @@ final class HostIntelligenceController: ObservableObject {
     switch source {
     case .template: return .template
     case .localModel: return .localModel
+    case .repairedLocalModel: return .repairedLocalModel
     case .failedFallback: return .failedFallback
     }
   }
@@ -542,6 +590,7 @@ final class HostIntelligenceController: ObservableObject {
     case .template: return .template
     case .localPlaceholder: return .template
     case .localModel: return .localModel
+    case .repairedLocalModel: return .repairedLocalModel
     case .failedFallback: return .failedFallback
     }
   }

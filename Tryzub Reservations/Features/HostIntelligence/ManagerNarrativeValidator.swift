@@ -47,39 +47,41 @@ enum ManagerNarrativeOutputParser {
       )
     }
 
-    let lines = trimmed
-      .components(separatedBy: .newlines)
-      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
-
-    switch lines.count {
+    let sentences = sentences(in: trimmed)
+    switch sentences.count {
     case 0:
       return ManagerNarrative.empty
     case 1:
       return ManagerNarrative(
-        headline: lines[0],
+        headline: sentences[0],
         whyItMatters: nil,
-        checkNext: nil,
-        source: .localModel,
-        failedReason: nil
-      )
-    case 2:
-      return ManagerNarrative(
-        headline: lines[0],
-        whyItMatters: lines[1],
         checkNext: nil,
         source: .localModel,
         failedReason: nil
       )
     default:
       return ManagerNarrative(
-        headline: lines[0],
-        whyItMatters: lines[1],
-        checkNext: lines[2],
+        headline: sentences[0],
+        whyItMatters: sentences[1],
+        checkNext: nil,
         source: .localModel,
         failedReason: nil
       )
     }
+  }
+
+  private static func sentences(in text: String) -> [String] {
+    text
+      .replacingOccurrences(of: "\n", with: " ")
+      .split(whereSeparator: { ".!?".contains($0) })
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+      .prefix(2)
+      .map { value in
+        value.hasSuffix(".") || value.hasSuffix("!") || value.hasSuffix("?")
+          ? value
+          : "\(value)."
+      }
   }
 
   private static func labeledValue(label: String, in line: String) -> String? {
@@ -135,6 +137,9 @@ enum ManagerNarrativeValidator {
     "HEADLINE", "WHY", "CHECK"
   ]
 
+  private static let rawCategoryTagPattern = #"\[[^\]]+/[^\]]+\]"#
+  private static let numberedDiagnosticPattern = #"^\s*\d+\.\s*(?:\[|\w)"#
+
   private static let unnaturalStaffPhrases = [
     "lighter than usual window",
     "lightness of the window",
@@ -160,6 +165,76 @@ enum ManagerNarrativeValidator {
   }
 
   static func containsLeakedModelLabels(in text: String) -> Bool {
+    containsRawDiagnosticFormatting(in: text)
+      || containsStructuralModelLabels(in: text)
+  }
+
+  static func containsRawDiagnosticFormatting(in text: String) -> Bool {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+
+    if trimmed.range(of: rawCategoryTagPattern, options: .regularExpression) != nil {
+      return true
+    }
+
+    if trimmed.range(of: numberedDiagnosticPattern, options: .regularExpression) != nil {
+      return true
+    }
+
+    return false
+  }
+
+  static func repairStaffCopy(_ raw: String) -> String? {
+    var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return nil }
+
+    let lines = text
+      .components(separatedBy: .newlines)
+      .map { line -> String in
+        var cleaned = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        cleaned = cleaned.replacingOccurrences(
+          of: rawCategoryTagPattern,
+          with: "",
+          options: .regularExpression
+        )
+        cleaned = cleaned.replacingOccurrences(
+          of: #"^\s*\d+\.\s*"#,
+          with: "",
+          options: .regularExpression
+        )
+        for token in leakedLabelTokens {
+          let pattern = "(?i)^\\s*\(token)\\s*[:=]\\s*"
+          cleaned = cleaned.replacingOccurrences(
+            of: pattern,
+            with: "",
+            options: .regularExpression
+          )
+        }
+        cleaned = cleaned.replacingOccurrences(of: " — ", with: ". ")
+        cleaned = cleaned.replacingOccurrences(of: " - ", with: ". ")
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+      }
+      .filter { !$0.isEmpty }
+
+    if !lines.isEmpty {
+      text = lines.joined(separator: " ")
+    }
+
+    text = text.replacingOccurrences(
+      of: rawCategoryTagPattern,
+      with: "",
+      options: .regularExpression
+    )
+    text = text.replacingOccurrences(of: "  ", with: " ")
+    text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard !text.isEmpty else { return nil }
+    guard !containsRawDiagnosticFormatting(in: text) else { return nil }
+    guard !containsStructuralModelLabels(in: text) else { return nil }
+    return text
+  }
+
+  private static func containsStructuralModelLabels(in text: String) -> Bool {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return false }
 
@@ -368,7 +443,7 @@ enum ManagerNarrativeValidator {
       )
     }
 
-    for phrase in completionPhrases where lower.contains(phrase) {
+    for phrase in completionPhrases where containsCompletionPhrase(phrase, in: lower) {
       return ManagerNarrativeValidationResult(
         isValid: false,
         reason: "Narrative claims an action was already completed."
@@ -398,6 +473,20 @@ enum ManagerNarrativeValidator {
     }
 
     return nil
+  }
+
+  private static func containsCompletionPhrase(_ phrase: String, in lower: String) -> Bool {
+    guard lower.contains(phrase) else { return false }
+    switch phrase {
+    case "is confirmed":
+      return !lower.contains("still confirmed")
+    case "table assigned":
+      return !lower.contains("no table assigned") && !lower.contains("without a table")
+    case "is seated":
+      return !lower.contains("not seated") && !lower.contains("was not seated")
+    default:
+      return true
+    }
   }
 
   private static func containsBlockedTechnicalLanguage(_ lower: String) -> Bool {

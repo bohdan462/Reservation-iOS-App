@@ -28,8 +28,14 @@ struct BusinessIntelligenceOverviewSection: View {
                 }
 
                 if let summary {
+                    headlineInsightCard(summary)
                     headlineStrip(summary)
-                    insightSection(summary)
+                    if BusinessIntelligenceInsightBuilder.headline(
+                        summary: summary,
+                        systemStatus: systemStatus
+                    ) == nil {
+                        insightSection(summary)
+                    }
                 }
 
                 if let dataQualityNote {
@@ -70,6 +76,43 @@ struct BusinessIntelligenceOverviewSection: View {
     }
 
     @ViewBuilder
+    private func headlineInsightCard(_ summary: BusinessIntelligenceSummaryDTO) -> some View {
+        if let headline = BusinessIntelligenceInsightBuilder.headline(
+            summary: summary,
+            systemStatus: systemStatus
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("What to check")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(headline)
+                    .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(
+                    Array(
+                        BusinessIntelligenceInsightBuilder
+                            .supportingLines(summary: summary, systemStatus: systemStatus)
+                            .prefix(2)
+                            .enumerated()
+                    ),
+                    id: \.offset
+                ) { _, line in
+                    Text(line)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color(.secondarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
+            )
+        }
+    }
+
+    @ViewBuilder
     private func headlineStrip(_ summary: BusinessIntelligenceSummaryDTO) -> some View {
         let metrics = summary.summary
         let risk = summary.risk
@@ -78,11 +121,11 @@ struct BusinessIntelligenceOverviewSection: View {
 
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
             BusinessIntelligenceHeadlineMetric(
-                title: "Total guests",
+                title: "Guests",
                 value: BusinessIntelligenceFormatting.integer(metrics.totalGuests)
             )
             BusinessIntelligenceHeadlineMetric(
-                title: "Repeat guests",
+                title: "Repeat rate",
                 value: BusinessIntelligenceFormatting.percent(summary.guestRelationships.repeatGuestRate)
             )
             BusinessIntelligenceHeadlineMetric(title: "Peak window", value: peak)
@@ -126,11 +169,6 @@ struct BusinessIntelligenceOverviewSection: View {
         TryzubSectionCard(title: "Demand", systemImage: "calendar.badge.clock", spacing: 10) {
             BusinessIntelligenceMetricGrid {
                 BusinessIntelligenceMetricCard(
-                    title: "Total guests",
-                    value: BusinessIntelligenceFormatting.integer(metrics.totalGuests),
-                    systemImage: "person.2"
-                )
-                BusinessIntelligenceMetricCard(
                     title: "Active guests",
                     value: BusinessIntelligenceFormatting.integer(metrics.activeGuests),
                     systemImage: "person.2.wave.2"
@@ -146,6 +184,11 @@ struct BusinessIntelligenceOverviewSection: View {
                     value: BusinessIntelligenceFormatting.decimal(metrics.averagePartySize),
                     systemImage: "number"
                 )
+                BusinessIntelligenceMetricCard(
+                    title: "Reservations",
+                    value: BusinessIntelligenceFormatting.integer(metrics.totalReservations),
+                    systemImage: "calendar"
+                )
             }
 
             if let arrivalBars {
@@ -153,6 +196,11 @@ struct BusinessIntelligenceOverviewSection: View {
                     Text("Arrival pressure by 15-minute window")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
+                    if let caption = BusinessIntelligenceInsightBuilder.chartCaption(summary: summary) {
+                        Text(caption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     BusinessIntelligenceVerticalBarChart(bars: arrivalBars)
                 }
                 .padding(.top, 4)

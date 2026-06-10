@@ -19,11 +19,23 @@ struct HostBriefingService {
     _ actions: [HostSuggestedAction],
     reservations: [ReservationRecord],
     now: Date,
-    settings: HostIntelligenceSettings
+    settings: HostIntelligenceSettings,
+    preferredReservationIDs: [Int] = []
   ) -> [HostSuggestedAction] {
     let lookup = Dictionary(uniqueKeysWithValues: reservations.map { ($0.remoteID, $0) })
+    let preferred = Set(preferredReservationIDs)
 
     return actions.sorted { lhs, rhs in
+      let lhsPreferred = preferred.isEmpty
+        ? false
+        : !Set(lhs.relatedReservationIDs).isDisjoint(with: preferred)
+      let rhsPreferred = preferred.isEmpty
+        ? false
+        : !Set(rhs.relatedReservationIDs).isDisjoint(with: preferred)
+      if lhsPreferred != rhsPreferred {
+        return lhsPreferred
+      }
+
       let lhsScore = actionPriorityScore(
         lhs,
         lookup: lookup,
@@ -137,6 +149,11 @@ struct HostBriefingService {
     for fact in ranked {
       guard selected.count < maxCount else { break }
 
+      if let anchor = selected.first,
+         !Self.templateFactsShareOperationalContext(anchor, fact) {
+        continue
+      }
+
       if isReturningGuestFact(fact) {
         let reservationIDs = fact.relatedReservationIDs
         if reservationIDs.contains(where: returningReservationIDs.contains) {
@@ -168,6 +185,31 @@ struct HostBriefingService {
     }
 
     return selected
+  }
+
+  static func templateFactsShareOperationalContext(
+    _ lhs: HostBriefingFact,
+    _ rhs: HostBriefingFact
+  ) -> Bool {
+    if !isOperationalTemplateCategory(lhs.category),
+       !isOperationalTemplateCategory(rhs.category) {
+      return true
+    }
+
+    if lhs.relatedReservationIDs.isEmpty || rhs.relatedReservationIDs.isEmpty {
+      return lhs.category == rhs.category
+    }
+
+    return !Set(lhs.relatedReservationIDs).isDisjoint(with: rhs.relatedReservationIDs)
+  }
+
+  private static func isOperationalTemplateCategory(_ category: HostFactCategory) -> Bool {
+    switch category {
+    case .table, .overdue, .timing, .arrivalWave, .largeParty, .bookingDecision:
+      return true
+    default:
+      return false
+    }
   }
 
   private func collapsesPerReservationLowRisk(_ fact: HostBriefingFact) -> Bool {
@@ -316,6 +358,13 @@ struct HostBriefingService {
     settings: HostIntelligenceSettings
   ) -> Int {
     var score = max(0, 4 - action.severity.rank) * 20
+
+    if action.id.hasPrefix("overdue-no-table-action-") {
+      score += 30
+    }
+    if action.id.hasPrefix("unresolved-late-cleanup-action-") {
+      score -= 25
+    }
 
     switch action.kind {
     case .reviewReservation, .confirmReservation, .suggestAlternateTime:

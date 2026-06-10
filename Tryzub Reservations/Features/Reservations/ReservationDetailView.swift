@@ -54,7 +54,7 @@ struct ReservationDetailPresentation {
             Row(title: "Submitted", value: submittedValue(for: reservation))
         ]
 
-        if let timingText = reservation.operationalTimingState().insightText {
+        if let timingText = reservation.operationalTimingDisplayText() {
             reservationRows.insert(Row(title: "Timing", value: timingText, allowsWrap: true), at: 1)
         }
 
@@ -344,6 +344,7 @@ struct ReservationDetailView: View {
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hostIntentStore: HostReservationOpenIntentStore
     @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
+    @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
     // Guest Insights reads cached reservations only; no network or mutation is involved.
     @Query(sort: [
         SortDescriptor(\ReservationRecord.reservationDate),
@@ -509,6 +510,12 @@ struct ReservationDetailView: View {
             guestInsightReport = GuestInsightsController().analyze(
                 selected: reservation,
                 allReservations: allCachedReservations
+            )
+        }
+        .task(id: reservation.reservationDate) {
+            guestIntelligenceStore.scheduleLoad(
+                dateKey: reservation.reservationDate,
+                isSelectedDate: false
             )
         }
     }
@@ -761,7 +768,10 @@ struct ReservationDetailView: View {
                     allReservations: allCachedReservations
                 )
             } label: {
-                GuestInsightsPreviewCard(report: guestInsightReport)
+                GuestInsightsPreviewCard(
+                    report: guestInsightReport,
+                    presentation: guestDetailInsightPresentation(report: guestInsightReport)
+                )
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -772,10 +782,23 @@ struct ReservationDetailView: View {
         }
     }
 
+    private func guestDetailInsightPresentation(
+        report: GuestInsightReport
+    ) -> GuestHistorySemantics.DetailInsightPresentation {
+        let serverSummary = guestIntelligenceStore
+            .summariesByReservationID(for: reservation.reservationDate)[reservation.remoteID]
+        return GuestHistorySemantics.detailInsightPresentation(
+            reservation: reservation,
+            localReport: report,
+            serverSummary: serverSummary
+        )
+    }
+
     private var guestInsightCacheKey: ReservationDetailGuestInsightCacheKey {
         ReservationDetailGuestInsightCacheKey(
             selectedReservation: reservation,
-            reservations: allCachedReservations
+            reservations: allCachedReservations,
+            guestIntelligenceStamp: guestIntelligenceStore.cacheStamp(for: reservation.reservationDate)
         )
     }
 
@@ -1164,13 +1187,19 @@ private struct ReservationDetailGuestInsightCacheKey: Hashable {
     let visibleCount: Int
     let maxLastSyncedAt: Date?
     let maxUpdatedAt: Date?
+    let guestIntelligenceStamp: String
 
-    init(selectedReservation: ReservationRecord, reservations: [ReservationRecord]) {
+    init(
+        selectedReservation: ReservationRecord,
+        reservations: [ReservationRecord],
+        guestIntelligenceStamp: String = ""
+    ) {
         selectedID = selectedReservation.remoteID
         let visible = reservations.filter { !$0.isHidden }
         visibleCount = visible.count
         maxLastSyncedAt = visible.map(\.lastSyncedAt).max()
         maxUpdatedAt = visible.compactMap(\.updatedAt).max()
+        self.guestIntelligenceStamp = guestIntelligenceStamp
     }
 }
 
@@ -1224,10 +1253,7 @@ private struct ReservationServiceLoadCard: View {
 
 private struct GuestInsightsPreviewCard: View {
     let report: GuestInsightReport
-
-    private var historyLine: (title: String, detail: String) {
-        report.guestHistoryLine
-    }
+    let presentation: GuestHistorySemantics.DetailInsightPresentation
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -1239,7 +1265,7 @@ private struct GuestInsightsPreviewCard: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Text("Guest history")
+                    Text("Guest insight")
                         .font(.headline.weight(.medium))
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right")
@@ -1247,16 +1273,29 @@ private struct GuestInsightsPreviewCard: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text(historyLine.title)
+                Text(presentation.historyTitle)
                     .font(.subheadline.weight(.semibold))
 
-                Text(historyLine.detail)
+                Text(presentation.historyDetail)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
 
+                ForEach(Array(presentation.supplementalLines.enumerated()), id: \.offset) { _, line in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(line.title)
+                            .font(.caption.weight(.semibold))
+                        Text(line.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+
                 FlowLayout(spacing: 7) {
-                    GuestRegularityBadge(level: report.regularityLevel)
+                    if report.hasReliableRepeatGuestHistory {
+                        GuestRegularityBadge(level: report.regularityLevel)
+                    }
                     if !report.staffMentionHistory.isEmpty {
                         DetailPill(label: "Staff notes", systemImage: "note.text", tint: .secondary)
                     }

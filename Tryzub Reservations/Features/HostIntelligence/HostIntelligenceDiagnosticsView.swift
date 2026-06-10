@@ -414,6 +414,63 @@ struct HostIntelligenceDiagnosticsView: View {
   }
 
   @ViewBuilder
+  private func hostBoardModelDecisionSection(packet: HostLLMPacket) -> some View {
+    let categories = HostBriefingHostBoardGate.operationalCategories(for: packet)
+    let categoryLabels = categories.map(\.traceLabel).sorted().joined(separator: ", ")
+    let complexityScore = HostBriefingHostBoardGate.complexityScore(for: packet)
+    let liveTrace = HostBoardModelDecisionTrace.latest
+
+    Text("Host Board model decision")
+      .font(.subheadline.weight(.semibold))
+
+    if let liveTrace {
+      LabeledContent("Live decision") {
+        Text(liveTrace.decision)
+      }
+      if let skipReason = liveTrace.skipReason, !skipReason.isEmpty {
+        LabeledContent("Skip reason") {
+          Text(skipReason)
+        }
+      }
+      LabeledContent("Packet categories") {
+        Text(liveTrace.packetCategories.isEmpty ? "—" : liveTrace.packetCategories)
+      }
+      LabeledContent("Complexity score") {
+        Text("\(liveTrace.complexityScore)")
+      }
+      LabeledContent("Enrichment loading") {
+        Text(liveTrace.enrichmentLoading ? "Yes" : "No")
+      }
+      if let runAt = liveTrace.lastLiveModelRunAt {
+        LabeledContent("Last live host model run") {
+          Text(runAt.formatted(date: .omitted, time: .standard))
+        }
+      }
+      LabeledContent("Last visible source") {
+        Text(liveTrace.lastVisibleSource)
+      }
+    } else {
+      Text("No live Host Board model run recorded yet this session.")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+    }
+
+    LabeledContent("Snapshot categories") {
+      Text(categoryLabels.isEmpty ? "—" : categoryLabels)
+    }
+    LabeledContent("Snapshot complexity score") {
+      Text("\(complexityScore)")
+    }
+    LabeledContent("Would use local model") {
+      Text(
+        HostBriefingHostBoardGate.shouldPreferDeterministicHostSummary(packet: packet)
+          ? "No — template-only packet"
+          : "Yes — complex enough"
+      )
+    }
+  }
+
+  @ViewBuilder
   private func briefingWriterSection(_ decision: HostDecisionSnapshot) -> some View {
     let packet = decision.llmPacket
     let fallback = decision.templateBriefingText
@@ -472,6 +529,8 @@ struct HostIntelligenceDiagnosticsView: View {
           Text(briefingFailureReason)
         }
       }
+
+      hostBoardModelDecisionSection(packet: packet)
 
       LocalModelDiagnosticsControls(
         coordinator: modelCoordinator,

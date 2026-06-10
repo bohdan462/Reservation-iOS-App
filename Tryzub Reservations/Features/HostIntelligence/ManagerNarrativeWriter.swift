@@ -102,28 +102,23 @@ struct ManagerNarrativeWriter {
 
     do {
       let generated = try await runtime.generateBriefing(prompt: prompt)
-      if ManagerNarrativeValidator.containsLeakedModelLabels(in: generated) {
-        HostIntelligenceDiagnostics.localModelFallback(
-          reason: "rejected labeled or unnatural staff output"
-        )
-        ManagerNarrativeWriterDiagnostics.recordFailure(
-          raw: generated,
-          reason: "Narrative contains labeled or unnatural staff output."
-        )
+      let normalizedResult = normalizeModelOutput(generated)
+      guard let normalized = normalizedResult.text else {
         return fallbackWithReason(
           fallback,
-          reason: "rejected labeled or unnatural staff output"
+          reason: normalizedResult.failureReason ?? "rejected labeled or unnatural staff output"
         )
       }
+      let usedRepair = normalizedResult.usedRepair
 
-      ManagerNarrativeWriterDiagnostics.recordSuccess(raw: generated)
+      ManagerNarrativeWriterDiagnostics.recordSuccess(raw: normalized)
 
-      var parsed = ManagerNarrativeOutputParser.parse(generated)
+      var parsed = ManagerNarrativeOutputParser.parse(normalized)
       parsed = ManagerNarrative(
         headline: parsed.headline,
         whyItMatters: parsed.whyItMatters,
-        checkNext: parsed.checkNext,
-        source: .localModel,
+        checkNext: nil,
+        source: usedRepair ? .repairedLocalModel : .localModel,
         failedReason: nil
       )
 
@@ -135,9 +130,18 @@ struct ManagerNarrativeWriter {
       )
 
       if validation.isValid {
+        HostLocalModelWarmthTracker.markWarm()
+        if usedRepair {
+          HostIntelligenceDiagnostics.repairedOutputUsed(labelsRemoved: true)
+        } else {
+          HostIntelligenceDiagnostics.modelOutputUsed(source: "local_model")
+        }
         return parsed
       }
 
+      HostIntelligenceDiagnostics.modelOutputRejected(
+        reason: validation.reason ?? "validation_failed"
+      )
       ManagerNarrativeWriterDiagnostics.recordFailure(
         raw: generated,
         reason: validation.reason
@@ -150,6 +154,35 @@ struct ManagerNarrativeWriter {
       )
       return fallbackWithReason(fallback, reason: error.localizedDescription)
     }
+  }
+
+  private struct NormalizedModelOutput {
+    let text: String?
+    let usedRepair: Bool
+    let failureReason: String?
+  }
+
+  private func normalizeModelOutput(_ generated: String) -> NormalizedModelOutput {
+    if ManagerNarrativeValidator.containsLeakedModelLabels(in: generated),
+       let repaired = ManagerNarrativeValidator.repairStaffCopy(generated),
+       !ManagerNarrativeValidator.containsLeakedModelLabels(in: repaired) {
+      return NormalizedModelOutput(text: repaired, usedRepair: true, failureReason: nil)
+    }
+
+    if ManagerNarrativeValidator.containsLeakedModelLabels(in: generated) {
+      HostIntelligenceDiagnostics.modelOutputRejected(reason: "raw_labels")
+      ManagerNarrativeWriterDiagnostics.recordFailure(
+        raw: generated,
+        reason: "Narrative contains labeled or unnatural staff output."
+      )
+      return NormalizedModelOutput(
+        text: nil,
+        usedRepair: false,
+        failureReason: "Narrative contains labeled or unnatural staff output."
+      )
+    }
+
+    return NormalizedModelOutput(text: generated, usedRepair: false, failureReason: nil)
   }
 
   private func fallbackWithReason(

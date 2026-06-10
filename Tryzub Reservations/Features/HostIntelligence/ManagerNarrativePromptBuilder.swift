@@ -14,25 +14,17 @@ enum ManagerNarrativePromptBuilder {
 
     sections.append(
       """
-      You are writing a short manager briefing for restaurant staff.
-      Use simple restaurant staff language.
-      Write so a busy host understands in five seconds.
-      Do not use technical words: backend, cache, sync, API, endpoint, packet, model, validation, diagnostics, confidence, capacity ratio, lead time, auto-confirm, candidate, slot pressure, eligible, rule, threshold, based on.
+      You are writing a short manager briefing for restaurant staff on the Host board.
+      Write natural host or manager language in at most 2 short sentences.
+      Lead with the most urgent reservation or issue first.
+      Connect related operational facts only when useful for staff decisions.
       Use only the provided facts and actions.
       Do not invent guests, tables, times, counts, allergies, notes, or actions.
-      Do not say anything was confirmed, sent, assigned, cancelled, seated, or changed.
-      Do not mention AI, models, or local model.
-      Use at most 3 short lines with these exact labels:
-      HEADLINE:
-      WHY:
-      CHECK:
-      HEADLINE = one sentence for what matters right now.
-      WHY = one sentence for why it matters, or write NONE if not needed.
-      CHECK = one sentence for what staff can check next using an available action, or write NONE if not needed.
-      Do not use bullet points.
-      Do not add extra lines.
-      Do not repeat the same idea in multiple lines.
-      Use concrete numbers only when provided in approved facts.
+      Do not say anything was confirmed, sent, seated, assigned, cancelled, or changed.
+      Do not mention AI, models, or validation.
+      Do not use bullet points, numbering, or category tags like [critical/overdue].
+      Do not use labels like HEADLINE, WHY, or CHECK.
+      Output plain staff-facing prose only.
       """
     )
 
@@ -45,16 +37,16 @@ enum ManagerNarrativePromptBuilder {
     if packet.headlineFacts.isEmpty {
       sections.append("Approved facts: none")
       sections.append(
-        "When no facts are provided, HEADLINE should say nothing needs attention right now. WHY and CHECK should be NONE."
+        "When no facts are provided, say nothing needs attention right now."
       )
     } else {
       sections.append("Approved facts:")
-      for (index, fact) in packet.headlineFacts.enumerated() {
-        var line = "\(index + 1). [\(fact.priority)] \(fact.title)"
+      for fact in packet.headlineFacts {
+        var line = fact.title
         if let detail = fact.detail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty {
-          line += " — \(detail)"
+          line += ". \(detail)"
         }
-        sections.append(line)
+        sections.append("- \(line)")
       }
     }
 

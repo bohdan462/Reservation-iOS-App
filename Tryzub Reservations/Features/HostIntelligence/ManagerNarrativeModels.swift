@@ -39,6 +39,7 @@ struct ManagerNarrative: Equatable {
   enum Source: Equatable {
     case template
     case localModel
+    case repairedLocalModel
     case failedFallback
   }
 
@@ -212,7 +213,9 @@ enum ManagerNarrativeTemplateBuilder {
       }
     }
 
-    if rankedFacts.count >= 2 {
+    if rankedFacts.count >= 2,
+       let first = rankedFacts.first,
+       HostBriefingService.templateFactsShareOperationalContext(first, rankedFacts[1]) {
       let fact = rankedFacts[1]
       if let detail = ManagerNarrativePacketSanitizer.staffSafeLine(fact.detail),
          !HostStaffLanguage.isGenericCheckLine(detail),
@@ -276,7 +279,13 @@ enum ManagerNarrativeTemplateBuilder {
   }
 
   private static func checkLine(from snapshot: HostDecisionSnapshot, headline: String) -> String? {
-    guard let action = snapshot.suggestedActions.first else { return nil }
+    let rankedFacts = HostBriefingService().rankHostFacts(snapshot.briefingFacts)
+    let preferredIDs = rankedFacts.first?.relatedReservationIDs ?? []
+    let action = snapshot.suggestedActions.first { item in
+      guard !preferredIDs.isEmpty else { return false }
+      return !Set(item.relatedReservationIDs).isDisjoint(with: preferredIDs)
+    } ?? snapshot.suggestedActions.first
+    guard let action else { return nil }
     let label = ManagerAttentionItemBuilder.tapLabel(for: action)
     if HostStaffLanguage.areSameStaffMeaning(label, headline) {
       return nil
@@ -310,7 +319,8 @@ enum ManagerNarrativeWritingRules {
     "Do not invent guests, tables, times, counts, allergies, notes, or actions.",
     "Do not say anything was confirmed, sent, assigned, cancelled, or changed.",
     "Do not mention AI or local model.",
-    "Use at most 3 short lines: what matters, why it matters, what staff can check next."
+    "Use at most 2 short sentences of plain prose.",
+    "Lead with the most urgent reservation first."
   ]
 }
 
