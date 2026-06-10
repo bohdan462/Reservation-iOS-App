@@ -636,25 +636,36 @@ struct HostBoardView: View {
 
     @ViewBuilder
     private func homeOperationalHeader(snapshot: HostBoardSnapshot) -> some View {
-        HostBoardSummaryCard(
-            reservationCount: snapshot.upcoming.count + snapshot.seated.count,
-            guestCount: snapshot.expectedGuestCount,
-            newCount: snapshot.newReservations.count,
-            reviewCount: snapshot.needsReview.count,
-            failedImportCount: controller.capabilities.canViewDeveloperDiagnostics ? failedImportCount : 0,
-            noTableCount: snapshot.noTableCount,
-            peakTimeText: snapshot.peakTimeText,
-            nextReservationText: snapshot.nextReservationText,
-            arrivalBuckets: snapshot.arrivalBuckets,
-            isSelectedDateToday: snapshot.selectedDate.reservationDateString() == Date.reservationDateString(),
-            availabilitySummary: availabilitySummaryLine,
-            isAvailabilityLoading: isLoadingAvailabilitySummary,
-            onRefreshAvailability: selectedDate.reservationDateString() == Date.reservationDateString()
-                ? { controller.ensureAvailabilitySummary(date: selectedDateKey, force: true) }
-                : nil
-        )
+        VStack(alignment: .leading, spacing: 8) {
+            if selectedDateKey == Date.reservationDateString(),
+               guestIntelligenceStore.isLoading(dateKey: selectedDateKey),
+               guestIntelligenceStore.response(for: selectedDateKey) == nil {
+                TryzubSectionLoadingCard(
+                    title: "Checking guest context…",
+                    systemImage: "person.2"
+                )
+            }
 
-        hostIntelligenceSection
+            HostBoardSummaryCard(
+                reservationCount: snapshot.upcoming.count + snapshot.seated.count,
+                guestCount: snapshot.expectedGuestCount,
+                newCount: snapshot.newReservations.count,
+                reviewCount: snapshot.needsReview.count,
+                failedImportCount: controller.capabilities.canViewDeveloperDiagnostics ? failedImportCount : 0,
+                noTableCount: snapshot.noTableCount,
+                peakTimeText: snapshot.peakTimeText,
+                nextReservationText: snapshot.nextReservationText,
+                arrivalBuckets: snapshot.arrivalBuckets,
+                isSelectedDateToday: snapshot.selectedDate.reservationDateString() == Date.reservationDateString(),
+                availabilitySummary: availabilitySummaryLine,
+                isAvailabilityLoading: isLoadingAvailabilitySummary,
+                onRefreshAvailability: selectedDate.reservationDateString() == Date.reservationDateString()
+                    ? { controller.ensureAvailabilitySummary(date: selectedDateKey, force: true) }
+                    : nil
+            )
+
+            hostIntelligenceSection
+        }
     }
 
     @ViewBuilder
@@ -1058,7 +1069,7 @@ private struct HostBoardSummaryCard: View {
                     if let onRefreshAvailability {
                         Button(action: onRefreshAvailability) {
                             if isAvailabilityLoading {
-                                ProgressView().controlSize(.mini)
+                                TryzubSubtleLoadingDot(diameter: 6)
                             } else {
                                 Image(systemName: "arrow.clockwise")
                                     .font(.caption2)
@@ -1068,6 +1079,14 @@ private struct HostBoardSummaryCard: View {
                         .foregroundStyle(TryzubColors.mutedText)
                         .disabled(isAvailabilityLoading)
                     }
+                }
+            } else if isAvailabilityLoading {
+                HStack(spacing: 8) {
+                    Text("Checking available times…")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(TryzubColors.mutedText)
+                    Spacer(minLength: 0)
+                    TryzubSubtleLoadingDot(diameter: 6)
                 }
             }
 
@@ -1215,7 +1234,7 @@ private struct HomeAvailabilityIndicator: View {
         }
 
         if isLoading && availability == nil && slots == nil {
-            return "Loading..."
+            return "Checking available times…"
         }
 
         if isClosed {

@@ -130,7 +130,7 @@ enum HostBoardAvailabilityPresenter {
             return error
         }
         if state.isLoading, !state.hasUsableSlots {
-            return "Loading availability…"
+            return "Checking available times…"
         }
         if state.isClosed {
             return "Closed today"

@@ -178,6 +178,9 @@ enum ReservationAvailabilityFacade {
         return String(trimmed.prefix(5))
     }
 
+    /// Loads availability for dates outside the Host Board selected-day summary path.
+    /// Controller caches and dedupes per `date`; responses are written to date-keyed caches only.
+    /// Unmanaged `Task` here is acceptable: no cross-date UI overwrite because reads use the requested date key.
     private static func startDirectLoad(controller: ReservationsController, date: String) {
         Task {
             do {

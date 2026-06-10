@@ -238,7 +238,7 @@ final class BusinessAnalyticsCoordinator: ObservableObject {
             to: rangeKey.intelligenceTo
         ) {
             enrichmentWarning = businessIntelligenceSummary == nil
-                ? "Business intelligence is taking longer than usual. Reservation analytics are still available."
+                ? "Advanced insight delayed. Core reservation analytics are available."
                 : nil
             AnalyticsTrace.fail(
                 range: rangeKey,

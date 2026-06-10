@@ -614,7 +614,7 @@ final class ReservationsController: ObservableObject {
         hasReleasedStartupUI = false
         startupUIReleasedAt = nil
         startupPresentationState = .failedNoCache(
-            startupNetworkPassError ?? "Could not load reservations. Check your connection and try again."
+            StartupProgressPresenter.staffNoCacheFailureMessage
         )
     }
 

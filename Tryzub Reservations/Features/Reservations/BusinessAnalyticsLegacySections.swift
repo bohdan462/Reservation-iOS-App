@@ -114,7 +114,11 @@ private struct AnalyticsStatusSection: View {
     let rows: [ReservationAnalyticsStatusRowDTO]
 
     var body: some View {
-        AnalyticsSectionCard(title: "Status Breakdown", systemImage: "list.bullet.rectangle") {
+        AnalyticsSectionCard(
+            title: "Status breakdown",
+            systemImage: "list.bullet.rectangle",
+            caption: "Shows how reservations in this range are distributed by staff status."
+        ) {
             AnalyticsRowsEmptyAware(isEmpty: rows.isEmpty) {
                 ForEach(rows) { row in
                     AnalyticsBreakdownRow(title: row.status.analyticsStatusLabel, reservations: row.reservationsCount, guests: row.guestsCount)
@@ -128,7 +132,11 @@ private struct AnalyticsMonthSection: View {
     let rows: [ReservationAnalyticsMonthRowDTO]
 
     var body: some View {
-        AnalyticsSectionCard(title: "Demand by Month", systemImage: "calendar") {
+        AnalyticsSectionCard(
+            title: "Demand by month",
+            systemImage: "calendar",
+            caption: "Helps compare busier months before planning staffing or closures."
+        ) {
             AnalyticsRowsEmptyAware(isEmpty: rows.isEmpty) {
                 ForEach(rows) { row in
                     AnalyticsBreakdownRow(title: row.month, reservations: row.reservationsCount, guests: row.guestsCount)
@@ -142,7 +150,11 @@ private struct AnalyticsHourSection: View {
     let rows: [ReservationAnalyticsHourRowDTO]
 
     var body: some View {
-        AnalyticsSectionCard(title: "Peak Hours", systemImage: "clock") {
+        AnalyticsSectionCard(
+            title: "Guest flow by hour",
+            systemImage: "clock",
+            caption: "Shows when the floor is likely to feel busiest for the selected range."
+        ) {
             AnalyticsRowsEmptyAware(isEmpty: rows.isEmpty) {
                 ForEach(rows.sorted { $0.guestsCount == $1.guestsCount ? $0.hour < $1.hour : $0.guestsCount > $1.guestsCount }) { row in
                     AnalyticsBreakdownRow(title: AnalyticsPresenter.hourLabel(row.hour), reservations: row.reservationsCount, guests: row.guestsCount)
@@ -156,7 +168,11 @@ private struct AnalyticsPartySizeSection: View {
     let rows: [ReservationAnalyticsPartySizeRowDTO]
 
     var body: some View {
-        AnalyticsSectionCard(title: "Party Size", systemImage: "person.2") {
+        AnalyticsSectionCard(
+            title: "Party size mix",
+            systemImage: "person.2",
+            caption: "Helps plan table mix and joined tables for upcoming service."
+        ) {
             AnalyticsRowsEmptyAware(isEmpty: rows.isEmpty) {
                 ForEach(rows.sorted { $0.partySize < $1.partySize }) { row in
                     AnalyticsBreakdownRow(title: "\(row.partySize) \(row.partySize == 1 ? "guest" : "guests")", reservations: row.reservationsCount, guests: row.guestsCount)
@@ -170,7 +186,11 @@ private struct AnalyticsLeadTimeSection: View {
     let rows: [ReservationAnalyticsLeadTimeRowDTO]
 
     var body: some View {
-        AnalyticsSectionCard(title: "Lead Time", systemImage: "clock.arrow.circlepath") {
+        AnalyticsSectionCard(
+            title: "Booking lead time",
+            systemImage: "clock.arrow.circlepath",
+            caption: "Shows how far ahead guests booked for this range."
+        ) {
             AnalyticsRowsEmptyAware(isEmpty: rows.isEmpty) {
                 ForEach(rows) { row in
                     AnalyticsBreakdownRow(title: AnalyticsPresenter.leadTimeLabel(row.bucket), reservations: row.reservationsCount, guests: row.guestsCount)
@@ -238,10 +258,11 @@ private struct AnalyticsPipelineSection: View {
 private struct AnalyticsSectionCard<Content: View>: View {
     let title: String
     let systemImage: String
+    var caption: String?
     @ViewBuilder let content: Content
 
     var body: some View {
-        TryzubSectionCard(title: title, systemImage: systemImage, spacing: 12) {
+        TryzubChartCard(title: title, systemImage: systemImage, caption: caption) {
             content
         }
         .padding(.horizontal, 16)
@@ -310,7 +331,7 @@ private struct AnalyticsRowsEmptyAware<Content: View>: View {
 
     var body: some View {
         if isEmpty {
-            Text("No rows returned.")
+            Text("No data for this range yet.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         } else {

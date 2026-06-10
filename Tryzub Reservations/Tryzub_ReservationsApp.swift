@@ -166,9 +166,10 @@ private struct AppLoginView: View {
                             .font(.largeTitle.weight(.bold))
                             .multilineTextAlignment(.center)
 
-                        Text("Use your app password.")
+                        Text("Staff sign-in for reservation operations.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                     }
                     .padding(.top, 28)
 
@@ -178,6 +179,11 @@ private struct AppLoginView: View {
                             Text("Developer").tag(AppUserRole.developer)
                         }
                         .pickerStyle(.segmented)
+
+                        Text("Manager is the normal service mode. Developer unlocks diagnostics only.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
                         VStack(spacing: 12) {
                             TextField("Username", text: $username)
@@ -271,7 +277,7 @@ private struct AppLoginView: View {
                 applicationPassword: trimmedPassword
             )
             if !saved {
-                errorMessage = credentialStore.errorMessage ?? "Sign in failed. Check your username and app password."
+                errorMessage = credentialStore.errorMessage ?? "Could not sign in. Check the username and application password."
                 return
             }
             roleStore.select(role)
@@ -290,15 +296,15 @@ private struct AppLoginView: View {
 
     private func loginMessage(for error: Error) -> String {
         if error is LoginValidationError {
-            return "Sign in failed. Check your username and app password."
+            return "Could not sign in. Check the username and application password."
         }
         if error.isOfflineLike || error.isLoginConnectionFailure {
-            return "Could not connect. Try again."
+            return "Connection failed. Check internet and try again."
         }
         if error.isLoginAccessFailure {
-            return "Sign in failed. Check your username and app password."
+            return "This account does not have reservation access."
         }
-        return "Sign in failed. Check your username and app password."
+        return "Could not sign in. Check the username and application password."
     }
 }
 

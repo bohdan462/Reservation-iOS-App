@@ -13,14 +13,13 @@ struct BusinessIntelligenceOverviewSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if isEnrichmentLoading, summary == nil, systemStatus == nil, !reservationAnalyticsAvailable {
+            if isEnrichmentLoading, summary == nil, systemStatus == nil {
                 loadingCard
             } else {
                 if isEnrichmentLoading, summary != nil || systemStatus != nil {
                     HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Refreshing business intelligence…")
+                        TryzubSubtleLoadingDot(diameter: 6)
+                        Text("Loading advanced insight…")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -65,12 +64,16 @@ struct BusinessIntelligenceOverviewSection: View {
     }
 
     private var loadingCard: some View {
-        TryzubSectionCard(title: "Overview", systemImage: "chart.line.uptrend.xyaxis", spacing: 10) {
-            HStack(spacing: 8) {
-                ProgressView()
-                Text("Loading overview...")
-                    .font(.subheadline)
+        VStack(alignment: .leading, spacing: 8) {
+            TryzubSectionLoadingCard(
+                title: "Loading advanced insight…",
+                systemImage: "chart.line.uptrend.xyaxis"
+            )
+            if reservationAnalyticsAvailable {
+                Text("Core reservation analytics are available.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
             }
         }
     }

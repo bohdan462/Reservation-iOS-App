@@ -33,7 +33,8 @@ struct GuestInsightsView: View {
                     )
                     GuestInsightSnapshotGrid(
                         report: report,
-                        metrics: mergedContext.metrics
+                        metrics: mergedContext.metrics,
+                        mergedSource: mergedContext.mergedSource
                     )
                     if let profilePack {
                         if hasProfileSummaryContent(profilePack) {
@@ -52,7 +53,7 @@ struct GuestInsightsView: View {
                         reservationID: selectedReservation.remoteID
                     ) {
                         GuestInsightCard(title: "Server guest profile", systemImage: "arrow.triangle.2.circlepath") {
-                            TryzubLoadingRow(title: "Loading server guest history...")
+                            TryzubLoadingRow(title: "Loading server history…")
                         }
                     }
                     GuestInsightNotesSection(report: report)
@@ -91,6 +92,11 @@ struct GuestInsightsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .fontDesign(.rounded)
+        .onChange(of: cacheKey, initial: true) { _, _ in
+            profileFacade.updateReservationProvider {
+                (selectedReservation, allReservations)
+            }
+        }
         .task(id: cacheKey) {
             profileFacade.loadIfNeeded(
                 reservation: selectedReservation,
@@ -98,21 +104,7 @@ struct GuestInsightsView: View {
                 store: guestIntelligenceStore
             )
         }
-        .onChange(of: localAnalysisRefreshKey) { _, _ in
-            profileFacade.rebuildViewState(
-                reservation: selectedReservation,
-                historyPool: allReservations,
-                store: guestIntelligenceStore
-            )
-        }
-        .onChange(of: profileCacheStampKey) { _, _ in
-            profileFacade.rebuildViewState(
-                reservation: selectedReservation,
-                historyPool: allReservations,
-                store: guestIntelligenceStore
-            )
-        }
-        .task(id: viewState?.traceKey) {
+        .task(id: guestInsightsMergeTraceKey) {
             guard let report else { return }
             guestIntelligenceStore.recordMergePresentation(
                 surface: "guest_insights",
@@ -172,13 +164,18 @@ struct GuestInsightsView: View {
         )
     }
 
-    private var localAnalysisRefreshKey: String {
-        let report = profileFacade.localReport
-        return "\(profileFacade.analysisCoordinator.isAnalyzingLocalCache)-\(report?.selectedReservationID ?? 0)-\(report?.matchedReservations.count ?? 0)"
-    }
-
-    private var profileCacheStampKey: String {
-        guestIntelligenceStore.profileCacheStamp(for: selectedReservation.remoteID)
+    private var guestInsightsMergeTraceKey: String? {
+        guard let report else { return nil }
+        let reservationID = selectedReservation.remoteID
+        let dateKey = selectedReservation.reservationDate
+        return GuestHistorySemantics.mergePresentationTaskKey(
+            surface: "guest_insights",
+            guestName: selectedReservation.guestName,
+            localReport: report,
+            serverSummary: guestIntelligenceStore.summary(for: reservationID, dateKey: dateKey),
+            serverAnswered: guestIntelligenceStore.hasServerAnswer(for: reservationID, dateKey: dateKey),
+            profilePack: guestIntelligenceStore.profilePack(for: reservationID)
+        )
     }
 
     @ViewBuilder
@@ -216,7 +213,7 @@ struct GuestInsightsView: View {
             }
         } else if state.loadingState == .loadingServerProfile || state.loadingState == .loadingBoth {
             GuestInsightCard(title: "Server guest profile", systemImage: "arrow.triangle.2.circlepath") {
-                TryzubLoadingRow(title: "Loading server guest history...")
+                TryzubLoadingRow(title: "Loading server history…")
             }
         }
 
@@ -324,7 +321,11 @@ private struct GuestInsightHeader: View {
                 }
 
                 FlowLayout(spacing: 7) {
-                    if let mergedRegularity = mergedContext.mergedRegularity {
+                    if let mergedRegularity = mergedContext.mergedRegularity,
+                       !shouldHideRegularityBadge(
+                           historyTitle: mergedContext.historyTitle,
+                           regularity: mergedRegularity
+                       ) {
                         GuestRegularityBadge(level: mergedRegularity)
                     }
                     if report.isLikelyManualGuest {
@@ -343,6 +344,13 @@ private struct GuestInsightHeader: View {
             }
         }
     }
+
+    private func shouldHideRegularityBadge(
+        historyTitle: String,
+        regularity: GuestRegularityLevel
+    ) -> Bool {
+        historyTitle == "Seen before" && regularity == .seenBefore
+    }
 }
 
 // MARK: - Snapshot Cards
@@ -350,13 +358,35 @@ private struct GuestInsightHeader: View {
 private struct GuestInsightSnapshotGrid: View {
     let report: GuestInsightReport
     let metrics: GuestHistorySemantics.GuestInsightsMetricsPresentation
+    let mergedSource: GuestHistorySemantics.MergedHistorySource
 
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: 142), spacing: 10)]
     }
 
+    private var scopeCaption: String? {
+        switch metrics.source {
+        case .backendSummary:
+            return "Server-backed summary for this guest."
+        case .localCache:
+            return "Local cache supplement — counts from this device only."
+        case .merged:
+            if mergedSource == .unknownNotLoaded {
+                return "Guest history loading."
+            }
+            return nil
+        }
+    }
+
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
+            if let scopeCaption {
+                Text(scopeCaption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            LazyVGrid(columns: columns, spacing: 10) {
             GuestInsightMetricCard(
                 title: metrics.title,
                 value: metrics.value,
@@ -392,6 +422,7 @@ private struct GuestInsightSnapshotGrid: View {
                 value: "\(report.hospitalitySnapshot.noteCount)",
                 caption: notesCaption
             )
+            }
         }
     }
 
@@ -640,8 +671,12 @@ private struct GuestInsightPreferencesSection: View {
     let report: GuestInsightReport
 
     var body: some View {
-        GuestInsightCard(title: "Preferences", systemImage: "chart.bar.doc.horizontal") {
+        GuestInsightCard(title: "Local cache preferences", systemImage: "internaldrive") {
             VStack(alignment: .leading, spacing: 14) {
+                Text("Patterns from reservations stored on this device only.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 if report.preferredTimes.isEmpty,
                    report.preferredWeekdays.isEmpty,
                    report.partySizeStats.mostCommon == nil {

@@ -54,6 +54,81 @@ enum TryzubColors {
     static let neutralChip = Color.secondary
 }
 
+// MARK: - Staff Form Fields
+
+/// Shared chrome for staff text inputs across setup, login-adjacent forms, and reservations.
+struct StaffFormFieldLabel: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.secondary)
+    }
+}
+
+struct StaffFormErrorCaption: View {
+    let message: String
+
+    var body: some View {
+        Text(message)
+            .font(.caption)
+            .foregroundStyle(TryzubColors.danger)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct StaffFormFieldChrome: ViewModifier {
+    var isFocused = false
+
+    func body(content: Content) -> some View {
+        content
+            .font(.body)
+            .frame(minHeight: 22)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .background(
+                Color(.tertiarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                    .stroke(
+                        isFocused
+                            ? TryzubColors.primaryControl.opacity(0.55)
+                            : TryzubColors.border,
+                        lineWidth: isFocused ? 1.5 : 1
+                    )
+            }
+    }
+}
+
+extension View {
+    func staffFormFieldChrome(isFocused: Bool = false) -> some View {
+        modifier(StaffFormFieldChrome(isFocused: isFocused))
+    }
+}
+
+/// Standard analytics / insight chart container with operational context.
+struct TryzubChartCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    var caption: String?
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        TryzubSectionCard(title: title, systemImage: systemImage, spacing: 10) {
+            if let caption, !caption.isEmpty {
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            content()
+        }
+    }
+}
+
 // MARK: - Staff Status Dot
 
 /// Small live-status indicator for staff surfaces (Home header, Bookings tab, etc.).
@@ -233,13 +308,13 @@ enum StartupBackgroundWorkState: Equatable {
         case .idle, .ready:
             return nil
         case .checkingSavedData:
-            return "Checking service…"
+            return "Checking saved data…"
         case .checkingFreshness:
-            return "Finishing updates…"
-        case .updatingServiceSetup:
-            return "Checking setup…"
-        case .loadingTodayOperations:
             return "Checking service…"
+        case .updatingServiceSetup:
+            return "Checking Tryzub service…"
+        case .loadingTodayOperations:
+            return "Loading today's operations…"
         }
     }
 }
@@ -289,6 +364,13 @@ enum HomeServiceStatusPresenter {
         }
 
         if isReservationRefreshInFlight {
+            if hasVisibleCache {
+                return HomeServiceStatusPresentation(
+                    primarySyncText: "Saved data",
+                    secondaryProgressText: secondaryProgressText ?? "Checking service…",
+                    dotStyle: .greenFlashing
+                )
+            }
             return HomeServiceStatusPresentation(
                 primarySyncText: "Updating…",
                 secondaryProgressText: secondaryProgressText,
@@ -797,16 +879,62 @@ struct TryzubDestructiveButtonStyle: ButtonStyle {
     }
 }
 
+struct TryzubSubtleLoadingDot: View {
+    var diameter: CGFloat = 7
+    var activeColor: Color = TryzubColors.info
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+
+    var body: some View {
+        Circle()
+            .fill(activeColor.opacity(pulse ? 0.9 : 0.35))
+            .frame(width: diameter, height: diameter)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+            }
+    }
+}
+
+struct TryzubSectionLoadingCard: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 22, alignment: .center)
+
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            Spacer(minLength: 8)
+
+            TryzubSubtleLoadingDot()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TryzubColors.cardBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(TryzubColors.border, lineWidth: 1)
+        }
+    }
+}
+
 struct TryzubLoadingRow: View {
     let title: String
 
     var body: some View {
-        HStack {
-            Spacer()
-            ProgressView(title)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, minHeight: 72)
+        TryzubSectionLoadingCard(title: title, systemImage: "ellipsis.circle")
+            .frame(minHeight: 56)
     }
 }
 

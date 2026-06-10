@@ -44,18 +44,12 @@ struct ReservationDetailPresentation {
     ) -> ReservationDetailPresentation {
         let emailStatus = Self.emailStateText(for: reservation)
         var reservationRows: [Row] = [
-            Row(title: "Status", value: reservation.statusValue.displayName),
-            Row(title: "Date", value: reservation.displayDate),
-            Row(title: "Time", value: reservation.displayTime),
-            Row(title: "Party", value: "\(reservation.partySize)"),
-            Row(title: "Table", value: reservation.tableDisplay),
-            Row(title: "Source", value: reservation.sourceDisplayName),
             Row(title: "Email", value: emailStatus),
             Row(title: "Submitted", value: submittedValue(for: reservation))
         ]
 
         if let timingText = reservation.operationalTimingDisplayText() {
-            reservationRows.insert(Row(title: "Timing", value: timingText, allowsWrap: true), at: 1)
+            reservationRows.insert(Row(title: "Timing", value: timingText, allowsWrap: true), at: 0)
         }
 
         if let confirmedAt = reservation.confirmedAt?.nilIfBlank {
@@ -770,7 +764,7 @@ struct ReservationDetailView: View {
     }
 
     private func detailsCard(_ presentation: ReservationDetailPresentation) -> some View {
-        DetailSectionCard(title: "Reservation details", systemImage: "fork.knife") {
+        DetailSectionCard(title: "Reservation metadata", systemImage: "info.circle") {
             VStack(spacing: 10) {
                 ForEach(presentation.reservationRows) { row in
                     DetailDataRow(title: row.title, value: row.value, allowsWrap: row.allowsWrap)
@@ -891,17 +885,14 @@ struct ReservationDetailView: View {
             for: reservation.remoteID,
             dateKey: reservation.reservationDate
         )
-        return GuestHistorySemantics.insightsMergedContext(
+        return GuestHistorySemantics.mergePresentationTaskKey(
+            surface: "detail",
             guestName: reservation.guestName,
             localReport: guestInsightReport,
             serverSummary: serverSummary,
             serverAnswered: serverAnswered,
-            profileStamp: guestIntelligenceStore.semanticProfileStamp(
-                for: reservation.remoteID,
-                dateKey: reservation.reservationDate
-            ),
             profilePack: guestIntelligenceStore.profilePack(for: reservation.remoteID)
-        ).traceKey
+        )
     }
 
     private func mergedRegularityLevel(for report: GuestInsightReport) -> GuestRegularityLevel? {
@@ -1197,7 +1188,7 @@ struct ReservationDetailView: View {
             guestManageLinkMessage = "Manual confirmation recorded."
             ReservationHaptics.success()
         } catch {
-            errorMessage = "Email may have been sent, but the manual email log did not save. Check details and retry if needed."
+            errorMessage = "Staff may have sent email from Mail, but activity was not recorded. Check details and retry if needed."
             ReservationHaptics.warning()
         }
     }
@@ -1658,7 +1649,7 @@ private struct DetailActionBar: View {
 
             if reservation.hasUsableConfirmationEmail, let onSendGuestConfirmationEmail {
                 pendingConfirmationButton(
-                    title: isGeneratingGuestManageLink ? "Preparing draft" : "Send Confirmation Draft",
+                    title: isGeneratingGuestManageLink ? "Preparing draft" : "Open Email Draft",
                     systemImage: "envelope",
                     isPrimary: false
                 ) {
@@ -1721,7 +1712,7 @@ private struct DetailActionBar: View {
                     onSendGuestConfirmationEmail()
                 } label: {
                     Label(
-                        isGeneratingGuestManageLink ? "Preparing draft" : "Send confirmation draft",
+                        isGeneratingGuestManageLink ? "Preparing draft" : "Open email draft",
                         systemImage: "envelope"
                     )
                 }

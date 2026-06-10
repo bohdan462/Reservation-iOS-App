@@ -3,8 +3,9 @@
 //  Tryzub Reservations
 //
 
-import SwiftUI
 import SwiftData
+import SwiftUI
+import UIKit
 
 // MARK: - Manual Reservation Wrapper
 
@@ -72,11 +73,17 @@ struct ManualReservationFormView: View {
 
     private func prepareCreateConfirmation() {
         guard validateRequiredFields() else { return }
-        // Defer one run loop so the submit tap cannot immediately dismiss the sheet.
+        dismissKeyboard()
+        // Defer one run loop so keyboard teardown finishes before the sheet presents.
         Task { @MainActor in
             await Task.yield()
+            FormTrace.event(surface: "manual_add", name: "confirmation_sheet_presented", extra: "mode=create")
             showCreateConfirmation = true
         }
+    }
+
+    private func dismissKeyboard() {
+        dismissReservationFormKeyboard(reason: "confirmation_sheet")
     }
 
     // Intent: Staff creates a fast call-in/manual reservation.
@@ -174,7 +181,7 @@ struct ReservationEditFormView: View {
                 onCancel: { dismiss() },
                 onSubmit: { prepareSaveConfirmation() },
                 onHideReservation: reservation.canSoftHideAsWrongEntry && !reservation.isHidden
-                ? { isShowingHideConfirmation = true }
+                ? { prepareHideConfirmation() }
                 : nil
         )
         .sheet(isPresented: $showSaveConfirmation) {
@@ -203,7 +210,7 @@ struct ReservationEditFormView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Hide the reservation while keeping it in backend history.")
+            Text("This removes the wrong entry from normal staff views. It does not permanently delete it.")
         }
     }
 
@@ -213,9 +220,20 @@ struct ReservationEditFormView: View {
             errorMessage = "No changes to save."
             return
         }
+        dismissReservationFormKeyboard(reason: "confirmation_sheet")
         Task { @MainActor in
             await Task.yield()
+            FormTrace.event(surface: "manual_add", name: "confirmation_sheet_presented", extra: "mode=edit")
             showSaveConfirmation = true
+        }
+    }
+
+    private func prepareHideConfirmation() {
+        dismissReservationFormKeyboard(reason: "hide_confirmation_dialog")
+        Task { @MainActor in
+            await Task.yield()
+            FormTrace.event(surface: "manual_add", name: "confirmation_sheet_presented", extra: "mode=edit_hide")
+            isShowingHideConfirmation = true
         }
     }
 
@@ -348,6 +366,38 @@ private enum ReservationFormMode {
     }
 }
 
+private enum ReservationFormField: Hashable, CaseIterable {
+    case guestName
+    case phone
+    case email
+    case guestNotes
+    case staffNotes
+    case tableName
+    case supersededById
+
+    var traceName: String {
+        switch self {
+        case .guestName: return "guest_name"
+        case .phone: return "phone"
+        case .email: return "email"
+        case .guestNotes: return "guest_notes"
+        case .staffNotes: return "staff_notes"
+        case .tableName: return "table_name"
+        case .supersededById: return "superseded_by_id"
+        }
+    }
+
+    func next(in order: [ReservationFormField]) -> ReservationFormField? {
+        guard let index = order.firstIndex(of: self), index + 1 < order.count else { return nil }
+        return order[index + 1]
+    }
+
+    func previous(in order: [ReservationFormField]) -> ReservationFormField? {
+        guard let index = order.firstIndex(of: self), index > 0 else { return nil }
+        return order[index - 1]
+    }
+}
+
 private struct ReservationFormContent: View {
     let mode: ReservationFormMode
     @Binding var draft: ReservationFormDraft
@@ -386,6 +436,7 @@ private struct ReservationFormContent: View {
     @State private var cachedDayReservationsDateKey: String?
     @State private var cachedDayReservations: [ReservationRecord] = []
     @State private var slotContextRefreshTask: Task<Void, Never>?
+    @FocusState private var focusedField: ReservationFormField?
 
     private var dayAvailability: RestaurantDayAvailabilityDTO? {
         manualReservationFacade.dayAvailability
@@ -479,6 +530,33 @@ private struct ReservationFormContent: View {
         }
         .onChange(of: slotContextRefreshKey) { _, _ in
             refreshSlotContext()
+        }
+        .onChange(of: focusedField) { _, newValue in
+            guard let newValue else { return }
+            FormTrace.event(
+                surface: "manual_add",
+                name: "focus_changed",
+                extra: "field=\(newValue.traceName)"
+            )
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                if let focusedField, let previous = focusedField.previous(in: focusFieldOrder) {
+                    Button("Previous") {
+                        self.focusedField = previous
+                    }
+                }
+                if let focusedField, let next = focusedField.next(in: focusFieldOrder) {
+                    Button("Next") {
+                        self.focusedField = next
+                    }
+                }
+                Spacer()
+                Button("Done") {
+                    dismissReservationFormKeyboard(reason: "keyboard_done")
+                    self.focusedField = nil
+                }
+            }
         }
         .onDisappear {
             slotContextRefreshTask?.cancel()
@@ -624,8 +702,17 @@ private struct ReservationFormContent: View {
         GuestLookupCacheKey(records: guestLookupRecords)
     }
 
+    private var focusFieldOrder: [ReservationFormField] {
+        var order: [ReservationFormField] = [.guestName, .phone, .email, .guestNotes, .staffNotes]
+        if mode.showsEditControls {
+            order.append(contentsOf: [.tableName, .supersededById])
+        }
+        return order
+    }
+
     private var visibleGuestPhoneSuggestion: GuestLookupResult? {
         guard mode.usesManualGuestInput else { return nil }
+        guard draft.phone.filter(\.isNumber).count >= 10 else { return nil }
         guard let match = guestPhoneLookupStore.phoneMatch else { return nil }
         guard suppressedGuestPhoneSuggestionID != match.id else { return nil }
         guard !draftAlreadyMatchesGuest(match) else { return nil }
@@ -712,49 +799,41 @@ private struct ReservationFormContent: View {
 
     @ViewBuilder
     private var guestNameField: some View {
-        if mode.usesManualGuestInput {
-            ReservationFormTextField(
-                title: "Name",
-                text: $draft.guestName,
-                prompt: "Guest name",
-                inputKind: .guestName
-            )
-        } else {
-            ReservationFormTextField(title: "Name", text: $draft.guestName, prompt: "Guest name")
-                .textContentType(.name)
-        }
+        ReservationFormTextField(
+            title: "Name",
+            text: $draft.guestName,
+            prompt: "Guest name",
+            inputKind: .guestName,
+            field: .guestName,
+            focusedField: $focusedField,
+            error: guestNameFieldError
+        )
     }
 
     @ViewBuilder
     private var guestPhoneField: some View {
-        if mode.usesManualGuestInput {
-            ReservationFormTextField(
-                title: "Phone",
-                text: $draft.phone,
-                prompt: "(312) 345-5674",
-                inputKind: .guestPhone
-            )
-        } else {
-            ReservationFormTextField(title: "Phone", text: $draft.phone, prompt: "Phone")
-                .keyboardType(.phonePad)
-        }
+        ReservationFormTextField(
+            title: "Phone",
+            text: $draft.phone,
+            prompt: mode.usesManualGuestInput ? "(312) 345-5674" : "Phone",
+            inputKind: .guestPhone,
+            field: .phone,
+            focusedField: $focusedField,
+            error: phoneFieldError
+        )
     }
 
     @ViewBuilder
     private var guestEmailField: some View {
-        if mode.usesManualGuestInput {
-            ReservationFormTextField(
-                title: "Email optional",
-                text: $draft.email,
-                prompt: "Leave blank if none",
-                inputKind: .guestEmail
-            )
-        } else {
-            ReservationFormTextField(title: "Email optional", text: $draft.email, prompt: "Leave blank if none")
-                .keyboardType(.emailAddress)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-        }
+        ReservationFormTextField(
+            title: "Email optional",
+            text: $draft.email,
+            prompt: "Leave blank if none",
+            inputKind: .guestEmail,
+            field: .email,
+            focusedField: $focusedField,
+            error: emailFieldError
+        )
     }
 
     private var dateCard: some View {
@@ -958,7 +1037,6 @@ private struct ReservationFormContent: View {
 
     private var slotContextBanner: some View {
         HostReservationSlotContextBanner(context: slotContext)
-            .animation(.snappy(duration: 0.32), value: slotContext)
     }
 
     private func refreshSlotContext() {
@@ -1033,10 +1111,22 @@ private struct ReservationFormContent: View {
             }
 
             HStack(spacing: ReservationFormLayout.fieldSpacing) {
-                ReservationFormTextField(title: "Table", text: $draft.tableName, prompt: "Unassigned")
-                    .textInputAutocapitalization(.characters)
-                ReservationFormTextField(title: "Superseded by", text: $draft.supersededById, prompt: "ID")
-                    .keyboardType(.numberPad)
+                ReservationFormTextField(
+                    title: "Table",
+                    text: $draft.tableName,
+                    prompt: "Unassigned",
+                    inputKind: .tableName,
+                    field: .tableName,
+                    focusedField: $focusedField
+                )
+                ReservationFormTextField(
+                    title: "Superseded by",
+                    text: $draft.supersededById,
+                    prompt: "ID",
+                    inputKind: .numericID,
+                    field: .supersededById,
+                    focusedField: $focusedField
+                )
             }
 
             if let onHideReservation {
@@ -1055,18 +1145,54 @@ private struct ReservationFormContent: View {
         ReservationFormSection(title: "Notes", systemImage: "note.text") {
             if isWideForm && !mode.showsEditControls {
                 HStack(alignment: .top, spacing: ReservationFormLayout.fieldSpacing) {
-                    ReservationFormTextEditor(title: "Guest notes", text: $draft.guestNotes, minHeight: 108)
-                    ReservationFormTextEditor(title: "Staff notes", text: $draft.staffNotes, minHeight: 108)
+                    ReservationFormTextEditor(
+                        title: "Guest notes",
+                        text: $draft.guestNotes,
+                        minHeight: 108,
+                        field: .guestNotes,
+                        focusedField: $focusedField
+                    )
+                    ReservationFormTextEditor(
+                        title: "Staff notes",
+                        text: $draft.staffNotes,
+                        minHeight: 108,
+                        field: .staffNotes,
+                        focusedField: $focusedField
+                    )
                 }
             } else if isWideForm && mode.showsEditControls {
                 VStack(spacing: ReservationFormLayout.fieldSpacing) {
-                    ReservationFormTextEditor(title: "Guest notes", text: $draft.guestNotes, minHeight: 88)
-                    ReservationFormTextEditor(title: "Staff notes", text: $draft.staffNotes, minHeight: 88)
+                    ReservationFormTextEditor(
+                        title: "Guest notes",
+                        text: $draft.guestNotes,
+                        minHeight: 88,
+                        field: .guestNotes,
+                        focusedField: $focusedField
+                    )
+                    ReservationFormTextEditor(
+                        title: "Staff notes",
+                        text: $draft.staffNotes,
+                        minHeight: 88,
+                        field: .staffNotes,
+                        focusedField: $focusedField
+                    )
                 }
             } else {
                 VStack(spacing: ReservationFormLayout.fieldSpacing) {
-                    ReservationFormTextEditor(title: "Guest notes", text: $draft.guestNotes, minHeight: 88)
-                    ReservationFormTextEditor(title: "Staff notes", text: $draft.staffNotes, minHeight: 88)
+                    ReservationFormTextEditor(
+                        title: "Guest notes",
+                        text: $draft.guestNotes,
+                        minHeight: 88,
+                        field: .guestNotes,
+                        focusedField: $focusedField
+                    )
+                    ReservationFormTextEditor(
+                        title: "Staff notes",
+                        text: $draft.staffNotes,
+                        minHeight: 88,
+                        field: .staffNotes,
+                        focusedField: $focusedField
+                    )
                 }
             }
         }
@@ -1102,6 +1228,8 @@ private struct ReservationFormContent: View {
 
     private func submitIfValid() {
         hasAttemptedSave = true
+        dismissReservationFormKeyboard(reason: "submit")
+        focusedField = nil
         guard !controller.isNetworkDegraded,
               availabilityBlockingMessage == nil,
               validationErrorMessage == nil,
@@ -1116,11 +1244,28 @@ private struct ReservationFormContent: View {
     private var appliesStaffLeadTime: Bool { false }
 
     private var formBlockingMessage: String? {
-        if let availabilityBlockingMessage {
-            return availabilityBlockingMessage
-        }
+        availabilityBlockingMessage
+    }
+
+    private var guestNameFieldError: String? {
         guard hasAttemptedSave else { return nil }
-        return validationErrorMessage
+        let guestName = ReservationInputNormalizer.collapsedWhitespace(draft.guestName)
+        guard guestName.count < 2 else { return nil }
+        return "Add the guest name before saving."
+    }
+
+    private var phoneFieldError: String? {
+        guard hasAttemptedSave else { return nil }
+        let phoneDigits = ReservationInputNormalizer.phoneDigits(draft.phone)
+        guard !ReservationFormValidator.isPlausibleUSPhone(phoneDigits) else { return nil }
+        return "Add a valid 10-digit phone number before saving."
+    }
+
+    private var emailFieldError: String? {
+        guard hasAttemptedSave else { return nil }
+        let email = ReservationInputNormalizer.normalizedEmail(draft.email)
+        guard !email.isEmpty, !ReservationFormValidator.isPlausibleEmail(email) else { return nil }
+        return "Enter a valid email address or leave email blank."
     }
 
     private var availabilityBlockingMessage: String? {
@@ -1584,11 +1729,11 @@ private enum ReservationFormValidator {
         return lhsParts.hour == rhsParts.hour && lhsParts.minute == rhsParts.minute
     }
 
-    private static func isPlausibleUSPhone(_ digits: String) -> Bool {
+    static func isPlausibleUSPhone(_ digits: String) -> Bool {
         digits.count == 10 || (digits.count == 11 && digits.first == "1")
     }
 
-    private static func isPlausibleEmail(_ email: String) -> Bool {
+    static func isPlausibleEmail(_ email: String) -> Bool {
         let parts = email.split(separator: "@")
         guard parts.count == 2,
               parts[0].isEmpty == false,
@@ -1901,16 +2046,26 @@ private struct ReservationFormTextField: View {
         case guestName
         case guestPhone
         case guestEmail
+        case tableName
+        case numericID
     }
 
     let title: String
     @Binding var text: String
     let prompt: String
     var inputKind: InputKind = .plain
+    var field: ReservationFormField?
+    var focusedField: FocusState<ReservationFormField?>.Binding?
+    var error: String?
+
+    private var isFocused: Bool {
+        guard let field, let focusedField else { return false }
+        return focusedField.wrappedValue == field
+    }
 
     private var displayBinding: Binding<String> {
         switch inputKind {
-        case .plain, .guestEmail:
+        case .plain, .guestEmail, .tableName, .numericID:
             return $text
         case .guestName:
             return Binding(
@@ -1927,21 +2082,26 @@ private struct ReservationFormTextField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
+            StaffFormFieldLabel(title: title)
 
-            TextField(prompt, text: displayBinding)
-                .font(.body)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 11)
-                .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            Group {
+                if let focusedField, let field {
+                    styledTextField.focused(focusedField, equals: field)
+                } else {
+                    styledTextField
                 }
-                .modifier(ReservationFormTextFieldModifiers(inputKind: inputKind))
+            }
+
+            if let error {
+                StaffFormErrorCaption(message: error)
+            }
         }
+    }
+
+    private var styledTextField: some View {
+        TextField(prompt, text: displayBinding)
+            .staffFormFieldChrome(isFocused: isFocused)
+            .modifier(ReservationFormTextFieldModifiers(inputKind: inputKind))
     }
 }
 
@@ -1954,19 +2114,25 @@ private struct ReservationFormTextFieldModifiers: ViewModifier {
             content
         case .guestName:
             content
-                .textContentType(.none)
+                .textContentType(.name)
                 .textInputAutocapitalization(.words)
-                .autocorrectionDisabled()
         case .guestPhone:
             content
-                .textContentType(.none)
+                .textContentType(.telephoneNumber)
                 .keyboardType(.phonePad)
         case .guestEmail:
             content
-                .textContentType(.none)
+                .textContentType(.emailAddress)
                 .keyboardType(.emailAddress)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+        case .tableName:
+            content
+                .textInputAutocapitalization(.characters)
+                .autocorrectionDisabled()
+        case .numericID:
+            content
+                .keyboardType(.numberPad)
         }
     }
 }
@@ -1975,24 +2141,36 @@ private struct ReservationFormTextEditor: View {
     let title: String
     @Binding var text: String
     let minHeight: CGFloat
+    var field: ReservationFormField?
+    var focusedField: FocusState<ReservationFormField?>.Binding?
+
+    private var isFocused: Bool {
+        guard let field, let focusedField else { return false }
+        return focusedField.wrappedValue == field
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
+            StaffFormFieldLabel(title: title)
 
-            TextEditor(text: $text)
-                .font(.body)
-                .frame(minHeight: minHeight)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            Group {
+                if let focusedField, let field {
+                    styledEditor.focused(focusedField, equals: field)
+                } else {
+                    styledEditor
                 }
+            }
         }
+    }
+
+    private var styledEditor: some View {
+        TextEditor(text: $text)
+            .font(.body)
+            .textInputAutocapitalization(.sentences)
+            .frame(minHeight: minHeight)
+            .scrollContentBackground(.hidden)
+            .padding(8)
+            .staffFormFieldChrome(isFocused: isFocused)
     }
 }
 
@@ -2116,6 +2294,18 @@ private extension String {
     var nilIfBlank: String? {
         isEmpty ? nil : self
     }
+}
+
+// MARK: - Keyboard
+
+private func dismissReservationFormKeyboard(reason: String) {
+    UIApplication.shared.sendAction(
+        #selector(UIResponder.resignFirstResponder),
+        to: nil,
+        from: nil,
+        for: nil
+    )
+    FormTrace.event(surface: "manual_add", name: "keyboard_dismissed", extra: "reason=\(reason)")
 }
 
 // MARK: - Previews

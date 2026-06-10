@@ -294,7 +294,7 @@ enum HostGuestIntelligenceSupport {
       if let snippet = HostGuestNoteSnippetExtractor.allergySnippet(from: rawNotes) {
         message = "\(reservation.guestName) has \(snippet) noted."
       } else {
-        message = "\(reservation.guestName) has allergy-related notes."
+        message = "Guest note mentions allergy language. Staff should review before seating."
       }
       signals.append(
         HostGuestSignal(
@@ -633,7 +633,7 @@ enum HostGuestIntelligenceSupport {
     if let snippet = HostGuestNoteSnippetExtractor.allergySnippet(from: rawNotes) {
       message = "\(reservation.guestName) has \(snippet) noted."
     } else {
-      message = "\(reservation.guestName) has allergy-related notes."
+      message = "Guest note mentions allergy language. Staff should review before seating."
     }
 
     return HostGuestSignal(

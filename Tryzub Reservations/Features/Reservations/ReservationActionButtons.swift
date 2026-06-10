@@ -296,13 +296,13 @@ enum ReservationHostAction: String, Identifiable {
                 : ""
             let manualFlow = Self.isBackendConfirmEmailEnabled
                 ? "Choose Confirm only to update the reservation without email, or Confirm + Send Email to ask the server to send the confirmation email."
-                : "Choose Confirm only to update status. Use Detail → More → Send confirmation draft for the manual Gmail/Mail flow."
+                : "Choose Confirm only to update status. Use Detail → More → Open email draft for the manual Gmail/Mail flow."
             return "\(manualFlow)\(helper)"
         case .confirmAndSendEmail:
             if Self.isBackendConfirmEmailEnabled {
                 return "\(summary)\n\nThis will mark the reservation confirmed and ask the server to send a confirmation email to \(reservation.email)."
             }
-            return "Backend confirmation email is disabled for the pilot. Use Detail → More → Send confirmation draft instead."
+            return "Backend confirmation email is disabled for the pilot. Use Detail → More → Open email draft instead."
         case .seat:
             return "\(summary)\n\nThis only updates staff status. No email will be sent."
         case .assignTable:

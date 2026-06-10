@@ -51,6 +51,10 @@ enum ReservationAPIRequestReason: String {
     case guestIntelligence = "guest_intelligence"
     case intelligenceSystemStatus = "intelligence_system_status"
     case reconcileByID = "reconcile_by_id"
+    case floorPlan = "floor_plan"
+    case restaurantTables = "restaurant_tables"
+    case restaurantTablesPut = "restaurant_tables_put"
+    case reservationTablesPatch = "reservation_tables_patch"
     case manualSkipBusy = "manual_skip_busy"
     case manualSkipCooldown = "manual_skip_cooldown"
     case scopeSkipInFlight = "scope_skip_in_flight"
@@ -332,6 +336,14 @@ protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
         reason: ReservationAPIRequestReason
     ) async throws -> IntelligenceSystemStatusDTO
     func fetchImportFailures(page: Int, perPage: Int, reason: ReservationAPIRequestReason) async throws -> ImportFailuresResponse
+    func fetchRestaurantTables(reason: ReservationAPIRequestReason) async throws -> [RestaurantTableDTO]
+    func putRestaurantTables(_ tables: [RestaurantTableDTO], reason: ReservationAPIRequestReason) async throws -> [RestaurantTableDTO]
+    func fetchFloorPlan(date: String, reason: ReservationAPIRequestReason) async throws -> FloorPlanResponseDTO
+    func patchReservationTables(
+        reservationID: Int,
+        request: PatchReservationTablesRequest,
+        reason: ReservationAPIRequestReason
+    ) async throws -> FloorPlanPatchResponseDTO
 }
 
 // MARK: - Default Protocol Convenience
@@ -960,6 +972,76 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return try decodeIntelligenceSystemStatus(from: data, request: request)
     }
 
+    // MARK: - Floor Plan
+
+    // Intent: Reads persisted restaurant table layout metadata.
+    // Network: GET /restaurant-tables.
+    func fetchRestaurantTables(
+        reason: ReservationAPIRequestReason = .restaurantTables
+    ) async throws -> [RestaurantTableDTO] {
+        let url = try apiURL(path: "restaurant-tables")
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+        let response = try decode(RestaurantTablesResponseDTO.self, from: data, request: request)
+        return response.data
+    }
+
+    // Intent: Partial upsert of restaurant table layout rows by table_key.
+    // Network: PUT /restaurant-tables.
+    func putRestaurantTables(
+        _ tables: [RestaurantTableDTO],
+        reason: ReservationAPIRequestReason = .restaurantTablesPut
+    ) async throws -> [RestaurantTableDTO] {
+        let url = try apiURL(path: "restaurant-tables")
+        let request = try makeJSONRequest(
+            url: url,
+            method: "PUT",
+            body: RestaurantTablesPutRequestDTO(tables: tables)
+        )
+        let data = try await perform(request, reason: reason)
+        let response = try decode(RestaurantTablesResponseDTO.self, from: data, request: request)
+        return response.data
+    }
+
+    // Intent: Reads floor-plan tables, assignments, and reservations for one service date.
+    // Network: GET /floor-plan?date=YYYY-MM-DD.
+    func fetchFloorPlan(
+        date: String,
+        reason: ReservationAPIRequestReason = .floorPlan
+    ) async throws -> FloorPlanResponseDTO {
+        let url = try makeURL(
+            path: "floor-plan",
+            queryItems: [URLQueryItem(name: "date", value: date)]
+        )
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+        return try decode(FloorPlanResponseDTO.self, from: data, request: request)
+    }
+
+    // Intent: Replaces table assignment for one managed reservation atomically.
+    // Network: PATCH /managed-reservations/{id}/tables.
+    func patchReservationTables(
+        reservationID: Int,
+        request patchRequest: PatchReservationTablesRequest,
+        reason: ReservationAPIRequestReason = .reservationTablesPatch
+    ) async throws -> FloorPlanPatchResponseDTO {
+        let url = try apiURL(path: "managed-reservations/\(reservationID)/tables")
+        let request = try makeJSONRequest(url: url, method: "PATCH", body: patchRequest)
+        let (data, httpResponse) = try await performReturningHTTPResponse(request, reason: reason)
+
+        if httpResponse.statusCode == 409 {
+            throw decodeTableAssignmentConflict(from: data, request: request, httpResponse: httpResponse)
+        }
+
+        try validate(
+            response: httpResponse,
+            data: data,
+            request: request,
+            reason: reason
+        )
+        return try decode(FloorPlanPatchResponseDTO.self, from: data, request: request)
+    }
+
     // MARK: - Import Failure Diagnostics
 
     // Intent: Developer/manager reads failed public-form imports.
@@ -1033,6 +1115,43 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(body)
         return request
+    }
+
+    private func decodeTableAssignmentConflict(
+        from data: Data,
+        request: URLRequest,
+        httpResponse: HTTPURLResponse
+    ) -> FloorPlanError {
+        _ = ReservationAPIDiagnostics.make(
+            request: request,
+            response: httpResponse,
+            data: data,
+            includeResponseBody: true
+        )
+
+        if let conflictResponse = try? decoder.decode(
+            TableAssignmentConflictResponseDTO.self,
+            from: data
+        ), !conflictResponse.conflicts.isEmpty {
+            return .assignmentConflict(conflictResponse.conflicts)
+        }
+
+        if let message = (try? decoder.decode(TableAssignmentConflictResponseDTO.self, from: data))?.message?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !message.isEmpty {
+            return .serverMessage(message)
+        }
+
+        if let wordpress = try? decoder.decode(WordPressAPIError.self, from: data) {
+            let message = wordpress.message.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !message.isEmpty {
+                return .serverMessage(message)
+            }
+        }
+
+        return .serverMessage(
+            "This table assignment conflicts with another reservation. Refresh the floor plan and try again."
+        )
     }
 
     private func decode<T: Decodable>(
@@ -1278,6 +1397,31 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
 
     // MARK: - Network Execution
 
+    private func performReturningHTTPResponse(
+        _ request: URLRequest,
+        retryCount: Int = 0,
+        reason: ReservationAPIRequestReason = .unspecified,
+        requiresAuth: Bool = true
+    ) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await execute(
+            request,
+            retryCount: retryCount,
+            reason: reason,
+            requiresAuth: requiresAuth
+        )
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ReservationAPIError.invalidResponse(
+                diagnostics: ReservationAPIDiagnostics.make(
+                    request: request,
+                    response: nil,
+                    data: data,
+                    includeResponseBody: !reason.suppressesResponseBodyLogging
+                )
+            )
+        }
+        return (data, httpResponse)
+    }
+
     // Intent: Performs one API request with bounded retry for transient network errors.
     private func perform(
         _ request: URLRequest,
@@ -1285,6 +1429,22 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         reason: ReservationAPIRequestReason = .unspecified,
         requiresAuth: Bool = true
     ) async throws -> Data {
+        let (data, response) = try await execute(
+            request,
+            retryCount: retryCount,
+            reason: reason,
+            requiresAuth: requiresAuth
+        )
+        try validate(response: response, data: data, request: request, reason: reason)
+        return data
+    }
+
+    private func execute(
+        _ request: URLRequest,
+        retryCount: Int = 0,
+        reason: ReservationAPIRequestReason = .unspecified,
+        requiresAuth: Bool = true
+    ) async throws -> (Data, URLResponse) {
         if requiresAuth {
             try ensureProtectedCredentials()
         }
@@ -1299,22 +1459,36 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         while attempt <= effectiveRetryCount {
             do {
                 let (data, response) = try await requestSerializer.data(for: request, session: session)
-                try validate(response: response, data: data, request: request, reason: reason)
                 let includeResponseBody = !reason.suppressesResponseBodyLogging
-                let successDiagnostics = ReservationAPIDiagnostics.make(
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let diagnostics = ReservationAPIDiagnostics.make(
                     request: request,
                     response: response as? HTTPURLResponse,
                     data: data,
                     includeResponseBody: includeResponseBody
                 )
-                ReservationAPILogger.end(
-                    request: request,
-                    reason: reason,
-                    statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0,
-                    startedAt: startedAt,
-                    responseBodySnippet: successDiagnostics.responseBodySnippet
-                )
-                return data
+
+                if (200...299).contains(statusCode) {
+                    ReservationAPILogger.end(
+                        request: request,
+                        reason: reason,
+                        statusCode: statusCode,
+                        startedAt: startedAt,
+                        responseBodySnippet: diagnostics.responseBodySnippet
+                    )
+                } else {
+                    ReservationAPILogger.fail(
+                        request: request,
+                        reason: reason,
+                        error: ReservationAPIError.serverError(
+                            statusCode: statusCode,
+                            diagnostics: diagnostics
+                        ),
+                        startedAt: startedAt
+                    )
+                }
+
+                return (data, response)
             } catch is CancellationError {
                 ReservationAPILogger.cancelled(request: request, reason: reason, startedAt: startedAt)
                 throw ReservationAPIError.cancelled

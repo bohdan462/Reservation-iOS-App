@@ -283,8 +283,10 @@ struct HostIntelligenceCard: View {
       }
     } else if isLoadingPresentation {
       HStack(spacing: 6) {
-        ProgressView()
-          .controlSize(.mini)
+        TryzubSubtleLoadingDot(diameter: 6)
+        Text("Checking service status…")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
       }
     }
   }

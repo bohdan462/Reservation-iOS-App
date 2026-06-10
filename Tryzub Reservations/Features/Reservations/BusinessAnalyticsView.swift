@@ -74,8 +74,11 @@ private struct BusinessAnalyticsLoadedView: View {
                 }
 
                 if coordinator.isReservationLoading, coordinator.reservationSummary == nil {
-                    ProgressView("Loading reservation analytics…")
-                        .frame(maxWidth: .infinity, minHeight: 120)
+                    TryzubSectionLoadingCard(
+                        title: "Loading reservation analytics…",
+                        systemImage: "chart.bar"
+                    )
+                    .padding(.horizontal, 16)
                 } else {
                     BusinessIntelligenceOverviewSection(
                         summary: coordinator.businessIntelligenceSummary,

@@ -166,7 +166,6 @@ enum GuestProfileViewStateBuilder {
             return .ready
         }()
 
-        let profileStamp = store.profileCacheStamp(for: reservationID)
         let freshness = ScreenFreshnessState.from(
             loadedAt: profilePack != nil ? now : nil,
             ttl: DataFreshnessPolicy.standard.guestIntelligenceTTL,
@@ -192,7 +191,8 @@ enum GuestProfileViewStateBuilder {
             showsSupplementalLocalHistory: localCachedHistory != nil,
             localHistorySectionTitle: localCachedHistory?.sectionTitle,
             localHistoryScopeNote: localCachedHistory?.scopeNote,
-            traceKey: "\(reservationID)-\(mergedContext?.traceKey ?? profileStamp)"
+            traceKey: mergedContext?.traceKey
+                ?? store.semanticProfileStamp(for: reservationID, dateKey: dateKey)
         )
 
         let source: String
@@ -226,8 +226,8 @@ enum GuestProfileViewStateBuilder {
             return "Server guest profile loaded."
         }
         if isLoadingProfile {
-            return "Loading server guest history…"
+            return "Guest history loading…"
         }
-        return "Local cache insights will appear when ready."
+        return "Found in local cache when server profile is not ready."
     }
 }

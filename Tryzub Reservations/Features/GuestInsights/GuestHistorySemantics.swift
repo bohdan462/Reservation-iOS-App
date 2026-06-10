@@ -242,7 +242,7 @@ enum GuestHistorySemantics {
       return GuestInsightsMetricsPresentation(
         title: "Clean visits",
         value: "\(localReport.visitOrdinal)",
-        caption: localReport.regularityLevel.displayName,
+        caption: "Local cached history only",
         source: .localCache
       )
     }
@@ -287,7 +287,7 @@ enum GuestHistorySemantics {
       return GuestInsightsMetricsPresentation(
         title: "Known visits",
         value: "—",
-        caption: "Loading server history",
+        caption: "Guest history loading",
         source: .merged
       )
     }
@@ -304,7 +304,7 @@ enum GuestHistorySemantics {
     return GuestInsightsMetricsPresentation(
       title: "Clean visits",
       value: "\(localReport.visitOrdinal)",
-      caption: localReport.regularityLevel.displayName,
+      caption: "Local cached history only",
       source: .localCache
     )
   }
@@ -445,7 +445,7 @@ enum GuestHistorySemantics {
           title: "Dietary note",
           detail: noteText.count <= 80
             ? noteText
-            : "\(reservation.guestName) has dietary notes."
+            : "Guest note mentions a dietary preference."
         )
       )
     }
@@ -455,7 +455,7 @@ enum GuestHistorySemantics {
       supplemental.append(
         DetailInsightLine(
           title: "Allergy note",
-          detail: "\(reservation.guestName) has allergy-related notes."
+          detail: "Guest note mentions allergy language. Staff should review before seating."
         )
       )
     }
@@ -509,7 +509,7 @@ enum GuestHistorySemantics {
     }
 
     if !serverAnswered {
-      return ("Guest history", "Guest history not loaded yet.", .unknownNotLoaded)
+      return ("Guest history", "Guest history not checked yet.", .unknownNotLoaded)
     }
 
     if serverAnswered, serverSummary == nil {
@@ -560,17 +560,50 @@ enum GuestHistorySemantics {
     let packSeenBefore = profilePack?.history?.seenBefore == true
       || profilePack?.hostProfilePacket?.seenBefore == true
     let packVersion = profilePack?.profilePackVersion ?? "none"
+    let normalizedLocalPrior = mergedSource == .localReliablePriorVisits
+      ? localPriorCount
+      : -1
     return [
       surface,
       "\(reservationID)",
       mergedSource.rawValue,
       "\(backendSeenBefore)",
-      "\(localPriorCount)",
+      "\(normalizedLocalPrior)",
       "\(previewRows)",
       "\(knownVisits)",
       "\(packSeenBefore)",
       packVersion
     ].joined(separator: "-")
+  }
+
+  /// Task/onChange key aligned with `recordMergePresentation` dedupe for a surface.
+  static func mergePresentationTaskKey(
+    surface: String,
+    guestName: String,
+    localReport: GuestInsightReport,
+    serverSummary: GuestIntelligenceSummaryDTO?,
+    serverAnswered: Bool,
+    profilePack: GuestIntelligenceProfilePackDTO?
+  ) -> String {
+    let merged = mergedHistoryLine(
+      guestName: guestName,
+      localReport: localReport,
+      serverSummary: serverSummary,
+      serverAnswered: serverAnswered,
+      profilePack: profilePack
+    )
+    let backendSeenBefore = isBackendSeenBefore(
+      serverSummary: serverSummary,
+      profilePack: profilePack
+    )
+    return semanticMergeDedupeKey(
+      surface: surface,
+      reservationID: localReport.selectedReservationID,
+      mergedSource: merged.source,
+      backendSeenBefore: backendSeenBefore,
+      localPriorCount: localReport.priorReliableVisitCount,
+      profilePack: profilePack
+    )
   }
 
   static func mergedRegularityLevel(
@@ -588,7 +621,7 @@ enum GuestHistorySemantics {
       return .seenBefore
     }
     if localReport.hasReliableRepeatGuestHistory {
-      return localReport.regularityLevel
+      return .seenBefore
     }
     guard let serverSummary, isServerReturning(serverSummary) else {
       if serverAnswered, serverSummary?.classification == .new {

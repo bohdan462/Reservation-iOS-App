@@ -1666,20 +1666,11 @@ private struct SettingsTextField: View {
     var prompt: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            StaffFormFieldLabel(title: title)
 
             TextField(prompt.isEmpty ? title : prompt, text: $text)
-                .font(.subheadline.weight(.medium))
-                .padding(.horizontal, 11)
-                .frame(minHeight: 38)
-                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                }
+                .staffFormFieldChrome()
         }
     }
 }
@@ -1701,14 +1692,13 @@ private struct SettingsTextEditor: View {
     var minHeight: CGFloat = 88
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            StaffFormFieldLabel(title: title)
 
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $text)
-                    .font(.subheadline.weight(.medium))
+                    .font(.body)
+                    .textInputAutocapitalization(.sentences)
                     .frame(minHeight: minHeight)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)

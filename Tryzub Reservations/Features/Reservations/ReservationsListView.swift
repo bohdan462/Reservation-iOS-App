@@ -115,29 +115,22 @@ private struct StartupRootView: View {
 
     @ViewBuilder
     private var startupLoadingView: some View {
+        let presentation = StartupProgressPresenter.fullScreen(
+            presentationState: controller.startupPresentationState,
+            backgroundWork: controller.startupBackgroundWorkState
+        )
+        let showsFailure = {
+            if case .failedNoCache = controller.startupPresentationState {
+                return true
+            }
+            return false
+        }()
+
         switch controller.startupPresentationState {
-        case .failedNoCache(let message):
+        case .checkingCache, .loadingSavedReservations, .emptyCacheLoadingNetwork, .failedNoCache:
             StartupCacheLoadingView(
-                mode: .loadingFromNetwork,
-                errorMessage: message,
-                onRetry: retryStartup
-            )
-        case .checkingCache:
-            StartupCacheLoadingView(
-                mode: .checkingSavedData,
-                errorMessage: nil,
-                onRetry: retryStartup
-            )
-        case .loadingSavedReservations:
-            StartupCacheLoadingView(
-                mode: .loadingSavedReservations,
-                errorMessage: nil,
-                onRetry: retryStartup
-            )
-        case .emptyCacheLoadingNetwork:
-            StartupCacheLoadingView(
-                mode: .loadingFromNetwork,
-                errorMessage: nil,
+                presentation: presentation,
+                showsFailure: showsFailure,
                 onRetry: retryStartup
             )
         case .ready, .showingCachedDataRefreshing:
@@ -166,6 +159,7 @@ private struct ReservationsTabShell: View {
     @StateObject private var guestIntelligenceStore: GuestIntelligenceStore
     @StateObject private var businessIntelligenceStore: BusinessIntelligenceStore
     @StateObject private var intelligenceSystemStatusStore: IntelligenceSystemStatusStore
+    @StateObject private var floorPlanStore: FloorPlanStore
     @State private var selectedTab: ReservationsAppTab = .host
 
     let environment: AppEnvironment
@@ -195,6 +189,9 @@ private struct ReservationsTabShell: View {
         )
         _intelligenceSystemStatusStore = StateObject(
             wrappedValue: IntelligenceSystemStatusStore(apiClient: environment.apiClient)
+        )
+        _floorPlanStore = StateObject(
+            wrappedValue: FloorPlanStore(apiClient: environment.apiClient)
         )
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
@@ -230,6 +227,16 @@ private struct ReservationsTabShell: View {
                 Label(hostTabTitle, systemImage: ReservationsAppTab.host.systemImage)
             }
             .tag(ReservationsAppTab.host)
+
+            FloorPlanView(
+                store: floorPlanStore,
+                isActive: selectedTab == .floorPlan
+            )
+            .tabItem {
+                Label(ReservationsAppTab.floorPlan.title, systemImage: ReservationsAppTab.floorPlan.systemImage)
+            }
+            .accessibilityLabel(ReservationsAppTab.floorPlan.accessibilityTitle)
+            .tag(ReservationsAppTab.floorPlan)
 
             ReservationScheduleView(environment: environment, isActive: selectedTab == .bookings)
                 .tabItem {
@@ -276,6 +283,7 @@ private struct ReservationsTabShell: View {
         .environmentObject(guestIntelligenceStore)
         .environmentObject(businessIntelligenceStore)
         .environmentObject(intelligenceSystemStatusStore)
+        .environmentObject(floorPlanStore)
         .onAppear {
             restaurantSettingsStore.adoptRestaurantSetup(controller.restaurantSetup)
             let raw = UserDefaults.standard.string(forKey: HostTableCapacityTextParser.storageKey) ?? ""
@@ -318,7 +326,7 @@ private struct ReservationsTabShell: View {
         switch selectedTab {
         case .bookings:
             return 112
-        case .host, .guests, .more:
+        case .host, .floorPlan, .guests, .more:
             return 62
         }
     }
