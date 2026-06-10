@@ -48,7 +48,7 @@ struct HostBoardView: View {
         case .checkingCache, .emptyCacheLoadingNetwork:
             return !controller.hasReleasedStartupUI
         case .loadingSavedReservations, .showingCachedDataRefreshing, .ready, .failedNoCache:
-            return false
+            return !controller.canStartNoncriticalStartupLoads
         }
     }
 
@@ -146,7 +146,32 @@ struct HostBoardView: View {
         let tableStamp = hostTableConfigStore.tableConfigFingerprint
         let analyticsStamp = analyticsSummaryIdentity
         let guestIntelStamp = guestIntelligenceStore.cacheStamp(for: selectedDateKey)
-        return "\(selectedDateKey)-\(reservationStamp)-\(historyStamp)-\(availabilityStamp)-\(seatedStamp)-\(settingsStamp)-\(tableStamp)-\(analyticsStamp)-\(guestIntelStamp)"
+        let operationalMinuteStamp = hostIntelligenceOperationalMinuteStamp
+        return "\(selectedDateKey)-\(reservationStamp)-\(historyStamp)-\(availabilityStamp)-\(seatedStamp)-\(settingsStamp)-\(tableStamp)-\(analyticsStamp)-\(guestIntelStamp)-\(operationalMinuteStamp)"
+    }
+
+    private var hostIntelligenceOperationalMinuteStamp: String {
+        guard selectedDateKey == Date.reservationDateString() else {
+            return "future-day"
+        }
+        let components = Calendar.current.dateComponents([.hour, .minute], from: clockTick)
+        let hour = components.hour ?? 0
+        let minute = components.minute ?? 0
+        return "op-minute-\(hour * 60 + minute)"
+    }
+
+    private var hostEvaluationStabilityContext: HostEvaluationStabilityContext {
+        let dateNavigationRecent: Bool = {
+            guard let navigationAt = controller.hostBoardDateNavigationAt else { return false }
+            return clockTick.timeIntervalSince(navigationAt) < HostBriefingHostBoardGate.dateNavigationCooldown
+        }()
+        return HostEvaluationStabilityContext(
+            isReservationRefreshInFlight: controller.isReservationNetworkRefreshInFlight,
+            isAvailabilitySummaryLoading: isLoadingAvailabilitySummary,
+            isGuestIntelligenceLoading: guestIntelligenceStore.isLoading(dateKey: selectedDateKey),
+            selectedDateRecentlyChanged: dateNavigationRecent,
+            hostSnapshotIncomplete: shouldDeferStartupOptionalLoads || deferNetworkLoads
+        )
     }
 
     private var analyticsSummaryIdentity: String {
@@ -271,7 +296,7 @@ struct HostBoardView: View {
         .onAppear {
             controller.noteHostBoardSelectedDate(selectedDateKey)
         }
-        .task(id: "\(isVisible)-\(deferNetworkLoads)-\(controller.startupPresentationState)-\(selectedDate.reservationDateString())") {
+        .task(id: "\(isVisible)-\(deferNetworkLoads)-\(controller.canStartNoncriticalStartupLoads)-\(selectedDateKey)") {
             // Lazy Home indicator load: availability/slots/blocked are screen-specific
             // and cached by the controller so tab switching does not refetch them.
             guard !isRunningForPreviews else { return }
@@ -286,7 +311,7 @@ struct HostBoardView: View {
                   isVisible else { return }
             controller.scheduleAvailabilitySummary(date: selectedDateKey)
         }
-        .task(id: "\(isVisible)-\(selectedDateKey)-guest-intelligence-\(deferNetworkLoads)-\(shouldDeferStartupOptionalLoads)") {
+        .task(id: "\(isVisible)-\(selectedDateKey)-guest-intelligence-\(deferNetworkLoads)-\(controller.canStartNoncriticalStartupLoads)") {
             // Non-blocking guest intelligence: first Host pulse uses local fallback.
             // Defer flags stay in the task id so load runs once startup optional loads release.
             guard !isRunningForPreviews else { return }
@@ -302,7 +327,10 @@ struct HostBoardView: View {
                 hostIntelligenceController.reset()
                 return
             }
-            hostIntelligenceController.evaluate(input: makeHostEngineInput(now: clockTick))
+            hostIntelligenceController.evaluate(
+                input: makeHostEngineInput(now: clockTick),
+                stability: hostEvaluationStabilityContext
+            )
             await hostIntelligenceController.refreshBriefing(
                 hostBoardContext: HostBriefingHostBoardContext(
                     isStartupNetworkPassInFlight: controller.isStartupNetworkPassInFlight,
@@ -551,7 +579,7 @@ struct HostBoardView: View {
 
     @ViewBuilder
     private var hostIntelligenceSection: some View {
-        let snapshot = hostIntelligenceController.decisionSnapshot
+        let snapshot = hostIntelligenceController.displaySnapshot
         let useSeparatedPrompts = hostIntelligenceController.settings.useSeparatedBriefingPrompts
         let compactPrompts = useSeparatedPrompts
             ? HostOperationalBriefingPromptBuilder.buildCompactPrompts(from: snapshot)
@@ -562,12 +590,15 @@ struct HostBoardView: View {
 
         HostIntelligenceCard(
             snapshot: snapshot,
-            briefingTextOverride: hostIntelligenceController.briefingText,
-            managerNarrative: hostIntelligenceController.managerNarrative,
+            briefingTextOverride: hostIntelligenceController.displayBriefingText,
+            managerNarrative: hostIntelligenceController.displayManagerNarrative,
             briefingSource: hostIntelligenceController.briefingSource,
             compactOperationalPrompts: compactPrompts,
             showOperationalReview: useSeparatedPrompts,
+            staffFacingPresentation: true,
             externalPulseActive: onDeviceSupportCoordinator.phase.pulseIsActive,
+            renderState: hostIntelligenceController.renderState,
+            isRefreshingAttentionCard: hostIntelligenceController.isRefreshingAttentionCard,
             onReviewTapped: useSeparatedPrompts ? { isShowingHostIntelligenceReview = true } : nil
         ) { action in
             handleHostIntelligenceAction(action)
@@ -577,7 +608,7 @@ struct HostBoardView: View {
                 HostIntelligenceReviewView(
                     snapshot: snapshot,
                     operationalPrompts: expandedPrompts,
-                    briefingText: hostIntelligenceController.briefingText,
+                    briefingText: hostIntelligenceController.displayBriefingText,
                     briefingSource: hostIntelligenceController.briefingSource
                 ) { action in
                     handleHostIntelligenceAction(action)

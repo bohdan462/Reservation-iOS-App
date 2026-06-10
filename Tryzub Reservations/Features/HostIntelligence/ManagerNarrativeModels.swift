@@ -56,6 +56,14 @@ struct ManagerNarrative: Equatable {
     failedReason: nil
   )
 
+  static let loading = ManagerNarrative(
+    headline: "Checking service status…",
+    whyItMatters: "Looking for reservations that need attention.",
+    checkNext: nil,
+    source: .template,
+    failedReason: nil
+  )
+
   var compactBriefingText: String {
     [headline, whyItMatters, checkNext]
       .compactMap { line in

@@ -60,13 +60,23 @@ final class GuestIntelligenceStore: ObservableObject {
         return "\(key)-\(loadedStamp)-\(generatedAt)-\(itemCount)"
     }
 
-    func scheduleLoad(dateKey: String, force: Bool = false) {
+    func scheduleLoad(dateKey: String, force: Bool = false, isSelectedDate: Bool = true) {
         let key = normalizedDateKey(dateKey)
         guard !key.isEmpty else { return }
 
         if !force, isFresh(key), responsesByDateKey[key] != nil {
             return
         }
+
+        if let previous = pendingDateKey, previous != key {
+            StartupPolicyTrace.guestIntelligenceCancelled(date: previous, reason: "date_changed")
+        }
+
+        StartupPolicyTrace.guestIntelligenceScheduled(
+            date: key,
+            selected: isSelectedDate,
+            delaySeconds: Int(ceil(loadDebounceInterval))
+        )
 
         pendingDateKey = key
         loadDebounceTask?.cancel()
@@ -80,7 +90,10 @@ final class GuestIntelligenceStore: ObservableObject {
         }
     }
 
-    func cancelScheduledLoad() {
+    func cancelScheduledLoad(reason: String = "visibility") {
+        if let previous = pendingDateKey {
+            StartupPolicyTrace.guestIntelligenceCancelled(date: previous, reason: reason)
+        }
         pendingDateKey = nil
         loadDebounceTask?.cancel()
         loadDebounceTask = nil

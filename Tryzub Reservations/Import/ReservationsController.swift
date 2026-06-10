@@ -144,6 +144,11 @@ final class ReservationsController: ObservableObject {
     private let availabilitySummaryFreshnessInterval: TimeInterval = 180
     private let restaurantSetupFreshnessInterval: TimeInterval = 300
     private let dateOperationsFreshnessInterval: TimeInterval = 180
+    private let noncriticalStartupDeferralInterval: TimeInterval = 8
+    private let syncCursorDefaultsKey = "tryzub.sync.serverCursors.v1"
+    private let syncScopeSuccessDefaultsKey = "tryzub.sync.scopeLastSuccessAt.v1"
+    private let syncActiveWindowBoundsKey = "tryzub.sync.activeWindowBounds.v1"
+    private var persistedActiveWindowBounds: PersistedActiveWindowBounds?
 
     // MARK: - Dependencies
 
@@ -184,6 +189,14 @@ final class ReservationsController: ObservableObject {
         restaurantSetupLoadedAt != nil
     }
 
+    /// True after cache-first UI release and the noncritical startup deferral window has elapsed.
+    var canStartNoncriticalStartupLoads: Bool {
+        guard hasReleasedStartupUI else { return false }
+        guard !isStartupNetworkPassInFlight else { return false }
+        guard let releasedAt = startupUIReleasedAt else { return false }
+        return Date().timeIntervalSince(releasedAt) >= noncriticalStartupDeferralInterval
+    }
+
     private var hasAttemptedInitialLoad = false
     private var hasStartedStartupPresentation = false
     private var startupNetworkPassTask: Task<Void, Never>?
@@ -199,6 +212,7 @@ final class ReservationsController: ObservableObject {
         #if DEBUG
         self.creationTraceSource = traceSource
         #endif
+        loadPersistedSyncMetadata()
         StartupTrace.controllerCreated(id: controllerInstanceID, source: traceSource)
         networkPathMonitor.start { [weak self] isSatisfied in
             self?.applyNetworkPathStatus(isSatisfied)
@@ -233,6 +247,12 @@ final class ReservationsController: ObservableObject {
         hasReleasedStartupUI = false
         startupUIReleasedAt = nil
         isHistoryPrefetching = false
+        serverCursorByScope = [:]
+        syncStateByScope = [:]
+        UserDefaults.standard.removeObject(forKey: syncCursorDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: syncScopeSuccessDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: syncActiveWindowBoundsKey)
+        persistedActiveWindowBounds = nil
     }
 
     /// Synchronous local-only gate. Safe to call from view `onAppear` before async startup work.
@@ -344,7 +364,99 @@ final class ReservationsController: ObservableObject {
             )
         }
 
-        return await performActiveWindowRefresh(context: context, mode: .startup, force: true)
+        return await performStartupActiveWindowRefresh(context: context)
+    }
+
+    @discardableResult
+    private func performStartupActiveWindowRefresh(context: ModelContext) async -> Bool {
+        let cacheHit = Self.hasUsableCachedReservations(in: context)
+        let scope = activeWindowScope()
+        let activeWindowFresh = isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval)
+        let hasCursor = serverCursor(for: scope) != nil
+
+        let policy: StartupRefreshPolicy
+        let reason: String
+        if !cacheHit {
+            policy = .coldFull
+            reason = "no_cache"
+        } else if activeWindowFresh {
+            policy = .skip
+            reason = "fresh_cache"
+        } else if hasCursor {
+            policy = .delta
+            reason = "stale_cache_with_cursor"
+        } else {
+            policy = .full
+            reason = "missing_cursor"
+        }
+
+        StartupPolicyTrace.policy(
+            cacheHit: cacheHit,
+            activeWindowFresh: activeWindowFresh,
+            hasServerCursor: hasCursor,
+            policy: policy,
+            reason: reason,
+            setupLoadedFromCache: hasLoadedRestaurantSetup,
+            remoteSetupStarted: false
+        )
+
+        switch policy {
+        case .skip:
+            recordRefreshDecision(scope: scope, mode: .startup, outcome: "skipped_fresh")
+            StartupTrace.activeWindow(
+                controllerID: controllerInstanceID,
+                trigger: "startupPolicy",
+                scope: scope.description,
+                action: "skipped_fresh",
+                startupPassID: currentStartupPassID,
+                uiReleased: hasReleasedStartupUI,
+                startupPassActive: isStartupNetworkPassInFlight,
+                force: false,
+                mode: "startup"
+            )
+            ReservationAPILogger.skip(
+                reason: .scopeSkipFresh,
+                message: "\(scope.description) startup skipped because cache is fresh"
+            )
+            return true
+        case .coldFull, .full:
+            return await performActiveWindowRefresh(
+                context: context,
+                mode: .startup,
+                force: false,
+                allowStartupDelta: false
+            )
+        case .delta:
+            return await performActiveWindowRefresh(
+                context: context,
+                mode: .startup,
+                force: false,
+                allowStartupDelta: true
+            )
+        }
+    }
+
+    private func scheduleDeferredNoncriticalStartupWork(context: ModelContext) {
+        Task(priority: .utility) { @MainActor in
+            let delay = await self.noncriticalStartupDeferralRemaining()
+            if delay > 0 {
+                StartupPolicyTrace.noncriticalDeferred(
+                    work: "startup_pass_followups",
+                    delaySeconds: Int(ceil(delay))
+                )
+                try? await Task.sleep(for: .seconds(delay))
+            }
+            guard !Task.isCancelled else { return }
+            self.startDeferredRestaurantSetupIfNeeded()
+            self.scheduleHistoryPrefetchWhenReady(context: context)
+        }
+    }
+
+    private func noncriticalStartupDeferralRemaining() async -> TimeInterval {
+        guard let releasedAt = startupUIReleasedAt else {
+            return noncriticalStartupDeferralInterval
+        }
+        return max(0, noncriticalStartupDeferralInterval - Date().timeIntervalSince(releasedAt))
     }
 
     // Intent: Non-blocking reservation sync for intro/login chrome.
@@ -375,7 +487,6 @@ final class ReservationsController: ObservableObject {
         }
 
         startStartupNetworkPassInBackgroundIfNeeded(context: context, trigger: "backgroundWarmup")
-        startDeferredRestaurantSetupIfNeeded()
     }
 
     // Intent: Cache-first entrance. Shows tabs immediately when SwiftData has reservations.
@@ -417,18 +528,17 @@ final class ReservationsController: ObservableObject {
         hydrateCacheMetadataSync(context: context)
 
         let refreshSucceeded = await performStartupNetworkPass(context: context)
-        startDeferredRestaurantSetupIfNeeded()
         if Self.hasUsableCachedReservations(in: context) {
             markStartupUIReleased()
             startupPresentationState = .ready
-            scheduleHistoryPrefetchWhenReady(context: context)
+            scheduleDeferredNoncriticalStartupWork(context: context)
             return
         }
 
         if refreshSucceeded {
             markStartupUIReleased()
             startupPresentationState = .ready
-            scheduleHistoryPrefetchWhenReady(context: context)
+            scheduleDeferredNoncriticalStartupWork(context: context)
             return
         }
 
@@ -475,8 +585,7 @@ final class ReservationsController: ObservableObject {
 
         startupNetworkPassTask = Task(priority: .utility) { @MainActor in
             _ = await self.performStartupNetworkPass(context: context, passID: passID)
-            self.startDeferredRestaurantSetupIfNeeded()
-            self.scheduleHistoryPrefetchWhenReady(context: context)
+            self.scheduleDeferredNoncriticalStartupWork(context: context)
             self.startupNetworkPassTask = nil
         }
     }
@@ -532,6 +641,11 @@ final class ReservationsController: ObservableObject {
         historyPrefetchTask = Task(priority: .utility) { @MainActor in
             defer { self.historyPrefetchTask = nil }
 
+            while !self.canStartNoncriticalStartupLoads {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+            }
+
             if let releasedAt = self.startupUIReleasedAt {
                 let remaining = self.historyPrefetchStabilizationDelay - Date().timeIntervalSince(releasedAt)
                 if remaining > 0 {
@@ -584,8 +698,23 @@ final class ReservationsController: ObservableObject {
         guard deferredRestaurantSetupTask == nil else { return }
         guard !hasLoadedRestaurantSetup else { return }
         guard !isLoadingRestaurantSetup else { return }
+        StartupPolicyTrace.remoteSetupStarted(fromCache: hasLoadedRestaurantSetup)
         deferredRestaurantSetupTask = Task(priority: .utility) { @MainActor in
+            let previousBookingWindowDays = self.restaurantSetup.bookingWindowDays
+            let previousScope = self.activeWindowScope()
             _ = try? await self.loadRestaurantSetup()
+            if self.restaurantSetup.bookingWindowDays != previousBookingWindowDays {
+                self.markScopeStale(previousScope)
+                StartupPolicyTrace.policy(
+                    cacheHit: self.localCacheStoreHasReservations,
+                    activeWindowFresh: false,
+                    hasServerCursor: self.serverCursor(for: previousScope) != nil,
+                    policy: .full,
+                    reason: "setup_booking_window_changed",
+                    setupLoadedFromCache: false,
+                    remoteSetupStarted: true
+                )
+            }
             self.deferredRestaurantSetupTask = nil
         }
     }
@@ -678,10 +807,146 @@ final class ReservationsController: ObservableObject {
             let repository = ReservationRepository(context: context)
             if let latestLocalSyncDate = try repository.latestLocalSyncDate() {
                 lastSyncedAt = latestLocalSyncDate
+                adoptLocalSyncSuccess(for: activeWindowScope(), at: latestLocalSyncDate)
             }
         } catch {
             // Cache metadata is optional for presentation; startup refresh may still proceed.
         }
+    }
+
+    private func loadPersistedSyncMetadata() {
+        if let rawCursors = UserDefaults.standard.dictionary(forKey: syncCursorDefaultsKey) as? [String: String] {
+            for (key, cursor) in rawCursors {
+                guard let scope = ReservationSyncScope(persistenceKey: key) else { continue }
+                serverCursorByScope[scope] = cursor
+            }
+        }
+
+        if let rawSuccess = UserDefaults.standard.dictionary(forKey: syncScopeSuccessDefaultsKey) as? [String: TimeInterval] {
+            for (key, timestamp) in rawSuccess {
+                guard let scope = ReservationSyncScope(persistenceKey: key) else { continue }
+                var state = syncStateByScope[scope] ?? SyncScopeState()
+                state.lastSuccessAt = Date(timeIntervalSince1970: timestamp)
+                syncStateByScope[scope] = state
+            }
+        }
+
+        if let data = UserDefaults.standard.data(forKey: syncActiveWindowBoundsKey),
+           let bounds = try? JSONDecoder().decode(PersistedActiveWindowBounds.self, from: data) {
+            persistedActiveWindowBounds = bounds
+        }
+
+        reconcileActiveWindowSyncMetadata()
+        publishSyncScopeSnapshots()
+    }
+
+    private func persistSyncMetadata() {
+        let cursors = Dictionary(
+            uniqueKeysWithValues: serverCursorByScope.map { ($0.key.persistenceKey, $0.value) }
+        )
+        UserDefaults.standard.set(cursors, forKey: syncCursorDefaultsKey)
+
+        let successes = Dictionary(
+            uniqueKeysWithValues: syncStateByScope.compactMap { scope, state -> (String, TimeInterval)? in
+                guard let lastSuccessAt = state.lastSuccessAt else { return nil }
+                return (scope.persistenceKey, lastSuccessAt.timeIntervalSince1970)
+            }
+        )
+        UserDefaults.standard.set(successes, forKey: syncScopeSuccessDefaultsKey)
+    }
+
+    private func adoptLocalSyncSuccess(for scope: ReservationSyncScope, at date: Date) {
+        var state = syncStateByScope[scope] ?? SyncScopeState()
+        if state.lastSuccessAt == nil {
+            state.lastSuccessAt = date
+            syncStateByScope[scope] = state
+            persistSyncMetadata()
+            publishSyncScopeSnapshots()
+        }
+    }
+
+    private func persistActiveWindowBoundsIfNeeded(
+        scope: ReservationSyncScope,
+        window: (from: String, to: String)
+    ) {
+        guard case .activeWindow = scope else { return }
+        let bounds = PersistedActiveWindowBounds(
+            from: window.from,
+            to: window.to,
+            bookingWindowDays: activeWindowBookingWindowDays()
+        )
+        persistedActiveWindowBounds = bounds
+        if let data = try? JSONEncoder().encode(bounds) {
+            UserDefaults.standard.set(data, forKey: syncActiveWindowBoundsKey)
+        }
+    }
+
+    private func reconcileActiveWindowSyncMetadata() {
+        let currentScope = activeWindowScope()
+        let hasCursor = serverCursor(for: currentScope) != nil
+        let hasFreshness = syncStateByScope[currentScope]?.lastSuccessAt != nil
+        if hasCursor && hasFreshness {
+            return
+        }
+
+        if let bounds = persistedActiveWindowBounds {
+            let persistedScope = ReservationSyncScope.activeWindow(from: bounds.from, to: bounds.to)
+            if persistedScope.persistenceKey != currentScope.persistenceKey {
+                migrateActiveWindowSyncMetadata(from: persistedScope, to: currentScope)
+            }
+            if serverCursor(for: currentScope) != nil,
+               syncStateByScope[currentScope]?.lastSuccessAt != nil {
+                return
+            }
+        }
+
+        adoptNearestActiveWindowSyncMetadata(for: currentScope)
+    }
+
+    private func migrateActiveWindowSyncMetadata(
+        from sourceScope: ReservationSyncScope,
+        to targetScope: ReservationSyncScope
+    ) {
+        guard sourceScope.persistenceKey != targetScope.persistenceKey else { return }
+
+        if serverCursor(for: targetScope) == nil,
+           let cursor = serverCursor(for: sourceScope) {
+            serverCursorByScope[targetScope] = cursor
+        }
+
+        if syncStateByScope[targetScope]?.lastSuccessAt == nil,
+           let sourceState = syncStateByScope[sourceScope] {
+            syncStateByScope[targetScope] = sourceState
+        }
+
+        if serverCursor(for: targetScope) != nil || syncStateByScope[targetScope]?.lastSuccessAt != nil {
+            persistSyncMetadata()
+        }
+    }
+
+    private func adoptNearestActiveWindowSyncMetadata(for targetScope: ReservationSyncScope) {
+        guard case .activeWindow(let targetFrom, let targetTo) = targetScope else { return }
+
+        let candidates = serverCursorByScope.keys.compactMap { scope -> (ReservationSyncScope, Int)? in
+            guard case .activeWindow(let from, let to) = scope else { return nil }
+            guard to == targetTo else { return nil }
+            guard let distance = Self.reservationDateDayDistance(from: from, to: targetFrom) else { return nil }
+            guard distance <= 1 else { return nil }
+            return (scope, distance)
+        }
+        .sorted { $0.1 < $1.1 }
+
+        guard let nearest = candidates.first?.0 else { return }
+        migrateActiveWindowSyncMetadata(from: nearest, to: targetScope)
+    }
+
+    private static func reservationDateDayDistance(from: String, to: String) -> Int? {
+        guard let fromDate = ReservationFormatters.reservationDateKey.date(from: from),
+              let toDate = ReservationFormatters.reservationDateKey.date(from: to) else {
+            return nil
+        }
+        let days = Calendar.current.dateComponents([.day], from: fromDate, to: toDate).day ?? 0
+        return abs(days)
     }
 
     // MARK: - Legacy Refresh Entry Points
@@ -993,7 +1258,8 @@ final class ReservationsController: ObservableObject {
     private func performActiveWindowRefresh(
         context: ModelContext,
         mode: ReservationRefreshMode,
-        force: Bool
+        force: Bool,
+        allowStartupDelta: Bool = false
     ) async -> Bool {
         let window = activeWindow()
         let scope = ReservationSyncScope.activeWindow(from: window.from, to: window.to)
@@ -1061,6 +1327,7 @@ final class ReservationsController: ObservableObject {
                 context: context,
                 mode: mode,
                 force: force,
+                allowStartupDelta: allowStartupDelta,
                 window: window,
                 scope: capturedScope,
                 refreshID: refreshID,
@@ -1095,6 +1362,7 @@ final class ReservationsController: ObservableObject {
         context: ModelContext,
         mode: ReservationRefreshMode,
         force: Bool,
+        allowStartupDelta: Bool,
         window: (from: String, to: String),
         scope: ReservationSyncScope,
         refreshID: String,
@@ -1154,7 +1422,16 @@ final class ReservationsController: ObservableObject {
                 controllerTraceID: controllerInstanceID
             )
             let result: ReservationSyncResult
-            if mode == .automatic, let cursor = serverCursor(for: scope) {
+            let deltaCursor: String?
+            let shouldAttemptDelta: Bool
+            if mode == .automatic || (mode == .startup && allowStartupDelta) {
+                deltaCursor = serverCursor(for: scope)
+                shouldAttemptDelta = deltaCursor != nil
+            } else {
+                deltaCursor = nil
+                shouldAttemptDelta = false
+            }
+            if shouldAttemptDelta, let cursor = deltaCursor {
                 recordRefreshDecision(scope: scope, mode: mode, outcome: "delta")
                 StartupTrace.activeWindow(
                     controllerID: controllerInstanceID,
@@ -1168,12 +1445,34 @@ final class ReservationsController: ObservableObject {
                     force: force,
                     mode: String(describing: mode)
                 )
-                result = try await service.syncActiveWindowChanges(
-                    from: window.from,
-                    to: window.to,
-                    since: cursor,
-                    reason: .activeWindowDelta
-                )
+                do {
+                    result = try await service.syncActiveWindowChanges(
+                        from: window.from,
+                        to: window.to,
+                        since: cursor,
+                        reason: .activeWindowDelta
+                    )
+                } catch {
+                    if error.isCancellationLike { throw error }
+                    recordRefreshDecision(scope: scope, mode: mode, outcome: "delta_failed_full_recovery")
+                    StartupTrace.activeWindow(
+                        controllerID: controllerInstanceID,
+                        trigger: trigger,
+                        scope: scope.description,
+                        action: "delta_failed_fallback_full",
+                        refreshID: refreshID,
+                        startupPassID: currentStartupPassID,
+                        uiReleased: hasReleasedStartupUI,
+                        startupPassActive: isStartupNetworkPassInFlight,
+                        force: force,
+                        mode: String(describing: mode)
+                    )
+                    result = try await service.syncActiveWindowFull(
+                        from: window.from,
+                        to: window.to,
+                        reason: mode.activeWindowRequestReason
+                    )
+                }
             } else {
                 recordRefreshDecision(scope: scope, mode: mode, outcome: "full")
                 StartupTrace.activeWindow(
@@ -1197,6 +1496,12 @@ final class ReservationsController: ObservableObject {
             updateServerCursor(for: scope, with: result.serverTime)
             lastSyncedAt = Date()
             markScopeSuccess(scope)
+            persistActiveWindowBoundsIfNeeded(scope: scope, window: window)
+            StartupPolicyTrace.persisted(
+                scope: scope.persistenceKey,
+                cursorSaved: serverCursor(for: scope) != nil,
+                lastSuccessSaved: syncStateByScope[scope]?.lastSuccessAt != nil
+            )
             StartupTrace.activeWindow(
                 controllerID: controllerInstanceID,
                 trigger: trigger,
@@ -2978,11 +3283,30 @@ final class ReservationsController: ObservableObject {
     }
 
     private func activeWindow() -> (from: String, to: String) {
-        let now = Date()
+        Self.normalizedActiveWindow(
+            bookingWindowDays: activeWindowBookingWindowDays(),
+            referenceDate: Date()
+        )
+    }
+
+    private func activeWindowBookingWindowDays() -> Int {
+        if let persistedActiveWindowBounds {
+            return max(persistedActiveWindowBounds.bookingWindowDays, 30)
+        }
+        return max(restaurantSetup.bookingWindowDays, 30)
+    }
+
+    private static func normalizedActiveWindow(
+        bookingWindowDays: Int,
+        referenceDate: Date
+    ) -> (from: String, to: String) {
         let calendar = Calendar.current
-        let from = calendar.date(byAdding: .day, value: -1, to: now) ?? now
-        let bookingWindowDays = max(restaurantSetup.bookingWindowDays, 30)
-        let to = calendar.date(byAdding: .day, value: bookingWindowDays, to: now) ?? now
+        let from = calendar.date(byAdding: .day, value: -1, to: referenceDate) ?? referenceDate
+        let to = calendar.date(
+            byAdding: .day,
+            value: max(bookingWindowDays, 30),
+            to: referenceDate
+        ) ?? referenceDate
         return (from.reservationDateString(), to.reservationDateString())
     }
 
@@ -3026,6 +3350,7 @@ final class ReservationsController: ObservableObject {
             return
         }
         serverCursorByScope[scope] = serverTime
+        persistSyncMetadata()
         publishOperationState()
     }
 
@@ -3078,6 +3403,7 @@ final class ReservationsController: ObservableObject {
         state.cooldownUntil = nil
         syncStateByScope[scope] = state
         activeSyncIntentByScope[scope] = nil
+        persistSyncMetadata()
         publishSyncScopeSnapshots()
     }
 
@@ -3582,6 +3908,12 @@ enum ReservationSyncIntent: Equatable {
     case diagnostics
 }
 
+struct PersistedActiveWindowBounds: Codable, Equatable {
+    let from: String
+    let to: String
+    let bookingWindowDays: Int
+}
+
 enum ReservationSyncScope: Hashable, CustomStringConvertible {
     case today(date: String)
     case activeWindow(from: String, to: String)
@@ -3611,6 +3943,67 @@ enum ReservationSyncScope: Hashable, CustomStringConvertible {
         case .reservation(let id):
             return "reservation(\(id))"
         }
+    }
+
+    /// Stable UserDefaults key for cursor/freshness metadata. Matches `description` format.
+    var persistenceKey: String { description }
+
+    init?(persistenceKey: String) {
+        switch persistenceKey {
+        case "hidden_reservations":
+            self = .hiddenReservations
+            return
+        case "review_queues":
+            self = .reviewQueues
+            return
+        case "failure_count":
+            self = .importFailureCount
+            return
+        default:
+            break
+        }
+
+        if persistenceKey.hasPrefix("today("), persistenceKey.hasSuffix(")") {
+            let date = String(persistenceKey.dropFirst(6).dropLast())
+            self = .today(date: date)
+            return
+        }
+
+        if persistenceKey.hasPrefix("active_window("), persistenceKey.hasSuffix(")") {
+            let inner = persistenceKey.dropFirst("active_window(".count).dropLast()
+            guard let range = inner.range(of: "...") else { return nil }
+            let from = String(inner[..<range.lowerBound])
+            let to = String(inner[range.upperBound...])
+            self = .activeWindow(from: from, to: to)
+            return
+        }
+
+        if persistenceKey.hasPrefix("schedule("), persistenceKey.hasSuffix(")") {
+            let inner = persistenceKey.dropFirst("schedule(".count).dropLast()
+            guard let range = inner.range(of: "...") else { return nil }
+            let from = String(inner[..<range.lowerBound])
+            let to = String(inner[range.upperBound...])
+            self = .scheduleWindow(from: from, to: to)
+            return
+        }
+
+        if persistenceKey.hasPrefix("cancelled("), persistenceKey.hasSuffix(")") {
+            let inner = persistenceKey.dropFirst("cancelled(".count).dropLast()
+            guard let range = inner.range(of: "...") else { return nil }
+            let from = String(inner[..<range.lowerBound])
+            let to = String(inner[range.upperBound...])
+            self = .cancelledWindow(from: from, to: to)
+            return
+        }
+
+        if persistenceKey.hasPrefix("reservation("), persistenceKey.hasSuffix(")") {
+            let idString = String(persistenceKey.dropFirst(12).dropLast())
+            guard let id = Int(idString) else { return nil }
+            self = .reservation(id: id)
+            return
+        }
+
+        return nil
     }
 }
 

@@ -294,6 +294,29 @@ struct HostLLMPacket: Codable, Equatable {
     }
 }
 
+// MARK: - Host Card Render State
+
+enum HostIntelligenceRenderState: String, Equatable {
+  case evaluating
+  case ready
+}
+
+struct HostEvaluationStabilityContext: Equatable {
+  var isReservationRefreshInFlight: Bool = false
+  var isAvailabilitySummaryLoading: Bool = false
+  var isGuestIntelligenceLoading: Bool = false
+  var selectedDateRecentlyChanged: Bool = false
+  var hostSnapshotIncomplete: Bool = false
+
+  var allowsEmptyReplacement: Bool {
+    !isReservationRefreshInFlight
+      && !isAvailabilitySummaryLoading
+      && !isGuestIntelligenceLoading
+      && !selectedDateRecentlyChanged
+      && !hostSnapshotIncomplete
+  }
+}
+
 // MARK: - Decision Snapshot
 
 struct HostDecisionSnapshot: Codable, Equatable {
@@ -325,6 +348,15 @@ struct HostDecisionSnapshot: Codable, Equatable {
             templateBriefingText: "Nothing needs attention right now.",
             llmPacket: .empty
         )
+    }
+
+    var hasAttentionContent: Bool {
+        !briefingFacts.isEmpty || !suggestedActions.isEmpty
+    }
+
+    var hasOperationalNoTableSoonContent: Bool {
+        briefingFacts.contains { $0.id.hasPrefix("no-table-due-soon-") }
+            || suggestedActions.contains { $0.id.hasPrefix("assign-table-") }
     }
 }
 

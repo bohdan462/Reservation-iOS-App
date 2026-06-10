@@ -169,7 +169,13 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             skipped: stats.skipped,
             removed: stats.removed
         )
-        return ReservationSyncResult(rowCount: syncResponse.reservations.count, serverTime: syncResponse.serverTime)
+        return ReservationSyncResult(
+            rowCount: syncResponse.reservations.count,
+            serverTime: resolvedSyncCursor(
+                serverTime: syncResponse.serverTime,
+                reservations: syncResponse.reservations
+            )
+        )
     }
 
     /// Background history enrichment: upsert-only, never replaces or deletes local rows.
@@ -226,7 +232,13 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             try repository.upsert(syncResponse.reservations)
         }
 
-        return ReservationSyncResult(rowCount: syncResponse.reservations.count, serverTime: syncResponse.serverTime)
+        return ReservationSyncResult(
+            rowCount: syncResponse.reservations.count,
+            serverTime: resolvedSyncCursor(
+                serverTime: syncResponse.serverTime,
+                reservations: syncResponse.reservations
+            )
+        )
     }
 
     // MARK: - Schedule Window Sync
@@ -350,5 +362,21 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
         } while currentPage <= totalPages
 
         return (allReservations, latestServerTime)
+    }
+
+    private func resolvedSyncCursor(
+        serverTime: String?,
+        reservations: [ReservationDTO]
+    ) -> String? {
+        if let serverTime = serverTime?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !serverTime.isEmpty {
+            return serverTime
+        }
+
+        let latestUpdatedAt = reservations
+            .compactMap { $0.updatedAt?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .max()
+        return latestUpdatedAt?.isEmpty == false ? latestUpdatedAt : nil
     }
 }

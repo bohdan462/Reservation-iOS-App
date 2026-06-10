@@ -35,10 +35,10 @@ struct HostIntelligenceEngine {
     let noTableReservations = findReservationsWithoutTables(
       reservations: activeReservations
     )
-    let noTableDueSoon = findNoTableDueSoon(
-      reservations: noTableReservations,
-      now: context.now,
-      settings: context.settings
+    let noTableDueSoon = findOperationalNoTableSoon(
+      reservations: activeReservations,
+      selectedDate: context.selectedDate,
+      now: context.now
     )
 
     var briefingFacts = slotPressures.flatMap(\.facts)
@@ -535,32 +535,20 @@ struct HostIntelligenceEngine {
     reservations.filter { $0.isOpenWork && !$0.hasTableAssignment }
   }
 
-  private func findNoTableDueSoon(
+  private func findOperationalNoTableSoon(
     reservations: [ReservationRecord],
-    now: Date,
-    settings: HostIntelligenceSettings
+    selectedDate: Date,
+    now: Date
   ) -> [ReservationRecord] {
-    reservations.filter { reservation in
-      guard reservationNeedsTableAttention(reservation) else { return false }
-      guard let serviceDate = reservation.serviceDateTime else { return false }
-      let minutesUntil = serviceDate.timeIntervalSince(now) / 60
-      if minutesUntil < 0 {
-        return abs(minutesUntil) <= Double(settings.noTableDueSoonMinutes)
-      }
-      return minutesUntil <= Double(settings.noTableDueSoonMinutes)
-    }
+    HostOperationalNoTableSoonSupport.qualifyingReservations(
+      in: reservations,
+      selectedDate: selectedDate,
+      now: now
+    )
   }
 
   private func reservationNeedsTableAttention(_ reservation: ReservationRecord) -> Bool {
-    guard reservation.isOpenWork, !reservation.hasTableAssignment else { return false }
-    switch reservation.statusValue {
-    case .new, .needsReview:
-      return true
-    case .confirmed:
-      return true
-    case .seated, .completed, .cancelled, .noShow:
-      return false
-    }
+    HostOperationalNoTableSoonSupport.reservationNeedsTableAttention(reservation)
   }
 
   private func noTableDueSoonFactsAndActions(
@@ -596,10 +584,10 @@ struct HostIntelligenceEngine {
           detail: "Check the table plan.",
           evidence: [
             "partySize=\(reservation.partySize)",
-            "dueWindowMinutes=\(settings.noTableDueSoonMinutes)"
+            "dueWindowMinutes=\(HostOperationalNoTableSoonSupport.windowMinutes)"
           ],
           relatedReservationIDs: [reservation.remoteID],
-          suggestedActionTitle: "Check the table plan."
+          suggestedActionTitle: "Check table plan for \(firstName)"
         )
       )
 
@@ -629,7 +617,7 @@ struct HostIntelligenceEngine {
           title: "No table assigned",
           detail: "\(reservation.guestName) at \(timeLabel) needs a table.",
           relatedReservationIDs: [reservation.remoteID],
-          evidence: ["dueWindowMinutes=\(settings.noTableDueSoonMinutes)"]
+          evidence: ["dueWindowMinutes=\(HostOperationalNoTableSoonSupport.windowMinutes)"]
         )
       )
     }

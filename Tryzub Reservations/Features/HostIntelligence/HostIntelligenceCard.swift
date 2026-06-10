@@ -18,6 +18,8 @@ struct HostIntelligenceCard: View {
   var staffFacingPresentation: Bool = true
   /// Pulses the awareness icon during on-device support preparation, etc.
   var externalPulseActive: Bool = false
+  var renderState: HostIntelligenceRenderState = .ready
+  var isRefreshingAttentionCard: Bool = false
   var onReviewTapped: (() -> Void)? = nil
   var onActionTapped: ((HostSuggestedAction) -> Void)? = nil
 
@@ -34,6 +36,7 @@ struct HostIntelligenceCard: View {
   private var calmCard: some View {
     VStack(alignment: .leading, spacing: 8) {
       cardTitleRow
+      refreshingCaption
 
       narrativeBody
 
@@ -72,6 +75,7 @@ struct HostIntelligenceCard: View {
           .foregroundStyle(.secondary)
       }
 
+      refreshingCaption
       narrativeBody
 
       if let briefingSourceCaption {
@@ -171,9 +175,17 @@ struct HostIntelligenceCard: View {
   // MARK: - Helpers
 
   private var isCalmPresentation: Bool {
-    snapshot.briefingFacts.isEmpty
+    guard renderState == .ready else { return false }
+    guard !isLoadingPresentation else { return false }
+    return snapshot.briefingFacts.isEmpty
       && snapshot.suggestedActions.isEmpty
       && snapshot.slotPressures.allSatisfy { $0.severity == .calm && $0.reservationCount == 0 }
+  }
+
+  private var isLoadingPresentation: Bool {
+    renderState == .evaluating
+      && !snapshot.hasAttentionContent
+      && !isRefreshingAttentionCard
   }
 
   private var stateTitle: String {
@@ -224,6 +236,13 @@ struct HostIntelligenceCard: View {
 
   private var staffFacingNarrative: ManagerNarrative? {
     guard staffFacingPresentation, let managerNarrative else { return nil }
+    if isLoadingPresentation {
+      return .loading
+    }
+    if renderState != .ready,
+       managerNarrative.headline == ManagerNarrative.empty.headline {
+      return .loading
+    }
     guard managerNarrative.source != .localModel
         || !ManagerNarrativeValidator.containsLeakedModelLabels(in: managerNarrative) else {
       return nil
@@ -231,6 +250,24 @@ struct HostIntelligenceCard: View {
     let headline = managerNarrative.headline.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !headline.isEmpty else { return nil }
     return managerNarrative
+  }
+
+  @ViewBuilder
+  private var refreshingCaption: some View {
+    if isRefreshingAttentionCard {
+      HStack(spacing: 6) {
+        ProgressView()
+          .controlSize(.mini)
+        Text("Refreshing…")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+      }
+    } else if isLoadingPresentation {
+      HStack(spacing: 6) {
+        ProgressView()
+          .controlSize(.mini)
+      }
+    }
   }
 
   private var displayBriefingText: String {
