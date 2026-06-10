@@ -44,6 +44,9 @@ enum HostCardTrace {
     lastAttentionSelectedDate: String?,
     preserveAllowed: Bool,
     dateChanged: Bool,
+    localEvaluationComplete: Bool,
+    enrichmentLoading: Bool,
+    display: String,
     factCount: Int,
     actionCount: Int,
     renderState: HostIntelligenceRenderState,
@@ -55,7 +58,7 @@ enum HostCardTrace {
     let lastAttention = lastAttentionSelectedDate ?? "none"
     print(
       """
-      [HOST_CARD_TRACE] selected=\(selectedDate) lastAttentionSelected=\(lastAttention) preserveAllowed=\(preserveAllowed) dateChanged=\(dateChanged) facts=\(factCount) actions=\(actionCount) render=\(renderState.rawValue) emptyAllowed=\(emptyAllowed) preserved=\(preservedPrevious)
+      [HOST_CARD_TRACE] selected=\(selectedDate) lastAttentionSelected=\(lastAttention) preserveAllowed=\(preserveAllowed) dateChanged=\(dateChanged) localEvaluationComplete=\(localEvaluationComplete) enrichmentLoading=\(enrichmentLoading) display=\(display) facts=\(factCount) actions=\(actionCount) render=\(renderState.rawValue) emptyAllowed=\(emptyAllowed) preserved=\(preservedPrevious)
       """
     )
     if let noTableSoonCandidate {

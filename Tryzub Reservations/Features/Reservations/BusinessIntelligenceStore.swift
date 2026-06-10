@@ -14,8 +14,9 @@ final class BusinessIntelligenceStore: ObservableObject {
     @Published private(set) var errorByRangeKey: [String: String] = [:]
 
     private var loadingRangeKeys: Set<String> = []
+    private var activeTasksByRangeKey: [String: Task<Void, Never>] = [:]
     private let apiClient: any ReservationsAPIClientProtocol
-    private let freshnessInterval: TimeInterval = 300
+    private let freshnessInterval: TimeInterval = 600
 
     init(apiClient: any ReservationsAPIClientProtocol) {
         self.apiClient = apiClient
@@ -51,14 +52,54 @@ final class BusinessIntelligenceStore: ObservableObject {
         return "\(key)-\(loadedStamp)-\(generatedAt)-\(reservationCount)"
     }
 
-    func load(from: String, to: String, force: Bool = false) async {
+    func load(
+        from: String,
+        to: String,
+        force: Bool = false,
+        freshnessInterval: TimeInterval? = nil
+    ) async {
         let key = rangeKey(from: from, to: to)
         guard !key.isEmpty, key != "|" else { return }
-        guard !loadingRangeKeys.contains(key) else { return }
 
-        if !force, isFresh(key), responsesByRangeKey[key] != nil {
+        let interval = freshnessInterval ?? self.freshnessInterval
+        if !force, isFresh(key, interval: interval), responsesByRangeKey[key] != nil {
             return
         }
+
+        activeTasksByRangeKey[key]?.cancel()
+        let task = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            await self.performLoad(
+                key: key,
+                from: from,
+                to: to
+            )
+        }
+        activeTasksByRangeKey[key] = task
+        await task.value
+        if activeTasksByRangeKey[key] != nil {
+            activeTasksByRangeKey[key] = nil
+        }
+    }
+
+    func cancelLoad(from: String, to: String) {
+        let key = rangeKey(from: from, to: to)
+        activeTasksByRangeKey[key]?.cancel()
+        activeTasksByRangeKey[key] = nil
+        loadingRangeKeys.remove(key)
+    }
+
+    func reset() {
+        activeTasksByRangeKey.values.forEach { $0.cancel() }
+        activeTasksByRangeKey = [:]
+        responsesByRangeKey = [:]
+        loadedAtByRangeKey = [:]
+        errorByRangeKey = [:]
+        loadingRangeKeys = []
+    }
+
+    private func performLoad(key: String, from: String, to: String) async {
+        guard !loadingRangeKeys.contains(key) else { return }
 
         loadingRangeKeys.insert(key)
         defer { loadingRangeKeys.remove(key) }
@@ -73,6 +114,7 @@ final class BusinessIntelligenceStore: ObservableObject {
                 to: trimmedTo,
                 reason: .businessIntelligenceSummary
             )
+            guard !Task.isCancelled else { return }
             responsesByRangeKey[key] = response
             loadedAtByRangeKey[key] = Date()
             errorByRangeKey.removeValue(forKey: key)
@@ -80,13 +122,6 @@ final class BusinessIntelligenceStore: ObservableObject {
             guard !error.isCancellationLike else { return }
             errorByRangeKey[key] = IntelligenceStoreMessaging.displayMessage(for: error)
         }
-    }
-
-    func reset() {
-        responsesByRangeKey = [:]
-        loadedAtByRangeKey = [:]
-        errorByRangeKey = [:]
-        loadingRangeKeys = []
     }
 
     // MARK: - Private
@@ -97,8 +132,8 @@ final class BusinessIntelligenceStore: ObservableObject {
         return "\(trimmedFrom)|\(trimmedTo)"
     }
 
-    private func isFresh(_ key: String) -> Bool {
+    private func isFresh(_ key: String, interval: TimeInterval? = nil) -> Bool {
         guard let loadedAt = loadedAtByRangeKey[key] else { return false }
-        return Date().timeIntervalSince(loadedAt) < freshnessInterval
+        return Date().timeIntervalSince(loadedAt) < (interval ?? freshnessInterval)
     }
 }

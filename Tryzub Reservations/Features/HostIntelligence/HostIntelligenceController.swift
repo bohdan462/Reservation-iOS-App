@@ -16,6 +16,8 @@ final class HostIntelligenceController: ObservableObject {
   @Published private(set) var briefingFailureReason: String?
   @Published private(set) var managerNarrative: ManagerNarrative = .empty
   @Published private(set) var renderState: HostIntelligenceRenderState = .evaluating
+  @Published private(set) var localEvaluationComplete = false
+  @Published private(set) var isEnrichmentLoading = false
 
   let settingsStore: HostIntelligenceSettingsStore
   let tableStore: HostTableConfigStore
@@ -78,9 +80,19 @@ final class HostIntelligenceController: ObservableObject {
   }
 
   var isRefreshingAttentionCard: Bool {
-    renderState == .evaluating
-      && lastAttentionSnapshot?.hasAttentionContent == true
-      && lastAttentionSelectedDateKey == latestSelectedDateKey
+    isEnrichmentLoading
+      && localEvaluationComplete
+      && (decisionSnapshot.hasAttentionContent || displaySnapshot.hasAttentionContent)
+  }
+
+  var hostCardDisplayMode: String {
+    if !localEvaluationComplete {
+      return "loading"
+    }
+    if isEnrichmentLoading {
+      return decisionSnapshot.hasAttentionContent ? "local_ready_refreshing" : "refreshing"
+    }
+    return decisionSnapshot.hasAttentionContent ? "local_ready" : "stable_empty"
   }
 
   func evaluate(
@@ -94,6 +106,8 @@ final class HostIntelligenceController: ObservableObject {
       clearAttentionPreservation()
       decisionSnapshot = .empty
       applyTemplateBriefing(from: .empty)
+      localEvaluationComplete = false
+      isEnrichmentLoading = false
     }
     latestSelectedDateKey = selectedDateKey
     latestTraceCandidate = HostCardTrace.noTableSoonCandidate(
@@ -108,6 +122,7 @@ final class HostIntelligenceController: ObservableObject {
       clearAttentionPreservation()
       clearBriefingCache()
       applyTemplateBriefing(from: .empty)
+      localEvaluationComplete = true
       renderState = .ready
       traceEvaluation(snapshot: .empty, preservedPrevious: false, emptyAllowed: true)
       return
@@ -134,11 +149,13 @@ final class HostIntelligenceController: ObservableObject {
       && lastAttentionSelectedDateKey == selectedDateKey
 
     if shouldBlockEmptyReplacement {
+      localEvaluationComplete = true
       traceEvaluation(
         snapshot: candidate,
         preservedPrevious: true,
         emptyAllowed: false,
-        dateChanged: dateChanged
+        dateChanged: dateChanged,
+        enrichmentLoading: stability.isEnrichmentLoading
       )
       renderState = stability.allowsEmptyReplacement ? .ready : .evaluating
       return
@@ -156,19 +173,28 @@ final class HostIntelligenceController: ObservableObject {
       clearAttentionPreservation()
     }
 
+    localEvaluationComplete = true
     renderState = .ready
     traceEvaluation(
       snapshot: candidate,
       preservedPrevious: false,
       emptyAllowed: stability.allowsEmptyReplacement,
-      dateChanged: dateChanged
+      dateChanged: dateChanged,
+      enrichmentLoading: stability.isEnrichmentLoading
     )
   }
 
   /// Presentation-only rewrite of the approved LLM packet. Does not change engine output.
   func refreshBriefing(hostBoardContext: HostBriefingHostBoardContext? = nil) async {
-    renderState = .evaluating
+    let preserveLocalPresentation = localEvaluationComplete
+      && (decisionSnapshot.hasAttentionContent || !decisionSnapshot.briefingFacts.isEmpty)
+    if preserveLocalPresentation {
+      isEnrichmentLoading = true
+    } else {
+      renderState = .evaluating
+    }
     defer {
+      isEnrichmentLoading = false
       if latestStabilityContext.allowsEmptyReplacement || displaySnapshot.hasAttentionContent {
         renderState = .ready
       }
@@ -322,6 +348,8 @@ final class HostIntelligenceController: ObservableObject {
     clearBriefingCache()
     applyTemplateBriefing(from: .empty)
     renderState = .evaluating
+    localEvaluationComplete = false
+    isEnrichmentLoading = false
   }
 
   private func applyTemplateBriefing(from snapshot: HostDecisionSnapshot) {
@@ -341,6 +369,7 @@ final class HostIntelligenceController: ObservableObject {
   }
 
   private var shouldShowLoadingNarrative: Bool {
+    guard !localEvaluationComplete else { return false }
     guard renderState == .evaluating else { return false }
     if shouldPreservePreviousAttentionCard {
       return false
@@ -348,8 +377,7 @@ final class HostIntelligenceController: ObservableObject {
     if decisionSnapshot.hasAttentionContent || displaySnapshot.hasAttentionContent {
       return false
     }
-    return !latestStabilityContext.allowsEmptyReplacement
-      || managerNarrative.headline == ManagerNarrative.empty.headline
+    return managerNarrative.headline == ManagerNarrative.empty.headline
   }
 
   private func clearAttentionPreservation() {
@@ -363,13 +391,17 @@ final class HostIntelligenceController: ObservableObject {
     snapshot: HostDecisionSnapshot,
     preservedPrevious: Bool,
     emptyAllowed: Bool,
-    dateChanged: Bool = false
+    dateChanged: Bool = false,
+    enrichmentLoading: Bool = false
   ) {
     HostCardTrace.log(
       selectedDate: latestSelectedDateKey,
       lastAttentionSelectedDate: lastAttentionSelectedDateKey.isEmpty ? nil : lastAttentionSelectedDateKey,
       preserveAllowed: shouldPreservePreviousAttentionCard,
       dateChanged: dateChanged,
+      localEvaluationComplete: localEvaluationComplete,
+      enrichmentLoading: enrichmentLoading,
+      display: hostCardDisplayMode,
       factCount: snapshot.briefingFacts.count,
       actionCount: snapshot.suggestedActions.count,
       renderState: renderState,

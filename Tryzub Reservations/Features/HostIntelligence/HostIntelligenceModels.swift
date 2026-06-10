@@ -310,10 +310,11 @@ struct HostEvaluationStabilityContext: Equatable {
 
   var allowsEmptyReplacement: Bool {
     !isReservationRefreshInFlight
-      && !isAvailabilitySummaryLoading
-      && !isGuestIntelligenceLoading
-      && !selectedDateRecentlyChanged
       && !hostSnapshotIncomplete
+  }
+
+  var isEnrichmentLoading: Bool {
+    isAvailabilitySummaryLoading || isGuestIntelligenceLoading
   }
 }
 

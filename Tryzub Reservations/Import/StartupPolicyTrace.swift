@@ -86,6 +86,25 @@ enum StartupPolicyTrace {
         emit("guest_intelligence cancelled date=\(date) reason=\(reason)")
     }
 
+    static func freshnessChecked(at date: Date, reason: String) {
+        guard isEnabled else { return }
+        let stamp = ISO8601DateFormatter().string(from: date)
+        emit("freshnessCheckedAt=\(stamp) reason=\(reason)")
+    }
+
+    static func headerPresentation(_ presentation: HomeServiceStatusPresentation) {
+        guard isEnabled else { return }
+        let secondary = presentation.secondaryProgressText ?? "none"
+        emit(
+            "header primary=\(presentation.primarySyncText) secondary=\(secondary) dot=\(presentation.dotStyle)"
+        )
+    }
+
+    static func startupBackgroundWork(_ state: StartupBackgroundWorkState) {
+        guard isEnabled else { return }
+        emit("startupBackgroundWork=\(state)")
+    }
+
     private static func emit(_ body: String) {
         logger.debug("[STARTUP_POLICY] \(body, privacy: .public)")
     }

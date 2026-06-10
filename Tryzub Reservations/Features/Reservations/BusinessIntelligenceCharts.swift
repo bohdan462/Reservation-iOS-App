@@ -17,7 +17,7 @@ enum BusinessIntelligenceChartData {
     private static let minimumArrivalBars = 3
     private static let minimumWeekdayBars = 2
     private static let minimumGuestMixTotal = 5
-    private static let maxArrivalBars = 18
+    private static let maxArrivalBars = 8
 
     static func arrivalBars(from rows: [BusinessFifteenMinuteBucketRowDTO]) -> [BusinessIntelligenceChartBar]? {
         let sorted = rows
@@ -164,7 +164,7 @@ struct BusinessIntelligenceVerticalBarChart: View {
             }
         }
         .chartXAxis {
-            AxisMarks { _ in
+            AxisMarks(values: .automatic(desiredCount: min(6, max(bars.count, 1)))) { _ in
                 AxisValueLabel()
                     .font(.system(size: 9, weight: .medium))
             }

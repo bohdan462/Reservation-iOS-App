@@ -8,16 +8,25 @@ import SwiftUI
 struct BusinessIntelligenceOverviewSection: View {
     let summary: BusinessIntelligenceSummaryDTO?
     let systemStatus: IntelligenceSystemStatusDTO?
-    let isLoading: Bool
-    let errorMessage: String?
+    let isEnrichmentLoading: Bool
+    let reservationAnalyticsAvailable: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if isLoading, summary == nil, systemStatus == nil {
+            if isEnrichmentLoading, summary == nil, systemStatus == nil, !reservationAnalyticsAvailable {
                 loadingCard
-            } else if let errorMessage, summary == nil, systemStatus == nil {
-                errorCard(errorMessage)
             } else {
+                if isEnrichmentLoading, summary != nil || systemStatus != nil {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Refreshing business intelligence…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 4)
+                }
+
                 if let summary {
                     headlineStrip(summary)
                     insightSection(summary)
@@ -37,7 +46,7 @@ struct BusinessIntelligenceOverviewSection: View {
                 }
 
                 if let systemStatus {
-                    systemHealthSection(systemStatus)
+                    bookingHealthBanner(systemStatus)
                 }
             }
         }
@@ -57,14 +66,6 @@ struct BusinessIntelligenceOverviewSection: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-        }
-    }
-
-    private func errorCard(_ message: String) -> some View {
-        TryzubSectionCard(title: "Overview", systemImage: "chart.line.uptrend.xyaxis", spacing: 10) {
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -250,58 +251,72 @@ struct BusinessIntelligenceOverviewSection: View {
     }
 
     @ViewBuilder
-    private func systemHealthSection(_ systemStatus: IntelligenceSystemStatusDTO) -> some View {
+    private func bookingHealthBanner(_ systemStatus: IntelligenceSystemStatusDTO) -> some View {
         let manager = systemStatus.managerSummary
         let developer = systemStatus.developerSummary
-        let warningLines = BusinessIntelligenceInsightBuilder.managerSafeSystemWarnings(
-            systemStatus.warnings
-        )
+        let needAttention = manager.itemsNeedingReview ?? 0
+        let mayNeedReview = manager.possibleDuplicatesCount ?? 0
+        let rejectedForms = developer.spamOrRejectedSubmissionCount ?? 0
+        let importFailures = developer.importFailureCount ?? 0
 
-        TryzubSectionCard(title: "Booking health", systemImage: "heart.text.square", spacing: 8) {
-            HStack {
-                Text("Status")
-                    .font(.subheadline.weight(.medium))
-                Spacer()
-                Text(BusinessIntelligenceFormatting.overallStatusTitle(systemStatus.status))
+        if needAttention == 0,
+           mayNeedReview == 0,
+           rejectedForms == 0,
+           importFailures == 0,
+           systemStatus.status == .ok {
+            EmptyView()
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Booking pipeline warning", systemImage: "exclamationmark.triangle")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(statusTint(systemStatus.status))
-            }
-            .padding(.vertical, 2)
 
-            BusinessIntelligenceCompactRow(
-                title: "Need attention",
-                value: BusinessIntelligenceFormatting.integer(manager.itemsNeedingReview)
+                Text(bookingWarningMessage(
+                    needAttention: needAttention,
+                    mayNeedReview: mayNeedReview,
+                    rejectedForms: rejectedForms,
+                    importFailures: importFailures
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+                Text("Hidden bookings are excluded.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color(.secondarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
             )
-            BusinessIntelligenceCompactRow(
-                title: "May need review",
-                value: BusinessIntelligenceFormatting.integer(manager.possibleDuplicatesCount)
-            )
-
-            if let importFailures = developer.importFailureCount, importFailures > 0 {
-                BusinessIntelligenceCompactRow(
-                    title: "Form problems",
-                    value: BusinessIntelligenceFormatting.integer(importFailures)
-                )
-            }
-
-            if let rejected = developer.spamOrRejectedSubmissionCount, rejected > 0 {
-                BusinessIntelligenceCompactRow(
-                    title: "Rejected forms",
-                    value: BusinessIntelligenceFormatting.integer(rejected)
-                )
-            }
-
-            if !warningLines.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(warningLines, id: \.self) { line in
-                        Text(line)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.top, 2)
-            }
         }
+    }
+
+    private func bookingWarningMessage(
+        needAttention: Int,
+        mayNeedReview: Int,
+        rejectedForms: Int,
+        importFailures: Int
+    ) -> String {
+        var parts: [String] = []
+        if needAttention > 0 {
+            parts.append("\(needAttention) need attention")
+        }
+        if mayNeedReview > 0 {
+            parts.append("\(mayNeedReview) may need review")
+        }
+        if rejectedForms > 0 {
+            parts.append("\(rejectedForms) rejected forms")
+        }
+        if importFailures > 0 {
+            parts.append("\(importFailures) form problems")
+        }
+        if parts.isEmpty {
+            return "Booking pipeline needs a quick check."
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func combinedNotesOrPreferences(_ guests: GuestRelationshipMetricsDTO) -> String {

@@ -57,8 +57,33 @@ final class ReservationsController: ObservableObject {
 
     // Last successful server-to-cache reservation sync.
     @Published private(set) var lastSyncedAt: Date? {
-        didSet { refreshStaffStatusDotStyle() }
+        didSet { refreshHomeServicePresentation() }
     }
+
+    /// Last time the app confirmed visible reservation cache is acceptable to show.
+    @Published private(set) var lastFreshnessCheckedAt: Date? {
+        didSet { refreshHomeServicePresentation() }
+    }
+
+    @Published private(set) var cacheTrustSource: ReservationCacheTrustSource = .unknown {
+        didSet { refreshHomeServicePresentation() }
+    }
+
+    @Published private(set) var startupBackgroundWorkState: StartupBackgroundWorkState = .idle {
+        didSet {
+            #if DEBUG
+            if oldValue != startupBackgroundWorkState {
+                StartupPolicyTrace.startupBackgroundWork(startupBackgroundWorkState)
+            }
+            #endif
+        }
+    }
+
+    @Published private(set) var homeServiceStatusPresentation = HomeServiceStatusPresentation(
+        primarySyncText: "Saved data",
+        secondaryProgressText: nil,
+        dotStyle: .yellowStatic
+    )
 
     // Staff-facing live/sync indicator for Home and Bookings headers.
     @Published private(set) var staffStatusDotStyle: TryzubStaffStatusDotStyle = .yellowStatic
@@ -70,7 +95,9 @@ final class ReservationsController: ObservableObject {
     @Published var importFailureCount: Int = 0
     @Published var importFailureCountError: String?
     @Published private(set) var restaurantSetup: RestaurantSetup = .default
-    @Published private(set) var isLoadingRestaurantSetup = false
+    @Published private(set) var isLoadingRestaurantSetup = false {
+        didSet { refreshHomeServicePresentation() }
+    }
     @Published private(set) var isSavingRestaurantSetup = false
     @Published private(set) var isLoadingRestaurantHours = false
     @Published private(set) var isSavingRestaurantHours = false
@@ -86,7 +113,9 @@ final class ReservationsController: ObservableObject {
     @Published private(set) var operationState = ReservationOperationState()
     @Published private(set) var latestRefreshDecision: ReservationRefreshDecision?
     @Published private(set) var availabilitySummaryByDate: [String: ReservationAvailabilitySummary] = [:]
-    @Published private(set) var availabilitySummaryLoadingDates: Set<String> = []
+    @Published private(set) var availabilitySummaryLoadingDates: Set<String> = [] {
+        didSet { refreshHomeServicePresentation() }
+    }
     @Published private(set) var availabilitySummaryErrorsByDate: [String: String] = [:]
     @Published private(set) var localSeatedAtByReservationID: [Int: Date] = [:]
 
@@ -213,6 +242,7 @@ final class ReservationsController: ObservableObject {
         self.creationTraceSource = traceSource
         #endif
         loadPersistedSyncMetadata()
+        refreshHomeServicePresentation()
         StartupTrace.controllerCreated(id: controllerInstanceID, source: traceSource)
         networkPathMonitor.start { [weak self] isSatisfied in
             self?.applyNetworkPathStatus(isSatisfied)
@@ -253,6 +283,9 @@ final class ReservationsController: ObservableObject {
         UserDefaults.standard.removeObject(forKey: syncScopeSuccessDefaultsKey)
         UserDefaults.standard.removeObject(forKey: syncActiveWindowBoundsKey)
         persistedActiveWindowBounds = nil
+        lastFreshnessCheckedAt = nil
+        cacheTrustSource = .unknown
+        startupBackgroundWorkState = .idle
     }
 
     /// Synchronous local-only gate. Safe to call from view `onAppear` before async startup work.
@@ -402,6 +435,7 @@ final class ReservationsController: ObservableObject {
 
         switch policy {
         case .skip:
+            noteFreshnessChecked(reason: "fresh_cache")
             recordRefreshDecision(scope: scope, mode: .startup, outcome: "skipped_fresh")
             StartupTrace.activeWindow(
                 controllerID: controllerInstanceID,
@@ -691,6 +725,7 @@ final class ReservationsController: ObservableObject {
         guard !hasReleasedStartupUI else { return }
         hasReleasedStartupUI = true
         startupUIReleasedAt = Date()
+        refreshHomeServicePresentation()
         HostLocalModelAutoPrepareCoordinator.shared.scheduleWhenReady(controller: self)
     }
 
@@ -837,7 +872,36 @@ final class ReservationsController: ObservableObject {
         }
 
         reconcileActiveWindowSyncMetadata()
+        adoptPersistedFreshnessTrustIfAvailable()
         publishSyncScopeSnapshots()
+    }
+
+    private func adoptPersistedFreshnessTrustIfAvailable() {
+        let scope = activeWindowScope()
+        guard isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval),
+              let checkedAt = syncStateByScope[scope]?.lastSuccessAt else {
+            return
+        }
+        lastFreshnessCheckedAt = checkedAt
+        if cacheTrustSource == .unknown {
+            cacheTrustSource = .freshnessCheck
+        }
+    }
+
+    private func noteFreshnessChecked(reason: String) {
+        let now = Date()
+        lastFreshnessCheckedAt = now
+        cacheTrustSource = .freshnessCheck
+        StartupPolicyTrace.freshnessChecked(at: now, reason: reason)
+        refreshHomeServicePresentation()
+    }
+
+    private func noteReservationServerSyncCompleted() {
+        let now = Date()
+        lastSyncedAt = now
+        lastFreshnessCheckedAt = now
+        cacheTrustSource = .serverSync
+        refreshHomeServicePresentation()
     }
 
     private func persistSyncMetadata() {
@@ -1070,7 +1134,7 @@ final class ReservationsController: ObservableObject {
 
         let repository = ReservationRepository(context: context)
         try repository.upsert(response.data)
-        lastSyncedAt = Date()
+        noteReservationServerSyncCompleted()
         return response
     }
 
@@ -1095,7 +1159,7 @@ final class ReservationsController: ObservableObject {
 
         let repository = ReservationRepository(context: context)
         try repository.upsert(response.data)
-        lastSyncedAt = Date()
+        noteReservationServerSyncCompleted()
     }
 
     // MARK: - Pending Review Sync
@@ -1494,7 +1558,7 @@ final class ReservationsController: ObservableObject {
                 )
             }
             updateServerCursor(for: scope, with: result.serverTime)
-            lastSyncedAt = Date()
+            noteReservationServerSyncCompleted()
             markScopeSuccess(scope)
             persistActiveWindowBoundsIfNeeded(scope: scope, window: window)
             StartupPolicyTrace.persisted(
@@ -1599,7 +1663,7 @@ final class ReservationsController: ObservableObject {
                 result = try await service.syncTodayFull(reason: mode.requestReason)
             }
             updateServerCursor(for: scope, with: result.serverTime)
-            lastSyncedAt = Date()
+            noteReservationServerSyncCompleted()
             markScopeSuccess(scope)
         } catch {
             if error.isCancellationLike {
@@ -1689,7 +1753,7 @@ final class ReservationsController: ObservableObject {
                 reason: .scheduleWindow
             )
             updateServerCursor(for: scope, with: result.serverTime)
-            lastSyncedAt = Date()
+            noteReservationServerSyncCompleted()
             markScopeSuccess(scope)
             return true
         } catch {
@@ -1736,7 +1800,7 @@ final class ReservationsController: ObservableObject {
             let repository = ReservationRepository(context: context)
             let service = ReservationSyncService(client: environment.apiClient, repository: repository)
             try await service.syncReviewQueues(reason: .reviewQueues)
-            lastSyncedAt = Date()
+            noteReservationServerSyncCompleted()
             markScopeSuccess(scope)
             return true
         } catch {
@@ -3518,11 +3582,36 @@ final class ReservationsController: ObservableObject {
             || operationState.hasUncertainMutationReconcileInProgress
     }
 
-    private func refreshStaffStatusDotStyle(now: Date = Date()) {
+    func refreshHomeServicePresentation(
+        hostOperationalLoading: Bool = false,
+        now: Date = Date()
+    ) {
+        publishStartupBackgroundWorkState()
+        let presentation = HomeServiceStatusPresenter.resolve(
+            isNetworkDegraded: isNetworkDegraded,
+            isReservationRefreshInFlight: isReservationNetworkRefreshInFlight,
+            hasVisibleCache: localCacheStoreHasReservations || hasReleasedStartupUI,
+            startupNetworkPassError: startupNetworkPassError,
+            cacheTrustSource: cacheTrustSource,
+            lastSyncedAt: lastSyncedAt,
+            lastFreshnessCheckedAt: lastFreshnessCheckedAt,
+            startupBackgroundWorkState: startupBackgroundWorkState,
+            hostOperationalLoading: hostOperationalLoading,
+            now: now
+        )
+        if homeServiceStatusPresentation != presentation {
+            homeServiceStatusPresentation = presentation
+            #if DEBUG
+            StartupPolicyTrace.headerPresentation(presentation)
+            #endif
+        }
+
         let resolved = TryzubStaffStatusResolver.resolve(
             isNetworkDegraded: isNetworkDegraded,
             isNetworkActivityInFlight: isStaffNetworkActivityInFlight,
             lastSyncedAt: lastSyncedAt,
+            lastFreshnessCheckedAt: lastFreshnessCheckedAt,
+            cacheTrustSource: cacheTrustSource,
             pendingReviewCount: pendingReviewAttentionCount,
             now: now
         )
@@ -3534,6 +3623,34 @@ final class ReservationsController: ObservableObject {
         scheduleStaffStatusBoundaryTask(now: now)
     }
 
+    private func refreshStaffStatusDotStyle(now: Date = Date()) {
+        refreshHomeServicePresentation(now: now)
+    }
+
+    private func publishStartupBackgroundWorkState() {
+        let resolved: StartupBackgroundWorkState
+        if !hasReleasedStartupUI {
+            resolved = .checkingSavedData
+        } else if isStartupNetworkPassInFlight {
+            resolved = .checkingFreshness
+        } else if isLoadingRestaurantSetup {
+            resolved = .updatingServiceSetup
+        } else if isLoadingHostTodayAvailabilityBundle() {
+            resolved = .loadingTodayOperations
+        } else {
+            resolved = .ready
+        }
+
+        if startupBackgroundWorkState != resolved {
+            startupBackgroundWorkState = resolved
+        }
+    }
+
+    private func isLoadingHostTodayAvailabilityBundle() -> Bool {
+        guard let dateKey = hostBoardSelectedDateKey else { return false }
+        return isAvailabilitySummaryLoading(date: dateKey)
+    }
+
     private func scheduleStaffStatusBoundaryTask(now: Date = Date()) {
         staffStatusBoundaryTask?.cancel()
 
@@ -3541,11 +3658,20 @@ final class ReservationsController: ObservableObject {
 
         if !isNetworkDegraded,
            !isStaffNetworkActivityInFlight,
-           pendingReviewAttentionCount == 0,
-           let lastSyncedAt {
-            let staleAt = lastSyncedAt.addingTimeInterval(TryzubStaffStatusResolver.staleSyncThreshold)
-            if staleAt > now {
-                nextWake = staleAt
+           pendingReviewAttentionCount == 0 {
+            let trustReference: Date? = switch cacheTrustSource {
+            case .serverSync:
+                lastSyncedAt ?? lastFreshnessCheckedAt
+            case .freshnessCheck:
+                lastFreshnessCheckedAt ?? lastSyncedAt
+            case .unknown:
+                lastFreshnessCheckedAt ?? lastSyncedAt
+            }
+            if let trustReference {
+                let staleAt = trustReference.addingTimeInterval(TryzubStaffStatusResolver.staleSyncThreshold)
+                if staleAt > now {
+                    nextWake = staleAt
+                }
             }
         }
 

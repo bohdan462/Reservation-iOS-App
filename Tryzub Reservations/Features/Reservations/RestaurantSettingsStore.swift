@@ -56,7 +56,9 @@ final class RestaurantSettingsStore: ObservableObject {
     private let setupFreshnessInterval: TimeInterval = 300
     private var lastAnalyticsRequestKey: String?
     private var analyticsInFlightKey: String?
-    private let analyticsFreshnessInterval: TimeInterval = 120
+    private var reservationAnalyticsByRequestKey: [String: ReservationAnalyticsSummaryDTO] = [:]
+    private var reservationAnalyticsLoadedAtByRequestKey: [String: Date] = [:]
+    private let analyticsFreshnessInterval: TimeInterval = 600
 
     // MARK: - Lifecycle
 
@@ -457,34 +459,87 @@ final class RestaurantSettingsStore: ObservableObject {
 
     // MARK: - Analytics
 
+    func cachedReservationAnalytics(for rangeKey: AnalyticsRangeKey) -> ReservationAnalyticsSummaryDTO? {
+        reservationAnalyticsByRequestKey[rangeKey.reservationRequestKey]
+            ?? (lastAnalyticsRequestKey == rangeKey.reservationRequestKey ? analyticsSummary : nil)
+    }
+
+    func isReservationAnalyticsFresh(
+        for rangeKey: AnalyticsRangeKey,
+        interval: TimeInterval
+    ) -> Bool {
+        let requestKey = rangeKey.reservationRequestKey
+        if let loadedAt = reservationAnalyticsLoadedAtByRequestKey[requestKey] {
+            return Date().timeIntervalSince(loadedAt) < interval
+        }
+        if lastAnalyticsRequestKey == requestKey {
+            return isFresh(analyticsLoadedAt, interval: interval)
+        }
+        return false
+    }
+
+    @discardableResult
+    func loadReservationAnalyticsSummary(
+        for rangeKey: AnalyticsRangeKey,
+        force: Bool = false,
+        freshnessInterval: TimeInterval? = nil
+    ) async throws -> ReservationAnalyticsSummaryDTO {
+        try await loadReservationAnalyticsSummary(
+            from: rangeKey.reservationFrom,
+            to: rangeKey.reservationTo,
+            force: force,
+            freshnessInterval: freshnessInterval ?? analyticsFreshnessInterval
+        )
+    }
+
     @discardableResult
     func loadReservationAnalyticsSummary(
         from: String?,
         to: String?,
-        force: Bool = false
+        force: Bool = false,
+        freshnessInterval: TimeInterval? = nil
     ) async throws -> ReservationAnalyticsSummaryDTO {
         let requestKey = "\(from ?? "")|\(to ?? "")"
+        let interval = freshnessInterval ?? analyticsFreshnessInterval
+
+        if !force,
+           let cached = reservationAnalyticsByRequestKey[requestKey],
+           isFresh(reservationAnalyticsLoadedAtByRequestKey[requestKey], interval: interval) {
+            ReservationSyncDiagnostics.analyticsRequestSkipped(key: requestKey)
+            return cached
+        }
 
         if !force,
            lastAnalyticsRequestKey == requestKey,
            let analyticsSummary,
-           isFresh(analyticsLoadedAt, interval: analyticsFreshnessInterval) {
+           isFresh(analyticsLoadedAt, interval: interval) {
             ReservationSyncDiagnostics.analyticsRequestSkipped(key: requestKey)
             return analyticsSummary
         }
 
+        return try await performReservationAnalyticsLoad(
+            from: from,
+            to: to,
+            requestKey: requestKey
+        )
+    }
+
+    @discardableResult
+    private func performReservationAnalyticsLoad(
+        from: String?,
+        to: String?,
+        requestKey: String
+    ) async throws -> ReservationAnalyticsSummaryDTO {
         if analyticsLoading, analyticsInFlightKey == requestKey {
             while analyticsLoading, analyticsInFlightKey == requestKey {
                 await Task.yield()
+                try Task.checkCancellation()
             }
-            if !force,
-               lastAnalyticsRequestKey == requestKey,
-               let analyticsSummary,
-               isFresh(analyticsLoadedAt, interval: analyticsFreshnessInterval) {
-                return analyticsSummary
+            if let cached = reservationAnalyticsByRequestKey[requestKey] {
+                return cached
             }
             if analyticsLoading {
-                throw SettingsValidationError(message: "Analytics are already loading.")
+                throw CancellationError()
             }
         }
 
@@ -502,11 +557,16 @@ final class RestaurantSettingsStore: ObservableObject {
                 to: to,
                 reason: .reservationAnalyticsSummary
             )
+            reservationAnalyticsByRequestKey[requestKey] = summary
+            reservationAnalyticsLoadedAtByRequestKey[requestKey] = Date()
             analyticsSummary = summary
             analyticsLoadedAt = Date()
             lastAnalyticsRequestKey = requestKey
             return summary
         } catch {
+            if error.isCancellationLike {
+                throw error
+            }
             analyticsError = error.localizedDescription
             throw error
         }

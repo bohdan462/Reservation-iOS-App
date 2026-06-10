@@ -212,6 +212,143 @@ struct TryzubSegmentedControl<Value: Hashable>: View {
     }
 }
 
+/// Whether visible reservation cache trust comes from a server fetch or a freshness check.
+enum ReservationCacheTrustSource: Equatable {
+    case unknown
+    case serverSync
+    case freshnessCheck
+}
+
+/// Lightweight non-blocking startup work surfaced in the Home header.
+enum StartupBackgroundWorkState: Equatable {
+    case idle
+    case checkingSavedData
+    case checkingFreshness
+    case updatingServiceSetup
+    case loadingTodayOperations
+    case ready
+
+    var staffProgressLabel: String? {
+        switch self {
+        case .idle, .ready:
+            return nil
+        case .checkingSavedData:
+            return "Checking service…"
+        case .checkingFreshness:
+            return "Finishing updates…"
+        case .updatingServiceSetup:
+            return "Checking setup…"
+        case .loadingTodayOperations:
+            return "Checking service…"
+        }
+    }
+}
+
+/// Staff-facing Home header sync line and optional secondary progress copy.
+struct HomeServiceStatusPresentation: Equatable {
+    let primarySyncText: String
+    let secondaryProgressText: String?
+    let dotStyle: TryzubStaffStatusDotStyle
+}
+
+enum HomeServiceStatusPresenter {
+    static func resolve(
+        isNetworkDegraded: Bool,
+        isReservationRefreshInFlight: Bool,
+        hasVisibleCache: Bool,
+        startupNetworkPassError: String?,
+        cacheTrustSource: ReservationCacheTrustSource,
+        lastSyncedAt: Date?,
+        lastFreshnessCheckedAt: Date?,
+        startupBackgroundWorkState: StartupBackgroundWorkState,
+        hostOperationalLoading: Bool,
+        now: Date = Date()
+    ) -> HomeServiceStatusPresentation {
+        let secondaryFromStartup = startupBackgroundWorkState.staffProgressLabel
+        let secondaryFromHost = hostOperationalLoading && !isReservationRefreshInFlight
+            ? "Checking service…"
+            : nil
+        let secondaryProgressText = isReservationRefreshInFlight
+            ? nil
+            : (secondaryFromStartup ?? secondaryFromHost)
+
+        if isNetworkDegraded || startupNetworkPassError != nil {
+            let primary: String
+            if let checkedAt = lastFreshnessCheckedAt {
+                primary = "Saved data · checked \(checkedAt.formatted(date: .omitted, time: .shortened))"
+            } else if hasVisibleCache || lastSyncedAt != nil {
+                primary = "Saved data"
+            } else {
+                primary = "Offline · saved data"
+            }
+            return HomeServiceStatusPresentation(
+                primarySyncText: primary,
+                secondaryProgressText: secondaryProgressText,
+                dotStyle: .redFlashing
+            )
+        }
+
+        if isReservationRefreshInFlight {
+            return HomeServiceStatusPresentation(
+                primarySyncText: "Updating…",
+                secondaryProgressText: secondaryProgressText,
+                dotStyle: .greenFlashing
+            )
+        }
+
+        if cacheTrustSource == .serverSync, let lastSyncedAt {
+            return HomeServiceStatusPresentation(
+                primarySyncText: "Updated \(lastSyncedAt.formatted(date: .omitted, time: .shortened))",
+                secondaryProgressText: secondaryProgressText,
+                dotStyle: dotStyleForTrust(
+                    lastSyncedAt: lastSyncedAt,
+                    lastFreshnessCheckedAt: lastFreshnessCheckedAt,
+                    now: now
+                )
+            )
+        }
+
+        if let lastFreshnessCheckedAt {
+            return HomeServiceStatusPresentation(
+                primarySyncText: "Checked \(lastFreshnessCheckedAt.formatted(date: .omitted, time: .shortened))",
+                secondaryProgressText: secondaryProgressText,
+                dotStyle: dotStyleForTrust(
+                    lastSyncedAt: lastSyncedAt,
+                    lastFreshnessCheckedAt: lastFreshnessCheckedAt,
+                    now: now
+                )
+            )
+        }
+
+        if hasVisibleCache || lastSyncedAt != nil {
+            return HomeServiceStatusPresentation(
+                primarySyncText: "Saved data",
+                secondaryProgressText: secondaryProgressText,
+                dotStyle: .yellowStatic
+            )
+        }
+
+        return HomeServiceStatusPresentation(
+            primarySyncText: "Saved data",
+            secondaryProgressText: secondaryProgressText,
+            dotStyle: .yellowStatic
+        )
+    }
+
+    private static func dotStyleForTrust(
+        lastSyncedAt: Date?,
+        lastFreshnessCheckedAt: Date?,
+        now: Date
+    ) -> TryzubStaffStatusDotStyle {
+        let reference = [lastSyncedAt, lastFreshnessCheckedAt].compactMap { $0 }.max()
+        guard let reference else { return .yellowStatic }
+        if now.timeIntervalSince(reference) > TryzubStaffStatusResolver.staleSyncThreshold {
+            return .yellowStatic
+        }
+        return .greenStatic
+    }
+}
+
 /// Pure resolver for the staff status dot. Controllers map live state into a style.
 enum TryzubStaffStatusResolver {
     static let staleSyncThreshold: TimeInterval = 120
@@ -220,6 +357,8 @@ enum TryzubStaffStatusResolver {
         isNetworkDegraded: Bool,
         isNetworkActivityInFlight: Bool,
         lastSyncedAt: Date?,
+        lastFreshnessCheckedAt: Date?,
+        cacheTrustSource: ReservationCacheTrustSource,
         pendingReviewCount: Int,
         now: Date = Date()
     ) -> TryzubStaffStatusDotStyle {
@@ -229,10 +368,20 @@ enum TryzubStaffStatusResolver {
         if isNetworkActivityInFlight || pendingReviewCount > 0 {
             return .greenFlashing
         }
-        guard let lastSyncedAt else {
+
+        let trustReference: Date? = switch cacheTrustSource {
+        case .serverSync:
+            lastSyncedAt ?? lastFreshnessCheckedAt
+        case .freshnessCheck:
+            lastFreshnessCheckedAt ?? lastSyncedAt
+        case .unknown:
+            lastFreshnessCheckedAt ?? lastSyncedAt
+        }
+
+        guard let trustReference else {
             return .yellowStatic
         }
-        if now.timeIntervalSince(lastSyncedAt) > staleSyncThreshold {
+        if now.timeIntervalSince(trustReference) > staleSyncThreshold {
             return .yellowStatic
         }
         return .greenStatic

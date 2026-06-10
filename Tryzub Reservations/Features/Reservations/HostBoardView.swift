@@ -131,23 +131,43 @@ struct HostBoardView: View {
         controller.isAvailabilitySummaryLoading(date: selectedDateKey)
     }
 
-    private var hostIntelligenceRefreshKey: String {
-        let reservationStamp = reservations
-            .map { "\($0.remoteID):\($0.statusValue.rawValue):\($0.tableName ?? "")" }
-            .sorted()
-            .joined(separator: "|")
-        let historyStamp = controller.historyCacheEnrichmentGeneration
+    private var hostIntelligenceReservationStamp: Int {
+        var hasher = Hasher()
+        for reservation in reservations {
+            hasher.combine(reservation.remoteID)
+            hasher.combine(reservation.statusValue.rawValue)
+            hasher.combine(reservation.tableName ?? "")
+            hasher.combine(reservation.displayTime)
+            hasher.combine(reservation.partySize)
+        }
+        return hasher.finalize()
+    }
+
+    private var hostIntelligenceSeatedStamp: Int {
+        var hasher = Hasher()
+        for (id, seatedAt) in controller.localSeatedAtByReservationID.sorted(by: { $0.key < $1.key }) {
+            hasher.combine(id)
+            hasher.combine(seatedAt.timeIntervalSince1970)
+        }
+        return hasher.finalize()
+    }
+
+    /// Local deterministic Host facts: reservations, date, seated times, settings.
+    private var hostIntelligenceEvaluationKey: String {
+        "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceSeatedStamp)-\(controller.historyCacheEnrichmentGeneration)-\(hostIntelligenceOperationalMinuteStamp)-\(hostIntelligenceSettingsStore.settings.hostDecisionFingerprint)-\(hostTableConfigStore.tableConfigFingerprint)"
+    }
+
+    /// Enrichment-only inputs that may update narrative later without blocking local facts.
+    private var hostIntelligenceEnrichmentKey: String {
         let availabilityStamp = availabilitySummary?.loadedAt.timeIntervalSince1970 ?? 0
-        let seatedStamp = controller.localSeatedAtByReservationID
-            .sorted { $0.key < $1.key }
-            .map { "\($0.key)=\($0.value.timeIntervalSince1970)" }
-            .joined(separator: ",")
-        let settingsStamp = hostIntelligenceSettingsStore.settings.hostDecisionFingerprint
-        let tableStamp = hostTableConfigStore.tableConfigFingerprint
-        let analyticsStamp = analyticsSummaryIdentity
         let guestIntelStamp = guestIntelligenceStore.cacheStamp(for: selectedDateKey)
-        let operationalMinuteStamp = hostIntelligenceOperationalMinuteStamp
-        return "\(selectedDateKey)-\(reservationStamp)-\(historyStamp)-\(availabilityStamp)-\(seatedStamp)-\(settingsStamp)-\(tableStamp)-\(analyticsStamp)-\(guestIntelStamp)-\(operationalMinuteStamp)"
+        let analyticsStamp = analyticsSummaryIdentity
+        return "\(selectedDateKey)-\(availabilityStamp)-\(guestIntelStamp)-\(analyticsStamp)"
+    }
+
+    private var hostBoardOperationalLoading: Bool {
+        isLoadingAvailabilitySummary
+            || guestIntelligenceStore.isLoading(dateKey: selectedDateKey)
     }
 
     private var hostIntelligenceOperationalMinuteStamp: String {
@@ -295,6 +315,7 @@ struct HostBoardView: View {
         }
         .onAppear {
             controller.noteHostBoardSelectedDate(selectedDateKey)
+            controller.refreshHomeServicePresentation(hostOperationalLoading: hostBoardOperationalLoading)
         }
         .task(id: "\(isVisible)-\(deferNetworkLoads)-\(controller.canStartNoncriticalStartupLoads)-\(selectedDateKey)") {
             // Lazy Home indicator load: availability/slots/blocked are screen-specific
@@ -322,7 +343,7 @@ struct HostBoardView: View {
             guard !deferNetworkLoads, !shouldDeferStartupOptionalLoads else { return }
             guestIntelligenceStore.scheduleLoad(dateKey: selectedDateKey)
         }
-        .task(id: hostIntelligenceRefreshKey) {
+        .task(id: hostIntelligenceEvaluationKey) {
             guard isVisible else {
                 hostIntelligenceController.reset()
                 return
@@ -331,6 +352,9 @@ struct HostBoardView: View {
                 input: makeHostEngineInput(now: clockTick),
                 stability: hostEvaluationStabilityContext
             )
+        }
+        .task(id: hostIntelligenceEnrichmentKey) {
+            guard isVisible else { return }
             await hostIntelligenceController.refreshBriefing(
                 hostBoardContext: HostBriefingHostBoardContext(
                     isStartupNetworkPassInFlight: controller.isStartupNetworkPassInFlight,
@@ -343,6 +367,9 @@ struct HostBoardView: View {
                     now: clockTick
                 )
             )
+        }
+        .onChange(of: hostBoardOperationalLoading) { _, isLoading in
+            controller.refreshHomeServicePresentation(hostOperationalLoading: isLoading)
         }
     }
 
@@ -457,9 +484,7 @@ struct HostBoardView: View {
         HomeServiceHeader(
             title: environment.role == .developer ? "Dev" : "Host",
             selectedDate: $selectedDate,
-            hasVisibleCachedData: controller.hasReleasedStartupUI
-                || !allKnownReservations.isEmpty
-                || controller.localCacheStoreHasReservations,
+            statusPresentation: controller.homeServiceStatusPresentation,
             canCreateReservation: controller.capabilities.canCreateManualReservations,
             canViewFormProblems: controller.capabilities.canViewFailedImports
                 && controller.capabilities.canViewDeveloperDiagnostics,
@@ -1184,7 +1209,7 @@ private struct HomeAvailabilityIndicator: View {
 private struct HomeServiceHeader: View {
     let title: String
     @Binding var selectedDate: Date
-    let hasVisibleCachedData: Bool
+    let statusPresentation: HomeServiceStatusPresentation
     let canCreateReservation: Bool
     @EnvironmentObject private var controller: ReservationsController
     let canViewFormProblems: Bool
@@ -1197,29 +1222,6 @@ private struct HomeServiceHeader: View {
         selectedDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
     }
 
-    private var isRefreshing: Bool {
-        controller.isSyncing
-            || controller.isAutoRefreshing
-            || controller.isStartupNetworkPassInFlight
-    }
-
-    private var syncText: String {
-        if controller.startupNetworkPassError != nil,
-           hasVisibleCachedData || controller.localCacheStoreHasReservations || controller.lastSyncedAt != nil {
-            return "Offline · saved data"
-        }
-
-        if isRefreshing {
-            return "Refreshing…"
-        }
-
-        guard let lastSyncedAt = controller.lastSyncedAt else {
-            return "Saved data"
-        }
-
-        return "Updated \(lastSyncedAt.formatted(date: .omitted, time: .shortened))"
-    }
-    
     var body: some View {
         ViewThatFits(in: .horizontal) {
             // Wide (iPad): everything on one row
@@ -1308,24 +1310,34 @@ private struct HomeServiceHeader: View {
                 .foregroundStyle(ReservationUIStyle.serviceTitleColor)
                 .lineLimit(1)
 
-            HStack(spacing: 8) {
-                Text(serviceDateText)
-                    .lineLimit(1)
-                    .contentTransition(.interpolate)
-                    .animation(.snappy(duration: 0.35), value: selectedDate.reservationDateString())
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Text(serviceDateText)
+                        .lineLimit(1)
+                        .contentTransition(.interpolate)
+                        .animation(.snappy(duration: 0.35), value: selectedDate.reservationDateString())
 
-                Text("·")
-                    .foregroundStyle(.quaternary)
+                    Text("·")
+                        .foregroundStyle(.quaternary)
 
-                Text(syncText)
-                    .lineLimit(1)
-                    .contentTransition(.opacity)
-                    .animation(.easeInOut(duration: 0.25), value: syncText)
+                    Text(statusPresentation.primarySyncText)
+                        .lineLimit(1)
+                        .contentTransition(.opacity)
+                        .animation(.easeInOut(duration: 0.25), value: statusPresentation.primarySyncText)
 
-                TryzubStaffStatusIndicator(
-                    style: controller.staffStatusDotStyle,
-                    showsOfflineIcon: controller.isNetworkDegraded
-                )
+                    TryzubStaffStatusIndicator(
+                        style: statusPresentation.dotStyle,
+                        showsOfflineIcon: controller.isNetworkDegraded
+                    )
+                }
+
+                if let secondary = statusPresentation.secondaryProgressText {
+                    Text(secondary)
+                        .lineLimit(1)
+                        .foregroundStyle(.tertiary)
+                        .contentTransition(.opacity)
+                        .animation(.easeInOut(duration: 0.25), value: secondary)
+                }
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(.secondary)
@@ -1342,7 +1354,7 @@ private struct HomeServiceHeader: View {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                .disabled(isRefreshing)
+                .disabled(controller.isReservationNetworkRefreshInFlight)
 
                 if canViewFormProblems, failedImportCount > 0 {
                     Button {

@@ -10,15 +10,38 @@ struct BusinessAnalyticsView: View {
     @EnvironmentObject private var businessIntelligenceStore: BusinessIntelligenceStore
     @EnvironmentObject private var intelligenceSystemStatusStore: IntelligenceSystemStatusStore
 
-    @State private var summary: ReservationAnalyticsSummaryDTO?
-    @State private var range: AnalyticsRangeOption = .all
-    @State private var isLoading = false
-    @State private var errorMessage: String?
+    var body: some View {
+        BusinessAnalyticsLoadedView(
+            settingsStore: settingsStore,
+            businessIntelligenceStore: businessIntelligenceStore,
+            intelligenceSystemStatusStore: intelligenceSystemStatusStore
+        )
+    }
+}
+
+private struct BusinessAnalyticsLoadedView: View {
+    @ObservedObject var settingsStore: RestaurantSettingsStore
+    @StateObject private var coordinator: BusinessAnalyticsCoordinator
+
+    init(
+        settingsStore: RestaurantSettingsStore,
+        businessIntelligenceStore: BusinessIntelligenceStore,
+        intelligenceSystemStatusStore: IntelligenceSystemStatusStore
+    ) {
+        self.settingsStore = settingsStore
+        _coordinator = StateObject(
+            wrappedValue: BusinessAnalyticsCoordinator(
+                settingsStore: settingsStore,
+                businessIntelligenceStore: businessIntelligenceStore,
+                intelligenceSystemStatusStore: intelligenceSystemStatusStore
+            )
+        )
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Picker("Range", selection: $range) {
+                Picker("Range", selection: rangeBinding) {
                     ForEach(AnalyticsRangeOption.allCases) { option in
                         Text(option.title).tag(option)
                     }
@@ -26,35 +49,44 @@ struct BusinessAnalyticsView: View {
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 16)
 
-                Text(range.managerRangeLabel())
+                Text(coordinator.selectedRange.managerRangeLabel())
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
 
-                if let errorMessage {
-                    AnalyticsNoticeCard(message: errorMessage, tint: .red)
+                if let reservationError = coordinator.reservationError {
+                    AnalyticsNoticeCard(message: reservationError, tint: .red)
                         .padding(.horizontal, 16)
                 }
 
-                if isLoading && summary != nil {
-                    AnalyticsNoticeCard(message: "Updating analytics...", tint: .secondary, systemImage: "arrow.clockwise")
+                if coordinator.isReservationLoading, coordinator.reservationSummary != nil {
+                    AnalyticsNoticeCard(
+                        message: "Refreshing reservation analytics…",
+                        tint: .secondary,
+                        systemImage: "arrow.clockwise"
+                    )
+                    .padding(.horizontal, 16)
+                }
+
+                if let enrichmentWarning = coordinator.enrichmentWarning {
+                    AnalyticsNoticeCard(message: enrichmentWarning, tint: .orange)
                         .padding(.horizontal, 16)
                 }
 
-                if isLoading && summary == nil {
-                    ProgressView("Loading analytics...")
-                        .frame(maxWidth: .infinity, minHeight: 160)
+                if coordinator.isReservationLoading, coordinator.reservationSummary == nil {
+                    ProgressView("Loading reservation analytics…")
+                        .frame(maxWidth: .infinity, minHeight: 120)
                 } else {
                     BusinessIntelligenceOverviewSection(
-                        summary: businessIntelligenceSummary,
-                        systemStatus: intelligenceSystemStatus,
-                        isLoading: isBusinessIntelligenceLoading,
-                        errorMessage: businessIntelligenceErrorMessage
+                        summary: coordinator.businessIntelligenceSummary,
+                        systemStatus: coordinator.intelligenceSystemStatus,
+                        isEnrichmentLoading: coordinator.isEnrichmentLoading,
+                        reservationAnalyticsAvailable: coordinator.reservationSummary != nil
                     )
 
-                    if let summary {
+                    if let summary = coordinator.reservationSummary {
                         BusinessAnalyticsLegacyContent(summary: summary)
-                    } else {
+                    } else if !coordinator.isReservationLoading {
                         ContentUnavailableView(
                             "No Analytics",
                             systemImage: "chart.bar",
@@ -73,87 +105,29 @@ struct BusinessAnalyticsView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task { await load(force: true) }
+                    coordinator.refresh(force: true)
                 } label: {
-                    if isLoading || settingsStore.analyticsLoading {
+                    if coordinator.isReservationLoading || coordinator.isEnrichmentLoading || settingsStore.analyticsLoading {
                         ProgressView()
                     } else {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
-                .disabled(isLoading)
+                .disabled(coordinator.isReservationLoading)
             }
         }
-        .task(id: range) {
-            await load()
+        .onAppear {
+            coordinator.isScreenVisible = true
+        }
+        .onDisappear {
+            coordinator.isScreenVisible = false
         }
     }
 
-    private var intelligenceDateKeys: (from: String, to: String) {
-        range.resolvedIntelligenceDateRange()
-    }
-
-    private var businessIntelligenceSummary: BusinessIntelligenceSummaryDTO? {
-        let keys = intelligenceDateKeys
-        return businessIntelligenceStore.response(from: keys.from, to: keys.to)
-    }
-
-    private var intelligenceSystemStatus: IntelligenceSystemStatusDTO? {
-        let keys = intelligenceDateKeys
-        return intelligenceSystemStatusStore.response(from: keys.from, to: keys.to)
-    }
-
-    private var isBusinessIntelligenceLoading: Bool {
-        let keys = intelligenceDateKeys
-        return businessIntelligenceStore.isLoading(from: keys.from, to: keys.to)
-            || intelligenceSystemStatusStore.isLoading(from: keys.from, to: keys.to)
-    }
-
-    private var businessIntelligenceErrorMessage: String? {
-        let keys = intelligenceDateKeys
-        guard businessIntelligenceStore.error(from: keys.from, to: keys.to) != nil else {
-            return nil
-        }
-        return "Business intelligence is unavailable right now."
-    }
-
-    private func load(force: Bool = false) async {
-        guard !isLoading else { return }
-        if summary == nil, let cached = settingsStore.analyticsSummary {
-            summary = cached
-        }
-        isLoading = true
-        errorMessage = nil
-
-        let intelligenceRange = range.resolvedIntelligenceDateRange()
-        Task {
-            await businessIntelligenceStore.load(
-                from: intelligenceRange.from,
-                to: intelligenceRange.to,
-                force: force
-            )
-            await intelligenceSystemStatusStore.load(
-                from: intelligenceRange.from,
-                to: intelligenceRange.to,
-                force: force
-            )
-        }
-
-        defer {
-            isLoading = false
-        }
-
-        do {
-            let dateRange = range.dateRange()
-            summary = try await settingsStore.loadReservationAnalyticsSummary(
-                from: dateRange.from,
-                to: dateRange.to,
-                force: force
-            )
-        } catch {
-            if !error.isCancellationLike {
-                errorMessage = error.localizedDescription
-            }
-        }
+    private var rangeBinding: Binding<AnalyticsRangeOption> {
+        Binding(
+            get: { coordinator.selectedRange },
+            set: { coordinator.setSelectedRange($0) }
+        )
     }
 }

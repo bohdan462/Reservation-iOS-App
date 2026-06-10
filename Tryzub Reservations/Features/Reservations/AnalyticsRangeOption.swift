@@ -5,6 +5,36 @@
 
 import Foundation
 
+struct AnalyticsRangeKey: Hashable, Equatable {
+    let mode: AnalyticsRangeOption
+    let reservationFrom: String?
+    let reservationTo: String?
+    let intelligenceFrom: String
+    let intelligenceTo: String
+
+    init(mode: AnalyticsRangeOption, now: Date = Date(), calendar: Calendar = .current) {
+        self.mode = mode
+        let reservationRange = mode.dateRange(now: now, calendar: calendar)
+        reservationFrom = reservationRange.from
+        reservationTo = reservationRange.to
+        let intelligenceRange = mode.resolvedIntelligenceDateRange(now: now, calendar: calendar)
+        intelligenceFrom = intelligenceRange.from
+        intelligenceTo = intelligenceRange.to
+    }
+
+    var reservationRequestKey: String {
+        "\(reservationFrom ?? "")|\(reservationTo ?? "")"
+    }
+
+    var intelligenceRequestKey: String {
+        "\(intelligenceFrom)|\(intelligenceTo)"
+    }
+
+    var traceLabel: String {
+        mode.rawValue
+    }
+}
+
 enum AnalyticsRangeOption: String, CaseIterable, Identifiable {
     /// Backend `/business-intelligence/summary` and `/intelligence/system-status` cap ranges at 366 inclusive days.
     static let intelligenceMaxInclusiveDays = 366
