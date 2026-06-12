@@ -120,6 +120,7 @@ enum ManualTextMessageService {
 }
 
 enum GuestTextMessagePresenter {
+    @MainActor
     static func canSendText() -> Bool {
         MFMessageComposeViewController.canSendText()
     }
@@ -192,13 +193,14 @@ struct GuestTextMessageComposer: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: MFMessageComposeViewController, context: Context) {}
 
-    final class Coordinator: NSObject, MFMessageComposeViewControllerDelegate {
+    final class Coordinator: NSObject, @preconcurrency MFMessageComposeViewControllerDelegate {
         let onFinish: () -> Void
 
         init(onFinish: @escaping () -> Void) {
             self.onFinish = onFinish
         }
 
+        @MainActor
         func messageComposeViewController(
             _ controller: MFMessageComposeViewController,
             didFinishWith result: MessageComposeResult

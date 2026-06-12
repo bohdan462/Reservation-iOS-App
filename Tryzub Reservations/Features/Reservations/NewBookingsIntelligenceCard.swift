@@ -52,18 +52,12 @@ struct NewBookingsIntelligenceSummary: Equatable {
       )
     }
 
-    var summaryParts: [String] = []
+    let summaryLine: String
     if pending.count == 1 {
-      summaryParts.append("1 reservation needs attention")
+      summaryLine = "1 reservation needs attention"
     } else {
-      summaryParts.append("\(pending.count) reservations need attention")
+      summaryLine = "\(pending.count) reservations need attention"
     }
-    if noTableCount == 1 {
-      summaryParts.append("1 still needs a table")
-    } else if noTableCount > 1 {
-      summaryParts.append("\(noTableCount) still need tables")
-    }
-    let summaryLine = summaryParts.joined(separator: " · ")
 
     var priorityLines: [String] = []
     if allergyCount == 1 {

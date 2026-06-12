@@ -760,6 +760,7 @@ struct TableAssignmentSheet: View {
     @EnvironmentObject private var controller: ReservationsController
     @AppStorage(ReservationTableOptionsStore.storageKey) private var tableOptionsRawValue = ReservationTableOptionsStore.defaultRawValue
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
+    @EnvironmentObject private var floorPlanStore: FloorPlanStore
     @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
     @State private var assignmentContext: HostTableAssignmentContext?
     @State private var tableName: String
@@ -898,9 +899,27 @@ struct TableAssignmentSheet: View {
     }
 
     private var tableSuggestions: [String] {
-        hostTableConfigStore.assignmentTableNames(
+        if floorPlanStore.hasBackendLayout {
+            let backendTables = floorPlanStore.viewState.tables.isEmpty
+                ? floorPlanStore.layoutTables
+                : floorPlanStore.viewState.tables
+            let names = backendTables.filter(\.isActive).map(\.label)
+            if !names.isEmpty { return names }
+        }
+        return hostTableConfigStore.assignmentTableNames(
             legacyFallback: ReservationTableOptionsStore.options(from: tableOptionsRawValue)
         )
+    }
+
+    private var effectiveTableConfigsForAssignment: [RestaurantTableConfig] {
+        if floorPlanStore.hasBackendLayout {
+            let backendTables = floorPlanStore.viewState.tables.isEmpty
+                ? floorPlanStore.layoutTables
+                : floorPlanStore.viewState.tables
+            let configs = backendTables.filter(\.isActive).map { $0.asRestaurantTableConfig() }
+            if !configs.isEmpty { return configs }
+        }
+        return hostTableConfigStore.tables
     }
 
     private func refreshAssignmentContext() {
@@ -914,7 +933,7 @@ struct TableAssignmentSheet: View {
             reservation: reservation,
             dayReservations: fetchDayReservations(dateKey: dateKey),
             blockedSlotValues: blockedValues,
-            tableConfigs: hostTableConfigStore.tables,
+            tableConfigs: effectiveTableConfigsForAssignment,
             settings: hostIntelligenceSettingsStore.settings,
             localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
             manualTableSuggestions: tableSuggestions

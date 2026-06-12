@@ -250,7 +250,9 @@ struct HostBoardView: View {
             let closedPresentation = closedDayPresentation(for: snapshot)
 
             Group {
-                if safeWidth >= 1100 {
+                // Both wide and narrow use a single outer ScrollView so the entire Host board
+                // (header + intelligence + lists) scrolls as one unified page.
+                ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         homeServiceHeader
                         onDeviceSupportStatusBanner
@@ -258,24 +260,10 @@ struct HostBoardView: View {
                         closedOrOperationalBody(
                             snapshot: snapshot,
                             closedPresentation: closedPresentation,
-                            isWideLayout: true
+                            isWideLayout: safeWidth >= 1100
                         )
-                        .layoutPriority(1)
                     }
-                } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 8) {
-                            homeServiceHeader
-                            onDeviceSupportStatusBanner
-
-                            closedOrOperationalBody(
-                                snapshot: snapshot,
-                                closedPresentation: closedPresentation,
-                                isWideLayout: false
-                            )
-                        }
-                        .padding(.bottom, 12)
-                    }
+                    .padding(.bottom, 12)
                 }
             }
             .padding(.horizontal, safeWidth >= 1100 ? 16 : 12)
@@ -451,6 +439,7 @@ struct HostBoardView: View {
                 reservations: snapshot.seated,
                 emptyTitle: "No one seated",
                 emptySystemImage: "person.2.slash",
+                scrollsInternally: false,
                 referenceNow: snapshot.now,
                 environment: environment,
                 onAction: handleAction,
@@ -461,13 +450,13 @@ struct HostBoardView: View {
             HomeReservationsPanel(
                 snapshot: snapshot,
                 referenceNow: snapshot.now,
+                scrollsInternally: false,
                 environment: environment,
                 onAction: handleAction,
                 onOpenReservation: onOpenReservation
             )
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var hostBoardViewStateBuildKey: String {
@@ -817,15 +806,6 @@ struct HostBoardView: View {
             }
         }
 
-        if hasMeaningfulSlotPressure(snapshot) {
-            SlotPressureStripView(pressures: snapshot.slotPressures)
-        }
-    }
-
-    private func hasMeaningfulSlotPressure(_ snapshot: HostDecisionSnapshot) -> Bool {
-        snapshot.slotPressures.contains { pressure in
-            pressure.reservationCount > 0 || pressure.severity != .calm
-        }
     }
 
     private func handleHostIntelligenceAction(_ action: HostSuggestedAction) {

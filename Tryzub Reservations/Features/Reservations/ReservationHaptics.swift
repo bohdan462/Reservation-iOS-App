@@ -5,6 +5,7 @@
 
 import UIKit
 
+@MainActor
 enum ReservationHaptics {
     static func selection() {
         UISelectionFeedbackGenerator().selectionChanged()

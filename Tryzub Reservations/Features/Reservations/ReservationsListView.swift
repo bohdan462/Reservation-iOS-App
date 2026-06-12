@@ -274,7 +274,12 @@ private struct ReservationsTabShell: View {
             controller.setPendingReviewAttentionCount(count)
         }
         .restaurantPrivacyCover {
-            RestaurantPrivacyCoverDataController.snapshot(from: serviceWindowReservations)
+            var snap = RestaurantPrivacyCoverDataController.snapshot(from: serviceWindowReservations)
+            let briefing = hostIntelligenceController.displayBriefingText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !briefing.isEmpty, briefing != "Nothing needs attention right now." {
+                snap.serviceSummary = briefing
+            }
+            return snap
         }
         .environmentObject(restaurantSettingsStore)
         .environmentObject(hostTableConfigStore)
@@ -768,6 +773,15 @@ private struct ReservationScheduleView: View {
                 ManualReservationFormView { request in
                     // Manual call-in create is accepted immediately; no email is sent.
                     try await controller.createAcceptedManualReservation(request, context: modelContext)
+                }
+            }
+            .onAppear {
+                // Every time the Bookings tab activates: if there are items to review → Review,
+                // otherwise stay on / return to Upcoming.
+                if reviewAttentionCount > 0 {
+                    scope = .needsReview
+                } else if scope == .needsReview {
+                    scope = .upcoming
                 }
             }
             .task(id: isActive) {

@@ -1020,6 +1020,11 @@ enum HostBriefingHostBoardGate {
     if categories.contains(.capacityTableMismatch), categories.contains(.servicePressure) {
       return true
     }
+    // Guest notes (dietary, occasion, preference) + unassigned tables during live service
+    // are independently significant together — the model should synthesize a briefing.
+    if categories.contains(.capacityTableMismatch), categories.contains(.guestNoteOccasion) {
+      return true
+    }
 
     let operationalThemes: Set<HostBoardOperationalCategory> = [
       .lateNoTable,

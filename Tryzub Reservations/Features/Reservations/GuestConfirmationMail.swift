@@ -22,6 +22,7 @@ enum GuestConfirmationMailPresenter {
         }
     }
 
+    @MainActor
     static func canSendMail() -> Bool {
         MFMailComposeViewController.canSendMail()
     }
@@ -123,13 +124,14 @@ struct GuestConfirmationMailComposer: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: MFMailComposeViewController, context: Context) {}
 
-    final class Coordinator: NSObject, MFMailComposeViewControllerDelegate {
+    final class Coordinator: NSObject, @preconcurrency MFMailComposeViewControllerDelegate {
         let onFinish: (MFMailComposeResult) -> Void
 
         init(onFinish: @escaping (MFMailComposeResult) -> Void) {
             self.onFinish = onFinish
         }
 
+        @MainActor
         func mailComposeController(
             _ controller: MFMailComposeViewController,
             didFinishWith result: MFMailComposeResult,

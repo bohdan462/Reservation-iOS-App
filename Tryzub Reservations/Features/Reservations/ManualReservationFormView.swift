@@ -1084,7 +1084,7 @@ private struct ReservationFormContent: View {
         let predicate = #Predicate<ReservationRecord> { record in
             record.reservationDate == dateKey && record.isHidden == false
         }
-        var descriptor = FetchDescriptor<ReservationRecord>(predicate: predicate)
+        let descriptor = FetchDescriptor<ReservationRecord>(predicate: predicate)
         return (try? modelContext.fetch(descriptor)) ?? []
     }
 
@@ -2298,6 +2298,7 @@ private extension String {
 
 // MARK: - Keyboard
 
+@MainActor
 private func dismissReservationFormKeyboard(reason: String) {
     UIApplication.shared.sendAction(
         #selector(UIResponder.resignFirstResponder),

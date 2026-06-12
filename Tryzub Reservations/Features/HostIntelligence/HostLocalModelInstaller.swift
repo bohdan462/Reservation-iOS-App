@@ -35,17 +35,35 @@ enum HostLocalModelInstaller {
   static func installBundledModel(
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> URL {
+    let appSupportExists = HostLocalModelFileLocator.applicationSupportModelURL() != nil
+    let bundledModelFound = HostLocalModelFileLocator.bundledModelURL() != nil
+    #if DEBUG
+    print("[MODEL_FILE_TRACE] appSupportExists=\(appSupportExists)")
+    print("[MODEL_FILE_TRACE] bundleModelFound=\(bundledModelFound)")
+    #endif
+
     guard let bundledURL = HostLocalModelFileLocator.bundledModelURL() else {
+      #if DEBUG
+      print("[MODEL_FILE_TRACE] bundledModelMissing=true")
+      #endif
       throw HostLocalModelInstallerError.bundledModelMissing
     }
 
     if let existing = HostLocalModelFileLocator.applicationSupportModelURL() {
+      #if DEBUG
+      print("[MODEL_FILE_TRACE] copiedFromBundle=false (already in applicationSupport) path=\(existing.path)")
+      #endif
       progress(1.0)
       return existing
     }
 
     return try await Task.detached(priority: .userInitiated) {
-      try installModel(from: bundledURL, progress: progress)
+      let result = try installModel(from: bundledURL, progress: progress)
+      #if DEBUG
+      let sizeBytes = (try? FileManager.default.attributesOfItem(atPath: result.path)[.size] as? Int) ?? 0
+      print("[MODEL_FILE_TRACE] copiedFromBundle=true destination=\(result.path) sizeBytes=\(sizeBytes)")
+      #endif
+      return result
     }.value
   }
 

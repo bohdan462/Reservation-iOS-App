@@ -201,11 +201,19 @@ enum ServiceIntelligenceEngine {
         let headline = total > 0
             ? "Planning: \(total) \(reservationWord(total)) booked\(input.selectedDateLabel.map { " for \($0)" } ?? "")."
             : "Planning\(input.selectedDateLabel.map { " for \($0)" } ?? "")."
-        let comingUp = input.liveActions.filter { $0.type == .assignTable || $0.type == .prepareSetup || $0.type == .verifyGuestCount }
+        // Only surface prep/verification actions for upcoming dates — do not push table pre-assignment
+        // for every unassigned reservation. Table assignment is optional before service.
+        let comingUp = input.liveActions.filter { $0.type == .prepareSetup || $0.type == .verifyGuestCount }
+        let summary: String
+        if comingUp.isEmpty {
+            summary = total > 0 ? "Check large parties and guest notes before service." : ""
+        } else {
+            summary = "Check large parties and guest notes before service."
+        }
         return ServiceBriefing(
             mode: input.mode,
             headline: headline,
-            summary: comingUp.isEmpty ? "" : "Set tables and setup for the larger parties before service.",
+            summary: summary,
             checkNow: [],
             comingUp: comingUp,
             reviewLater: [],

@@ -1403,20 +1403,8 @@ struct ReservationDetailView: View {
     private var guestInsightsSection: some View {
         DetailSectionCard(title: "Guest insights", systemImage: "person.text.rectangle") {
             VStack(alignment: .leading, spacing: 10) {
-                if let guestProfilePreview {
-                    Text(guestProfilePreview.title)
-                        .font(.subheadline.weight(.semibold))
-                    ForEach(Array(guestProfilePreview.lines.enumerated()), id: \.offset) { _, line in
-                        Text(line)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(3)
-                    }
-                } else if guestIntelligenceStore.isLoadingProfile(reservationID: reservation.remoteID) {
-                    TryzubLoadingRow(title: "Loading server guest history...")
-                }
-
                 if let guestInsightReport {
+                    // Full report available: preview card already contains profile text.
                     NavigationLink {
                         GuestInsightsView(
                             selectedReservation: reservation,
@@ -1433,6 +1421,18 @@ struct ReservationDetailView: View {
                     }
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                } else if let guestProfilePreview {
+                    // Profile available but no local history report yet.
+                    Text(guestProfilePreview.title)
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(Array(guestProfilePreview.lines.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else if guestIntelligenceStore.isLoadingProfile(reservationID: reservation.remoteID) {
+                    TryzubLoadingRow(title: "Loading server guest history...")
                 } else if guestInsightAnalysisCoordinator.isAnalyzingLocalCache {
                     TryzubLoadingRow(title: "Calculating local cache insights...")
                 }
@@ -1996,7 +1996,7 @@ private struct GuestInsightsPreviewCard: View {
                         Text(line)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
-                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 } else {
                     Text(presentation.historyTitle)
@@ -2005,7 +2005,7 @@ private struct GuestInsightsPreviewCard: View {
                     Text(presentation.historyDetail)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 ForEach(Array(presentation.supplementalLines.enumerated()), id: \.offset) { _, line in
@@ -2015,7 +2015,7 @@ private struct GuestInsightsPreviewCard: View {
                         Text(line.detail)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 
@@ -2033,13 +2033,8 @@ private struct GuestInsightsPreviewCard: View {
                 .lineLimit(1)
             }
         }
-        .padding(14)
+        // Flat inside DetailSectionCard — no nested background/border.
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
     }
 }
 
@@ -2777,56 +2772,9 @@ enum ReservationImportantFlags {
             ))
         }
 
-        // Dietary / allergy / accessibility in any note field.
-        let allNotes = [reservation.guestNotes, reservation.staffNotes]
-            .compactMap { $0?.nilIfBlank }
-            .joined(separator: " ")
-            .lowercased()
-
-        let dietaryKeywords = ["allerg", "vegan", "vegetarian", "gluten", "dairy", "nut", "halal", "kosher", "lactose", "celiac"]
-        let accessKeywords   = ["wheelchair", "accessibility", "accessible", "high chair", "highchair", "mobility"]
-        let depositKeywords  = ["deposit", "paid", "payment"]
-        let preorderKeywords = ["preorder", "pre-order", "pre order", "banquet", "menu package", "chicken kyiv", "cake", "champagne flight", "bottle"]
-
-        if dietaryKeywords.contains(where: { allNotes.contains($0) }) {
-            flags.append(ReservationImportantFlag(
-                id: "dietary",
-                title: "Dietary or allergy note",
-                detail: "Check guest notes before seating.",
-                icon: "fork.knife.circle",
-                tint: .red
-            ))
-        }
-
-        if accessKeywords.contains(where: { allNotes.contains($0) }) {
-            flags.append(ReservationImportantFlag(
-                id: "accessibility",
-                title: "Accessibility note",
-                detail: "Check setup before seating.",
-                icon: "figure.roll",
-                tint: .purple
-            ))
-        }
-
-        if depositKeywords.contains(where: { allNotes.contains($0) }) {
-            flags.append(ReservationImportantFlag(
-                id: "deposit",
-                title: "Deposit mentioned",
-                detail: "Manager should verify.",
-                icon: "banknote",
-                tint: .green
-            ))
-        }
-
-        if preorderKeywords.contains(where: { allNotes.contains($0) }) {
-            flags.append(ReservationImportantFlag(
-                id: "preorder",
-                title: "Preorder or banquet note",
-                detail: "Kitchen should review.",
-                icon: "cart",
-                tint: .orange
-            ))
-        }
+        // Note-based signals (dietary, deposit, preorder, accessibility) are handled by
+        // NoteSignalAnalyzer and shown in NOTE SIGNALS — not duplicated here.
+        // IMPORTANT keeps only operational flags: no table, large party.
 
         return flags
     }

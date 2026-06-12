@@ -27,7 +27,6 @@ enum GuestMessageDraftTemplateWriter {
     private static func confirmationDraft(from packet: GuestMessageDraftPacket) -> GuestMessageDraft {
         let greeting = greetingLine(for: packet)
         let restaurant = packet.restaurantName
-        let detail = reservationDetailLine(for: packet)
         let manage = manageURLLine(for: packet)
 
         let subject = "Reservation confirmation — \(restaurant)"

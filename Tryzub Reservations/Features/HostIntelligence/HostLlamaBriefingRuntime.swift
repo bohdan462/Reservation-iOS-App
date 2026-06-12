@@ -244,7 +244,7 @@ private final class LlamaLoadedSession: @unchecked Sendable {
     llama_backend_init()
     ownsBackend = true
 
-    var modelParams = llama_model_default_params()
+    let modelParams = llama_model_default_params()
     guard let loadedModel = llama_model_load_from_file(modelPath, modelParams) else {
       llama_backend_free()
       throw HostLocalModelRuntimeError.modelLoadFailed("Could not load GGUF at \(modelPath).")
@@ -264,7 +264,7 @@ private final class LlamaLoadedSession: @unchecked Sendable {
     vocab = llama_model_get_vocab(model)
     self.contextWindow = contextWindow
 
-    var samplerParams = llama_sampler_chain_default_params()
+    let samplerParams = llama_sampler_chain_default_params()
     let chain = llama_sampler_chain_init(samplerParams)
     llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
     llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.9, 1))
@@ -504,6 +504,8 @@ private final class LlamaLoadedSession: @unchecked Sendable {
       return ""
     }
 
-    return String(cString: buffer)
+    let written = min(Int(length), buffer.count)
+    let utf8 = buffer.prefix(written).prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+    return String(decoding: utf8, as: UTF8.self)
   }
 }

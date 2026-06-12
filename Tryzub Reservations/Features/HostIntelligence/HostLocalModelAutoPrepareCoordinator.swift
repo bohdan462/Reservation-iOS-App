@@ -105,6 +105,12 @@ final class HostLocalModelAutoPrepareCoordinator: ObservableObject {
     technicalFailureDetail = nil
     phase = .waitingForSafeMoment
     HostIntelligenceDiagnostics.skipLocalModel(reason: "on_device_support_waiting")
+    #if DEBUG
+    let appSupportExists = HostLocalModelFileLocator.applicationSupportModelURL() != nil
+    let bundleModelFound = HostLocalModelFileLocator.bundledModelURL() != nil
+    print("[MODEL_FILE_TRACE] appSupportExists=\(appSupportExists)")
+    print("[MODEL_FILE_TRACE] bundleModelFound=\(bundleModelFound)")
+    #endif
 
     if let releasedAt = controller.startupUIReleasedAt {
       let remaining = stabilizationDelay - Date().timeIntervalSince(releasedAt)
@@ -154,6 +160,7 @@ final class HostLocalModelAutoPrepareCoordinator: ObservableObject {
       phase = .ready
       #if DEBUG
       print("[HOST_AI] on_device_support auto_prepare completed")
+      print("[MODEL_FILE_TRACE] readiness=ready source=applicationSupport")
       #endif
       try? await Task.sleep(for: .seconds(readyDisplayDuration))
       if case .ready = phase {

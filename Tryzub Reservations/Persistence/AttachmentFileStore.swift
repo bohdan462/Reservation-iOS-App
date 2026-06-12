@@ -70,6 +70,7 @@ enum AttachmentFileStore {
     }
 
     /// Loads and downsamples to a thumbnail for list display without loading the full image.
+    @MainActor
     static func thumbnail(filename: String, size: CGSize = CGSize(width: 120, height: 120)) -> UIImage? {
         let url = attachmentsDirectory.appendingPathComponent(filename)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }

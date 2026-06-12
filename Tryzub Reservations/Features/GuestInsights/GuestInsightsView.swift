@@ -26,7 +26,7 @@ struct GuestInsightsView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
-                if let report, let mergedContext, let viewState {
+                if let report, let mergedContext {
                     GuestInsightHeader(
                         report: report,
                         mergedContext: mergedContext

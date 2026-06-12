@@ -118,6 +118,8 @@ struct RestaurantPrivacyCoverSnapshot: Equatable {
     let noTableCount: Int
     let nextDueTimeText: String?
     let nextDueDetailText: String?
+    /// Short service briefing text from host intelligence (replaces raw "No table" count).
+    var serviceSummary: String?
 
     var hasAttentionItems: Bool {
         pastDueCount > 0
@@ -135,7 +137,8 @@ struct RestaurantPrivacyCoverSnapshot: Equatable {
         reviewCount: 0,
         noTableCount: 0,
         nextDueTimeText: nil,
-        nextDueDetailText: nil
+        nextDueDetailText: nil,
+        serviceSummary: nil
     )
 }
 
@@ -215,7 +218,8 @@ enum RestaurantPrivacyCoverDataController {
             reviewCount: reviewCount,
             noTableCount: noTableCount,
             nextDueTimeText: nextDueTimeText,
-            nextDueDetailText: nextDueDetailText
+            nextDueDetailText: nextDueDetailText,
+            serviceSummary: nil
         )
     }
 
@@ -255,17 +259,7 @@ enum RestaurantPrivacyCoverDataController {
                 )
             )
         }
-        if snapshot.noTableCount > 0 {
-            rows.append(
-                RestaurantPrivacyCoverWarning(
-                    id: "no-table",
-                    title: "No table",
-                    systemImage: "table.furniture",
-                    value: "\(snapshot.noTableCount)",
-                    subtitle: nil
-                )
-            )
-        }
+        // "No table" count removed — service summary replaces it (shown in PrivacyWarningsPanel).
         if snapshot.newCount > 0 {
             rows.append(
                 RestaurantPrivacyCoverWarning(
@@ -403,6 +397,7 @@ final class RestaurantPrivacyCoverController: ObservableObject {
     }
 }
 
+@MainActor
 enum RestaurantPrivacyCoverPolicy {
     static func setKeepsDisplayAwake(_ keepsAwake: Bool) {
         guard UIDevice.current.userInterfaceIdiom == .pad else { return }
@@ -624,7 +619,8 @@ private struct RestaurantPrivacyCoverView: View {
 
                 PrivacyWarningsPanel(
                     warnings: warnings,
-                    isAllClear: !snapshot.hasAttentionItems
+                    isAllClear: !snapshot.hasAttentionItems,
+                    serviceSummary: snapshot.serviceSummary
                 )
                 .frame(maxWidth: 300)
 
@@ -693,6 +689,7 @@ private struct PrivacyClockLabel: View {
             HStack(alignment: .center, spacing: 8) {
                 Text(date, format: .dateTime.hour(.twoDigits(amPM: .omitted)))
                 Text(":")
+                    .offset(y: -3)
                     .opacity(colonVisible ? 1 : 0.2)
                     .animation(.easeInOut(duration: 0.5), value: colonVisible)
                 Text(date, format: .dateTime.minute(.twoDigits))
@@ -708,6 +705,7 @@ private struct PrivacyClockLabel: View {
 private struct PrivacyWarningsPanel: View {
     let warnings: [RestaurantPrivacyCoverWarning]
     let isAllClear: Bool
+    var serviceSummary: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -726,6 +724,16 @@ private struct PrivacyWarningsPanel: View {
                 VStack(spacing: 7) {
                     ForEach(warnings) { warning in
                         PrivacyWarningRow(warning: warning)
+                    }
+
+                    if let summary = serviceSummary, !summary.isEmpty {
+                        Text(summary)
+                            .font(.caption)
+                            .foregroundStyle(PrivacyCoverPalette.ink)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 2)
                     }
                 }
             }

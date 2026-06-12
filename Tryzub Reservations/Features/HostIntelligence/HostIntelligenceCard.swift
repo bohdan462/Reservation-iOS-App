@@ -48,7 +48,7 @@ struct HostIntelligenceCard: View {
   }
 
   private var activeCard: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 6) {
       HStack(alignment: .firstTextBaseline) {
         cardTitleRow
 
@@ -89,13 +89,7 @@ struct HostIntelligenceCard: View {
       reviewIntelligenceButton
 
       if !attentionItems.isEmpty {
-        VStack(alignment: .leading, spacing: 6) {
-          if staffFacingPresentation {
-            Text("Check next")
-              .font(.caption.weight(.semibold))
-              .foregroundStyle(.secondary)
-          }
-
+        VStack(alignment: .leading, spacing: 4) {
           ForEach(attentionItems) { item in
             if let action = item.sourceAction {
               attentionRow(item, action: action)
@@ -145,12 +139,12 @@ struct HostIntelligenceCard: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(item.title)
           .font(.caption.weight(.semibold))
-          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
         if let detail = item.detail {
           Text(detail)
             .font(.caption2)
             .foregroundStyle(.secondary)
-            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
         }
         if isTappable {
           Text(item.actionTitle)
@@ -166,10 +160,10 @@ struct HostIntelligenceCard: View {
           .foregroundStyle(.tertiary)
       }
     }
-    .padding(.horizontal, 10)
-    .padding(.vertical, 8)
+    .padding(.horizontal, 8)
+    .padding(.vertical, 5)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
   }
 
   // MARK: - Helpers
@@ -357,7 +351,7 @@ struct HostIntelligenceCard: View {
           Text(prompt.body)
             .font(.caption)
             .foregroundStyle(.secondary)
-            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
         }
       }
     }
@@ -378,7 +372,8 @@ struct HostIntelligenceCard: View {
 
 private extension View {
   func cardStyle() -> some View {
-    padding(12)
+    padding(.horizontal, 10)
+      .padding(.vertical, 10)
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
   }

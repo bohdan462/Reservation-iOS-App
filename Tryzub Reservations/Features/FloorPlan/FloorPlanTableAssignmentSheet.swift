@@ -106,7 +106,7 @@ struct FloorPlanTableAssignmentSheet: View {
     @ViewBuilder
     private var tableContextSection: some View {
         if case let .table(block) = context {
-            if let reservation = block.reservation, let assignment = block.assignment {
+            if let reservation = block.reservation, block.assignment != nil {
                 Section("Assigned reservation") {
                     reservationSummary(reservation)
                     Button("Change table") {

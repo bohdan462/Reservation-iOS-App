@@ -102,7 +102,10 @@ enum HostServiceBriefingViewStateBuilder {
             }
         }.count
 
-        let liveActions = HostActionMapper.map(input.snapshot.suggestedActions)
+        // For future-date planning, snapshot actions belong to a different date's evaluation
+        // and must not appear in the planning card. Only today/live service uses the snapshot.
+        let snapshotActions = modeResult.mode == .futurePlanning ? [] : input.snapshot.suggestedActions
+        let liveActions = HostActionMapper.map(snapshotActions)
         let busiestLabel = busiestTimeLabel(from: input.snapshot.slotPressures)
 
         let briefing = ServiceIntelligenceEngine.makeBriefing(

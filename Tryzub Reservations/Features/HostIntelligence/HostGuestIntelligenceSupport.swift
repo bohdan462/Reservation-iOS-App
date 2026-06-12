@@ -247,7 +247,7 @@ enum HostGuestIntelligenceSupport {
           title: "Seen before",
           reason: signal.message
         )
-      case .vip, .noteReminder, .unknown:
+      case .vip, .unknown:
         return nil
       }
     }
