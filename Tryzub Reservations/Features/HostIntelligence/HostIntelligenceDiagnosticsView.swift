@@ -69,8 +69,31 @@ struct HostIntelligenceDiagnosticsView: View {
       analyticsIntelligenceSection(decision)
       briefingWriterSection(decision)
       signalsSection(decision)
+      #if DEBUG
+      proofHarnessSection()
+      #endif
     }
   }
+
+  #if DEBUG
+  @ViewBuilder
+  private func proofHarnessSection() -> some View {
+    Section("Proof Harnesses (Debug)") {
+      Button("Run Service Intelligence proof") {
+        ServiceIntelligenceProofHarness.run()
+      }
+      Button("Run AI validator proof") {
+        HostAIValidatorProofHarness.run()
+      }
+      Button("Run booking load proof") {
+        BookingLoadProofHarness.run()
+      }
+      Text("Emits [SERVICE_INTELLIGENCE_TEST], [BOOKING_LOAD_TRACE], and [HOST_AI_TEST] lines to the unified log.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+  #endif
 
   private var analyticsIntelligence: HostAnalyticsIntelligenceResult {
     HostAnalyticsIntelligenceSupport.analyze(

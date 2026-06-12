@@ -33,6 +33,10 @@ final class FloorPlanStore: ObservableObject {
     private var autoRefreshTask: Task<Void, Never>?
     private let autoRefreshInterval: TimeInterval = 60
 
+    // Optional coordinator for cross-store dedup. Set by the owning view hierarchy.
+    // When nil, FloorPlanStore uses its own cacheByDate check only.
+    var freshnessCoordinator: FreshnessCoordinator?
+
     init(service: any FloorPlanServiceProtocol) {
         self.service = service
     }
@@ -56,19 +60,52 @@ final class FloorPlanStore: ObservableObject {
         }
     }
 
-    func refresh(date: String? = nil, force: Bool = true) async {
+    func refresh(date: String? = nil, force: Bool = true, allowDuringSave: Bool = false) async {
+        // While a layout save is in flight, suppress any competing/automatic floor
+        // refresh. Only the save's own post-success refresh (allowDuringSave) may run.
+        // This prevents the observed overlap where a `floor_plan` GET raced the failing
+        // `restaurant_tables_put` PUT.
+        if isSavingLayout && !allowDuringSave {
+            FloorPlanTrace.event(name: "refresh_suppressed", extra: "reason=layout_save_in_flight")
+            return
+        }
+
         let targetDate = date ?? selectedDate
         selectedDate = targetDate
         activeLoadGeneration += 1
         let generation = activeLoadGeneration
 
-        if !force, cacheByDate[targetDate] != nil {
+        // Ask the shared freshness coordinator before checking local cacheByDate.
+        // This prevents duplicate floor-plan fetches when multiple surfaces trigger
+        // load for the same date within the TTL window.
+        let scope = FreshnessScope.floorPlan(date: targetDate)
+        if !force, let coordinator = freshnessCoordinator {
+            let decision = coordinator.decide(scope: scope)
+            switch decision {
+            case .useCache:
+                if cacheByDate[targetDate] != nil {
+                    applyCached(date: targetDate)
+                    errorMessage = nil
+                    return
+                }
+                // Coordinator says fresh but local cache is empty (relaunch):
+                // fall through to fetch.
+            case .joinInFlight:
+                return
+            case .blockedByCooldown:
+                return
+            case .fetch:
+                break
+            }
+        } else if !force, cacheByDate[targetDate] != nil {
+            // Fallback when no coordinator is wired yet.
             applyCached(date: targetDate)
             errorMessage = nil
             return
         }
 
         isLoading = true
+        freshnessCoordinator?.markInFlight(scope)
         defer {
             if generation == activeLoadGeneration {
                 isLoading = false
@@ -80,11 +117,18 @@ final class FloorPlanStore: ObservableObject {
 
         do {
             let response = try await service.getFloorPlan(date: targetDate)
-            guard !Task.isCancelled else { return }
-            guard generation == activeLoadGeneration, selectedDate == targetDate else { return }
+            guard !Task.isCancelled else {
+                freshnessCoordinator?.markFailed(scope, cooldown: 0)
+                return
+            }
+            guard generation == activeLoadGeneration, selectedDate == targetDate else {
+                freshnessCoordinator?.markFailed(scope, cooldown: 0)
+                return
+            }
 
             cacheByDate[targetDate] = response
             lastCheckedAtByDate[targetDate] = Date()
+            freshnessCoordinator?.markCompleted(scope)
             viewState = FloorPlanViewStateBuilder.build(
                 response: response,
                 selectedDate: targetDate,
@@ -97,11 +141,13 @@ final class FloorPlanStore: ObservableObject {
         } catch let error as FloorPlanError {
             guard !Task.isCancelled else { return }
             guard generation == activeLoadGeneration, selectedDate == targetDate else { return }
+            freshnessCoordinator?.markFailed(scope)
             errorMessage = staffMessage(for: error)
         } catch {
             guard !Task.isCancelled else { return }
             guard generation == activeLoadGeneration, selectedDate == targetDate else { return }
             if !error.isCancellationLike {
+                freshnessCoordinator?.markFailed(scope)
                 errorMessage = error.localizedDescription
             }
         }
@@ -151,11 +197,31 @@ final class FloorPlanStore: ObservableObject {
             name: "assign_started",
             extra: "reservation=\(reservationID) tableKeys=\(tableKeys.joined(separator: ","))"
         )
+        // Backend Floor Plan assignment is canonical.
+        // This endpoint enforces backend table conflict rules.
+        // Legacy table_name PATCH does not.
+        TableAssignmentTrace.canonicalFloorPlan(
+            reservationID: reservationID,
+            tableKeys: tableKeys
+        )
+
+        let expectedUpdatedAt: String?
+        if let controller, let context {
+            expectedUpdatedAt = controller.cachedReservationRowVersion(id: reservationID, context: context)
+        } else {
+            expectedUpdatedAt = nil
+        }
+        MutationVersionTrace.log(
+            action: "table_assignment",
+            reservationID: reservationID,
+            expectedUpdatedAt: expectedUpdatedAt
+        )
 
         do {
             let response = try await service.patchReservationTables(
                 reservationID: reservationID,
-                tableKeys: tableKeys
+                tableKeys: tableKeys,
+                expectedUpdatedAt: expectedUpdatedAt
             )
             if let reservation = response.reservation,
                let controller,
@@ -175,6 +241,10 @@ final class FloorPlanStore: ObservableObject {
                 FloorPlanTrace.event(
                     name: "assign_conflict",
                     extra: "reservation=\(reservationID) conflicts=\(conflicts.count)"
+                )
+                ReservationMutationReconcilePolicy.traceTableConflict(
+                    reservationID: reservationID,
+                    source: "floor_plan"
                 )
             default:
                 errorMessage = staffMessage(for: error)
@@ -225,10 +295,30 @@ final class FloorPlanStore: ObservableObject {
             extra: "tables=\(tables.count) active=\(activeCount)"
         )
 
+        let keys = tables.map(\.tableKey).joined(separator: ",")
+        let maxX = tables.map { $0.x + $0.widthUnits }.max() ?? 0
+        let maxY = tables.map { $0.y + $0.heightUnits }.max() ?? 0
+        FloorPlanTrace.event(
+            name: "layout_save_payload",
+            extra: "tables=\(tables.count) keys=[\(keys)] active=\(activeCount) bounds=\(maxX)x\(maxY)"
+        )
+        // FloorPlanStore is @MainActor and the save path builds a value-type payload and
+        // calls the network service; it never opens a SwiftData ModelContext.
+        DateSwitchTrace.concurrencyPhase(
+            context: "floor_layout_save",
+            phase: "payload_built",
+            detail: "modelContextUsed=false"
+        )
+
         do {
             let saved = try await service.putRestaurantTables(tables)
             layoutTables = saved.sorted { $0.sortOrder < $1.sortOrder }
-            await refresh(date: selectedDate, force: true)
+            DateSwitchTrace.concurrencyPhase(
+                context: "floor_layout_save",
+                phase: "refresh_after_success",
+                detail: "onlyOnSuccess=true mainActor=true"
+            )
+            await refresh(date: selectedDate, force: true, allowDuringSave: true)
             layoutSaveState = .saved
             FloorPlanTrace.event(
                 name: "layout_save_completed",
@@ -242,10 +332,22 @@ final class FloorPlanStore: ObservableObject {
             }
             let message = FloorPlanLayoutSaveCopy.failureMessage(for: error)
             layoutSaveState = .failed(message)
-            FloorPlanTrace.event(
-                name: "layout_save_failed",
-                extra: "message=\(message)"
+            DateSwitchTrace.concurrencyPhase(
+                context: "floor_layout_save",
+                phase: "publish_error",
+                detail: "mainActor=true modelContextUsed=false"
             )
+            if case let .serverValidation(code, status, backendMessage) = (error as? FloorPlanError) {
+                FloorPlanTrace.event(
+                    name: "layout_save_failed",
+                    extra: "code=\(code) status=\(status) backendMessage=\"\(backendMessage)\""
+                )
+            } else {
+                FloorPlanTrace.event(
+                    name: "layout_save_failed",
+                    extra: "message=\(message)"
+                )
+            }
             return false
         }
     }
@@ -264,6 +366,40 @@ final class FloorPlanStore: ObservableObject {
                 await self?.refresh(force: true)
             }
         }
+    }
+
+    // MARK: - Canonical Assignment Lookup (for Detail/Host migration)
+
+    /// Returns a `tableKey` for a given human-readable table name/label.
+    /// Checks the current floor plan view state first, then the layout tables fallback.
+    /// Returns nil when no backend layout is available (caller should use legacy path).
+    func tableKey(forLabel label: String) -> String? {
+        let normalized = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let match = viewState.tables.first(where: {
+            $0.label.lowercased() == normalized || $0.tableKey.lowercased() == normalized
+        }) {
+            return match.tableKey
+        }
+        if let match = layoutTables.first(where: {
+            $0.label.lowercased() == normalized || $0.tableKey.lowercased() == normalized
+        }) {
+            return match.tableKey
+        }
+        return nil
+    }
+
+    /// True when a backend floor layout is available and canonical assignment can be used.
+    var hasBackendLayout: Bool {
+        viewState.hasTables || !layoutTables.isEmpty
+    }
+
+    /// Typed capacity summary built from the backend floor layout.
+    /// Service Intelligence and BookingLoadAnalyzer should prefer this over free-form text.
+    var capacitySummary: TableCapacitySummary {
+        let tables = viewState.tables.isEmpty ? layoutTables : viewState.tables
+        let summary = TableCapacitySummary.build(from: tables)
+        TableCapacityTrace.summary(summary)
+        return summary
     }
 
     // MARK: - Helpers
@@ -286,6 +422,8 @@ final class FloorPlanStore: ObservableObject {
         case let .decoding(error):
             return error.localizedDescription
         case let .serverMessage(message):
+            return message
+        case let .serverValidation(_, _, message):
             return message
         }
     }

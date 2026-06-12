@@ -78,7 +78,7 @@ enum ManagerAttentionItemBuilder {
         "still needs a table",
         "nothing needs attention",
         "busiest time",
-        "table plan"
+        "floor plan"
       ]
       if overlapPhrases.contains(where: { normalizedBriefing.contains($0) && body.contains($0) }) {
         return false
@@ -215,7 +215,7 @@ enum ManagerAttentionItemBuilder {
   private static func staffTapLabel(for kind: HostActionKind) -> String {
     switch kind {
     case .assignTable, .holdTable, .releaseTable:
-      return "Check table plan"
+      return "Check floor plan"
     case .alertServer:
       return "Check guest note"
     case .reviewReservation, .reviewCancellationOpportunity:

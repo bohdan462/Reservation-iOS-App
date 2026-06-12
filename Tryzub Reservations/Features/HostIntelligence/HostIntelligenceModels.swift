@@ -410,6 +410,9 @@ struct HostIntelligenceSettings: Codable, Equatable {
     var useLocalModelOnHostBoard: Bool
     /// When true, Reservation Detail may use on-device wording for guest message drafts (staff reviews before send).
     var useLocalModelForGuestMessageDrafts: Bool
+    /// When true, Reservation Detail enriches note signals with on-device model analysis
+    /// (tone + classification). Deterministic keyword signals always remain the baseline.
+    var useLocalModelForNoteAnalysis: Bool
     /// When true, Host board may show separated operational prompts from deterministic facts.
     var useSeparatedBriefingPrompts: Bool
 
@@ -439,7 +442,8 @@ struct HostIntelligenceSettings: Codable, Equatable {
         useEnhancedBriefing: Bool = false,
         enhancedBriefingProvider: HostBriefingProviderKind = .template,
         useLocalModelOnHostBoard: Bool = false,
-        useLocalModelForGuestMessageDrafts: Bool = false,
+        useLocalModelForGuestMessageDrafts: Bool = true,
+        useLocalModelForNoteAnalysis: Bool = true,
         useSeparatedBriefingPrompts: Bool = false
     ) {
         self.isEnabled = isEnabled
@@ -468,6 +472,7 @@ struct HostIntelligenceSettings: Codable, Equatable {
         self.enhancedBriefingProvider = enhancedBriefingProvider
         self.useLocalModelOnHostBoard = useLocalModelOnHostBoard
         self.useLocalModelForGuestMessageDrafts = useLocalModelForGuestMessageDrafts
+        self.useLocalModelForNoteAnalysis = useLocalModelForNoteAnalysis
         self.useSeparatedBriefingPrompts = useSeparatedBriefingPrompts
     }
 
@@ -499,7 +504,8 @@ struct HostIntelligenceSettings: Codable, Equatable {
             useEnhancedBriefing: try container.decodeIfPresent(Bool.self, forKey: .useEnhancedBriefing) ?? false,
             enhancedBriefingProvider: try container.decodeIfPresent(HostBriefingProviderKind.self, forKey: .enhancedBriefingProvider) ?? .template,
             useLocalModelOnHostBoard: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelOnHostBoard) ?? false,
-            useLocalModelForGuestMessageDrafts: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelForGuestMessageDrafts) ?? false,
+            useLocalModelForGuestMessageDrafts: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelForGuestMessageDrafts) ?? true,
+            useLocalModelForNoteAnalysis: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelForNoteAnalysis) ?? true,
             useSeparatedBriefingPrompts: try container.decodeIfPresent(Bool.self, forKey: .useSeparatedBriefingPrompts) ?? false
         )
     }
@@ -621,6 +627,10 @@ struct HostEngineInput {
     let tableConfigs: [RestaurantTableConfig]
     /// Broader local cache for guest memory. Falls back to `reservations` when empty.
     let allKnownReservations: [ReservationRecord]
+    /// Active backend floor tables from GET /floor-plan.
+    /// When non-empty, the engine prefers these over tableConfigs for capacity-based table suggestions
+    /// because they reflect actual backend table inventory, not the local UserDefaults store.
+    let backendFloorTables: [RestaurantTableDTO]
     /// Backend guest intelligence summaries for the selected service date, keyed by reservation ID.
     let guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO]
     /// Loaded reservation profile packs (Detail/Guest Insights), keyed by reservation ID.
@@ -637,6 +647,7 @@ struct HostEngineInput {
         settings: HostIntelligenceSettings,
         tableConfigs: [RestaurantTableConfig],
         allKnownReservations: [ReservationRecord],
+        backendFloorTables: [RestaurantTableDTO] = [],
         guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO] = [:],
         guestProfilePacksByReservationID: [Int: GuestIntelligenceProfilePackDTO] = [:]
     ) {
@@ -650,6 +661,7 @@ struct HostEngineInput {
         self.settings = settings
         self.tableConfigs = tableConfigs
         self.allKnownReservations = allKnownReservations
+        self.backendFloorTables = backendFloorTables
         self.guestIntelligenceSummariesByReservationID = guestIntelligenceSummariesByReservationID
         self.guestProfilePacksByReservationID = guestProfilePacksByReservationID
     }

@@ -141,7 +141,7 @@ enum HostStaffLanguage {
     "check reservation",
     "confirm details",
     "check details",
-    "check the table plan",
+    "check the floor plan",
   ]
 
   static func isGenericCheckLine(_ text: String) -> Bool {

@@ -21,7 +21,7 @@ enum HostLLMPacketPromptBuilder {
       Do not mention internal IDs, reservation numbers, AI, models, packets, backend, system, or debug details.
       Write in a calm restaurant host voice using simple staff language.
       Do not use technical words like backend, cache, sync, packet, model, validation, API, capacity ratio, or diagnostics.
-      Prefer: table plan, open times, saved reservations, needs attention, check, update, refresh.
+      Prefer: floor plan, open times, saved reservations, needs attention, check, update, refresh.
       Write so a busy host can understand it in five seconds.
       Write 1-2 short sentences for the Host board. Never write more than 2 sentences.
       Output at most 500 characters.

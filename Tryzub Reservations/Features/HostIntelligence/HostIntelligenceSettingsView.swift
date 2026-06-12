@@ -76,6 +76,12 @@ struct HostIntelligenceSettingsView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
 
+      Toggle("Use local model for note analysis", isOn: binding(\.useLocalModelForNoteAnalysis))
+
+      Text("Reads reservation notes for tone and missed signals on Reservation Detail. Deterministic keyword signals always remain. Advisory only — nothing is auto-sent or auto-confirmed.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
       Toggle("Show separated operational prompts", isOn: binding(\.useSeparatedBriefingPrompts))
 
       Text("Adds a Review Intelligence view that breaks deterministic Host Intelligence facts into Reservation Attention, Table Plan, Guest Notes, Timing, and Booking prompts. This does not use the local model.")

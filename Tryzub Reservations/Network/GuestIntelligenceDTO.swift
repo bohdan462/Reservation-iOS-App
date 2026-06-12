@@ -104,13 +104,16 @@ struct GuestIntelligenceVisitSignalsDTO: Decodable, Equatable {
     let accessibility: String?
     let serviceIssue: String?
 
+    // Decoder uses .convertFromSnakeCase on ReservationsAPIClient.
+    // All CodingKey cases must be camelCase — no raw snake_case overrides.
+    // table_preference → tablePreference, service_issue → serviceIssue
     enum CodingKeys: String, CodingKey {
         case occasion
         case dietary
         case allergy
-        case tablePreference = "table_preference"
+        case tablePreference
         case accessibility
-        case serviceIssue = "service_issue"
+        case serviceIssue
     }
 }
 

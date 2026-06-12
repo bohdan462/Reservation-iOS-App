@@ -18,7 +18,7 @@ enum HostOperationalBriefingPromptCategory: String, Codable, CaseIterable, Equat
   var displayTitle: String {
     switch self {
     case .reservationAttention: return "Reservation attention"
-    case .tablePlan: return "Table plan"
+    case .tablePlan: return "Floor plan"
     case .guestNotes: return "Guest notes"
     case .timing: return "Timing"
     case .booking: return "Booking"

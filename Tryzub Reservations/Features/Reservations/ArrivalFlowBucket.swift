@@ -116,7 +116,7 @@ enum ArrivalFlowBucketBuilder {
     if bucket.largePartyCount == 1,
        bucket.reservationCount == 1,
        bucket.noTableCount == 0 {
-      return (headline, "1 large party · check table plan")
+      return (headline, "1 large party · check floor plan")
     }
 
     var detailParts: [String] = []
@@ -132,9 +132,9 @@ enum ArrivalFlowBucketBuilder {
     }
 
     if bucket.largePartyCount == 1 {
-      detailParts.append("1 large party · check table plan")
+      detailParts.append("1 large party · check floor plan")
     } else if bucket.largePartyCount > 1 {
-      detailParts.append("\(bucket.largePartyCount) large parties · check table plan")
+      detailParts.append("\(bucket.largePartyCount) large parties · check floor plan")
     } else if bucket.needsReviewCount > 0 {
       detailParts.append("needs attention")
     }

@@ -93,6 +93,40 @@ enum HostAILifecycleTrace {
         emit("event=model_result_ignored reason=\(reason)")
     }
 
+    static func modelLoadStarted() {
+        guard isEnabled else { return }
+        emit("event=model_load_started")
+    }
+
+    static func modelReady(detail: String? = nil) {
+        guard isEnabled else { return }
+        if let detail, !detail.isEmpty {
+            emit("event=model_ready detail=\(detail)")
+        } else {
+            emit("event=model_ready")
+        }
+    }
+
+    static func modelUnavailable(reason: String) {
+        guard isEnabled else { return }
+        emit("event=model_unavailable reason=\(reason)")
+    }
+
+    static func modelTimeout(fallback: String) {
+        guard isEnabled else { return }
+        emit("event=model_timeout fallback=\(fallback)")
+    }
+
+    static func modelCancelled(reason: String) {
+        guard isEnabled else { return }
+        emit("event=model_cancelled reason=\(reason)")
+    }
+
+    static func fallbackUsed(reason: String) {
+        guard isEnabled else { return }
+        emit("event=fallback_used reason=\(reason)")
+    }
+
     static func estimatedPromptTokens(for prompt: String) -> Int {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return 0 }

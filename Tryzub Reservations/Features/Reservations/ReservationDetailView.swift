@@ -4,6 +4,7 @@
 //
 
 import MessageUI
+import PhotosUI
 import SwiftUI
 import SwiftData
 import UIKit
@@ -339,8 +340,13 @@ struct ReservationDetailView: View {
     @EnvironmentObject private var hostIntentStore: HostReservationOpenIntentStore
     @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
     @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
+    @EnvironmentObject private var floorPlanStore: FloorPlanStore
     // Guest Insights uses the active reservation window, not the full SwiftData cache.
     @Query private var windowCachedReservations: [ReservationRecord]
+    /// Local-device attachments for this reservation (Phase 5). Persisted by reservationRemoteID.
+    @Query private var attachments: [ReservationAttachmentRecord]
+    /// Local structured staff notes (deposit, preorder, kitchen, bar, setup, manager).
+    @Query private var structuredNoteRecords: [ReservationStructuredNoteRecord]
 
     // MARK: - Local UI State
 
@@ -376,6 +382,18 @@ struct ReservationDetailView: View {
                 SortDescriptor(\ReservationRecord.reservationTime)
             ]
         )
+        let remoteID = reservation.remoteID
+        _attachments = Query(
+            filter: #Predicate<ReservationAttachmentRecord> { record in
+                record.reservationRemoteID == remoteID
+            },
+            sort: [SortDescriptor(\ReservationAttachmentRecord.createdAt, order: .reverse)]
+        )
+        _structuredNoteRecords = Query(
+            filter: #Predicate<ReservationStructuredNoteRecord> { record in
+                record.reservationRemoteID == remoteID
+            }
+        )
     }
 
     private var guestInsightHistoryPool: [ReservationRecord] {
@@ -388,9 +406,57 @@ struct ReservationDetailView: View {
     private var guestInsightReport: GuestInsightReport? {
         guestInsightAnalysisCoordinator.report
     }
+
+    /// First (and only) structured note record for this reservation, if it exists.
+    private var structuredNote: ReservationStructuredNoteRecord? {
+        structuredNoteRecords.first
+    }
+
+    /// Returns the existing record or inserts a new one into the context.
+    @MainActor
+    @discardableResult
+    private func getOrCreateStructuredNote() -> ReservationStructuredNoteRecord {
+        if let existing = structuredNote { return existing }
+        let record = ReservationStructuredNoteRecord(reservationRemoteID: reservation.remoteID)
+        modelContext.insert(record)
+        return record
+    }
+
+    /// Auto-seeds deposit/preorder status from NoteSignalAnalyzer results.
+    /// Only runs once — skipped if a structured note record already exists.
+    @MainActor
+    private func autoSeedStructuredNoteFromSignals() {
+        guard structuredNote == nil, !noteSignals.isEmpty else { return }
+        let hasDeposit = noteSignals.contains { $0.type == .depositMentioned || $0.type == .depositVerified }
+        let hasPreorder = noteSignals.contains { $0.type == .preorderMentioned || $0.type == .banquetMentioned }
+        guard hasDeposit || hasPreorder else { return }
+        let record = getOrCreateStructuredNote()
+        if hasDeposit && record.depositStatus == .none {
+            record.depositStatus = .mentioned
+        }
+        if hasPreorder && record.preorderStatus == .none {
+            record.preorderStatus = .mentioned
+        }
+    }
+
     @State private var draftReviewContext: GuestMessageDraftReviewContext?
     @State private var guestMessageMailDraft: GuestConfirmationMailPresenter.Draft?
     @State private var guestMessageTextDraft: GuestTextMessageDraft?
+    /// Signals derived deterministically from note text (Phase 6) and attachments (Phase 9).
+    @State private var noteSignals: [ReservationSignal] = []
+    /// Per-attachment signals keyed by ReservationAttachmentRecord.id, for inline display.
+    @State private var attachmentSignalsByID: [String: [ReservationSignal]] = [:]
+    /// Additive model-enriched note signals (tone + classification) — Phase 10.
+    @State private var modelNoteSignals: [ReservationSignal] = []
+    /// Controls the structured-notes editor sheet.
+    @State private var showStructuredNoteEditor = false
+    // Phase 5 — Attachment state
+    @State private var pendingPhotoItem: PhotosPickerItem?
+    @State private var pendingPhotoData: Data?
+    @State private var pendingLabel: AttachmentLabel = .other
+    @State private var showLabelPicker = false
+    @State private var previewAttachmentRecord: ReservationAttachmentRecord?
+    @State private var attachmentError: String?
 
     var body: some View {
         GeometryReader { proxy in
@@ -412,6 +478,37 @@ struct ReservationDetailView: View {
                 hostIntelligenceSettingsStore.settings.useLocalModelForGuestMessageDrafts
             }
             guestIntelligenceStore.markDetailOpened(reservationID: reservation.remoteID)
+            recomputeNoteSignals()
+            autoSeedStructuredNoteFromSignals()
+            // Schedule OCR for any existing attachments that haven't been scanned yet.
+            if AttachmentFeatureFlag.ocrEnabled {
+                for attachment in attachments where attachment.ocrRanAt == nil {
+                    scheduleOCR(for: attachment)
+                }
+            }
+            // Model note enrichment (tone + missed signals) — additive, non-blocking.
+            Task { await enrichNoteSignalsWithModel() }
+        }
+        .onChange(of: attachments) { _, _ in
+            // Re-run signal analysis when attachments change (new attachment saved,
+            // OCR completes and writes extractedText, or attachment deleted).
+            recomputeNoteSignals()
+        }
+        .confirmationDialog("Label this photo", isPresented: $showLabelPicker, titleVisibility: .visible) {
+            ForEach(AttachmentLabel.allCases) { label in
+                Button(label.rawValue) {
+                    saveAttachment(label: label)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingPhotoItem = nil
+                pendingPhotoData = nil
+            }
+        }
+        .fullScreenCover(item: $previewAttachmentRecord) { record in
+            AttachmentPreviewScreen(record: record) {
+                previewAttachmentRecord = nil
+            }
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -423,12 +520,34 @@ struct ReservationDetailView: View {
         }
         .sheet(item: $tableAssignmentReservation) { reservation in
             TableAssignmentSheet(reservation: reservation) { tableName in
-                // Table assignment is a server PATCH through the controller.
-                _ = try await controller.updateReservation(
-                    id: reservation.remoteID,
-                    request: ReservationUpdateRequest(tableName: tableName),
-                    context: modelContext
-                )
+                // Use canonical PATCH /managed-reservations/{id}/tables when a backend
+                // floor layout exists. This enforces table conflict rules.
+                // Fall back to legacy table_name PATCH when no layout is available.
+                if floorPlanStore.hasBackendLayout,
+                   let tableKey = floorPlanStore.tableKey(forLabel: tableName) {
+                    TableAssignmentTrace.canonicalFloorPlan(
+                        reservationID: reservation.remoteID,
+                        tableKeys: [tableKey]
+                    )
+                    await floorPlanStore.assign(
+                        reservationID: reservation.remoteID,
+                        tableKeys: [tableKey],
+                        controller: controller,
+                        context: modelContext
+                    )
+                } else {
+                    // Legacy path: no floor layout or table key not found.
+                    // Does NOT enforce backend table conflict rules.
+                    TableAssignmentTrace.legacyPatch(
+                        reservationID: reservation.remoteID,
+                        tableName: tableName
+                    )
+                    _ = try await controller.updateReservation(
+                        id: reservation.remoteID,
+                        request: ReservationUpdateRequest(tableName: tableName),
+                        context: modelContext
+                    )
+                }
                 if seatAfterTableAssignment {
                     seatAfterTableAssignment = false
                     await controller.updateStatus(
@@ -596,39 +715,55 @@ struct ReservationDetailView: View {
                         actionBar
                     }
 
+                    importantCard(presentation)
+                    noteSignalsCard
+
                     detailColumnPair {
-                        contactCard
+                        VStack(spacing: 14) {
+                            notesCard(presentation)
+                            structuredNotesSection
+                            depositSection
+                            preorderSection
+                        }
                     } right: {
                         VStack(spacing: 14) {
-                            draftMessageCard
-                            notesCard(presentation)
+                            attachmentsCard
+                            guestInsightsSection
                         }
                     }
 
                     detailColumnPair {
                         detailsCard(presentation)
                     } right: {
-                        ReservationServiceLoadCard(
-                            reservation: reservation,
-                            sameDayReservations: sameDayReservations
-                        )
+                        VStack(spacing: 14) {
+                            contactCard
+                            draftMessageCard
+                            ReservationServiceLoadCard(
+                                reservation: reservation,
+                                sameDayReservations: sameDayReservations
+                            )
+                        }
                     }
-
-                    guestInsightsSection
                 }
             } else {
                 VStack(spacing: 14) {
                     DetailHeroCard(header: presentation.header)
                     actionBar
+                    importantCard(presentation)
+                    noteSignalsCard
+                    notesCard(presentation)
+                    structuredNotesSection
+                    depositSection
+                    preorderSection
+                    attachmentsCard
+                    guestInsightsSection
+                    detailsCard(presentation)
                     contactCard
                     draftMessageCard
-                    notesCard(presentation)
-                    detailsCard(presentation)
                     ReservationServiceLoadCard(
                         reservation: reservation,
                         sameDayReservations: sameDayReservations
                     )
-                    guestInsightsSection
                 }
             }
         }
@@ -749,22 +884,483 @@ struct ReservationDetailView: View {
         }
     }
 
-    private func notesCard(_ presentation: ReservationDetailPresentation) -> some View {
-        DetailSectionCard(title: "Notes", systemImage: "note.text") {
-            if presentation.notesRows.isEmpty {
-                DetailPlainLine("No guest or staff notes")
+    /// "Important" card — shows only when there is something staff need to notice before
+    private func recomputeNoteSignals() {
+        let input = NoteSignalAnalyzer.Input(
+            reservationID: String(reservation.remoteID),
+            guestNote: reservation.guestNotes?.nilIfBlank,
+            staffNote: reservation.staffNotes?.nilIfBlank
+        )
+        var signals = NoteSignalAnalyzer.analyze(input)
+
+        // Merge attachment signals (label-based + OCR-based).
+        var localAttSignalMap: [String: [ReservationSignal]] = [:]
+        for attachment in attachments {
+            let attInput = AttachmentSignalAnalyzer.Input(
+                reservationID: String(reservation.remoteID),
+                attachmentID: attachment.id,
+                label: attachment.label,
+                extractedText: attachment.extractedText
+            )
+            let attSignals = AttachmentSignalAnalyzer.analyze(attInput)
+            localAttSignalMap[attachment.id] = attSignals
+            for s in attSignals {
+                AttachmentOCRTrace.labelSignal(
+                    reservationID: reservation.remoteID,
+                    attachmentID: attachment.id,
+                    signalType: s.type.rawValue
+                )
+            }
+            signals.append(contentsOf: attSignals)
+        }
+        attachmentSignalsByID = localAttSignalMap
+
+        // Deduplicate deterministic + attachment signals by type (highest priority wins).
+        var seenTypes = Set<ReservationSignalType>()
+        signals = signals.sorted { $0.priority > $1.priority }.filter { signal in
+            seenTypes.insert(signal.type).inserted
+        }
+
+        // Model signals (Phase 10) are additive: only surface types the deterministic and
+        // attachment passes missed. Deterministic/attachment evidence always wins.
+        let existingTypes = Set(signals.map { $0.type })
+        let newModelSignals = modelNoteSignals.filter { !existingTypes.contains($0.type) }
+        signals.append(contentsOf: newModelSignals)
+
+        noteSignals = signals.sorted { $0.priority > $1.priority }
+    }
+
+    /// Phase 10 — asks the on-device model to read the note for tone + missed signals.
+    /// Deterministic signals are already shown; this only adds, never blocks or replaces.
+    private func enrichNoteSignalsWithModel() async {
+        guard hostIntelligenceSettingsStore.settings.useLocalModelForNoteAnalysis else { return }
+        let analyzer = LocalModelNoteAnalyzer()
+        let enriched = await analyzer.analyze(
+            LocalModelNoteAnalyzer.Input(
+                reservationID: String(reservation.remoteID),
+                guestNote: reservation.guestNotes?.nilIfBlank,
+                staffNote: reservation.staffNotes?.nilIfBlank
+            )
+        )
+        guard !enriched.isEmpty else { return }
+        modelNoteSignals = enriched
+        recomputeNoteSignals()
+    }
+
+    /// Schedules background Vision OCR on a newly saved attachment.
+    /// OCR runs off the main thread; result is written back to SwiftData.
+    private func scheduleOCR(for record: ReservationAttachmentRecord) {
+        guard AttachmentFeatureFlag.ocrEnabled else { return }
+        guard record.extractedText == nil else { return }
+
+        let filename = record.filename
+        let recordID = record.id
+        let reservationID = reservation.remoteID
+
+        AttachmentOCRTrace.ocrStarted(reservationID: reservationID, filename: filename)
+
+        Task {
+            // Run Vision off the main thread.
+            let text = await Task.detached(priority: .utility) {
+                await AttachmentOCRService.extractText(filename: filename)
+            }.value
+
+            // Write result back on main actor.
+            if let text {
+                AttachmentOCRTrace.ocrCompleted(
+                    reservationID: reservationID,
+                    filename: filename,
+                    textChars: text.count,
+                    signalCount: 0
+                )
             } else {
-                VStack(spacing: 10) {
-                    ForEach(presentation.notesRows) { row in
-                        DetailDataRow(title: row.title, value: row.value, allowsWrap: row.allowsWrap)
+                AttachmentOCRTrace.ocrEmpty(reservationID: reservationID, filename: filename)
+            }
+
+            if let existing = attachments.first(where: { $0.id == recordID }) {
+                existing.extractedText = text
+                existing.ocrRanAt = Date()
+                try? modelContext.save()
+            }
+            recomputeNoteSignals()
+        }
+    }
+
+    /// Shows signals derived from note text analysis (Phase 6 — Note intelligence).
+    /// Only displayed when NoteSignalAnalyzer finds something actionable.
+    @ViewBuilder
+    private var noteSignalsCard: some View {
+        if !noteSignals.isEmpty {
+            DetailSectionCard(title: "Note signals", systemImage: "lightbulb") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(noteSignals) { signal in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: signalIcon(for: signal.type))
+                                .foregroundStyle(signalColor(for: signal.priority))
+                                .font(.subheadline)
+                                .frame(width: 18)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(signal.title)
+                                        .font(.subheadline.weight(.semibold))
+                                    if signal.requiresReview {
+                                        Text("Review")
+                                            .font(.caption2.weight(.medium))
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 2)
+                                            .background(Color.orange.opacity(0.15))
+                                            .foregroundStyle(Color.orange)
+                                            .cornerRadius(4)
+                                    }
+                                }
+                                Text(signal.staffText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let evidence = signal.evidence {
+                                    Text("\u{201C}\(evidence)\u{201D}")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
+    private func signalIcon(for type: ReservationSignalType) -> String {
+        switch type {
+        case .depositMentioned, .depositVerified: return "banknote"
+        case .preorderMentioned, .banquetMentioned: return "cart"
+        case .allergyOrDietary: return "allergens"
+        case .accessibility: return "accessibility"
+        case .occasion: return "party.popper"
+        case .guestPreference: return "chair"
+        case .kitchenNote: return "fork.knife"
+        case .barNote: return "wineglass"
+        case .guestSentiment: return "heart.text.square"
+        case .serviceIssue: return "exclamationmark.bubble"
+        case .guestCommunicationNeeded: return "bubble.left.and.bubble.right"
+        default: return "note.text"
+        }
+    }
+
+    private func signalColor(for priority: SignalPriority) -> Color {
+        switch priority {
+        case .critical: return .red
+        case .high: return .orange
+        case .medium: return .accentColor
+        case .low, .info: return .secondary
+        }
+    }
+
+    @ViewBuilder
+    private func importantCard(_ presentation: ReservationDetailPresentation) -> some View {
+        let flags = ReservationImportantFlags.make(reservation: reservation)
+        if !flags.isEmpty {
+            DetailSectionCard(title: "Important", systemImage: "exclamationmark.triangle") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(flags) { flag in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: flag.icon)
+                                .foregroundStyle(flag.tint)
+                                .font(.subheadline)
+                                .frame(width: 18)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(flag.title)
+                                    .font(.subheadline.weight(.semibold))
+                                if let detail = flag.detail {
+                                    Text(detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func notesCard(_ presentation: ReservationDetailPresentation) -> some View {
+        DetailSectionCard(title: "Notes", systemImage: "note.text") {
+            if presentation.notesRows.isEmpty {
+                DetailPlainLine("No guest or staff notes")
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(Array(presentation.notesRows.enumerated()), id: \.offset) { index, row in
+                        if index > 0 { Divider().opacity(0.4) }
+                        DetailNoteRow(label: row.title, text: row.value)
+                    }
+                }
+            }
+        }
+    }
+
+    private var attachmentsCard: some View {
+        DetailSectionCard(title: "Attachments", systemImage: "paperclip") {
+            VStack(alignment: .leading, spacing: 10) {
+
+                if let error = attachmentError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
+                if !attachments.isEmpty {
+                    ForEach(attachments) { record in
+                        AttachmentRow(
+                            record: record,
+                            signals: attachmentSignalsByID[record.id] ?? [],
+                            onTap: { previewAttachmentRecord = record },
+                            onDelete: { deleteAttachment(record) }
+                        )
+                        if record.id != attachments.last?.id {
+                            Divider().opacity(0.4)
+                        }
+                    }
+                } else {
+                    Text("No photos attached yet.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                PhotosPicker(
+                    selection: $pendingPhotoItem,
+                    matching: .images,
+                    photoLibrary: .shared()
+                ) {
+                    Label("Add photo", systemImage: "plus.circle")
+                        .font(.subheadline.weight(.medium))
+                }
+                .onChange(of: pendingPhotoItem) { _, item in
+                    guard let item else { return }
+                    loadPhoto(item)
+                }
+            }
+        }
+    }
+
+    // MARK: - Structured staff notes
+
+    /// Staff-structured notes section: manager, kitchen, bar, setup notes.
+    @ViewBuilder
+    private var structuredNotesSection: some View {
+        let note = structuredNote
+        let hasContent = note?.hasStaffNoteContent ?? false
+        DetailSectionCard(title: "Staff notes", systemImage: "person.text.rectangle") {
+            VStack(alignment: .leading, spacing: 0) {
+                if let note, hasContent {
+                    VStack(spacing: 0) {
+                        if let text = note.managerNote?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                            StructuredNoteRow(label: "Manager", icon: "person.badge.key", text: text)
+                            Divider().opacity(0.4).padding(.vertical, 6)
+                        }
+                        if let text = note.kitchenNote?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                            StructuredNoteRow(label: "Kitchen", icon: "fork.knife", text: text)
+                            Divider().opacity(0.4).padding(.vertical, 6)
+                        }
+                        if let text = note.barNote?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                            StructuredNoteRow(label: "Bar", icon: "wineglass", text: text)
+                            Divider().opacity(0.4).padding(.vertical, 6)
+                        }
+                        if let text = note.setupNote?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                            StructuredNoteRow(label: "Setup", icon: "chair", text: text)
+                        }
+                    }
+                } else {
+                    Text("No staff notes added yet.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 4)
+                }
+                Button {
+                    showStructuredNoteEditor = true
+                } label: {
+                    Label(hasContent ? "Edit staff notes" : "Add staff notes", systemImage: hasContent ? "pencil" : "plus.circle")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(TryzubColors.primaryControl)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, hasContent ? 8 : 0)
+            }
+        }
+        .sheet(isPresented: $showStructuredNoteEditor) {
+            StructuredNoteEditorSheet(
+                reservationID: reservation.remoteID,
+                guestName: reservation.guestName,
+                existingRecord: structuredNote,
+                modelContext: modelContext
+            )
+        }
+    }
+
+    /// Deposit section — shown when deposit has any content or on first open if note signals found deposit.
+    @ViewBuilder
+    private var depositSection: some View {
+        let note = structuredNote
+        let hasContent = note?.hasDepositContent ?? false
+        let isDeposit = noteSignals.contains { $0.type == .depositMentioned || $0.type == .depositVerified }
+        if hasContent || isDeposit {
+            DetailSectionCard(title: "Deposit", systemImage: "banknote") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let note {
+                        HStack(spacing: 8) {
+                            Text("Status")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 60, alignment: .leading)
+                            DepositStatusPill(status: note.depositStatus)
+                        }
+                        if let amount = note.depositAmountText?.trimmingCharacters(in: .whitespacesAndNewlines), !amount.isEmpty {
+                            HStack(spacing: 8) {
+                                Text("Amount")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 60, alignment: .leading)
+                                Text(amount)
+                                    .font(.subheadline)
+                            }
+                        }
+                        if let noteText = note.depositNoteText?.trimmingCharacters(in: .whitespacesAndNewlines), !noteText.isEmpty {
+                            Text(noteText)
+                                .font(.subheadline)
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } else if isDeposit {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.circle")
+                                .foregroundStyle(.orange)
+                                .font(.subheadline)
+                            Text("Deposit mentioned in notes — manager should verify.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Button {
+                        showStructuredNoteEditor = true
+                    } label: {
+                        Label(hasContent ? "Edit deposit info" : "Record deposit info", systemImage: hasContent ? "pencil" : "plus.circle")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(TryzubColors.primaryControl)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    /// Preorder / Banquet section — shown when preorder has any content or signals found preorder.
+    @ViewBuilder
+    private var preorderSection: some View {
+        let note = structuredNote
+        let hasContent = note?.hasPreorderContent ?? false
+        let isPreorder = noteSignals.contains { $0.type == .preorderMentioned || $0.type == .banquetMentioned }
+        if hasContent || isPreorder {
+            DetailSectionCard(title: "Preorder / Banquet", systemImage: "cart") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let note {
+                        HStack(spacing: 8) {
+                            Text("Status")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 60, alignment: .leading)
+                            PreorderStatusPill(status: note.preorderStatus)
+                        }
+                        if let noteText = note.preorderNoteText?.trimmingCharacters(in: .whitespacesAndNewlines), !noteText.isEmpty {
+                            Text(noteText)
+                                .font(.subheadline)
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if let banquetText = note.banquetNoteText?.trimmingCharacters(in: .whitespacesAndNewlines), !banquetText.isEmpty {
+                            Divider().opacity(0.4)
+                            StructuredNoteRow(label: "Banquet", icon: "fork.knife.circle", text: banquetText)
+                        }
+                    } else if isPreorder {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.circle")
+                                .foregroundStyle(.orange)
+                                .font(.subheadline)
+                            Text("Preorder mentioned in notes — kitchen should review.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Button {
+                        showStructuredNoteEditor = true
+                    } label: {
+                        Label(hasContent ? "Edit preorder info" : "Record preorder info", systemImage: hasContent ? "pencil" : "plus.circle")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(TryzubColors.primaryControl)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func loadPhoto(_ item: PhotosPickerItem) {
+        Task {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else { return }
+                await MainActor.run {
+                    pendingPhotoData = data
+                    pendingLabel = .other
+                    showLabelPicker = true
+                }
+            } catch {
+                await MainActor.run {
+                    attachmentError = "Could not load the photo."
+                    pendingPhotoItem = nil
+                }
+            }
+        }
+    }
+
+    private func saveAttachment(label: AttachmentLabel) {
+        guard let data = pendingPhotoData,
+              let image = UIImage(data: data) else {
+            pendingPhotoItem = nil
+            pendingPhotoData = nil
+            return
+        }
+        let record = ReservationAttachmentRecord(
+            reservationRemoteID: reservation.remoteID,
+            label: label
+        )
+        do {
+            try AttachmentFileStore.save(image: image, filename: record.filename)
+            modelContext.insert(record)
+            attachmentError = nil
+            AttachmentOCRTrace.attached(
+                reservationID: reservation.remoteID,
+                filename: record.filename,
+                label: label.rawValue
+            )
+            // Immediate label-based signals appear via recomputeNoteSignals() on next @Query update.
+            // Schedule background OCR to enrich signals with actual image text.
+            scheduleOCR(for: record)
+        } catch {
+            attachmentError = error.localizedDescription
+        }
+        pendingPhotoItem = nil
+        pendingPhotoData = nil
+    }
+
+    private func deleteAttachment(_ record: ReservationAttachmentRecord) {
+        AttachmentFileStore.delete(filename: record.filename)
+        modelContext.delete(record)
+    }
+
     private func detailsCard(_ presentation: ReservationDetailPresentation) -> some View {
-        DetailSectionCard(title: "Reservation metadata", systemImage: "info.circle") {
+        DetailSectionCard(title: "Details", systemImage: "info.circle") {
             VStack(spacing: 10) {
                 ForEach(presentation.reservationRows) { row in
                     DetailDataRow(title: row.title, value: row.value, allowsWrap: row.allowsWrap)
@@ -1949,6 +2545,290 @@ private struct DetailPill: View {
                 RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
                     .stroke(Color.primary.opacity(0.10), lineWidth: 1)
             }
+    }
+}
+
+// MARK: - DetailNoteRow
+
+private struct DetailNoteRow: View {
+    let label: String
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(noteLabel)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text(text)
+                .font(.body)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var noteLabel: String {
+        switch label.lowercased() {
+        case "guest":   return "Guest note"
+        case "staff":   return "Staff note"
+        case "manager": return "Manager note"
+        case "kitchen": return "Kitchen note"
+        case "bar":     return "Bar note"
+        case "setup":   return "Setup note"
+        case "deposit": return "Deposit note"
+        case "preorder": return "Preorder note"
+        default:        return label
+        }
+    }
+}
+
+// MARK: - ReservationImportantFlags
+
+// MARK: - Attachment sub-views (Phase 5)
+
+/// Single attachment row: thumbnail, label, date, OCR status, signal pills, delete swipe.
+private struct AttachmentRow: View {
+    let record: ReservationAttachmentRecord
+    /// Signals already computed for this attachment by the parent view's recomputeNoteSignals().
+    let signals: [ReservationSignal]
+    let onTap: () -> Void
+    let onDelete: () -> Void
+
+    @State private var thumbnail: UIImage?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            thumbnailView
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: record.label.systemImage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(record.label.rawValue)
+                        .font(.subheadline.weight(.semibold))
+                }
+                if !signals.isEmpty {
+                    attachmentSignalPills
+                } else {
+                    Text(record.label.reviewInstruction)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                HStack(spacing: 6) {
+                    Text(record.displayDate)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    if AttachmentFeatureFlag.ocrEnabled {
+                        ocrStatusLabel
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+        .onAppear {
+            if thumbnail == nil {
+                thumbnail = AttachmentFileStore.thumbnail(filename: record.filename)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var attachmentSignalPills: some View {
+        FlowLayout(spacing: 4) {
+            ForEach(signals.prefix(3)) { signal in
+                Text(signal.title)
+                    .font(.caption2.weight(.medium))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(signalPillColor(signal.priority).opacity(0.14))
+                    .foregroundStyle(signalPillColor(signal.priority))
+                    .clipShape(Capsule())
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var ocrStatusLabel: some View {
+        // Show only when OCR ran and found text. No "Reading..." — OCR is a silent background benefit.
+        if record.ocrRanAt != nil, record.extractedText != nil {
+            Label("Text read", systemImage: "doc.text.magnifyingglass")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func signalPillColor(_ priority: SignalPriority) -> Color {
+        switch priority {
+        case .critical: return .red
+        case .high:     return .orange
+        case .medium:   return .blue
+        case .low, .info: return .secondary
+        }
+    }
+
+    @ViewBuilder
+    private var thumbnailView: some View {
+        if let image = thumbnail {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 52, height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(.systemFill))
+                .frame(width: 52, height: 52)
+                .overlay {
+                    Image(systemName: record.label.systemImage)
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+        }
+    }
+}
+
+/// Full-screen attachment preview with a close button.
+private struct AttachmentPreviewScreen: View {
+    let record: ReservationAttachmentRecord
+    let onDismiss: () -> Void
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let image {
+                    ScrollView([.horizontal, .vertical]) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity)
+                    }
+                    .background(Color.black)
+                } else {
+                    ZStack {
+                        Color.black.ignoresSafeArea()
+                        ProgressView()
+                            .tint(.white)
+                    }
+                }
+            }
+            .navigationTitle(record.label.rawValue)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { onDismiss() }
+                }
+            }
+            .onAppear {
+                image = AttachmentFileStore.load(filename: record.filename)
+            }
+        }
+    }
+}
+
+// MARK: - Deterministic importance flags
+
+/// Deterministic flag list shown in the "Important" card. No model, no fetch.
+/// Reads only the fields that are already in the reservation record.
+struct ReservationImportantFlag: Identifiable {
+    let id: String
+    let title: String
+    let detail: String?
+    let icon: String
+    let tint: Color
+}
+
+enum ReservationImportantFlags {
+    static func make(reservation: ReservationRecord) -> [ReservationImportantFlag] {
+        var flags: [ReservationImportantFlag] = []
+
+        // No table picked (only relevant for not-yet-complete reservations).
+        if !reservation.hasTableAssignment,
+           reservation.statusValue != .cancelled,
+           reservation.statusValue != .noShow,
+           reservation.statusValue != .completed {
+            flags.append(ReservationImportantFlag(
+                id: "no_table",
+                title: "No table picked",
+                detail: nil,
+                icon: "chair",
+                tint: .orange
+            ))
+        }
+
+        // Large party.
+        if reservation.partySize >= 7 {
+            flags.append(ReservationImportantFlag(
+                id: "large_party",
+                title: "Large party · \(reservation.partySize) guests",
+                detail: reservation.tableName.flatMap { $0.nilIfBlank }.map { "Table: \($0)" },
+                icon: "person.3",
+                tint: .blue
+            ))
+        }
+
+        // Dietary / allergy / accessibility in any note field.
+        let allNotes = [reservation.guestNotes, reservation.staffNotes]
+            .compactMap { $0?.nilIfBlank }
+            .joined(separator: " ")
+            .lowercased()
+
+        let dietaryKeywords = ["allerg", "vegan", "vegetarian", "gluten", "dairy", "nut", "halal", "kosher", "lactose", "celiac"]
+        let accessKeywords   = ["wheelchair", "accessibility", "accessible", "high chair", "highchair", "mobility"]
+        let depositKeywords  = ["deposit", "paid", "payment"]
+        let preorderKeywords = ["preorder", "pre-order", "pre order", "banquet", "menu package", "chicken kyiv", "cake", "champagne flight", "bottle"]
+
+        if dietaryKeywords.contains(where: { allNotes.contains($0) }) {
+            flags.append(ReservationImportantFlag(
+                id: "dietary",
+                title: "Dietary or allergy note",
+                detail: "Check guest notes before seating.",
+                icon: "fork.knife.circle",
+                tint: .red
+            ))
+        }
+
+        if accessKeywords.contains(where: { allNotes.contains($0) }) {
+            flags.append(ReservationImportantFlag(
+                id: "accessibility",
+                title: "Accessibility note",
+                detail: "Check setup before seating.",
+                icon: "figure.roll",
+                tint: .purple
+            ))
+        }
+
+        if depositKeywords.contains(where: { allNotes.contains($0) }) {
+            flags.append(ReservationImportantFlag(
+                id: "deposit",
+                title: "Deposit mentioned",
+                detail: "Manager should verify.",
+                icon: "banknote",
+                tint: .green
+            ))
+        }
+
+        if preorderKeywords.contains(where: { allNotes.contains($0) }) {
+            flags.append(ReservationImportantFlag(
+                id: "preorder",
+                title: "Preorder or banquet note",
+                detail: "Kitchen should review.",
+                icon: "cart",
+                tint: .orange
+            ))
+        }
+
+        return flags
     }
 }
 

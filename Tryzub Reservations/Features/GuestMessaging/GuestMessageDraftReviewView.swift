@@ -99,7 +99,10 @@ struct GuestMessageDraftReviewView: View {
 
                     if draft.isBlocked, let reason = draft.blockedReason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
                         reviewBanner(title: "Draft blocked", message: reason, tint: .orange)
-                    } else if draft.hasSafetyNote, let note = draft.safetyNote {
+                    } else if draft.hasSafetyNote, let note = draft.safetyNote, draft.source == .localModel {
+                        // Only surface a review note when the model actually produced output that
+                        // needs extra scrutiny. Template drafts are always safe — suppress the
+                        // "could not parse model output" message staff don't need to act on.
                         reviewBanner(title: "Review note", message: note, tint: TryzubColors.info)
                     }
 

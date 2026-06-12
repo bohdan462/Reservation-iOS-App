@@ -319,7 +319,7 @@ enum ReservationPreviewData {
     static var previewContainer: ModelContainer = {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try! ModelContainer(
-            for: ReservationRecord.self,
+            for: ReservationRecord.self, ReservationAttachmentRecord.self, ReservationStructuredNoteRecord.self,
             configurations: configuration
         )
         let context = container.mainContext

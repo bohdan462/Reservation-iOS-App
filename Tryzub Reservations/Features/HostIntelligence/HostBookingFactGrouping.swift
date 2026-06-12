@@ -136,11 +136,11 @@ enum HostBookingFactGrouping {
         id: "booking-fact-group-largeParty-\(idSuffix)",
         severity: elevatedSeverity(severity, minimum: .warning),
         category: .largeParty,
-        title: "\(reservations.count) large parties need table planning.",
-        detail: "Check joined tables before confirming.",
+        title: "\(reservations.count) large parties need floor plan review.",
+        detail: "Check combined floor plan before confirming.",
         evidence: evidence,
         relatedReservationIDs: reservationIDs,
-        suggestedActionTitle: "Check the table plan."
+        suggestedActionTitle: "Check the floor plan."
       )
 
     default:

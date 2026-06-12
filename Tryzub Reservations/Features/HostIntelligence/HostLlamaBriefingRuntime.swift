@@ -73,17 +73,8 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
 
   static let shared = HostLlamaBriefingRuntime()
 
-  private static let maxOutputTokens: Int32 = 100
   private static let samplingTemperature = 0.1
   private static let contextWindow: UInt32 = 2048
-
-  private static let promptEchoStopMarkers = [
-    "Write the host briefing now:",
-    "Approved facts:",
-    "You are rewriting an approved restaurant host briefing",
-    "Writing rules:",
-    "Forbidden:"
-  ]
 
   private var session: LlamaLoadedSession?
   private var sessionModelPath: String?
@@ -96,7 +87,14 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
 
   private init() {}
 
+  /// Host briefing path — unchanged behavior, routed through the hostBriefing profile.
   func generateBriefing(prompt: String) async throws -> String {
+    try await generate(prompt: prompt, profile: .hostBriefing)
+  }
+
+  /// Task-aware generation. The profile supplies system prompt, token budget, stop
+  /// markers, artifact prefixes, and a hard wall-clock deadline.
+  func generate(prompt: String, profile: HostLocalModelTaskProfile) async throws -> String {
     guard let modelURL = HostLocalModelFileLocator.inferenceModelURL() else {
       throw HostLocalModelRuntimeError.modelMissing
     }
@@ -126,22 +124,24 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
       throw HostLocalModelRuntimeError.modelLoadFailed("Llama session is unavailable.")
     }
 
-    let inferencePrompt = Self.wrapPromptForQwenInstruct(prompt)
+    let inferencePrompt = Self.wrapPromptForQwenInstruct(prompt, systemPrompt: profile.systemPrompt)
     var diagnostics = HostLlamaRunDiagnostics(
       modelPath: modelPath,
       modelSource: HostLocalModelFileLocator.resolvedModelSourceKind().rawValue,
       promptCharacterCount: inferencePrompt.count,
       contextWindow: Self.contextWindow,
-      maxOutputTokens: Self.maxOutputTokens
+      maxOutputTokens: profile.maxOutputTokens
     )
 
+    let deadline = Date().addingTimeInterval(profile.maxInferenceSeconds)
     let generated: String
     do {
       HostLocalModelProgressReporter.reportGeneratingIfManual()
       generated = try session.generate(
         prompt: inferencePrompt,
-        maxTokens: Self.maxOutputTokens,
-        echoStopMarkers: Self.promptEchoStopMarkers,
+        maxTokens: profile.maxOutputTokens,
+        echoStopMarkers: profile.echoStopMarkers,
+        deadline: deadline,
         diagnostics: &diagnostics
       )
     } catch let error as HostLocalModelRuntimeError {
@@ -157,7 +157,11 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
 
     HostLlamaBriefingRuntimeDiagnostics.storeLastRun(diagnostics)
 
-    let sanitized = Self.sanitizeGeneratedBriefing(generated)
+    let sanitized = Self.sanitizeGenerated(
+      generated,
+      markers: profile.echoStopMarkers,
+      prefixes: profile.artifactPrefixes
+    )
     let trimmed = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else {
       throw HostLocalModelRuntimeError.outputEmpty
@@ -165,10 +169,10 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
     return trimmed
   }
 
-  private static func wrapPromptForQwenInstruct(_ prompt: String) -> String {
+  private static func wrapPromptForQwenInstruct(_ prompt: String, systemPrompt: String) -> String {
     """
     <|im_start|>system
-    Rewrite the approved host facts into calm staff-facing prose. Obey every rule in the user message.
+    \(systemPrompt)
     
     <|im_start|>user
     \(prompt)
@@ -177,20 +181,14 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
     """
   }
 
-  private static let generatedArtifactPrefixes = [
-    "Briefing:",
-    "Host briefing:",
-    "Final briefing:",
-    "Here is the host briefing:",
-    "Here is the briefing:",
-    "Here is your host briefing:",
-    "Here is..."
-  ]
-
-  private static func sanitizeGeneratedBriefing(_ raw: String) -> String {
+  private static func sanitizeGenerated(
+    _ raw: String,
+    markers: [String],
+    prefixes: [String]
+  ) -> String {
     var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 
-    for marker in promptEchoStopMarkers {
+    for marker in markers {
       if let range = text.range(of: marker) {
         text = String(text[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
       }
@@ -202,16 +200,16 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
       .replacingOccurrences(of: "</s>", with: "")
       .trimmingCharacters(in: .whitespacesAndNewlines)
 
-    text = stripGeneratedArtifactPrefixes(from: text)
+    text = stripGeneratedArtifactPrefixes(from: text, prefixes: prefixes)
 
     return text
   }
 
-  private static func stripGeneratedArtifactPrefixes(from text: String) -> String {
+  private static func stripGeneratedArtifactPrefixes(from text: String, prefixes: [String]) -> String {
     var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
     let lowered = cleaned.lowercased()
 
-    for prefix in generatedArtifactPrefixes {
+    for prefix in prefixes {
       let normalizedPrefix = prefix.lowercased()
       if lowered.hasPrefix(normalizedPrefix) {
         cleaned = String(cleaned.dropFirst(prefix.count))
@@ -289,6 +287,7 @@ private final class LlamaLoadedSession: @unchecked Sendable {
     prompt: String,
     maxTokens: Int32,
     echoStopMarkers: [String],
+    deadline: Date,
     diagnostics: inout HostLlamaRunDiagnostics
   ) throws -> String {
     let promptTokens = try tokenize(prompt, addBOS: Self.addBOSForPrompt)
@@ -354,6 +353,17 @@ private final class LlamaLoadedSession: @unchecked Sendable {
 
     for _ in 0..<maxTokens {
       diagnostics.generationRan = true
+
+      // Hard wall-clock timeout: never hang the surface. Returns partial text if any,
+      // otherwise the caller treats empty output as a failure and falls back to template.
+      if Date() >= deadline {
+        diagnostics.lastError = "inference_timed_out"
+        if generated.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          throw HostLocalModelRuntimeError.timedOut
+        }
+        break
+      }
+
       let nextToken: llama_token
       if let sampler {
         nextToken = llama_sampler_sample(sampler, context, batch.n_tokens - 1)

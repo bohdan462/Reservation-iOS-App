@@ -11,7 +11,8 @@ protocol FloorPlanServiceProtocol: Sendable {
     func getFloorPlan(date: String) async throws -> FloorPlanResponseDTO
     func patchReservationTables(
         reservationID: Int,
-        tableKeys: [String]
+        tableKeys: [String],
+        expectedUpdatedAt: String?
     ) async throws -> FloorPlanPatchResponseDTO
 }
 
@@ -48,12 +49,16 @@ final class FloorPlanService: FloorPlanServiceProtocol {
 
     func patchReservationTables(
         reservationID: Int,
-        tableKeys: [String]
+        tableKeys: [String],
+        expectedUpdatedAt: String?
     ) async throws -> FloorPlanPatchResponseDTO {
         do {
             return try await client.patchReservationTables(
                 reservationID: reservationID,
-                request: PatchReservationTablesRequest(tableKeys: tableKeys),
+                request: PatchReservationTablesRequest(
+                    tableKeys: tableKeys,
+                    expectedUpdatedAt: expectedUpdatedAt
+                ),
                 reason: .reservationTablesPatch
             )
         } catch {
@@ -67,8 +72,8 @@ final class FloorPlanService: FloorPlanServiceProtocol {
         }
         if let apiError = error as? ReservationAPIError {
             switch apiError {
-            case .wordpressError(_, let message, _, _):
-                return .serverMessage(message)
+            case let .wordpressError(code, message, statusCode, _):
+                return .serverValidation(code: code, status: statusCode, message: message)
             case .serverError(_, let diagnostics):
                 if let snippet = diagnostics?.responseBodySnippet?
                     .trimmingCharacters(in: .whitespacesAndNewlines),

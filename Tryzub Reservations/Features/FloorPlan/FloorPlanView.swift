@@ -225,31 +225,85 @@ struct FloorPlanView: View {
     private var unassignedSection: some View {
         if !store.viewState.unassignedReservations.isEmpty {
             TryzubChartCard(title: "Unassigned", systemImage: "person.crop.circle.badge.questionmark") {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(store.viewState.unassignedReservations) { reservation in
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(store.viewState.unassignedReservations.enumerated()), id: \.element.id) { index, reservation in
+                        if index > 0 {
+                            Divider().padding(.vertical, 8)
+                        }
                         Button {
                             assignmentContext = .unassignedReservation(reservation)
                         } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(reservation.guestName)
-                                        .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(.primary)
-                                    Text("\(FloorPlanPresentation.displayTime(reservation.reservationTime)) · party of \(reservation.partySize)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding(.vertical, 4)
+                            UnassignedReservationRow(reservation: reservation)
                         }
                         .buttonStyle(.plain)
                     }
                 }
             }
+        }
+    }
+
+    private struct UnassignedReservationRow: View {
+        let reservation: ManagedReservationDTO
+
+        var body: some View {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(reservation.guestName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text("\(FloorPlanPresentation.displayTime(reservation.reservationTime)) · party of \(reservation.partySize)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if !noteChips.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(noteChips, id: \.self) { chip in
+                                Text(chip)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(.secondary.opacity(0.12))
+                                    .clipShape(Capsule())
+                            }
+                        }
+                        .padding(.top, 2)
+                    }
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Assign table")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(TryzubColors.primaryControl)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+
+        private var noteChips: [String] {
+            var chips: [String] = []
+            let combined = [reservation.guestNotes, reservation.staffNotes]
+                .compactMap { s -> String? in
+                    guard let s, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+                    return s
+                }
+                .joined(separator: " ")
+                .lowercased()
+            if !combined.isEmpty {
+                chips.append("Note")
+            }
+            if combined.contains("deposit") || combined.contains("payment") {
+                chips.append("Deposit")
+            }
+            if combined.contains("preorder") || combined.contains("pre-order") {
+                chips.append("Preorder")
+            }
+            if combined.contains("allerg") || combined.contains("gluten") || combined.contains("vegan") || combined.contains("vegetar") {
+                chips.append("Dietary")
+            }
+            return chips
         }
     }
 

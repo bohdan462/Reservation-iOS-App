@@ -314,7 +314,12 @@ enum StartupBackgroundWorkState: Equatable {
         case .updatingServiceSetup:
             return "Checking Tryzub service…"
         case .loadingTodayOperations:
-            return "Loading today's operations…"
+            // This state is only set while today's availability bundle is loading
+            // (see ReservationsController.isLoadingHostTodayAvailabilityBundle).
+            // Cached reservations are already visible by this point, so the copy
+            // must describe the precise background activity, not imply the board
+            // is still loading.
+            return "Checking available times…"
         }
     }
 }
@@ -343,9 +348,17 @@ enum HomeServiceStatusPresenter {
         let secondaryFromHost = hostOperationalLoading && !isReservationRefreshInFlight
             ? "Checking service…"
             : nil
-        let secondaryProgressText = isReservationRefreshInFlight
+        let rawSecondary = isReservationRefreshInFlight
             ? nil
             : (secondaryFromStartup ?? secondaryFromHost)
+        // When cached UI is already visible and this is an automatic background freshness
+        // check (no manual refresh in flight), do not show blocking "Checking service…"
+        // copy — it makes staff think the app is frozen. Manual refresh and no-cache
+        // startup keep their progress copy; specific states ("Checking available times…",
+        // "Checking saved data…") are unaffected.
+        let secondaryProgressText: String? = (hasVisibleCache && rawSecondary == "Checking service…")
+            ? nil
+            : rawSecondary
 
         if isNetworkDegraded || startupNetworkPassError != nil {
             let primary: String

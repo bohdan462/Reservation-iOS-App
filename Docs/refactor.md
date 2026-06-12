@@ -697,3 +697,1488 @@ P2:
 - Should diagnostics expose a dedicated “multi-device conflict rehearsal” checklist?
 - Should Restaurant Settings table import be hidden once backend layout setup is verified?
 - Should the backend expose a lightweight reservation mutation version/ETag for stale update detection later?
+
+---
+
+# iOS Final Stabilization Pass (branch: intelligence)
+
+This section is appended live during the stabilization pass. Each phase records what
+was implemented, files changed, risk reduced, new traces, and proof status.
+
+## Current Implementation Reality Check (Phase 0)
+
+Confirmed from code, not prior agent claims:
+
+| Component | Exists | Wired into real flow? | Notes |
+| --- | --- | --- | --- |
+| `FreshnessCoordinator` | Yes | Partial | Used by `FloorPlanStore` + `AppReservationSession`. NOT used by `ReservationsController` active-window/startup (still uses `syncStateByScope` + `isScopeFresh`). |
+| `ReservationMutationReconcilePolicy` | Yes | **No → now Yes (Phase 3)** | Before: only its own file referenced it. Now wired into edit/status/hide/restore/delete/confirm catch sites + table-conflict trace. |
+| `MutationVersionTrace` | Yes | **No → now Yes (Phase 4)** | Before: defined, never called. Now emitted on every PATCH mutation + table assignment. |
+| `SwiftDataTrace` | Yes | Partial | Integrated in `ReservationRepository`. No structural cleanup yet (Phase 11). |
+| `HostBoardLifecycleCoordinator` | Yes | Yes | Drives Host lifecycle in `HostBoardView`. |
+| `FloorPlanStore` | Yes | Yes | Uses `FreshnessCoordinator`; canonical table assignment path. |
+| `ReservationDetailView` table path | Yes | Yes | Canonical when backend layout exists, legacy `table_name` fallback otherwise. |
+| `ReservationsController` active-window | Yes | Legacy | Own startup policy + scope freshness. `FreshnessCoordinator` not yet wired here (Phase 5 target). |
+| `HostBoardView` header/status copy | Yes | **Fixed (Phase 1)** | `loadingTodayOperations` previously read "Loading today's operations…" over visible cache. |
+| Arrival Flow chart | Yes | **Fixed (Phase 2)** | Was a line/wave + single dot → regressed to a lonely floating dot. Now rounded bars. |
+| Navigation/onChange handlers | Yes | Symptom present | Repeated "tried to update multiple times per frame" warnings (Phase 8 target). |
+
+## Phase 1 — False Home loading state (DONE)
+
+- **Implemented:** `StartupBackgroundWorkState.loadingTodayOperations.staffProgressLabel`
+  changed from "Loading today's operations…" to "Checking available times…". This state
+  is only ever set while `ReservationsController.isLoadingHostTodayAvailabilityBundle()`
+  is true (today's availability bundle loading), with cached reservations already visible.
+- **Files:** `Features/Reservations/ReservationSharedUI.swift`,
+  `Import/StartupPolicyTrace.swift`, `Import/ReservationsController.swift`.
+- **Risk reduced:** Misleading "still loading" copy over a populated board during service.
+- **New trace:** `[HOME_STATUS_TRACE] state=<primary> copy=<secondary> dot=<style>` emitted
+  from `refreshHomeServicePresentation` whenever the presentation changes.
+- **Status mapping (header secondary line):** freshness check → "Checking service…";
+  availability loading → "Checking available times…"; setup → "Checking Tryzub service…";
+  manual refresh in-flight with cache → "Checking service…"; idle → none / "Checked HH:mm".
+- **Proof:** Builds clean. Device proof pending (look for absence of
+  "Loading today's operations…" in `[STARTUP_POLICY] header` / `[HOME_STATUS_TRACE]`).
+
+## Phase 2 — Arrival Flow chart (DONE)
+
+- **Implemented:** Rewrote `ReservationDensityWaveChart` from a line/area + floating dot
+  renderer into compact rounded bars (one bar per 15-min window, value = guest count).
+  Empty buckets render as a faint baseline nub so empty hours never dominate; arrival
+  windows get a prominent rounded bar with a value label; peak bar is emphasized; tap a
+  bar to see the window summary; existing footer/peak/next labels retained.
+- **Data source:** existing `arrivalBuckets` from Host Board view-state (no refetch).
+- **Files:** `Features/Reservations/ReservationDensityWaveChart.swift`.
+- **Risk reduced:** Unusable "tiny floating dot" for single-window days (e.g. 4 guests @ 19:30).
+- **New trace:** `[ARRIVAL_CHART_TRACE] buckets=N arrivals=M peak=HH:mm renderer=rounded_bars`.
+- **Proof:** Builds clean. Device proof pending (expect a clear bar at 19:30 for the
+  2-reservation/4-guest sample day).
+
+## Phase 3 — Mutation reconcile policy wired (DONE)
+
+- **Implemented:** `applyMutationReconcilePolicy(error:action:id:reservationDate:context:)`
+  helper on `ReservationsController` classifies failures via
+  `ReservationMutationReconcilePolicy.classify` and:
+  - `.alreadyGone` (404): deletes the local row, marks scopes stale, posts
+    `MutationOutcome.copyAlreadyGone` ("…already gone on the server. Saved data was refreshed.").
+  - `.alreadyChanged` / `.invalidTransition` (409): reconciles server truth, posts
+    `MutationOutcome.copyAlreadyChanged`.
+  - `.uncertainNeedsReconcile`: returns false → caller keeps its existing uncertain-network flow.
+- **Call sites wired:** `updateReservation` (edit), `updateStatus` (status),
+  `hideWrongEntry` (hide), `restoreHiddenReservation` (restore), `hardDeleteReservation`
+  (delete), `confirmReservation` (confirm). Floor Plan table conflict emits
+  `ReservationMutationReconcilePolicy.traceTableConflict`.
+- **Files:** `Import/ReservationsController.swift`,
+  `Services/ReservationMutationReconcilePolicy.swift`, `Features/FloorPlan/FloorPlanStore.swift`.
+- **Risk reduced:** Stale delete/hide/status no longer shows misleading raw "could not"
+  errors; local cache converges to server truth; rows don't stay stuck.
+- **New traces:** `[MUTATION_RECONCILE] action=… id=… outcome=already_gone|already_changed|invalid_transition|table_conflict`.
+- **Remaining unhandled:** manual email-log path keeps its own copy (low risk, no
+  server-truth conflict). Table conflict UI still owned by Floor Plan (intentional).
+- **Proof:** Builds clean. Device proof requires a two-device stale mutation.
+
+## Phase 4 — expected_updated_at sent (DONE, with documented gaps)
+
+- **Implemented:** Added `ReservationRecord.rowVersion` (= `apiUpdatedAt ?? createdAt`) and
+  `ReservationRepository.rowVersion(forRemoteID:)`. `updateReservation` now attaches the
+  cached row version as `expected_updated_at` when the caller didn't supply one.
+  Hide/restore (which call the service directly) attach `reservation.rowVersion`. Table
+  assignment PATCH carries `expected_updated_at` via `PatchReservationTablesRequest`.
+- **Endpoints now sending `expected_updated_at`:**
+  - `PATCH /managed-reservations/{id}` (edit / status / hide / restore) ✓
+  - `PATCH /managed-reservations/{id}/tables` ✓
+- **Documented gaps (intentionally not changed this pass):**
+  - `DELETE /managed-reservations/{id}`: client sends `?force=1` only (admin cleanup).
+    404 is already handled by the reconcile policy; adding an optimistic guard would
+    change force-cleanup semantics. Gap left intentionally.
+  - `POST /managed-reservations/{id}/confirm`: client sends no body; not wired to avoid
+    expanding the client contract. Gap left intentionally.
+- **Encoding:** `JSONEncoder.keyEncodingStrategy = .convertToSnakeCase` → `expectedUpdatedAt`
+  becomes `expected_updated_at`; nil is omitted (synthesized `encodeIfPresent`), so no
+  request fails on an unknown/empty field.
+- **Files:** `Persistence/ReservationRecord.swift`, `Services/ReservationRepository.swift`,
+  `Import/ReservationsController.swift`, `Network/FloorPlanDTO.swift`,
+  `Services/FloorPlanService.swift`, `Features/FloorPlan/FloorPlanStore.swift`.
+- **New trace:** `[MUTATION_VERSION_TRACE] action=… id=… expected_updated_at=present|missing`.
+- **Proof:** Builds clean. Device proof: confirm `present` on edit/status/table when the
+  row is cached.
+
+## Phase 5 — FreshnessCoordinator wired into active-window lifecycle (DONE, measured)
+
+- **Approach (honest):** `ReservationsController` already has a proven scope-state machine
+  (`syncStateByScope` + `isScopeFresh` + `beginScope` + cooldowns) that device logs show
+  works — `[API] SKIP reason=scope_skip_fresh` fires and empty deltas never delete rows.
+  Ripping that out mid-service is unsafe, so the shared `FreshnessCoordinator` is injected
+  as the **shared decision authority/recorder** while the scope-state machine remains the
+  **executor**. The coordinator's state (`markInFlight`/`markCompleted`/`markFailed`) now
+  tracks active-window fetches so Phase 6 surfaces can consult one authority.
+- **Implemented:**
+  - `AppReservationSession` injects its single `FreshnessCoordinator` into the controller.
+  - `recordActiveWindowFreshness(_:)` mirrors each active-window decision into the shared
+    `[FRESHNESS_COORDINATOR]` log: startup skip → `use_cache`, scope-fresh skip →
+    `use_cache`, scope-in-flight → `join_in_flight`, network start → `fetch`.
+  - `markInFlight` on network start; `markCompleted` on success; `markFailed` on
+    failure/cancel; `markCacheHit` on startup cache-fresh skip.
+- **Files:** `Services/AppReservationSession.swift`, `Services/FreshnessCoordinator.swift`
+  (added `record`), `Import/ReservationsController.swift`.
+- **Risk reduced:** Decisions are now observable in one vocabulary; coordinator state is
+  authoritative for the active window (foundation for Phase 6).
+- **New traces:** `[FRESHNESS_COORDINATOR] scope=activeWindow(from–to) decision=use_cache|fetch|join_in_flight reason=…`.
+- **Remaining:** Full executor migration (coordinator as the sole gate) is intentionally
+  deferred. The acceptance behavior ("Host open after cache hit does not duplicate
+  active-window fetch") is already enforced by the existing machine and now visible via
+  the coordinator log. Device proof pending.
+
+## Phase 7 — No-op refresh trace (INSTRUMENTED)
+
+- **Implemented:** `[NOOP_REFRESH_TRACE]` emitted alongside `[CACHE] upsert finished`,
+  computing `publishSemanticChange = written>0 || removed>0`. A no-op refresh
+  (written=0, removed=0) reports `publishSemanticChange=false`.
+- **Files:** `Services/ReservationRepository.swift`.
+- **Finding (from device log):** The transient `host_snapshot_build … reservations=0`
+  occurred immediately before `[HOST_LIFECYCLE] event=hidden` (tab transition to Floor),
+  i.e. it correlates with navigation/visibility, not with the no-op upsert (which already
+  wrote 0 / skipped 38). This points at Phase 8 (navigation churn) / Phase 11
+  (`unsafeForcedSync`) rather than a semantic publish from the repository. The trace lets
+  the next device run confirm no-op refresh does not publish a semantic change.
+- **Status:** Instrumented; behavioral fix (if still needed) depends on Phase 8/11 device proof.
+
+## Phase 8 — Navigation/onChange churn (PARTIAL mitigation)
+
+- **Finding:** `NavigationRequestObserver` is a SwiftUI-internal observer, not an app type.
+  The startup `onChange(of: String)` ×8 / `onChange(of: Bool)` warnings come from handlers
+  that synchronously publish controller state mid-frame.
+- **Implemented:** Coalesced the clearest offender — `HostBoardView`
+  `.onChange(of: hostBoardOperationalLoading)` now defers `refreshHomeServicePresentation`
+  by one runloop tick (`Task { @MainActor in await Task.yield(); … }`). That call publishes
+  state which feeds back into `hostBoardOperationalLoading`, so a synchronous update inside
+  onChange produced "tried to update multiple times per frame".
+- **Files:** `Features/Reservations/HostBoardView.swift`.
+- **Honest status:** This is a targeted mitigation, not a full fix. The remaining
+  `onChange(of: String)` warnings (date-string observers across the header selector,
+  settings `dateKey`, schedule filters) need device reproduction to attribute precisely;
+  they were left untouched to avoid destabilizing working navigation without runtime proof.
+
+## Phases NOT completed this pass (honest)
+
+- **Phase 6 (coordinator into guest/profile/BI/settings):** NOT done. Foundation laid in
+  Phase 5 (coordinator is now injected + authoritative for active window). Per-surface
+  wiring deferred.
+- **Phase 9 (Floor Plan save proof):** NOT proven. Requires running Set Up Tables → Save
+  on device and capturing `restaurant_tables_put status=200` + `floor_plan … tables>0`.
+  No save-wiring defect found in code review; backend simply has no saved layout yet.
+- **Phase 10 (Host table-assignment canonical migration):** NOT done. Detail path is
+  canonical-when-layout-exists (prior pass); Host assignment path still needs auditing
+  + `[TABLE_ASSIGNMENT_TRACE] source=host`.
+- **Phase 11 (SwiftData/concurrency cleanup):** NOT done. `unsafeForcedSync` correlates
+  with refresh/navigation; needs a device-reproduced stack to fix safely.
+- **Phase 12 (Intelligence/LLM verification):** Not re-verified this pass (build compiles;
+  prior pass wired backend floor tables + broader history).
+- **Phase 13 (polish):** Deferred until stability is device-proven.
+
+## Build status after Phases 1–8 work
+
+`xcodebuild -scheme "Tryzub Reservations" -destination generic/platform=iOS build-for-testing`
+→ **TEST BUILD SUCCEEDED** after every phase (only a pre-existing MainActor note in
+`GuestConfirmationMail.swift`). No new linter errors in touched files.
+
+## Device proof required (cannot be produced in this environment)
+
+These were verified to **compile**, but runtime/device proof must be captured on the
+physical device by re-running the same flows:
+1. Launch with cache → expect no `Loading today's operations…`; `[HOME_STATUS_TRACE]`
+   shows `Checking available times…` / `Checking service…`; `[FRESHNESS_COORDINATOR]
+   scope=activeWindow decision=use_cache`.
+2. Arrival Flow → clear bar at 19:30 for the 2-reservation/4-guest day; `[ARRIVAL_CHART_TRACE] renderer=rounded_bars`.
+3. Two-device stale mutation → `[MUTATION_RECONCILE] outcome=already_gone|already_changed`.
+4. Any edit/status/table change → `[MUTATION_VERSION_TRACE] expected_updated_at=present`.
+5. Manual refresh of unchanged data → `[NOOP_REFRESH_TRACE] publishSemanticChange=false`;
+   Host should not flash to 0.
+6. Navigation launch → Host → Floor → More → back: confirm reduction in
+   `onChange … multiple times per frame` warnings.
+
+---
+
+# Final Runtime Stabilization Results (active-window TTL, availability coordinator, adaptive arrival chart, concurrency instrumentation)
+
+This pass acted on the second device run, which confirmed the false-loading-state fix and
+the rounded-bar chart are working, and surfaced three remaining runtime issues plus a chart
+refinement request.
+
+## Phases completed
+
+### Phase 1 — Active-window FreshnessCoordinator TTL/key mismatch (FIXED)
+- **Root cause:** `autoRefreshDashboardIfAllowed` gated only on `lastAutoRefreshAttemptAt`
+  (nil at launch) and the `.automatic` path in `performActiveWindowRefreshBody` deliberately
+  bypasses the `isScopeFresh` skip (so the 60s cadence keeps polling during live service).
+  On a fresh-cache launch this produced `decision=use_cache reason=startup_cache_fresh`
+  immediately followed by `decision=fetch reason=stale_automatic` — an instant redundant
+  `active_window_delta`.
+- **Key identity:** verified the `activeWindow(from:to:)` scope is built from the same
+  `activeWindow()`/`activeWindowScope()` for startup, auto-refresh, and success-marking, so
+  there is **no real key mismatch**. The `2026-06-09–2026-08-09` (en-dash, coordinator
+  `description`) vs `2026-06-09...2026-08-09` (controller `ReservationSyncScope.description`)
+  difference is cosmetic across two trace vocabularies; the Hashable key uses the raw
+  `from`/`to` strings, which match.
+- **Fix:** `autoRefreshDashboardIfAllowed` now consults active-window freshness
+  (`isScopeFresh(scope, freshnessInterval: autoRefreshInterval)`) before attempting. If the
+  window is fresh it records `[FRESHNESS_COORDINATOR] … decision=use_cache reason=fresh_automatic`,
+  logs `[API] SKIP reason=scope_skip_fresh … auto refresh skipped because cache is fresh`,
+  and returns. Manual pull-to-refresh still forces (unchanged). Host and Bookings share the
+  same `activeWindow()` scope, so the key is identical for both.
+- **Rule (final):** *Auto-refresh fetches the active window only after the
+  `autoRefreshInterval` TTL elapses since the last successful sync, or on manual force. A
+  fresh-cache launch never triggers an immediate automatic delta.*
+- **Files:** `Import/ReservationsController.swift`.
+
+### Phase 2 — Availability bundle moved onto FreshnessCoordinator (DONE)
+- The availability bundle (`restaurant-day-availability` + `reservation-slots` +
+  `restaurant-blocked-slots`, loaded serially in `loadAvailabilitySummary`) now records its
+  decisions on `FreshnessScope.availabilityBundle(date:)`:
+  - fresh cache → `record(.useCache(reason: "fresh"))`
+  - already loading → `record(.joinInFlight(reason: "in_flight"))`
+  - proceed → `record(.fetch(reason: "host_visible_stale"|"forced"))` + `markInFlight`
+  - success → `markCompleted` (sets `lastFetchedAt`, becomes the TTL anchor)
+  - genuine error → `markFailed(cooldown: 15)`
+  - ignored/cancelled (selected date changed mid-flight) → `endInFlight` (new coordinator
+    method: clears in-flight without faking freshness or starting a cooldown).
+- The existing `HostBoardLifecycleCoordinator` `skip_availability reason=fresh/in_flight`
+  dedup (proven working in the device log) is retained as the executor; the coordinator is
+  now the visible authority via `[FRESHNESS_COORDINATOR] scope=availabilityBundle(date) …`.
+- `DateLoadTrace.ignoredResponse` (date-change race protection) is unchanged and still fires.
+- **Files:** `Import/ReservationsController.swift`, `Services/FreshnessCoordinator.swift`
+  (added `endInFlight`).
+
+### Phase 3 — unsafeForcedSync / gesture-timeout instrumentation (INSTRUMENTED + localized)
+- Added `Import/DateSwitchTrace.swift` emitting:
+  - `[DATE_SWITCH_TRACE] from=… to=… phase=begin` (in `noteHostBoardSelectedDate`)
+  - `[DATE_SWITCH_TRACE] date=… phase=availability_start`
+  - `[DATE_SWITCH_TRACE] date=… phase=availability_publish duration=…ms`
+  - `[CONCURRENCY_TRACE] context=availability_completion modelContextUsed=false`
+- **Finding (code-verified, device-confirm pending):** `HostBoardView` has **no `@Query`**;
+  `reservations` is a passed-in array, and `loadAvailabilitySummary` touches only
+  `@Published` in-memory dictionaries on the MainActor — it never opens or reads a
+  SwiftData `ModelContext`. Therefore the `unsafeForcedSync` warning is **not** in the
+  availability/date-switch completion path; it correlates instead with SwiftData
+  framework-level access during reservation upsert/mutation, which is the documented
+  remaining path. The `System gesture gate timed out` line coincides with the long
+  first-load `restaurant_day_availability` (1.87s) request and is the gesture system noting
+  the in-flight await, not a main-thread block in our code.
+- Per the instructions ("instrument first, fix only obvious problems, do not rewrite
+  persistence") no persistence rewrite was attempted; the remaining path is now tied to a
+  named trace for the next device repro.
+- **Files:** `Import/DateSwitchTrace.swift`, `Import/ReservationsController.swift`.
+
+### Phase 4 — Professional adaptive 15-minute Arrival Flow chart (DONE)
+- Data model already buckets every 15 minutes across the service range; this pass made the
+  **labels** adaptive so the axis never crowds while bars stay at 15-minute granularity.
+- Added `@Environment(\.horizontalSizeClass)` and a measured plot width
+  (`measuredPlotWidth`, captured via `onAppear`/`onChange` on the chart's GeometryReader).
+- `labelStrideMinutes`:
+  - ≥34 pt per bucket → label every **15 min**
+  - regular width (iPad) or ≥22 pt per bucket → label every **30 min**
+  - otherwise (compact iPhone, dense day) → label **hourly**
+- `xLabelIndices` now strides by `minute % stride == 0` with hour:minute de-duplication;
+  30-minute labels render `displayTime` (e.g. `18:30`) via the existing axis-label fallback.
+- Peak bucket emphasis, faint empty-bucket baseline, safe ratios (no NaN/zero-division),
+  and bar-width cap are retained from the prior pass.
+- Trace enriched: `[ARRIVAL_CHART_TRACE] buckets=… arrivals=… peak=… renderer=rounded_bars
+  widthClass=compact|regular labelStride=…min`.
+- **Files:** `Features/Reservations/ReservationDensityWaveChart.swift`.
+
+## Phases requiring device proof (cannot be produced in this environment)
+
+### Phase 5 — Floor Plan save proof (NOT proven; needs hardware run)
+- No save-wiring defect found in code review; the device log simply shows `tables=0`
+  because no layout has been saved to this restaurant yet. Capture on device:
+  Floor → Set Up Tables → seed T1/T2/T3 → Save → expect
+  `[API] START/END reason=restaurant_tables_put status=200`,
+  `[FLOOR_PLAN_TRACE] event=layout_save_completed tables=…`, then
+  `[FLOOR_PLAN_TRACE] event=load_completed … tables>0`.
+
+### Phase 6 — Mutation reconcile real-path proof (NOT proven; needs hardware run)
+- Reconcile policy is wired into `updateReservation` (edit/status), `hideWrongEntry`,
+  `restoreHiddenReservation`, `hardDeleteReservation`, `confirmReservation`, and the Floor
+  Plan assignment-conflict path. `expected_updated_at` is populated from the cached
+  `rowVersion` for PATCH mutations. Capture on device by performing a real edit/status/hide
+  /delete (and a stale 409 if dev tooling allows):
+  `[MUTATION_VERSION_TRACE] action=… expected_updated_at=present` and
+  `[MUTATION_RECONCILE] action=… outcome=already_gone|already_changed|table_conflict`.
+
+## Files changed this pass
+- `Tryzub Reservations/Import/ReservationsController.swift` — auto-refresh freshness gate;
+  availability bundle coordinator wiring (decide/in-flight/complete/fail/endInFlight);
+  date-switch + concurrency traces.
+- `Tryzub Reservations/Services/FreshnessCoordinator.swift` — added `endInFlight(_:)`.
+- `Tryzub Reservations/Features/Reservations/ReservationDensityWaveChart.swift` — adaptive
+  width-class label stride, measured width, enriched trace.
+- `Tryzub Reservations/Import/DateSwitchTrace.swift` — new instrumentation utility.
+
+## Build status
+`xcodebuild -scheme "Tryzub Reservations" -destination generic/platform=iOS build-for-testing`
+→ **TEST BUILD SUCCEEDED** after Phases 1–4. No new linter errors in touched files.
+
+## Expected device traces after this pass
+- Fresh-cache launch: `[FRESHNESS_COORDINATOR] scope=activeWindow(…) decision=use_cache
+  reason=startup_cache_fresh` is **no longer** followed by
+  `decision=fetch reason=stale_automatic`; instead `decision=use_cache reason=fresh_automatic`
+  + `[API] SKIP reason=scope_skip_fresh … auto refresh skipped because cache is fresh`.
+- Date switching: `[FRESHNESS_COORDINATOR] scope=availabilityBundle(2026-06-11)
+  decision=fetch reason=host_visible_stale` then `decision=use_cache reason=fresh_…s_of_300s`
+  when returning to a recently loaded date; `decision=join_in_flight` on rapid toggles.
+- Chart: `[ARRIVAL_CHART_TRACE] … widthClass=compact labelStride=60min` (iPhone) /
+  `widthClass=regular labelStride=30min` (iPad).
+- Date switch lifecycle: `[DATE_SWITCH_TRACE] … phase=begin/availability_start/availability_publish`
+  and `[CONCURRENCY_TRACE] context=availability_completion modelContextUsed=false`.
+
+## Remaining risks
+- `unsafeForcedSync` is localized away from availability completion but its true source
+  (SwiftData upsert/mutation framework access) still needs a device-reproduced stack.
+- Availability bundle TTL anchor is `lastFetchedAt` set on full success; a partial failure
+  mid-bundle (e.g. blocked-slots 4xx after day-availability 200) starts a 15s cooldown and
+  re-fetches the whole bundle, which is acceptable but not granular per-endpoint.
+- Floor Plan save and mutation reconcile remain unproven until the hardware run.
+
+## Next recommended task
+Capture the Phase 5 (Floor Plan Save) and Phase 6 (mutation reconcile) device logs, then
+use a two-device stale-409 to confirm `[MUTATION_RECONCILE] outcome=…`. After that, attempt
+the SwiftData `unsafeForcedSync` repro with `[CONCURRENCY_TRACE]` breadcrumbs to find the
+exact mutation/upsert call that triggers it.
+
+---
+
+# Final Runtime Fix Pass — Floor Save 400, Bookings Refetch, Chart 0-Height
+
+Device run confirmed startup cache-first, the active-window auto-refresh gate, the
+availability-bundle coordinator, and the adaptive arrival chart are all working
+(`[FRESHNESS_COORDINATOR] decision=use_cache reason=startup_cache_fresh`,
+`[API] SKIP reason=scope_skip_fresh`, `[ARRIVAL_CHART_TRACE] widthClass=compact labelStride=30/60min`,
+`[DATE_SWITCH_TRACE]` + `[CONCURRENCY_TRACE] modelContextUsed=false`). This pass fixed the
+remaining blockers it surfaced.
+
+## Phase 1 — Floor Plan layout save HTTP 400 (ROOT CAUSE FOUND + FIXED)
+- **Root cause (backend-verified):** `includes/floor-plan.php` `tryzub_parse_restaurant_table_definitions`
+  rejects unknown fields (`tryzub_unknown_restaurant_table_field`, HTTP 400). Its
+  `$allowed_fields` = `[table_key, label, x, y, width_units, height_units, min_capacity,
+  max_capacity, section, sort_order, is_active]` — it does **not** allow `restaurant_key`
+  or `id`. The iOS `RestaurantTableUpsertDTO.encode` always sent `restaurant_key` (→
+  `restaurant_key` after snake-case), so every PUT was rejected before any
+  overlap/capacity check. The upsert is `partial_by_table_key` and the server derives the
+  restaurant from auth, so those fields must not be sent.
+- **Fix:** removed `restaurant_key` and `id` from `RestaurantTableUpsertDTO` CodingKeys and
+  `encode(to:)`. The PUT body now contains only the backend's allowed fields. Backend was
+  **not** changed — the client was sending fields the documented contract forbids.
+- **Sanitized diagnostics added:**
+  - Before PUT: `[FLOOR_PLAN_TRACE] event=layout_save_payload tables=3 keys=[T1,T2,T3] active=3 bounds=WxH`.
+  - On failure: backend code/status threaded via new `FloorPlanError.serverValidation(code:status:message:)`
+    → `[FLOOR_PLAN_TRACE] event=layout_save_failed code=… status=400 backendMessage="…"`.
+    Staff copy stays "Could not save layout. Check the table positions and try again."
+- **Files:** `Network/FloorPlanDTO.swift`, `Network/FloorPlanError.swift`,
+  `Services/FloorPlanService.swift`, `Features/FloorPlan/FloorPlanStore.swift`.
+- **Expected device proof:** `[API] END reason=restaurant_tables_put status=200` →
+  `[FLOOR_PLAN_TRACE] event=layout_save_completed tables=3` →
+  `[FLOOR_PLAN_TRACE] event=load_completed … tables>0`.
+
+## Phase 2 — Floor save vs refresh overlap (FIXED)
+- `FloorPlanStore.refresh(...)` gained `allowDuringSave` (default false). While
+  `isSavingLayout == true`, any automatic/competing refresh is suppressed and logs
+  `[FLOOR_PLAN_TRACE] event=refresh_suppressed reason=layout_save_in_flight`. Only the
+  save's own post-success refresh passes `allowDuringSave: true`, so exactly one forced
+  refresh runs after a 200.
+- The Save button is already `.disabled(store.isSavingLayout || drafts.isEmpty)` in
+  `FloorPlanLayoutSetupView` (verified), satisfying "disable while in flight".
+- **Files:** `Features/FloorPlan/FloorPlanStore.swift`.
+
+## Phase 3 — Bookings/schedule activation full-fetch (FIXED)
+- **Root cause:** the startup cache-fresh `.skip` path updated `lastFreshnessCheckedAt`
+  but never updated the active-window scope `lastSuccessAt`. So the 300s schedule TTL kept
+  counting from the *old persisted* success time; tapping Bookings ~5 min after launch was
+  legitimately stale and full-fetched (`decision=fetch reason=stale_schedule`).
+- **Fix:** the startup `.skip` case now calls `markScopeRecentlyTouched(scope)`, anchoring
+  the active-window freshness clock to the startup confirmation. This is **session-only**
+  (not persisted — `markScopeRecentlyTouched` does not call `persistSyncMetadata`), so
+  cross-launch staleness stays honest, but a Bookings tap within the 300s window after
+  launch now uses cache. `scheduleBecameActive` also records
+  `[FRESHNESS_COORDINATOR] decision=use_cache reason=fresh_schedule_activation` on skip.
+- **TTL summary:** Host auto-refresh = 60s (Phase 1 of prior pass); schedule/Bookings
+  activation = 300s (`scheduleFreshnessInterval`); manual refresh forces.
+- **Files:** `Import/ReservationsController.swift`.
+- **Expected device proof (relaunch + tap Bookings shortly after):**
+  `[FRESHNESS_COORDINATOR] scope=activeWindow(…) decision=use_cache reason=fresh_schedule_activation`
+  + `[API] SKIP reason=scope_skip_fresh … schedule activation skipped because cache is fresh`,
+  no `active_window` GET. After ~5 min or manual refresh, the fetch is allowed again.
+
+## Phase 4 — Arrival chart zero-height (`Failed to create 1206x0 image slot`) (HARDENED)
+- The chart body already frames to a fixed plot height, so it should not be the 0-height
+  layer; but to eliminate any transient 0-size pass and to pinpoint the source, the chart
+  now: clamps to `minChartHeight = 64`, skips bar drawing (renders only the baseline) when
+  `plotWidth <= 1`, and records measured width/height.
+- Trace enriched: `[ARRIVAL_CHART_TRACE] … plotWidth=… plotHeight=… fallback=true|false`.
+  If device logs still show the warning while `plotHeight>0 fallback=false`, the 0-height
+  layer originates outside this chart (a sibling Host card element during the tab
+  transition) and the chart is exonerated.
+- **Files:** `Features/Reservations/ReservationDensityWaveChart.swift`.
+
+## Phase 5 — unsafeForcedSync around Floor save (INSTRUMENTED + localized)
+- Added `[CONCURRENCY_TRACE] context=floor_layout_save phase=payload_built modelContextUsed=false`,
+  `phase=refresh_after_success onlyOnSuccess=true mainActor=true`, and
+  `phase=publish_error mainActor=true modelContextUsed=false`.
+- **Finding:** `FloorPlanStore` is `@MainActor` and the save path builds a value-type
+  payload and calls the network service — it opens no SwiftData `ModelContext`. The
+  `unsafeForcedSync` that follows `layout_save_failed` is therefore not in the Floor save
+  code; it correlates with SwiftData framework access elsewhere (reservation upsert during
+  the concurrent schedule/active-window sync that was also running). With Phase 2
+  suppressing the competing floor refresh and Phase 3 reducing schedule full-fetches, the
+  overlap window shrinks. Remaining repro needs a device stack with the new breadcrumbs.
+- **Files:** `Import/DateSwitchTrace.swift`, `Features/FloorPlan/FloorPlanStore.swift`.
+
+## Files changed this pass
+- `Tryzub Reservations/Network/FloorPlanDTO.swift` — stop encoding `restaurant_key`/`id`.
+- `Tryzub Reservations/Network/FloorPlanError.swift` — `serverValidation(code:status:message:)`.
+- `Tryzub Reservations/Services/FloorPlanService.swift` — map WordPress errors to serverValidation.
+- `Tryzub Reservations/Features/FloorPlan/FloorPlanStore.swift` — payload/error/concurrency
+  traces; save-aware refresh suppression; success-only forced refresh.
+- `Tryzub Reservations/Import/ReservationsController.swift` — startup-fresh anchors active
+  window TTL; schedule activation coordinator trace.
+- `Tryzub Reservations/Features/Reservations/ReservationDensityWaveChart.swift` — min height,
+  zero-size fallback, plotWidth/plotHeight/fallback trace.
+- `Tryzub Reservations/Import/DateSwitchTrace.swift` — `concurrencyPhase` emitter.
+
+## Build status
+`xcodebuild -scheme "Tryzub Reservations" -destination generic/platform=iOS build-for-testing`
+→ **TEST BUILD SUCCEEDED** (only the pre-existing `GuestConfirmationMail` MainActor note).
+No new linter errors in touched files.
+
+## Remaining risks
+- Floor save 400 fix is code-verified against the backend contract but still needs the
+  device 200 + `tables>0` confirmation.
+- The `unsafeForcedSync` true source (SwiftData upsert during concurrent sync) is localized
+  but not yet eliminated; needs a device stack with the new `[CONCURRENCY_TRACE]` lines.
+- `1206x0` warning: if it persists with `fallback=false plotHeight>0`, the source is a
+  sibling Host element, not the chart.
+
+## Next recommended task
+Run the device proof: relaunch (cache), tap Bookings (expect skip), open Floor → Save seed
+(expect `restaurant_tables_put status=200` + `tables>0`), watch for the 1206x0 warning and
+`unsafeForcedSync`. If Floor save passes, proceed to mutation-reconcile device proof, then
+the AI/LLM final pass.
+
+---
+
+# Final Intelligence / LLM Proof Pass (TestFlight)
+
+This pass made the Host Intelligence / local-LLM layer **observable and provable**
+without changing the backend, weakening the validator, or making model output
+required for core operations. The pipeline (gate → sanitizer → writer → runtime →
+validator → fallback) already existed and is robust; this pass added the missing
+**named proof traces** plus a developer-only **validator proof harness**.
+
+## Pipeline (verified)
+```
+HostBoardView.task(evaluationKey)
+  → HostIntelligenceController.evaluate
+    → HostIntelligenceEngine.evaluateHostDecisionSnapshot  (facts + template + HostLLMPacket)
+    → [HOST_AI_FACTS_TRACE]
+HostBoardView.task(enrichmentKey)
+  → HostIntelligenceController.refreshBriefing
+    → recordHostBoardGateDecision → [HOST_AI_GATE] allowed/reason/categories
+    → (template-only) ManagerNarrativeTemplateBuilder + [HOST_AI_LIFECYCLE] model_skipped
+    → (allowed) ManagerNarrativeWriter.write
+        → ManagerNarrativePacketBuilder + ManagerNarrativePacketSanitizer
+        → [HOST_AI_PACKET_TRACE] containsRawContact=false containsRawNotes=false
+        → readiness check → [HOST_AI_LIFECYCLE] model_unavailable / fallback_used (if not ready)
+        → HostLlamaBriefingRuntime.generateBriefing → [HOST_AI_LIFECYCLE] model_started/model_completed
+        → ManagerNarrativeValidator.validationResult → [HOST_AI_VALIDATOR] result=pass|blocked reason=<token>
+        → (block) [HOST_AI_LIFECYCLE] fallback_used reason=validator_blocked → deterministic fallback
+    → stale result discarded on date change → [HOST_AI_LIFECYCLE] model_result_ignored + model_cancelled reason=date_changed
+  → reset() on view hidden → [HOST_AI_LIFECYCLE] model_cancelled reason=view_hidden (only if inference active)
+```
+
+## What changed
+- **`Import/HostAIProofTraces.swift`** (new) — `HostAIFactsTrace`, `HostAIPacketTrace`
+  (with `looksLikeRawContact`), `HostAIValidatorTrace` (with a stable `classify` token
+  map), `HostAITestTrace`. All `#if DEBUG`, OSLog category `HostAI`, `privacy: .public`.
+- **`Import/HostAILifecycleTrace.swift`** — added `modelLoadStarted`, `modelReady`,
+  `modelUnavailable`, `modelTimeout`, `modelCancelled`, `fallbackUsed`.
+- **`Features/HostIntelligence/HostIntelligenceController.swift`** — emits
+  `[HOST_AI_FACTS_TRACE]` after engine eval (facts/actions/categories/guestSignals/
+  floorTables); emits `model_cancelled reason=date_changed` alongside the existing
+  ignored-result guard; `reset()` now bumps the generation guard and logs
+  `model_cancelled reason=view_hidden` when inference is active (stale model output can
+  no longer reach UI after the board is hidden).
+- **`Features/HostIntelligence/ManagerNarrativeWriter.swift`** — emits
+  `[HOST_AI_PACKET_TRACE]` for the sanitized prompt; `[HOST_AI_VALIDATOR] result=pass|blocked`
+  with stable reason token; `model_unavailable` + `fallback_used` on readiness miss;
+  `fallback_used reason=validator_blocked` on rejection.
+- **`Features/HostIntelligence/HostBriefingWriter.swift`** — `[HOST_AI_GATE]` main line now
+  carries `categories=` inline so the allowed=true format matches `allowed=true
+  reason=operational_tension categories=...`.
+- **`Features/HostIntelligence/HostAIValidatorProofHarness.swift`** (new, DEBUG-only) — feeds
+  crafted candidates through the **real** `ManagerNarrativeValidator` and emits
+  `[HOST_AI_TEST] scenario=... result=pass|blocked`. Runs once per launch from
+  `HostBoardView.onAppear` (DEBUG). Never runs the model, never reaches staff UI.
+
+## Final TestFlight AI Safety Checklist
+- [x] **AI facts packet verified** — `[HOST_AI_FACTS_TRACE]` shows deterministic facts/
+  categories per date; guestSignals=server|local_bounded, floorTables=backend|local.
+- [x] **AI gate verified** — `[HOST_AI_GATE]` reasons are explicit: `operational_tension`/
+  `complex_packet` (allowed), `independent_simple_facts`, `no_meaningful_facts`,
+  `model_not_ready`, `date_navigation`, `packet_unchanged` etc. (skip). No silent skips.
+- [x] **Model runtime observable** — `model_started`/`model_completed` (duration) on AI-worthy
+  cases; `model_unavailable` when the GGUF/runtime is missing.
+- [x] **Validator verified** — `[HOST_AI_VALIDATOR] result=pass|blocked reason=<stable token>`;
+  proof harness blocks raw contact, leaked labels, completed-status claims, guest-facing
+  copy, invented "regular/always", and over-long output, and passes the calm supported case.
+- [x] **Fallback verified** — `fallback_used reason=validator_blocked|model_unavailable`;
+  deterministic template always present (never blank).
+- [x] **No raw contact data** — sanitizer strips email/phone/JSON/evidence markers;
+  `[HOST_AI_PACKET_TRACE] containsRawContact=false containsRawNotes=false` proves it.
+- [x] **No invented guest facts** — validator semantic checks + `unsupported_*` operational
+  claim rules; "regular/seen-before" requires backend pack evidence
+  (`GuestHistorySemantics` profile-pack precedence).
+- [x] **No invented table facts** — `unsupported_table_available_claim` rule; floor capacity
+  only from backend tables when loaded.
+- [x] **No blocking UI** — engine eval measured by `[UI_PRESSURE_TRACE] phase=host_engine_evaluate`
+  (typically <15ms); model runs async; deterministic facts/actions render immediately.
+- [x] **Guest Insights LLM boundary** — Guest Insights has **no** on-device model; guest
+  message drafts (Reservation Detail) follow packet→writer→validator→staff review→compose,
+  never auto-send, never mutate a reservation.
+
+## Device proof required (capture on physical device)
+1. Simple day → `[HOST_AI_GATE] allowed=false reason=independent_simple_facts` + `[HOST_CARD_TRACE] display=…` template/stable_empty.
+2. AI-worthy tension → `[HOST_AI_GATE] allowed=true reason=operational_tension categories=…`,
+   `[HOST_AI_PACKET_TRACE] containsRawContact=false`, `model_started` + `model_completed`,
+   `[HOST_AI_VALIDATOR] result=pass`.
+3. Validator block (rare in prod; harness proves it) → `[HOST_AI_TEST] scenario=attack_* result=blocked`,
+   and on a real reject `[HOST_AI_VALIDATOR] result=blocked` + `fallback_used reason=validator_blocked`.
+4. Date switch mid-generation → `[HOST_AI_LIFECYCLE] event=model_cancelled reason=date_changed`.
+5. Performance → `[UI_PRESSURE_TRACE] phase=host_engine_evaluate duration=<50ms`.
+
+## Remaining risks
+- **Hard model-run proof is device-only.** `model_started`/`model_completed` and a real
+  `[HOST_AI_VALIDATOR] result=pass` from genuine model output require a physical device with
+  the GGUF bundled and an AI-worthy day. The validator-block path is proven offline by the
+  `[HOST_AI_TEST]` harness; the *pass-on-real-model-output* path is not yet captured here.
+- **No hard generation timeout / Task.cancel** on the llama runtime. Output is bounded by
+  `maxOutputTokens=100` and stale results are discarded via the generation guard, but a
+  truly hung inference is not force-killed. `model_timeout` trace exists but is not yet wired
+  to a timer. Low risk for a 0.5B model with a 100-token cap; flagged for a follow-up.
+- **Deterministic presentation edges (not LLM):** `GuestProfileViewState` can show
+  "Seen before" for any loaded pack before the merge resolves; `RegularGuests` list uses
+  local visit counts only. These are deterministic UI precedence issues, not model-invented
+  facts — documented for a separate UX pass (out of scope: "no general UI polish").
+
+## Release-build fix (TestFlight blocker)
+`HostLLMPacketSampleFactory.groupedBookingDecisions()` referenced
+`HostBookingFactGroupingSamples` (a `#if DEBUG`-only enum), but the factory itself is
+**not** DEBUG-guarded and is used by the production settings smoke test. This compiled in
+Debug but broke the **Release / "Any iOS Device"** archive with
+`Cannot find 'HostBookingFactGroupingSamples' in scope`. Fixed by inlining the literal
+sample strings in the factory (no behavior change; the factory no longer depends on
+DEBUG-only code). Verified with a full `-configuration Release` device build → **BUILD
+SUCCEEDED** (only the pre-existing `GuestConfirmationMail` MainActor note remains).
+
+# Service Intelligence Refactor — Phase 1 (Foundation)
+
+New module `Features/ServiceIntelligence` that wraps (does **not** replace) the existing
+Host engine. It introduces a deterministic `ServiceMode` so live operational facts stop
+leaking into after-close surfaces (the "A10 opened after cancellation" bug).
+
+## Files added
+- `Models/ServiceMode.swift` — `ServiceMode` enum (+ `allowsLiveOperationalFacts`,
+  `isRecapContext`, `isAfterClose`).
+- `Models/ReservationSignal.swift` — `ReservationSignal` + `ReservationSignalType`,
+  `SignalConfidence`, `SignalSource`, `SignalPriority`. `depositMentioned ≠ depositVerified`;
+  review-required signals default `requiresReview=true`.
+- `Models/StaffActionIntent.swift` — `StaffActionIntent` + `StaffActionType`,
+  `ActionPriority`, `ActionTiming`. `canAutoComplete` is `false` for every type (staff confirms).
+- `Models/ServiceBriefing.swift` — `ServiceBriefing` + `BriefingSource`.
+- `Engine/ServiceModeResolver.swift` — **pure** resolver: `now` + open/close + status
+  histogram → `ServiceMode` + cleanup count. `summarize(statuses:)` builds the histogram from
+  `ReservationStatus`.
+- `Engine/ServiceIntelligenceEngine.swift` — deterministic `ServiceBriefing` assembler:
+  Check now / Coming up / Review later / After close + honest recap. Live actions only
+  `duringService`; after close it emits cleanup or a wrapped-up recap.
+- `Actions/HostActionMapper.swift` — bridges existing `HostSuggestedAction` → `StaffActionIntent`.
+- `Actions/ServiceAlertRouter.swift` — routing rules (host / detail / global / dev) with the
+  "no duplicate fact everywhere" policy; after close, live facts never route to Host.
+- `Diagnostics/ServiceIntelligenceTrace.swift` — `[SERVICE_INTELLIGENCE_TRACE]`,
+  `[HOST_SERVICE_MODE_TRACE]`, `[SERVICE_ACTION_TRACE]`, `[SERVICE_ALERT_ROUTE_TRACE]`,
+  `[SERVICE_INTELLIGENCE_TEST]`.
+- `Diagnostics/ServiceIntelligenceProofHarness.swift` (DEBUG) — deterministic self-check for
+  the mode transitions + after-close no-leak guarantee. Runs once from `HostBoardView.onAppear`.
+
+## Not yet wired (by design)
+Phase 1 is foundation only. The new engine is **not** yet rendered in Host Board or a Global
+view — that is Phases 2–3. Nothing in the existing tab shell, Host card, or detail screens
+changed, so the running app behaves exactly as before. This keeps the build safe while the
+new layer is proven by `[SERVICE_INTELLIGENCE_TEST]` logs.
+
+## Device proof (Phase 1)
+On launch (DEBUG), expect:
+```
+[SERVICE_INTELLIGENCE_TEST] scenario=A_after_close_finished result=pass mode=afterCloseFinished …
+[SERVICE_INTELLIGENCE_TEST] scenario=B_after_close_cleanup result=pass mode=afterCloseNeedsCleanup …
+[SERVICE_INTELLIGENCE_TEST] scenario=C_during_service result=pass mode=duringService …
+[SERVICE_INTELLIGENCE_TEST] scenario=before_service result=pass …
+[SERVICE_INTELLIGENCE_TEST] scenario=future_planning result=pass …
+[SERVICE_INTELLIGENCE_TEST] scenario=past_recap result=pass …
+```
+
+## Remaining backend / follow-up for later phases
+- Attachments upload endpoint + structured note fields (Phases 5/6) — backend work TBD.
+- No XCTest target exists in the project; Phase 1 uses the DEBUG proof harness instead. A
+  formal test target is a follow-up.
+
+---
+
+# Service Intelligence Refactor — Phase 2 (Host Board wiring, cache-only)
+
+Wires `ServiceMode` + `ServiceBriefing` into the Host card using **only cached
+in-memory data** — no new GET requests. Fixes the after-close bug (live "A10 opened"
+facts no longer appear once service is wrapped).
+
+## Files added
+- `ViewModels/HostServiceBriefingViewState.swift` — `HostServiceBriefingViewState` +
+  pure, cached-only `HostServiceBriefingViewStateBuilder`. Reads `clockTick`,
+  `selectedDate`, day `reservations`, `decisionSnapshot`, and cached open/close times.
+  Measures duration and emits no-network/eval traces. Computes busiest-time label from
+  cached `slotPressures` (no analytics fetch).
+- `Views/HostServiceBriefingCard.swift` — deterministic staff-language card (headline,
+  optional summary, primary/secondary action groups, today-summary lines). De-duplicates
+  summary against headline/first action.
+
+## Files changed
+- `Features/Reservations/HostBoardView.swift`
+  - `@State serviceBriefingState`, rebuilt via `.onChange(of: serviceBriefingStamp)` where
+    the stamp includes the clock minute + snapshot generation (so mode transitions and
+    status changes refresh it). `rebuildServiceBriefing()` is cache-only.
+  - `hostIntelligenceSection` now dispatches: after-close (finished + cleanup), past recap,
+    and future planning render `HostServiceBriefingCard`; live service (`duringService`/
+    `beforeService`) keeps the existing `HostIntelligenceCard` (renamed body
+    `liveHostIntelligenceSection`) — LLM wording stays until Phase 8 per the spec.
+  - `handleServiceActionIntent` opens the related reservation for reservation-scoped
+    actions; aggregate cleanup actions are non-tappable summaries.
+  - Removed the DEBUG proof-harness calls from `onAppear`.
+- `Features/HostIntelligence/HostIntelligenceDiagnosticsView.swift` — new DEBUG-only
+  "Proof Harnesses (Debug)" section with buttons to run the Service Intelligence and AI
+  validator proofs on demand (relocated off the normal Host appearance).
+- `Diagnostics/ServiceIntelligenceTrace.swift` — added `evaluate(...)` (emits
+  `source=cached`, `no_network=true`, `phase=evaluate durationMs=...`) and
+  `hostCard(display:mode:)`.
+
+## Display rules by ServiceMode
+| Mode | Card | Content |
+|------|------|---------|
+| `duringService` | existing `HostIntelligenceCard` | live Check now / Coming up (unchanged) |
+| `beforeService` | existing `HostIntelligenceCard` | upcoming (unchanged) |
+| `afterCloseNeedsCleanup` | `HostServiceBriefingCard` | "Cleanup needed" + status-update actions |
+| `afterCloseFinished` | `HostServiceBriefingCard` | "Service is wrapped." + today summary, no live facts |
+| `pastRecap` | `HostServiceBriefingCard` | "Recap" + counts |
+| `futurePlanning` | `HostServiceBriefingCard` | "Planning…" + setup/table actions, no "late"/"due" |
+
+The slot-pressure strip and live suggested actions live only in `liveHostIntelligenceSection`,
+so after-close/recap/planning surfaces cannot show "due in X" / "table opened".
+
+## No new API
+Service Intelligence reads `controller.availabilitySummary(for:)` (cache-only accessor) and
+already-published `decisionSnapshot`; it never calls `ensureAvailabilitySummary` or any GET.
+Proven by `[SERVICE_INTELLIGENCE_TRACE] no_network=true`.
+
+## Old HostIntelligenceController / Engine
+Untouched and still the live-service path + deterministic fallback. If the briefing maps to a
+live mode, the existing card renders exactly as before.
+
+## Proof harness
+Moved out of normal Host appearance into the Dev diagnostics "Proof Harnesses" section
+(`runOnceIfNeeded` no longer fires on Host tab open). Harnesses still runnable on demand.
+
+## Device proof (expected)
+After close, nothing active:
+```
+[HOST_SERVICE_MODE_TRACE] mode=afterCloseFinished afterClose=true cleanupNeeded=0
+[SERVICE_INTELLIGENCE_TRACE] source=cached selectedDate=… mode=afterCloseFinished reservations=8 actions=0
+[SERVICE_INTELLIGENCE_TRACE] no_network=true
+[SERVICE_INTELLIGENCE_TRACE] phase=evaluate durationMs=<n>
+[HOST_CARD_TRACE] display=service_briefing mode=afterCloseFinished
+```
+After close, unfinished statuses:
+```
+[HOST_SERVICE_MODE_TRACE] mode=afterCloseNeedsCleanup afterClose=true cleanupNeeded=2
+[HOST_CARD_TRACE] display=service_briefing mode=afterCloseNeedsCleanup
+```
+
+## Remaining risks
+- After-close detection needs a cached close time; if availability isn't cached,
+  `serviceDensityBounds` falls back to slot bounds, and if both are missing the resolver stays
+  `duringService` (safe — never a false "wrapped").
+- Live service still uses the old card (intended); migrating it to the grouped briefing +
+  model wording is Phase 8.
+
+---
+
+# Phase 4 — Review Details + Reservation Detail redesign (DONE)
+
+## Review Details cleanup (`HostIntelligenceReviewView`)
+
+**Problem (visible in screenshots):** "What to check" and "Check next" showed the same
+reservation text twice. The "Watch" severity label meant nothing. "8 items flagged" at the
+bottom was generic noise.
+
+**Fix:**
+- Replaced the old three-section structure (operationalPromptsSection + topFactsSection +
+  suggestedActionsSection + signalsSummarySection) with two focused sections:
+  - **"Check now"** — operational prompts first (with related reservation count), then
+    deduplicated suggested actions whose title/reason don't already appear in a prompt.
+    Empty: "Nothing to check right now." (not split across two headings).
+  - **"Key details"** — up to 4 briefing facts that are not already captured in the
+    headline, capped to avoid noise. Hidden entirely when there are no distinct facts.
+- Removed the `signalsSummarySection` counter ("8 items flagged") — it added no new info.
+- Removed the "Watch" severity label from prompt cards.
+- Added `dedupedActions` computed property: filters suggested actions whose
+  `title`/`reason` already appear verbatim in an operational prompt's `title`/`body`.
+
+## Reservation Detail redesign (`ReservationDetailView`)
+
+**Important card (new):**
+- Added `importantCard(_:)` inserted between the hero/action bar and the contact card.
+  Visible only when there is at least one flag. Flags are deterministic (no model, no fetch):
+  - No table picked (orange `chair` icon — skipped for completed/cancelled/no-show)
+  - Large party ≥ 7 (blue `person.3` icon, shows table if assigned)
+  - Dietary or allergy keyword in notes (red `fork.knife.circle` — "Check guest notes before seating.")
+  - Accessibility keyword in notes (purple `figure.roll` — "Check setup before seating.")
+  - Deposit keyword in notes (green `banknote` — "Manager should verify.")
+  - Preorder / banquet keyword in notes (orange `cart` — "Kitchen should review.")
+- Backed by `ReservationImportantFlags.make(reservation:)` — a pure function, no I/O.
+
+**Notes card:**
+- Replaces flat `DetailDataRow` (generic label) with `DetailNoteRow` which maps
+  `"Guest"` → `"Guest note"`, `"Staff"` → `"Staff note"`, etc., making the label
+  self-explanatory without needing a section header.
+
+**Details card:**
+- Renamed from `"Reservation metadata"` (developer-speak) to `"Details"`.
+
+## Files changed
+- `Features/HostIntelligence/HostIntelligenceReviewView.swift`
+- `Features/Reservations/ReservationDetailView.swift`
+
+## Build
+`** BUILD SUCCEEDED **` (Debug, generic/iOS), no linter errors.
+
+---
+
+# Service Intelligence — Phase 3 (Global view under More, DONE)
+
+## Goal
+Add a single staff-facing Service Intelligence hub: a combined action hub plus a backend
+analytics summary and a guest-memory entry point, reachable under **More → Business**.
+Keep Dev diagnostics / proof harness separate.
+
+## What was added
+- `Features/ServiceIntelligence/Views/GlobalServiceIntelligenceView.swift` (new) — a
+  **cache-only** hub. It reuses the Phase 2 `HostServiceBriefingViewStateBuilder` +
+  `HostServiceBriefingCard` to render today's action brain (Check now / Coming up /
+  Cleanup / recap) for **all** modes (the Host Board only shows the card after close /
+  recap / planning; the global hub always shows it). Action taps push the related
+  `ReservationDetailView` via `navigationDestination(item:)`.
+  - Optional **Business** block: shows already-cached `RestaurantSettingsStore.analyticsSummary`
+    headline numbers (reservations, guests, avg party, range) with a deep link to the full
+    `BusinessAnalyticsView`. If nothing is cached it shows a hint and the link — it never
+    forces a fetch from the hub.
+  - Optional **Guests** block: deep link to `RegularGuestsView` (Guest Memory).
+  - **Upcoming** block: count of non-cancelled reservations beyond today, from the same
+    `@Query` active-window pool (cache).
+- `ServiceIntelligenceTrace.globalView(...)` (new) → `[SERVICE_GLOBAL_TRACE] surface=global
+  mode=… actions=… analyticsCached=… upcoming=… no_network=true`.
+- More wiring in `Features/Reservations/ReservationsListView.swift`: new
+  `ReservationMoreDestination.serviceIntelligence`, a `NavigationLink` at the top of the
+  **Business** section (`sparkles`), and the destination → `GlobalServiceIntelligenceView`.
+
+## Cache-only guarantees
+- The hub builds the briefing from the in-memory `HostDecisionSnapshot` + a SwiftData
+  `@Query`; no controller refresh / availability fetch is triggered on appear.
+- Analytics/guest sections read cached store state and otherwise just deep-link to the
+  existing screens (those screens own their own loading, unchanged).
+- Rebuild is gated by a stamp (today key + today reservation count + snapshot generation +
+  clock minute) and a 60s timer, matching the Host Board pattern.
+
+## Dev separation
+`ServiceIntelligenceProofHarness` and the AI proof harness remain only in
+`DeveloperDiagnosticsView` / `HostIntelligenceDiagnosticsView`. The global hub lives in the
+staff **Business** section, not Developer / Support.
+
+## Build
+`** BUILD SUCCEEDED **` (Debug, generic/iOS), no linter errors.
+
+---
+
+# Active-Window Auto-Refresh TTL Fix
+
+## Root cause
+`autoRefreshDashboardIfAllowed` judged active-window freshness against
+`autoRefreshInterval` (60s) — the same value that throttles how often the auto-refresh
+*evaluates*. So a successful startup delta marked `lastSuccessAt = now`, the first idle
+tick correctly skipped (`fresh_automatic`), but ~60s later `isScopeFresh(60)` returned
+false and the automatic path fetched again (`stale_automatic`) with the startup success
+time as its cursor. The freshness clock itself was already shared (the success path calls
+both `markScopeSuccess` and `freshnessCoordinator.markCompleted`); only the TTL was wrong.
+
+## Fix
+- Added `activeWindowAutoRefreshTTL = 300`. Idle automatic refresh now judges freshness
+  against 300s; the 60s `autoRefreshInterval` keeps its role as the evaluation throttle only.
+- `mark_success` and `auto_check` traces via new `Import/ActiveWindowFreshnessTrace.swift`.
+- Header copy: during an automatic background freshness check with cache already visible,
+  the blocking secondary "Checking service…" is suppressed (just "Checked HH:mm"). Manual
+  refresh (`isReservationRefreshInFlight`) and no-cache startup keep their progress copy;
+  specific states ("Checking available times…", "Checking saved data…") are unaffected.
+
+## Files changed
+- `Import/ReservationsController.swift` — `activeWindowAutoRefreshTTL`; auto-refresh fresh
+  gate uses it; emits `auto_check` (skip/fetch, elapsed/ttl) and `mark_success` (with
+  `autoFreshUntil`, `cursorSaved`) on active-window success.
+- `Import/ActiveWindowFreshnessTrace.swift` — new trace.
+- `Features/Reservations/ReservationSharedUI.swift` — suppress background "Checking service…".
+
+## Bypass matrix
+| Path | Behavior |
+|------|----------|
+| Idle automatic (within 300s) | **skip** `reason=recent_success` |
+| Idle automatic (after 300s) | fetch `reason=ttl_expired` → mark_success → fresh 300s |
+| Manual pull/press | bypasses (separate `force` path, not this gate) |
+| Mutation reconcile | bypasses (own refresh path; `markScopesTouched` keeps scope fresh) |
+| Window/date change | bypasses (new scope) |
+
+## Expected device proof (no-tap, 3+ min)
+```
+[STARTUP] cache hit; UI released=true
+[API] START reason=active_window_delta … (startup)
+[API] END reason=active_window_delta status=200
+[ACTIVE_WINDOW_FRESHNESS_TRACE] event=mark_success source=startup_delta scope=… cursorSaved=true autoFreshUntil=…
+… (idle ticks) …
+[ACTIVE_WINDOW_FRESHNESS_TRACE] event=auto_check source=autoRefreshDashboard decision=skip reason=recent_success elapsed=72s ttl=300s
+[FRESHNESS_COORDINATOR] decision=use_cache reason=fresh_automatic
+[API] SKIP reason=scope_skip_fresh
+```
+No second `[API] START reason=active_window_delta` within 300s of startup success.
+Service Intelligence unchanged: `[SERVICE_INTELLIGENCE_TRACE] no_network=true`.
+
+---
+
+# Phase 5 — Attachments MVP (DONE)
+
+**Goal**: Local-first photo attachments for reservations. Staff attach deposit screenshots,
+preorder confirmations, banquet photos, and setup notes. Images persist on device, indexed
+by the reservation's backend ID so re-fetching the reservation never loses the photos.
+
+## Architecture
+- **`ReservationAttachmentRecord`** — SwiftData `@Model`. Foreign key is `reservationRemoteID: Int`
+  (the stable backend ID). ID format `res-{reservationRemoteID}-{uuid}` encodes ownership.
+  If the `ReservationRecord` SwiftData row is recreated by a backend refetch, all attachments
+  are still found via `@Query(filter: reservationRemoteID == x)`.
+- **`AttachmentFileStore`** — static disk I/O helpers. Images stored as compressed JPEG
+  (≤1920px, 0.85 quality) in `Application Support/attachments/<uuid>.jpg`. Thumbnails
+  generated via `CGImageSourceCreateThumbnailAtIndex` (no separate thumb file needed).
+- **`AttachmentLabel`** — 7 categories: Deposit, Preorder, Banquet, Guest screenshot,
+  Receipt, Setup, Other. Each has a `systemImage` and `reviewInstruction`.
+
+## Backend status: NO remote endpoint yet
+All images are device-local. Future backend endpoints documented in `ReservationAttachment.swift`:
+- `POST /wp-json/tryzub/v1/reservation-attachments` (multipart)
+- `GET  /wp-json/tryzub/v1/reservation-attachments?reservation_id={id}`
+- `DELETE /wp-json/tryzub/v1/reservation-attachments/{id}`
+
+`AttachmentFeatureFlag.localStorageEnabled = true` (device works)
+`AttachmentFeatureFlag.remoteUploadEnabled = false` (backend not ready)
+
+## UI flow
+1. Staff opens Reservation Detail → Attachments card.
+2. Tap "Add photo" → `PhotosPicker` from Photos library.
+3. Pick photo → label `confirmationDialog` appears (7 options).
+4. Staff picks label → JPEG compressed and saved to disk, `ReservationAttachmentRecord` inserted into SwiftData.
+5. Thumbnail appears immediately; tap thumbnail → full-screen preview.
+6. Swipe left on attachment row → Delete (removes file + SwiftData record).
+
+## Files changed
+- `Persistence/ReservationAttachmentRecord.swift` — new SwiftData model.
+- `Persistence/AttachmentFileStore.swift` — new disk I/O helper.
+- `Features/ServiceIntelligence/Models/ReservationAttachment.swift` — updated: removed old dead struct, `AttachmentLabel` + `AttachmentFeatureFlag` only.
+- `Tryzub_ReservationsApp.swift` — added `ReservationAttachmentRecord.self` to `ModelContainer`.
+- `Preview/ReservationPreviewData.swift` — added `ReservationAttachmentRecord.self` to preview container.
+- `Features/Reservations/ReservationDetailView.swift` — `import PhotosUI`, attachment `@Query`, photo picker state, `attachmentsCard`, `AttachmentRow`, `AttachmentPreviewScreen`, `saveAttachment`, `deleteAttachment`.
+
+## Build status
+Debug build: `** BUILD SUCCEEDED **`
+
+---
+
+# Phase 6 — Note intelligence (DONE)
+
+**Goal**: Convert free-text note fields into typed `ReservationSignal` objects using a
+pure, deterministic analyzer. Show signals in Reservation Detail and the global hub.
+
+## What's built
+- `NoteSignalAnalyzer` — pure, no-network analyzer.  Scans `guestNote` + `staffNote`
+  for deposit, preorder, banquet, dietary/allergy, accessibility, occasion, guest
+  preference, kitchen, and bar keywords.  Returns `[ReservationSignal]` sorted by
+  priority.  Evidence is trimmed to ≤60 chars, never raw PII.
+- `NoteSignalTrace` — DEBUG-only `[SERVICE_NOTE_ANALYZER_TRACE]` logs per analysis run
+  and per found signal (type, confidence, source, requiresReview).
+- **Reservation Detail** — new `noteSignalsCard` shown below `importantCard` when
+  signals exist.  Displays title, "Review" badge when staff must check, staff text,
+  and short evidence snippet.
+- **Global Service Intelligence hub** — new `noteSignalsSection` lists today's
+  reservations that have actionable note signals (sorted by highest priority signal).
+  Staff tap a row to navigate directly to that reservation's detail.
+
+## Signal types produced
+`depositMentioned`, `preorderMentioned`, `banquetMentioned`, `allergyOrDietary`,
+`accessibility`, `occasion`, `guestPreference`, `kitchenNote`, `barNote`
+
+## Safety rules
+- `depositMentioned`, not `depositVerified` — always `requiresReview = true`.
+- Allergy/dietary always `requiresReview = true`, priority `critical`.
+- If no keywords match, returns empty array (silence is correct).
+- Evidence snippet never contains raw phone/email (trimmed to note context window only).
+
+## Files changed
+- `Features/ServiceIntelligence/Analyzers/NoteSignalAnalyzer.swift` — new.
+- `Features/ServiceIntelligence/Diagnostics/NoteSignalTrace.swift` — new.
+- `Features/ServiceIntelligence/Diagnostics/ServiceIntelligenceTrace.swift` — added `noteSignals(count:)`.
+- `Features/Reservations/ReservationDetailView.swift` — `noteSignalsCard`, `recomputeNoteSignals()`, signal icon/color helpers.
+- `Features/ServiceIntelligence/Views/GlobalServiceIntelligenceView.swift` — `signalledReservations` state, `noteSignalsSection`, compute in `rebuild()`.
+
+## Expected traces
+```
+[SERVICE_NOTE_ANALYZER_TRACE] reservation=42 signals=2 fallback=false
+[SERVICE_NOTE_ANALYZER_TRACE] reservation=42 type=depositMentioned confidence=medium source=staffNote requiresReview=true
+[SERVICE_NOTE_ANALYZER_TRACE] reservation=42 type=allergyOrDietary confidence=medium source=guestNote requiresReview=true
+[SERVICE_GLOBAL_TRACE] section=note_signals count=1
+```
+
+## Build status
+Debug build: `** BUILD SUCCEEDED **`
+
+---
+
+# Phase: Backend-Fed Service Intelligence (DONE)
+
+**Goal**: Upgrade Service Intelligence from a cache-only view into a backend-fed operations
+system. Instant first render + automatic enrichment when backend data arrives.
+
+## Architecture: cache-first, never blocking
+
+```
+Host Board opens
+→ render cached service briefing immediately (source=cache_only)
+→ .onAppear schedules background loads (non-blocking Task priority=.utility)
+→ GuestIntelligenceStore.load(dateKey:today) completes
+→ BusinessIntelligenceStore.load(from:30d, to:today) completes
+→ rebuildStamp changes (cacheStamps update)
+→ rebuild() runs again with backend data
+→ source upgrades to "mixed" or "backend_enriched"
+→ "Guests to know today" section appears / business insights appear
+```
+
+## New models
+- **`ServiceIntelligenceFreshness`** — tracks `guestSummaryStatus`, `businessSummaryStatus`,
+  `profilePacksLoadedCount`. Derives `sourceToken` (cache_only / mixed / backend_enriched)
+  and `briefingSource` (.deterministic / .mixed / .backend) for `ServiceBriefing.source`.
+- **`ServiceIntelligenceContext`** — unified input packet: `selectedDate`, `serviceMode`,
+  `dayReservations`, `guestSummaries`, `profilePacks`, `businessSummary`,
+  `reservationAnalyticsSummary`, `freshness`. Has `prioritisedGuestsToKnow` computed
+  (sorted: service issue > allergy > accessibility > occasion > returning).
+
+## ServiceIntelligenceEngine changes
+- `Input` now has optional `backendGuestSummaries`, `backendBusinessSummary`, `freshness`
+  fields with defaults (nil/empty) → fully backward-compatible; no existing callers break.
+- `resolvedSource` property derives `BriefingSource` from freshness.
+- All `ServiceBriefing` objects use `resolvedSource` instead of hardcoded `.deterministic`.
+- `recapLines()` prefers backend `BusinessIntelligenceFormatting.peakWindowLabel` for
+  busiest-time over local slot analysis when `backendBusinessSummary` is available.
+
+## GlobalServiceIntelligenceView changes
+- Added `@EnvironmentObject var guestIntelligenceStore: GuestIntelligenceStore`
+- Added `@EnvironmentObject var businessIntelligenceStore: BusinessIntelligenceStore`
+- `scheduleBackendLoads()` called on `.onAppear` — non-blocking `Task(priority: .utility)`.
+- `rebuildStamp` includes both store cache stamps → automatically rebuilds on backend arrival.
+- New **"Guests to know today"** section from `ServiceIntelligenceContext.prioritisedGuestsToKnow`:
+  - flags from `GuestIntelligenceSummaryDTO`: `hasPriorServiceIssue`, `hasAllergyNote`,
+    `hasAccessibilityNote`, `hasSpecialOccasionNote`, returning guests (matchedVisitCount > 0)
+  - each row shows badges and prior visit count; tap navigates to reservation detail
+  - "Based on backend guest history." note at bottom
+- **Business section** now uses `BusinessIntelligenceInsightBuilder.build(summary:)` when
+  backend data is loaded; falls back to `ReservationAnalyticsSummaryDTO` metrics otherwise.
+- Subtle `freshnessNote` shown at bottom when data is stale/absent (nil when current).
+
+## New traces
+```
+[SERVICE_CONTEXT_TRACE] date=2026-06-12 reservations=8 guestSummary=loaded businessSummary=loaded profilePacks=0 source=backend_enriched
+[SERVICE_BACKEND_FEED_TRACE] type=guest_date_summary status=scheduled
+[SERVICE_BACKEND_FEED_TRACE] type=business_summary status=scheduled
+[SERVICE_GLOBAL_TRACE] section=note_signals count=2
+```
+
+## Data boundaries maintained
+- Local model NEVER invents history, allergy, or deposit truth.
+- All guest signals come from `GuestIntelligenceSummaryDTO` (backend-structured fields).
+- Business insight lines come from `BusinessIntelligenceInsightBuilder` (deterministic, no LLM).
+- If backend is unavailable: `source=cache_only`, guest section empty, analytics falls back to cached.
+- Staff sees no error message when backend is absent — only the subtle freshness note.
+
+## Files changed
+- `Features/ServiceIntelligence/Models/ServiceIntelligenceFreshness.swift` — new
+- `Features/ServiceIntelligence/Models/ServiceIntelligenceContext.swift` — new
+- `Features/ServiceIntelligence/Engine/ServiceIntelligenceEngine.swift` — extended Input
+- `Features/ServiceIntelligence/Views/GlobalServiceIntelligenceView.swift` — full upgrade
+- `Features/ServiceIntelligence/Diagnostics/ServiceIntelligenceTrace.swift` — context() + backendFeed()
+
+## Build status
+Debug build: `** BUILD SUCCEEDED **`
+
+## Remaining backend gaps
+None new. All data flows through existing `GuestIntelligenceStore` and `BusinessIntelligenceStore`
+which already have proven API clients and correct TTLs. Profile packs (per-reservation) are
+available via `GuestIntelligenceStore.profilePack(for:)` — wiring into individual reservation
+detail can be a future enrichment pass.
+
+---
+
+## Phase 6 — Canonical Floor Table Setup + Connected Table Assignment (DONE)
+
+### Goal
+Make backend Floor Plan the canonical table system. Every assignment surface now uses
+`PATCH /managed-reservations/{id}/tables` when a backend floor layout exists.
+
+### Table path audit
+
+| Screen | Assignment path | Conflict checks |
+|---|---|---|
+| `FloorPlanView` + `FloorPlanTableAssignmentSheet` | canonical — `PATCH /managed-reservations/{id}/tables` | yes (409) |
+| `ReservationDetailView` | canonical when `hasBackendLayout`; legacy fallback otherwise | yes when canonical |
+| `HostBoardView` | **now canonical** via `TableAssignmentCoordinator` | yes when canonical |
+| `ReservationsListView` | **now canonical** via `TableAssignmentCoordinator` | yes when canonical |
+| `ManualReservationFormView` | legacy `tableName` field in full PATCH | no (form submit) |
+
+Legacy `tableName` remains **display compatibility** only. It is never the preferred path
+when a floor layout is present.
+
+`HostTableConfigStore` is **advisory/fallback only** for assignment chip display.
+`ReservationTableOptionsStore` is **legacy fallback chip names** only.
+
+### Canonical architecture
+
+```
+Backend restaurant tables
+  → FloorPlanStore (layoutTables + viewState.tables)
+  → TableAssignmentCoordinator (decision: canonical vs legacy)
+  → Host Board / Reservation Detail / Schedule → PATCH /managed-reservations/{id}/tables
+```
+
+### New files
+
+- `Features/FloorPlan/TableAssignmentCoordinator.swift` — single facade, canonical-vs-legacy decision
+- `Features/FloorPlan/TableCapacitySummary.swift` — typed capacity summary for Service Intelligence
+- `Import/FloorPlanTrace.swift` — extended with `layoutImportDefaults`, `layoutSaveStarted`, `layoutSaveCompleted`
+
+### Files changed
+
+- `Features/FloorPlan/TableAssignmentCoordinator.swift` — new
+- `Features/FloorPlan/TableCapacitySummary.swift` — new
+- `Features/FloorPlan/FloorPlanStore.swift` — added `capacitySummary` computed property
+- `Features/FloorPlan/FloorPlanLayoutSetupView.swift` — added `tryzubDefaultTables`, "Import Tryzub default tables" button, save traces
+- `Features/FloorPlan/FloorPlanView.swift` — improved unassigned reservation rows (note chips, "Assign table" CTA)
+- `Features/FloorPlan/TableAssignmentTrace.swift` — added `fallback` trace
+- `Features/Reservations/HostBoardView.swift` — `HostBoardReservationRow` uses `TableAssignmentCoordinator`, added `@EnvironmentObject floorPlanStore`
+- `Features/Reservations/ReservationsListView.swift` — `ReservationNavigationRow` uses `TableAssignmentCoordinator`, added `@EnvironmentObject floorPlanStore`
+- `Features/Reservations/RestaurantSettingsStore.swift` — improved legacy table capacity text section with guidance note
+
+### Tryzub default tables
+
+Floor Plan → Edit Layout → "Import Tryzub default tables" creates:
+
+| Tables | Capacity | Grid row |
+|---|---|---|
+| A1–A5 | max 6 (2-top min) | Row 0 |
+| A6–A7 | max 8 (booth) | Row 1 |
+| A8–A15 | max 4 (4-top) | Row 2 |
+| Bar | max 4 | Row 3 |
+| Patio | max 4 | Row 3 |
+
+Total: 17 tables, 88 seats maximum.
+
+If layout already has tables, a confirmation dialog prevents accidental override.
+
+### TableCapacitySummary
+
+```swift
+struct TableCapacitySummary {
+    let tableCount: Int      // active tables from backend layout
+    let totalSeats: Int      // sum of maxCapacity
+    let activeSeats: Int     // same as totalSeats (active only)
+    let sections: [String: Int]
+    let largestTableCapacity: Int
+    let hasBackendLayout: Bool
+}
+```
+
+Exposed via `FloorPlanStore.capacitySummary`. Service Intelligence and BookingLoadAnalyzer
+consume this — they never guess from free-form text when a real layout is available.
+
+### Bar/Patio parser
+
+The legacy text parser already handles `Bar: 4` correctly. Bare `"Bar"` without a capacity
+fails and appears in `invalidLines`. The Settings UI now shows a clear hint:
+"Each line must be Name: Capacity or Name Capacity. Bare names like 'Bar' without a number will be rejected."
+
+The canonical path is Floor Plan → Edit Layout. Legacy text import is documented as fallback only.
+
+### Traces
+
+```
+[TABLE_ASSIGNMENT_TRACE] path=floor_plan_backend  reservation=123 tableKeys=a6
+[TABLE_ASSIGNMENT_TRACE] path=legacy_table_name_patch  reservation=123 tableName=A6
+[TABLE_ASSIGNMENT_TRACE] fallback_reason=no_backend_layout  reservation=123
+[TABLE_ASSIGNMENT_TRACE] fallback_reason=key_not_found  detail=A6  reservation=123
+[TABLE_CAPACITY_TRACE] source=backend tables=17 seats=88
+[FLOOR_PLAN_TRACE] event=import_defaults tables=17
+[FLOOR_PLAN_TRACE] event=save_started tables=17
+[FLOOR_PLAN_TRACE] event=save_completed tables=17
+```
+
+### Build status
+Debug build: `** BUILD SUCCEEDED **` — no errors, no linter warnings.
+
+### Architecture rules (authoritative)
+
+- Backend floor tables are canonical. `FloorPlanStore` is the iOS read-model.
+- `TableAssignmentCoordinator` is the only correct call site for table assignment.
+- `HostTableConfigStore` is **deprecated as an assignment source** — advisory/chip display fallback only.
+- `tableName` on `ReservationRecord` and `ReservationDTO` is **display compatibility** only.
+- Canonical assignment endpoint: `PATCH /managed-reservations/{id}/tables`
+- Conflict detection: backend 409 response. iOS shows staff-safe copy, refreshes floor plan.
+- No auto-assignment. No LLM table decisions. Staff taps table; backend is final truth.
+
+### Booking Load Suggestions readiness — UPGRADED (Phase 8)
+
+`TableCapacitySummary` is now wired into both call sites via `BookingLoadSupport.plannedSeats(from:localCapacity:)`, which replaces the old raw-table scan. The analyzer input now carries `hasBackendLayout: Bool`, which propagates to `BookingLoadReport`. Staff see:
+
+```
+88 seats (backend tables) — known reservations only, walk-ins not counted.
+```
+instead of the generic "known reservations only" note when the floor plan is loaded.
+
+When `hasBackendLayout = false` (no layout saved yet):
+```
+Known reservations only — walk-ins not counted. No table plan configured.
+```
+
+"Review close slot" from Global Service Intelligence now pre-selects the specific busy slot in `BlockedTimeSlotsView` so staff don't have to find it manually.
+
+---
+
+## Phase 8 — Booking Load + BlockedSlots Pre-selection (DONE)
+
+### Goal
+Connect booking load suggestions to real backend table capacity (Phase 6 result) and make the "Review close slot" action actionable by pre-selecting the specific slot in `BlockedTimeSlotsView`.
+
+### Changes
+
+**`BookingLoadAnalyzer.Input`** — added `hasBackendLayout: Bool = false`
+
+**`BookingLoadReport`** — added `hasBackendLayout: Bool`; `knownOnlyNote` now shows seat count + source ("backend tables" / "local config" / "no plan"); added `capacitySourceLabel: String?` for inline display.
+
+**`BookingLoadSupport`** — added `plannedSeats(from: TableCapacitySummary, localCapacity:) -> (seats: Int?, isBackendLayout: Bool)` to cleanly resolve both the seat count and the source flag from the typed summary.
+
+**`HostBoardView.buildBookingLoadReport`** and **`GlobalServiceIntelligenceView.buildBookingLoadReport`** — both now call `floorPlanStore.capacitySummary` and use `BookingLoadSupport.plannedSeats(from:localCapacity:)` instead of the raw table array scan.
+
+**`BlockedTimeSlotsView`** — added optional `preselectedSlotValue: String?` parameter. When set, the slot is auto-selected in the Available Public Slots grid on first appear.
+
+**`GlobalServiceIntelligenceView`** — added `@State private var blockedSlotsPreselectedSlot: String?`. "Review close slot" now sets `blockedSlotsPreselectedSlot = item.slotValue` before presenting the sheet; `BlockedTimeSlotsView` receives that slot.
+
+### Files changed
+- `Features/ServiceIntelligence/Analyzers/BookingLoadAnalyzer.swift` — `hasBackendLayout` in `Input` + propagated to report
+- `Features/ServiceIntelligence/Models/BookingLoadModels.swift` — `hasBackendLayout`, improved `knownOnlyNote`, `capacitySourceLabel`
+- `Features/ServiceIntelligence/Analyzers/BookingLoadSupport.swift` — `plannedSeats(from:localCapacity:)` helper
+- `Features/Reservations/HostBoardView.swift` — uses `capacitySummary` + `isBackendLayout`
+- `Features/ServiceIntelligence/Views/GlobalServiceIntelligenceView.swift` — uses `capacitySummary` + `blockedSlotsPreselectedSlot`
+- `Features/Reservations/RestaurantSettingsStore.swift` — `BlockedTimeSlotsView.preselectedSlotValue`
+
+### Architecture rules
+- `BookingLoadAnalyzer` is pure. It receives `hasBackendLayout` as a flag; it does not inspect `FloorPlanStore`.
+- Call sites are the only point where `FloorPlanStore.capacitySummary` is read into the analyzer input.
+- `BlockedTimeSlotsView` pre-selection is advisory only: the staff must still tap "Block Selected Slots".
+- `hasBackendLayout` must not change booking threshold logic — only the transparency copy.
+
+### Build status
+Debug build: `** BUILD SUCCEEDED **` — no errors, no linter warnings.
+
+---
+
+## Phase 7 — Reservation Detail Operational File (DONE)
+
+### Goal
+Transform `ReservationDetailView` from a basic data view into an operational reservation file.
+Staff can see all structured notes, deposit status, preorder info, and guest history in one place.
+
+### New section order (narrow layout)
+```
+DetailHeroCard        — name, time, party, table, status
+actionBar             — status actions (confirm / seat / complete / cancel)
+importantCard         — Important flags
+noteSignalsCard       — NoteSignal results from note text
+notesCard             — raw guest note + staff note (backend)
+structuredNotesSection — Manager / Kitchen / Bar / Setup notes (local)
+depositSection        — Deposit status + amount + note (local, shown when signals exist)
+preorderSection       — Preorder + banquet note (local, shown when signals exist)
+attachmentsCard       — Photos with labels
+guestInsightsSection  — Guest history (backend profile pack + local insights)
+detailsCard           — Reservation metadata
+contactCard           — Phone / email
+draftMessageCard      — Guest messaging drafts
+ReservationServiceLoadCard — Booking load for this date
+```
+
+### New SwiftData model: `ReservationStructuredNoteRecord`
+
+Keyed by `reservationRemoteID` (unique, indexed). Local-first — no backend equivalent yet.
+
+| Field | Type | Purpose |
+|---|---|---|
+| `managerNote` | `String?` | Payment, deposit decision, special instructions |
+| `kitchenNote` | `String?` | Preorder, allergy, cake, specific dishes |
+| `barNote` | `String?` | Drinks, champagne, bottle service |
+| `setupNote` | `String?` | High chair, wheelchair, quiet table, decorations |
+| `depositNoteText` | `String?` | Free-form deposit note |
+| `depositStatusRaw` | `String` | `DepositStatus` enum value |
+| `depositAmountText` | `String?` | e.g. "$200" |
+| `preorderNoteText` | `String?` | Preorder details |
+| `preorderStatusRaw` | `String` | `PreorderStatus` enum value |
+| `banquetNoteText` | `String?` | Package / banquet details |
+
+**`DepositStatus`**: `none` / `mentioned` / `needs_review` / `verified`
+**`PreorderStatus`**: `none` / `mentioned` / `confirmed`
+
+### Auto-seed from NoteSignals
+
+On first open, if `noteSignals` contains `.depositMentioned` → `depositStatus = .mentioned`.
+If `.preorderMentioned` / `.banquetMentioned` → `preorderStatus = .mentioned`.
+This means staff never have to manually discover these from note text — the system flags them automatically.
+
+### UI behavior
+
+- **Structured notes section**: shows manager/kitchen/bar/setup notes when present; "Add staff notes" button opens `StructuredNoteEditorSheet`.
+- **Deposit section**: shown when `depositStatus != .none` OR note signals found deposit. Shows status pill + amount + note.
+- **Preorder section**: shown when `preorderStatus != .none` OR note signals found preorder. Shows status pill + notes.
+- **`StructuredNoteEditorSheet`**: Form with all note fields, Picker for deposit/preorder status, saves to SwiftData on "Save".
+
+### Staff copy examples
+
+```
+Deposit: Mentioned          ← orange pill
+Manager should verify before service.
+
+Preorder: Mentioned         ← orange pill
+Kitchen should review before service.
+
+Deposit: Verified           ← green pill
+Amount: $200
+Deposit note: Paid cash, per Bohdan
+```
+
+### Files changed
+
+- `Persistence/ReservationStructuredNoteRecord.swift` — new SwiftData model
+- `Features/Reservations/ReservationStructuredNoteUI.swift` — new: editor sheet + helper views
+- `Tryzub_ReservationsApp.swift` — added `ReservationStructuredNoteRecord.self` to ModelContainer
+- `Preview/ReservationPreviewData.swift` — same
+- `Features/Reservations/ReservationDetailView.swift` — added @Query, @State, computed properties, 3 new sections, reordered detailContent
+
+### Needed future backend fields
+
+```
+PATCH /managed-reservations/{id}:
+  manager_note, kitchen_note, bar_note, setup_note,
+  deposit_note, deposit_status, deposit_amount,
+  preorder_note, preorder_status, banquet_note
+```
+
+When backend fields exist, `ReservationStructuredNoteRecord` fields should sync upstream on save.
+
+### Build status
+Debug build: `** BUILD SUCCEEDED **` — no errors, no linter warnings.
+
+---
+
+## Phase 9 — Attachment OCR / Image Intelligence (DONE)
+
+### Goal
+Extract text from locally stored attachment photos using Apple Vision, produce `ReservationSignal`s from the result, and surface those signals in both `ReservationDetailView` and `GlobalServiceIntelligenceView`.
+
+### Two signal stages
+
+**Stage 1 — Label-based (immediate, no OCR):**
+As soon as staff labels an attachment, `AttachmentSignalAnalyzer` fires a signal based on the label:
+- `Deposit` / `Receipt` → `depositMentioned` — "Manager should verify deposit before service."
+- `Preorder` → `preorderMentioned` — "Kitchen should review preorder before service."
+- `Banquet` → `banquetMentioned` — "Kitchen and manager should review banquet details."
+- `Setup` → `setupNeeded` — "Check setup requirements before service."
+- `Guest screenshot` / `Other` → `attachmentNeedsReview` — "Check this photo before seating."
+
+**Stage 2 — OCR-based (additive, background):**
+`AttachmentOCRService` runs `VNRecognizeTextRequest` (.accurate level) off the main thread via `Task.detached`. Result stored in `ReservationAttachmentRecord.extractedText`. `AttachmentSignalAnalyzer` re-runs `NoteSignalAnalyzer` on extracted text, remapping source to `.attachmentOCR` and appending "(from photo)" to `staffText`. OCR-based signals are deduplicated against label signals by type.
+
+### New files
+
+| File | Purpose |
+|---|---|
+| `Persistence/AttachmentOCRService.swift` | Vision OCR runner — pure async, no main actor |
+| `Features/ServiceIntelligence/Analyzers/AttachmentSignalAnalyzer.swift` | Label + OCR → `[ReservationSignal]` |
+| `Features/ServiceIntelligence/Diagnostics/AttachmentOCRTrace.swift` | `[SERVICE_ATTACHMENT_TRACE]` and `[SERVICE_ATTACHMENT_OCR_TRACE]` |
+
+### Modified files
+
+**`Persistence/ReservationAttachmentRecord.swift`** — added `extractedText: String?` and `ocrRanAt: Date?`. SwiftData handles lightweight migration automatically for new optional fields.
+
+**`Features/ServiceIntelligence/Models/ReservationAttachment.swift`** — added `AttachmentFeatureFlag.ocrEnabled: Bool = true`.
+
+**`Features/Reservations/ReservationDetailView.swift`**:
+- `recomputeNoteSignals()` extended to also run `AttachmentSignalAnalyzer` on all `attachments`, populate `attachmentSignalsByID: [String: [ReservationSignal]]`, then merge + deduplicate by type (highest priority wins).
+- `scheduleOCR(for:)` — runs `AttachmentOCRService.extractText` in a `Task.detached`, writes `extractedText` + `ocrRanAt` to SwiftData, calls `recomputeNoteSignals()` on main actor.
+- `saveAttachment` calls `scheduleOCR` after successful save.
+- `.onAppear` schedules OCR for any existing attachments that predate Phase 9 (`ocrRanAt == nil`).
+- `.onChange(of: attachments)` triggers `recomputeNoteSignals()` so signals update when OCR completes.
+- `AttachmentRow` gains `signals: [ReservationSignal]` parameter. Shows signal pills inline when present; shows `reviewInstruction` when no signals; shows "Text read" badge when OCR found content.
+
+**`Features/ServiceIntelligence/Views/GlobalServiceIntelligenceView.swift`**:
+- Added `@Query private var allAttachmentRecords: [ReservationAttachmentRecord]`.
+- `rebuild()` note signals loop extended: for each today's reservation, also queries `allAttachmentRecords` filtered by `reservationRemoteID`, runs `AttachmentSignalAnalyzer`, deduplicates by type, merges with note signals.
+- `rebuildStamp` includes `ocrCompleted` count so view rebuilds when OCR results arrive.
+
+### Trace output examples
+
+```
+[SERVICE_ATTACHMENT_TRACE] event=saved reservation=42 filename=<uuid>.jpg label=Deposit
+[SERVICE_ATTACHMENT_OCR_TRACE] event=started reservation=42 filename=<uuid>.jpg
+[SERVICE_ATTACHMENT_OCR_TRACE] event=completed reservation=42 filename=<uuid>.jpg textChars=183 signals=2
+[SERVICE_ATTACHMENT_TRACE] event=label_signal reservation=42 attachment=res-42-<uuid> type=depositMentioned
+[SERVICE_ATTACHMENT_TRACE] event=label_signal reservation=42 attachment=res-42-<uuid> type=preorderMentioned
+```
+
+### Architecture rules
+- `AttachmentOCRService` is pure: no SwiftData, no main actor, no stores.
+- `AttachmentSignalAnalyzer` is pure: no network, no model, same keyword safety as `NoteSignalAnalyzer`.
+- OCR runs via `Task.detached(priority: .utility)` — never blocks the main thread.
+- `extractedText` is stored to disk (SwiftData) so OCR only runs once per attachment.
+- Signals from OCR always have `requiresReview = true`. Source is `.attachmentOCR`.
+- No signal says "deposit paid," "allergy confirmed," or "preorder verified" — only "mentioned, verify."
+
+### Feature flag
+```swift
+AttachmentFeatureFlag.ocrEnabled = true   // Vision OCR on-device, no network
+AttachmentFeatureFlag.remoteUploadEnabled = false  // backend endpoint not yet live
+```
+
+### Acceptance scenarios
+
+| Scenario | Expected |
+|---|---|
+| Staff attaches a photo labeled "Deposit" | `depositMentioned` signal fires immediately in noteSignalsCard |
+| OCR reads "$200 deposit paid" from image | `depositMentioned` (from photo) signal enriched with evidence |
+| Image has no readable text | `ocrRanAt` set, `extractedText = nil`, no OCR signals, label signal still shows |
+| Staff attaches "Preorder" | `preorderMentioned` in noteSignalsCard + Global Service Intelligence notes section |
+| Old attachment (pre-Phase 9) | `.onAppear` schedules OCR; enriches on next detail open |
+
+### Build status
+Debug build: `** BUILD SUCCEEDED **` — no errors, no linter warnings.
+
+---
+
+## Is AI TestFlight-safe?
+**Yes, with one caveat.** The model is strictly advisory: deterministic facts/actions and a
+template briefing render without it, the gate keeps it off simple days, the sanitizer keeps
+raw contact/notes out of the packet, and the validator (proven by the offline harness) blocks
+unsupported claims with a deterministic fallback. Nothing the model produces is required for,
+or can mutate, core operations. A **hard wall-clock inference timeout** is now wired into the
+runtime (Phase 10) so a slow/hung generation falls back to the deterministic/template path
+instead of blocking the surface. **Caveat:** the *pass-on-real-model-output* path still benefits
+from a physical-device capture before final sign-off; the safety floor
+(skip/sanitize/validate/fallback) does not depend on that capture.
+
+---
+
+## Phase 10 — LLM Task Configuration + Note Sentiment + Guest Draft Fix (DONE)
+
+### Problem
+All three model tasks (host briefing, guest message draft, note analysis) shared **one
+hardcoded system prompt** (`"Rewrite the approved host facts into calm staff-facing prose"`)
+and **one 100-token cap**. Consequences:
+- Guest drafts inherited the *staff-facing* system prompt → "Dear staff, we are writing to
+  provide a guest communication draft…" meta-output, and a full email + SMS JSON could not fit
+  in 100 tokens (truncated → parse failure → template).
+- Note analysis was purely deterministic keyword matching — no model, no sentiment.
+- A slow inference could block the surface with no timeout, contributing to the Host tab
+  "sometimes falls back to the default engine" symptom.
+
+### Per-task model profiles
+**`Features/HostIntelligence/HostLocalModelRuntime.swift`** — new `HostLocalModelTaskProfile`
+(`taskName`, `systemPrompt`, `maxOutputTokens`, `echoStopMarkers`, `artifactPrefixes`,
+`maxInferenceSeconds`). Three profiles: `.hostBriefing` (unchanged behavior — 100 tokens, host
+markers), `.guestMessageDraft` (guest-facing system prompt, 360 tokens, JSON stop markers),
+`.noteAnalysis` (classification system prompt, 300 tokens). Protocol gains
+`generate(prompt:profile:)` with a default that routes to `generateBriefing` for safety.
+
+**`Features/HostIntelligence/HostLlamaBriefingRuntime.swift`**:
+- `generateBriefing(prompt:)` now routes through `.hostBriefing` (identical output).
+- `generate(prompt:profile:)` wraps the Qwen instruct template with the profile's system
+  prompt, uses the profile's token budget and stop markers, and sanitizes with the profile's
+  artifact prefixes.
+- Session `generate` gains a `deadline: Date`; the token loop throws `.timedOut` (or returns
+  partial text) once the deadline passes. New `HostLocalModelRuntimeError.timedOut`.
+
+### Guest draft fix (email + SMS)
+**`Features/GuestMessaging/GuestMessageDraftWriter.swift`** — `LocalModelGuestMessageDraftWriter`
+now calls `generate(prompt:, profile: .guestMessageDraft)` and emits `[MODEL_TASK_TRACE]`.
+**`Features/GuestMessaging/GuestMessageDraftValidator.swift`** — new `staffFacingPhrases` list
+blocks `dear staff`, `dear team`, `here is a draft`, `guest communication draft`, etc., so any
+residual staff-addressed/meta output falls back to the template instead of reaching staff.
+Default `useLocalModelForGuestMessageDrafts` flipped to **true** (staff still reviews every
+draft before sending; template fallback always present).
+
+### Model note sentiment + classification
+**`Features/ServiceIntelligence/Analyzers/LocalModelNoteAnalyzer.swift`** (new, `actor`) —
+additive on top of the deterministic `NoteSignalAnalyzer`. Asks the model for (1) a tone
+(`positive` / `neutral` / `concerned`) and (2) signal *types* from a strict allowlist + short
+evidence. **The model never writes staff-facing wording** — it only picks a category; the app
+owns every sentence. This makes it structurally impossible for the model to claim "deposit
+paid" or "allergy confirmed." Unknown/forbidden types and PII-bearing evidence are dropped.
+New `ReservationSignalType.guestSentiment`; signals carry `source: .localModel`.
+
+**`Features/Reservations/ReservationDetailView.swift`** — `enrichNoteSignalsWithModel()` runs
+on `.onAppear` (non-blocking `Task`), stores `modelNoteSignals`, and `recomputeNoteSignals()`
+merges them **additively** (deterministic + attachment signals win on type collisions).
+
+### Settings + diagnostics
+- New setting `useLocalModelForNoteAnalysis` (default **true**), toggle in
+  `HostIntelligenceSettingsView`. Both detail-only model toggles are excluded from
+  `hostDecisionFingerprint` (they do not affect Host board decisioning).
+- New `Features/HostIntelligence/ModelTaskTrace.swift` → `[MODEL_TASK_TRACE]` (DEBUG only):
+  `task=<hostBriefing|guestMessageDraft|noteAnalysis> status=<started|completed|blocked|fallback>`.
+
+### Architecture rules
+- The deterministic baseline always renders first; model output is additive enrichment.
+- Each task is isolated by profile — no task can inherit another's system prompt again.
+- Hard timeout per task; on timeout/parse-fail/validation-fail → deterministic/template path.
+- No model output is auto-sent or auto-confirmed; staff reviews drafts before sending.
+
+### Trace output examples
+```
+[MODEL_TASK_TRACE] task=guestMessageDraft status=started
+[MODEL_TASK_TRACE] task=guestMessageDraft status=completed detail=source=localModel
+[MODEL_TASK_TRACE] task=noteAnalysis status=started
+[MODEL_TASK_TRACE] task=noteAnalysis status=completed detail=signals=2
+[MODEL_TASK_TRACE] task=noteAnalysis status=fallback reason=parse_failed
+```
+
+### Build status
+Debug build (`generic/platform=iOS`): `** BUILD SUCCEEDED **` — no errors, no linter warnings.

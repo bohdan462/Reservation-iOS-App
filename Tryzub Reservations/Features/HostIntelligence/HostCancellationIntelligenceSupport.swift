@@ -202,7 +202,7 @@ enum HostCancellationIntelligenceSupport {
         )
       }) {
         let detail =
-          "\(tableName) opened after \(cancellation.guestName) canceled; \(match.guestName), party of \(match.partySize), may need table planning."
+          "\(tableName) opened after \(cancellation.guestName) canceled; \(match.guestName), party of \(match.partySize), may need a floor plan."
         facts.append(
           HostBriefingFact(
             id: "cancellation-freed-table-\(cancellation.remoteID)-\(match.remoteID)",
@@ -215,7 +215,7 @@ enum HostCancellationIntelligenceSupport {
               "cancelledPartySize=\(cancellation.partySize)"
             ],
             relatedReservationIDs: [cancellation.remoteID, match.remoteID],
-            suggestedActionTitle: "Review table plan for \(match.guestName)."
+            suggestedActionTitle: "Review floor plan for \(match.guestName)."
           )
         )
 
@@ -224,7 +224,7 @@ enum HostCancellationIntelligenceSupport {
             id: "cancellation-opportunity-action-\(cancellation.remoteID)-\(match.remoteID)",
             severity: .watch,
             kind: .reviewCancellationOpportunity,
-            title: "Review table plan for \(match.guestName)",
+            title: "Review floor plan for \(match.guestName)",
             reason: detail,
             relatedReservationIDs: [cancellation.remoteID, match.remoteID],
             targetSlotTime: match.reservationTime,
@@ -552,7 +552,7 @@ enum HostCancellationIntelligenceSupport {
           detail: detail,
           evidence: ["minutesLate=\(minutesLate)", "noTable=true"],
           relatedReservationIDs: [reservation.remoteID],
-          suggestedActionTitle: "Review table plan for \(reservation.guestName) now."
+          suggestedActionTitle: "Review floor plan for \(reservation.guestName) now."
         )
       )
 
@@ -561,7 +561,7 @@ enum HostCancellationIntelligenceSupport {
           id: "overdue-no-table-action-\(reservation.remoteID)",
           severity: severity,
           kind: .reviewReservation,
-          title: "Review table plan for late \(reservation.guestName)",
+            title: "Review floor plan for late \(reservation.guestName)",
           reason: detail,
           relatedReservationIDs: [reservation.remoteID],
           targetSlotTime: reservation.reservationTime,

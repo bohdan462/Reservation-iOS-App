@@ -154,15 +154,15 @@ enum HostLLMPacketSampleFactory {
         HostLLMFact(
           severity: .info,
           category: .bookingDecision,
-          title: HostBookingFactGroupingSamples.twoSafeToConfirmTitle,
-          detail: HostBookingFactGroupingSamples.twoSafeToConfirmDetail,
+          title: "Nick and Max look safe to confirm.",
+          detail: "Their times look manageable, but staff should still check details.",
           evidence: ["Grouped auto-confirm sample."],
           suggestedAction: "Confirm if details look right."
         ),
         HostLLMFact(
           severity: .watch,
           category: .bookingDecision,
-          title: HostBookingFactGroupingSamples.twoDueSoonTitle,
+          title: "Max and Nick's bookings are coming up soon.",
           detail: "Check details before confirming.",
           evidence: ["Grouped due-soon sample."],
           suggestedAction: "Check before confirming."

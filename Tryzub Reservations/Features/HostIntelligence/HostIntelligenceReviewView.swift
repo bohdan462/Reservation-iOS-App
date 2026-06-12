@@ -21,10 +21,8 @@ struct HostIntelligenceReviewView: View {
       VStack(alignment: .leading, spacing: 20) {
         headerSection
         mainBriefingSection
-        operationalPromptsSection
-        topFactsSection
-        suggestedActionsSection
-        signalsSummarySection
+        checkNowSection
+        keyDetailsSection
       }
       .padding()
     }
@@ -78,80 +76,41 @@ struct HostIntelligenceReviewView: View {
     .reviewCardStyle()
   }
 
+  /// Unified "Check now" section: operational prompts first (grouped, with related counts),
+  /// then any suggested actions whose title/body have not already appeared in the prompts.
+  /// This replaces the old "What to check" + "Check next" pair that could repeat the same
+  /// reservation in both lists with near-identical wording.
   @ViewBuilder
-  private var operationalPromptsSection: some View {
+  private var checkNowSection: some View {
+    let actions = dedupedActions
     VStack(alignment: .leading, spacing: 10) {
-      Text("What to check")
+      Text("Check now")
         .font(.headline)
 
-      if operationalPrompts.isEmpty {
-        Text("Nothing else grouped for this moment.")
+      if operationalPrompts.isEmpty && actions.isEmpty {
+        Text("Nothing to check right now.")
           .font(.subheadline)
           .foregroundStyle(.secondary)
+          .reviewCardStyle()
       } else {
         ForEach(operationalPrompts) { prompt in
           VStack(alignment: .leading, spacing: 6) {
-            HStack {
-              Text(prompt.title)
-                .font(.subheadline.weight(.semibold))
-              Spacer(minLength: 8)
-              Text(prompt.severity.rawValue.capitalized)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-            }
+            Text(prompt.title)
+              .font(.subheadline.weight(.semibold))
             Text(prompt.body)
               .font(.subheadline)
               .foregroundStyle(.secondary)
               .fixedSize(horizontal: false, vertical: true)
             if !prompt.relatedReservationIDs.isEmpty {
-              Text("\(prompt.relatedReservationIDs.count) related reservation\(prompt.relatedReservationIDs.count == 1 ? "" : "s")")
+              Text("\(prompt.relatedReservationIDs.count) \(prompt.relatedReservationIDs.count == 1 ? "reservation" : "reservations")")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
             }
           }
           .reviewCardStyle()
         }
-      }
-    }
-  }
 
-  @ViewBuilder
-  private var topFactsSection: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Text("Key details")
-        .font(.headline)
-
-      if snapshot.briefingFacts.isEmpty {
-        Text("No extra details right now.")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-      } else {
-        ForEach(Array(dedupedReviewFacts.prefix(5))) { fact in
-          VStack(alignment: .leading, spacing: 4) {
-            Text(HostStaffLanguage.rewrite(fact.title))
-              .font(.subheadline.weight(.semibold))
-            Text(HostStaffLanguage.rewrite(fact.detail))
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-          .reviewCardStyle()
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private var suggestedActionsSection: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Text("Check next")
-        .font(.headline)
-
-      if snapshot.suggestedActions.isEmpty {
-        Text("No checks suggested right now.")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-      } else {
-        ForEach(snapshot.suggestedActions.prefix(8)) { action in
+        ForEach(actions) { action in
           if let onActionTapped {
             Button {
               onActionTapped(action)
@@ -168,20 +127,31 @@ struct HostIntelligenceReviewView: View {
     }
   }
 
+  /// Key details: facts from the snapshot that are not already captured in the headline
+  /// or the operational prompts. Capped at 4 to avoid padding noise.
   @ViewBuilder
-  private var signalsSummarySection: some View {
-    let flaggedCount = snapshot.briefingFacts.count
-      + snapshot.suggestedActions.count
-    if flaggedCount > 0 {
-      VStack(alignment: .leading, spacing: 8) {
-        Text("Summary")
+  private var keyDetailsSection: some View {
+    let facts = dedupedReviewFacts
+    if !facts.isEmpty {
+      VStack(alignment: .leading, spacing: 10) {
+        Text("Key details")
           .font(.headline)
 
-        Text("\(flaggedCount) item\(flaggedCount == 1 ? "" : "s") flagged for staff review.")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
+        ForEach(Array(facts.prefix(4))) { fact in
+          VStack(alignment: .leading, spacing: 4) {
+            Text(HostStaffLanguage.rewrite(fact.title))
+              .font(.subheadline.weight(.semibold))
+            let detail = HostStaffLanguage.rewrite(fact.detail)
+            if !detail.isEmpty {
+              Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+          }
+          .reviewCardStyle()
+        }
       }
-      .reviewCardStyle()
     }
   }
 
@@ -241,6 +211,27 @@ struct HostIntelligenceReviewView: View {
       )
     }
     return template
+  }
+
+  /// Suggested actions whose title+reason are not already covered by an operational prompt.
+  /// This prevents the same reservation appearing in both "What to check" and "Check next"
+  /// with identical wording.
+  private var dedupedActions: [HostSuggestedAction] {
+    let promptTitles = Set(operationalPrompts.map { $0.title.lowercased() })
+    let promptBodies = Set(operationalPrompts.map { $0.body.lowercased() })
+    var seen = Set<String>()
+    var results: [HostSuggestedAction] = []
+    for action in snapshot.suggestedActions.prefix(8) {
+      let titleKey = HostStaffLanguage.rewrite(action.title).lowercased()
+      let reasonKey = HostStaffLanguage.rewrite(action.reason).lowercased()
+      if promptTitles.contains(titleKey) || promptBodies.contains(titleKey) { continue }
+      if promptBodies.contains(reasonKey) || promptTitles.contains(reasonKey) { continue }
+      let dedupKey = "\(titleKey)|\(reasonKey)"
+      guard !seen.contains(dedupKey) else { continue }
+      seen.insert(dedupKey)
+      results.append(action)
+    }
+    return results
   }
 
   private var dedupedReviewFacts: [HostBriefingFact] {

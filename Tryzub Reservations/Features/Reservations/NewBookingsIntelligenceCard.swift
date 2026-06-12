@@ -114,9 +114,9 @@ struct NewBookingsIntelligenceSummary: Equatable {
   private static func tableFitLine(count: Int) -> String? {
     guard count > 0 else { return nil }
     if count == 1 {
-      return "1 party may need a table plan"
+      return "1 party may need a floor plan"
     }
-    return "\(count) parties may need a table plan"
+    return "\(count) parties may need a floor plan"
   }
 }
 

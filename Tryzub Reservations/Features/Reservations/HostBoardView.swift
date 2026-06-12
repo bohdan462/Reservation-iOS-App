@@ -32,13 +32,24 @@ struct HostBoardView: View {
     @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @EnvironmentObject private var hostIntelligenceController: HostIntelligenceController
+    @EnvironmentObject private var floorPlanStore: FloorPlanStore
 
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
     @State private var boardSnapshot: HostBoardSnapshot?
     @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var isShowingHostIntelligenceReview = false
+    /// Phase 2: cached deterministic Service Briefing, rebuilt only when inputs change
+    /// (selected date, reservations, snapshot, clock minute) — never from a fetch.
+    @State private var serviceBriefingState: HostServiceBriefingViewState?
+    /// Phase 4: concise booking-load heads-up for the busiest window, shown only during
+    /// before/during service. Rebuilt with the briefing (cache-only, no fetch).
+    @State private var bookingTopItem: BookingSuggestionViewItem?
+    @State private var bookingKnownOnlyNote: String = ""
     @StateObject private var hostBoardViewStateStore = HostBoardViewStateStore()
+    /// Single lifecycle coordinator — replaces two independent .task(id:) pipelines
+    /// for availability and guest intelligence scheduling.
+    @StateObject private var lifecycleCoordinator = HostBoardLifecycleCoordinator()
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
@@ -352,22 +363,21 @@ struct HostBoardView: View {
         .onChange(of: hostBoardViewStateBuildKey, initial: true) { _, _ in
             refreshHostBoardViewState(reason: "semantic_key_changed")
         }
+        .onChange(of: serviceBriefingStamp, initial: true) { _, _ in
+            rebuildServiceBriefing()
+        }
+        // Single coordinated task replaces the two independent availability +
+        // guest-intelligence tasks. HostBoardLifecycleCoordinator emits [HOST_LIFECYCLE]
+        // traces, skips work when data is already fresh/in-flight, and provides one
+        // visible lifecycle path: visible → date_changed → hidden.
         .task(id: "\(isVisible)-\(deferNetworkLoads)-\(controller.canStartNoncriticalStartupLoads)-\(selectedDateKey)") {
             guard !isRunningForPreviews else { return }
-            HostBoardOrchestrationFacade.prepareAvailability(
-                controller: controller,
+            lifecycleCoordinator.handle(
+                isVisible: isVisible,
                 date: selectedDateKey,
-                isVisible: isVisible,
-                shouldDefer: deferNetworkLoads || shouldDeferStartupOptionalLoads
-            )
-        }
-        .task(id: "\(isVisible)-\(selectedDateKey)-guest-intelligence-\(deferNetworkLoads)-\(controller.canStartNoncriticalStartupLoads)") {
-            guard !isRunningForPreviews else { return }
-            HostBoardOrchestrationFacade.scheduleGuestIntelligence(
-                store: guestIntelligenceStore,
-                dateKey: selectedDateKey,
-                isVisible: isVisible,
-                shouldDefer: deferNetworkLoads || shouldDeferStartupOptionalLoads
+                shouldDefer: deferNetworkLoads || shouldDeferStartupOptionalLoads,
+                controller: controller,
+                guestIntelligenceStore: guestIntelligenceStore
             )
         }
         .task(id: hostIntelligenceEvaluationKey) {
@@ -414,7 +424,14 @@ struct HostBoardView: View {
             )
         }
         .onChange(of: hostBoardOperationalLoading) { _, isLoading in
-            controller.refreshHomeServicePresentation(hostOperationalLoading: isLoading)
+            // Coalesce to the next runloop tick. refreshHomeServicePresentation publishes
+            // controller state that feeds back into hostBoardOperationalLoading; updating
+            // it synchronously inside onChange caused SwiftUI's "tried to update multiple
+            // times per frame" churn during startup.
+            Task { @MainActor in
+                await Task.yield()
+                controller.refreshHomeServicePresentation(hostOperationalLoading: isLoading)
+            }
         }
     }
 
@@ -668,8 +685,101 @@ struct HostBoardView: View {
         }
     }
 
+    /// Stamp for the cached Service Briefing rebuild. Includes the clock minute so
+    /// mode transitions (e.g. crossing close time) are picked up, plus the snapshot
+    /// generation so reservation/status changes refresh it. All inputs are in-memory.
+    private var serviceBriefingStamp: String {
+        let minute = Int(clockTick.timeIntervalSince1970 / 60)
+        return [
+            selectedDateKey,
+            String(reservations.count),
+            String(Int(hostIntelligenceController.decisionSnapshot.generatedAt.timeIntervalSince1970)),
+            String(minute)
+        ].joined(separator: "|")
+    }
+
+    /// Modes where the deterministic Service Briefing card replaces the live Host
+    /// Intelligence card (those are the modes where live "due in X" / "table opened"
+    /// facts are useless or wrong). Live service keeps the existing card.
+    private func usesServiceBriefingCard(_ mode: ServiceMode) -> Bool {
+        switch mode {
+        case .afterCloseFinished, .afterCloseNeedsCleanup, .pastRecap, .futurePlanning:
+            return true
+        case .duringService, .beforeService:
+            return false
+        }
+    }
+
+    /// Rebuilds the Service Briefing from cached data only. No network.
+    private func rebuildServiceBriefing() {
+        let bounds = serviceDensityBounds
+        let state = HostServiceBriefingViewStateBuilder.build(
+            HostServiceBriefingViewStateBuilder.Input(
+                now: clockTick,
+                selectedDate: selectedDate,
+                reservations: reservations,
+                snapshot: hostIntelligenceController.decisionSnapshot,
+                openTime: bounds.open,
+                closeTime: bounds.close,
+                selectedDateLabel: selectedDate.formatted(.dateTime.weekday(.wide))
+            )
+        )
+        serviceBriefingState = state
+        if usesServiceBriefingCard(state.mode) {
+            ServiceIntelligenceTrace.hostCard(display: "service_briefing", mode: state.mode)
+        }
+
+        // Phase 4: booking-load heads-up only while there is a service to protect.
+        if state.mode == .beforeService || state.mode == .duringService {
+            let report = buildBookingLoadReport(bounds: bounds)
+            bookingTopItem = BookingLoadActionBuilder.topItem(from: report)
+            bookingKnownOnlyNote = report.knownOnlyNote
+        } else {
+            bookingTopItem = nil
+            bookingKnownOnlyNote = ""
+        }
+    }
+
+    /// Cache-only deterministic booking-load analysis for the selected date.
+    private func buildBookingLoadReport(bounds: (open: Date?, close: Date?)) -> BookingLoadReport {
+        let capacitySummary = floorPlanStore.capacitySummary
+        let (seats, isBackendLayout) = BookingLoadSupport.plannedSeats(
+            from: capacitySummary,
+            localCapacity: hostTableConfigStore.totalActiveCapacity
+        )
+        let blocked = BookingLoadSupport.blockedMinutes(from: availabilitySummary?.blockedSlots ?? [])
+        var thresholds = BookingLoadThresholds.default
+        thresholds.largePartyThreshold = hostIntelligenceSettingsStore.settings.largePartyThreshold
+        return BookingLoadAnalyzer.analyze(
+            BookingLoadAnalyzer.Input(
+                date: selectedDateKey,
+                reservations: reservations,
+                openMinutes: BookingLoadSupport.minutesOfDay(from: bounds.open),
+                closeMinutes: BookingLoadSupport.minutesOfDay(from: bounds.close),
+                plannedReservableSeats: seats,
+                hasBackendLayout: isBackendLayout,
+                blockedSlotMinutes: blocked,
+                thresholds: thresholds
+            )
+        )
+    }
+
     @ViewBuilder
     private var hostIntelligenceSection: some View {
+        if let serviceBriefingState, usesServiceBriefingCard(serviceBriefingState.mode) {
+            HostServiceBriefingCard(state: serviceBriefingState) { intent in
+                handleServiceActionIntent(intent)
+            }
+        } else {
+            liveHostIntelligenceSection
+            if let bookingTopItem {
+                BookingLoadHostCard(item: bookingTopItem, knownOnlyNote: bookingKnownOnlyNote)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var liveHostIntelligenceSection: some View {
         let snapshot = hostIntelligenceController.displaySnapshot
         let useSeparatedPrompts = hostIntelligenceController.settings.useSeparatedBriefingPrompts
         let compactPrompts = useSeparatedPrompts
@@ -748,7 +858,25 @@ struct HostBoardView: View {
         }
     }
 
+    /// Phase 2: opens the related reservation for a Service Briefing action when it
+    /// targets a specific reservation. Aggregate cleanup actions (no reservationID)
+    /// are non-tappable no-ops — they are summaries, not single-reservation actions.
+    private func handleServiceActionIntent(_ intent: StaffActionIntent) {
+        guard let idString = intent.reservationID, let remoteID = Int(idString) else { return }
+        guard let reservation = HostSuggestedActionRouter.findReservation(
+            remoteID: remoteID,
+            dayReservations: reservations,
+            knownReservations: allKnownReservations
+        ) else { return }
+        onOpenReservation(reservation)
+    }
+
     private func makeHostEngineInput(now: Date) -> HostEngineInput {
+        // Use the broader history pool (all known reservations from the shell) so
+        // guest-memory signals draw on history beyond the selected day.
+        // backendFloorTables feeds the engine canonical table layout when available,
+        // so table suggestions reflect actual backend table inventory rather than
+        // the local UserDefaults HostTableConfigStore.
         HostEngineInput(
             now: now,
             selectedDate: selectedDate,
@@ -759,7 +887,8 @@ struct HostBoardView: View {
             localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
             settings: hostIntelligenceSettingsStore.settings,
             tableConfigs: hostTableConfigStore.tables,
-            allKnownReservations: reservations,
+            allKnownReservations: allKnownReservations.isEmpty ? reservations : allKnownReservations,
+            backendFloorTables: floorPlanStore.viewState.tables,
             guestIntelligenceSummariesByReservationID: guestIntelligenceStore.summariesByReservationID(
                 for: selectedDateKey
             ),
@@ -1616,6 +1745,7 @@ private struct HomeReservationsPanel: View {
 private struct HostBoardReservationRow: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var floorPlanStore: FloorPlanStore
 
     let reservation: ReservationRecord
     var referenceNow = Date()
@@ -1689,9 +1819,11 @@ private struct HostBoardReservationRow: View {
         )
         .sheet(item: $tableAssignmentReservation) { reservation in
             TableAssignmentSheet(reservation: reservation) { tableName in
-                _ = try await controller.updateReservation(
-                    id: reservation.remoteID,
-                    request: ReservationUpdateRequest(tableName: tableName),
+                await TableAssignmentCoordinator.assign(
+                    reservationID: reservation.remoteID,
+                    tableName: tableName,
+                    floorPlanStore: floorPlanStore,
+                    controller: controller,
                     context: modelContext
                 )
                 if seatAfterTableAssignment {

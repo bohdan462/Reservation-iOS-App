@@ -119,9 +119,11 @@ struct RestaurantTableUpsertDTO: Encodable, Equatable {
         section = table.section
     }
 
+    // Only the backend's allowed PUT fields are encoded. The server derives the
+    // restaurant from auth context and upserts by `table_key` (partial_by_table_key),
+    // so `restaurant_key` and `id` must NOT be sent — the backend rejects unknown
+    // fields with `tryzub_unknown_restaurant_table_field` (HTTP 400).
     enum CodingKeys: String, CodingKey {
-        case id
-        case restaurantKey
         case tableKey
         case label
         case x
@@ -137,8 +139,6 @@ struct RestaurantTableUpsertDTO: Encodable, Equatable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encodeIfPresent(id, forKey: .id)
-        try container.encode(restaurantKey, forKey: .restaurantKey)
         try container.encode(tableKey, forKey: .tableKey)
         try container.encode(label, forKey: .label)
         try container.encode(x, forKey: .x)
@@ -161,6 +161,24 @@ struct RestaurantTablesPutRequestDTO: Encodable, Equatable {
     }
 }
 
+// MARK: - Host Intelligence bridge
+
+extension RestaurantTableDTO {
+    /// Approximate mapping to RestaurantTableConfig for use by HostIntelligenceEngine.
+    /// Uses maxCapacity as the single-capacity value. Boolean preference flags default
+    /// to false since the backend DTO does not carry them; the engine will still
+    /// compute valid fit options from capacity ranges.
+    func asRestaurantTableConfig() -> RestaurantTableConfig {
+        RestaurantTableConfig(
+            name: label,
+            capacity: maxCapacity,
+            section: section ?? "",
+            isActive: isActive,
+            sortOrder: sortOrder
+        )
+    }
+}
+
 // MARK: - Assignments
 
 struct TableAssignmentDTO: Codable, Equatable {
@@ -174,6 +192,9 @@ struct TableAssignmentDTO: Codable, Equatable {
 
 struct PatchReservationTablesRequest: Encodable, Equatable {
     let tableKeys: [String]
+    /// Optimistic concurrency guard (row_version = updated_at ?? created_at).
+    /// Omitted from the JSON body when nil so the server treats it as unguarded.
+    var expectedUpdatedAt: String? = nil
 }
 
 struct FloorPlanPatchDataDTO: Decodable, Equatable {

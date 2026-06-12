@@ -19,6 +19,14 @@ struct IntelligenceSystemStatusDTO: Decodable, Equatable {
     let developerSummary: IntelligenceDeveloperSummaryDTO
     let checks: [IntelligenceSystemCheckDTO]
     let warnings: [String]
+    /// Top-level staff-readable summary message (manager_message from backend).
+    let managerMessage: String?
+    /// Top-level developer diagnostic message (developer_message from backend).
+    let developerMessage: String?
+    /// Generic pipeline items array for flexible developer diagnostics display.
+    let items: [IntelligenceDiagnosticsItemDTO]
+    /// Metadata about the items array (counts, timestamps, pipeline state).
+    let itemsMeta: [String: String]
 
     enum CodingKeys: String, CodingKey {
         case contractVersion
@@ -30,6 +38,10 @@ struct IntelligenceSystemStatusDTO: Decodable, Equatable {
         case developerSummary
         case checks
         case warnings
+        case managerMessage
+        case developerMessage
+        case items
+        case itemsMeta
     }
 
     init(from decoder: Decoder) throws {
@@ -47,6 +59,37 @@ struct IntelligenceSystemStatusDTO: Decodable, Equatable {
             ?? IntelligenceDeveloperSummaryDTO()
         checks = try container.decodeIfPresent([IntelligenceSystemCheckDTO].self, forKey: .checks) ?? []
         warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
+        managerMessage = try container.decodeIfPresent(String.self, forKey: .managerMessage)
+        developerMessage = try container.decodeIfPresent(String.self, forKey: .developerMessage)
+        items = try container.decodeIfPresent([IntelligenceDiagnosticsItemDTO].self, forKey: .items) ?? []
+        itemsMeta = try container.decodeIfPresent([String: String].self, forKey: .itemsMeta) ?? [:]
+    }
+}
+
+// MARK: - Diagnostics Item
+
+struct IntelligenceDiagnosticsItemDTO: Decodable, Equatable, Identifiable {
+    let key: String
+    let label: String?
+    let value: String?
+    let severity: IntelligenceSystemCheckSeverityDTO?
+
+    var id: String { key }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decodeIfPresent(String.self, forKey: .key) ?? "unknown"
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        value = try container.decodeIfPresent(String.self, forKey: .value)
+            ?? container.decodeFlexibleIntIfPresent(forKey: .value).map(String.init)
+        severity = try container.decodeIfPresent(IntelligenceSystemCheckSeverityDTO.self, forKey: .severity)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case key
+        case label
+        case value
+        case severity
     }
 }
 
@@ -189,6 +232,17 @@ struct IntelligenceDeveloperSummaryDTO: Decodable, Equatable {
     let spamOrRejectedSubmissionCount: Int?
     let lastManagedUpdateAt: String?
     let lastGeneratedAt: String?
+    // Pipeline diagnostics fields (backend may omit these on older responses).
+    let flamingoInboundTotal: Int?
+    let reservationIntakeTotal: Int?
+    let managedActive: Int?
+    let managedHidden: Int?
+    let managedTerminal: Int?
+    let failedImports: Int?
+    let duplicateImports: Int?
+    /// Backend may return as manual_rows_without_flamingo_source or manual_without_source.
+    let manualRowsWithoutFlamingoSource: Int?
+    let unexplainedMissing: Int?
 
     init(
         managedRowsInRange: Int? = nil,
@@ -200,7 +254,16 @@ struct IntelligenceDeveloperSummaryDTO: Decodable, Equatable {
         importFailureCount: Int? = nil,
         spamOrRejectedSubmissionCount: Int? = nil,
         lastManagedUpdateAt: String? = nil,
-        lastGeneratedAt: String? = nil
+        lastGeneratedAt: String? = nil,
+        flamingoInboundTotal: Int? = nil,
+        reservationIntakeTotal: Int? = nil,
+        managedActive: Int? = nil,
+        managedHidden: Int? = nil,
+        managedTerminal: Int? = nil,
+        failedImports: Int? = nil,
+        duplicateImports: Int? = nil,
+        manualRowsWithoutFlamingoSource: Int? = nil,
+        unexplainedMissing: Int? = nil
     ) {
         self.managedRowsInRange = managedRowsInRange
         self.formSourceRowsInRange = formSourceRowsInRange
@@ -212,6 +275,15 @@ struct IntelligenceDeveloperSummaryDTO: Decodable, Equatable {
         self.spamOrRejectedSubmissionCount = spamOrRejectedSubmissionCount
         self.lastManagedUpdateAt = lastManagedUpdateAt
         self.lastGeneratedAt = lastGeneratedAt
+        self.flamingoInboundTotal = flamingoInboundTotal
+        self.reservationIntakeTotal = reservationIntakeTotal
+        self.managedActive = managedActive
+        self.managedHidden = managedHidden
+        self.managedTerminal = managedTerminal
+        self.failedImports = failedImports
+        self.duplicateImports = duplicateImports
+        self.manualRowsWithoutFlamingoSource = manualRowsWithoutFlamingoSource
+        self.unexplainedMissing = unexplainedMissing
     }
 
     init(from decoder: Decoder) throws {
@@ -226,6 +298,18 @@ struct IntelligenceDeveloperSummaryDTO: Decodable, Equatable {
         spamOrRejectedSubmissionCount = try container.decodeFlexibleIntIfPresent(forKey: .spamOrRejectedSubmissionCount)
         lastManagedUpdateAt = try container.decodeIfPresent(String.self, forKey: .lastManagedUpdateAt)
         lastGeneratedAt = try container.decodeIfPresent(String.self, forKey: .lastGeneratedAt)
+        flamingoInboundTotal = try container.decodeFlexibleIntIfPresent(forKey: .flamingoInboundTotal)
+        reservationIntakeTotal = try container.decodeFlexibleIntIfPresent(forKey: .reservationIntakeTotal)
+        managedActive = try container.decodeFlexibleIntIfPresent(forKey: .managedActive)
+        managedHidden = try container.decodeFlexibleIntIfPresent(forKey: .managedHidden)
+        managedTerminal = try container.decodeFlexibleIntIfPresent(forKey: .managedTerminal)
+        failedImports = try container.decodeFlexibleIntIfPresent(forKey: .failedImports)
+        duplicateImports = try container.decodeFlexibleIntIfPresent(forKey: .duplicateImports)
+        // Accept both backend key aliases.
+        manualRowsWithoutFlamingoSource =
+            try container.decodeFlexibleIntIfPresent(forKey: .manualRowsWithoutFlamingoSource)
+            ?? container.decodeFlexibleIntIfPresent(forKey: .manualWithoutSource)
+        unexplainedMissing = try container.decodeFlexibleIntIfPresent(forKey: .unexplainedMissing)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -239,5 +323,15 @@ struct IntelligenceDeveloperSummaryDTO: Decodable, Equatable {
         case spamOrRejectedSubmissionCount
         case lastManagedUpdateAt
         case lastGeneratedAt
+        case flamingoInboundTotal
+        case reservationIntakeTotal
+        case managedActive
+        case managedHidden
+        case managedTerminal
+        case failedImports
+        case duplicateImports
+        case manualRowsWithoutFlamingoSource
+        case manualWithoutSource
+        case unexplainedMissing
     }
 }

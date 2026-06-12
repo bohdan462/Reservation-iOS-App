@@ -220,9 +220,9 @@ enum HostReservationSlotContextSupport {
 
     let largestSeat = activeTables.map(\.capacity).max() ?? 0
     if partySize > largestSeat {
-      return "Your party may need a combined table plan."
+      return "Your party may need a combined floor plan."
     }
-    return "Table planning may be needed for this party size."
+    return "Floor plan may be needed for this party size."
   }
 
   private static func suggestAlternateTime(

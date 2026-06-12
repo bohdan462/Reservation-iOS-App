@@ -763,13 +763,15 @@ struct RestaurantSettingsView: View {
                 }
 
                 SettingsCard(title: "Import table capacity text", systemImage: "person.2.badge.gearshape") {
+                    SettingsHelperText("Use Floor Plan → Edit Layout to manage the real table inventory. This text import is a legacy fallback and does not support conflict checking. Format: Name: Capacity — one per line. Example: Bar: 4")
+                        .foregroundStyle(.secondary)
                     SettingsTextEditor(
                         title: "Quick table setup",
                         text: $tableCapacityRawValue,
                         placeholder: HostTableCapacityTextParser.formattedExample(),
                         minHeight: 92
                     )
-                    SettingsHelperText("Imports into the structured table inventory (canonical local source). Host Intelligence and Assign Table chips use that inventory. Example: A1:4, A2: 4, Patio: 6. Edit details in Host Intelligence → Manage Table Inventory.")
+                    SettingsHelperText("Each line must be Name: Capacity or Name Capacity. Bare names like 'Bar' without a number will be rejected. Edit the real table inventory in Floor Plan → Edit Layout.")
                     if let tableCapacityValidationMessage {
                         Text(tableCapacityValidationMessage)
                             .font(.caption.weight(.medium))
@@ -1243,6 +1245,9 @@ struct WeeklyHoursView: View {
 
 struct BlockedTimeSlotsView: View {
     @ObservedObject var settingsStore: RestaurantSettingsStore
+    /// When provided (from booking load suggestions), this slot value is
+    /// pre-selected in the Available Public Slots grid on first appear.
+    var preselectedSlotValue: String?
 
     @State private var selectedDate = Date()
     @State private var selectedAvailableSlotValues: Set<String> = []
@@ -1378,6 +1383,9 @@ struct BlockedTimeSlotsView: View {
         }
         .onAppear {
             requestDateOperations()
+            if let slot = preselectedSlotValue, !slot.isEmpty {
+                selectedAvailableSlotValues = [slot]
+            }
         }
         .onChange(of: dateKey) { _, _ in
             requestDateOperations()

@@ -34,21 +34,21 @@ enum HostOperationalFutureTablePlanningSupport {
       severity: .warning,
       category: .table,
       title: "\(reservationCount) reservations still need tables.",
-      detail: "Review table plan before service.",
+      detail: "Assign floor plan tables before service.",
       evidence: [
         "reservationCount=\(reservationCount)",
         "guestCount=\(guestCount)",
         "selectedDate=\(dateKey)"
       ],
       relatedReservationIDs: needingTables.map(\.remoteID),
-      suggestedActionTitle: "Review table plan before service."
+      suggestedActionTitle: "Assign floor plan tables before service."
     )
 
     let action = HostSuggestedAction(
       id: "future-table-plan-\(dateKey)",
       severity: .warning,
       kind: .assignTable,
-      title: "Review table plan for \(dateLabel)",
+      title: "Review floor plan for \(dateLabel)",
       reason: "\(reservationCount) reservations · \(guestCount) guests without tables",
       relatedReservationIDs: needingTables.map(\.remoteID),
       targetSlotTime: nil,

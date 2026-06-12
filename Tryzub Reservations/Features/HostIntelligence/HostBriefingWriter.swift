@@ -1113,8 +1113,9 @@ enum HostBriefingHostBoardGate {
     #if DEBUG
     let categories = operationalCategories(for: packet)
     let categoryTrace = categories.map(\.traceLabel).sorted().joined(separator: ",")
+    let categorySuffix = categoryTrace.isEmpty ? "" : " categories=\(categoryTrace)"
     print(
-      "[HOST_AI_GATE] surface=hostBoard allowed=\(allowed) reason=\(reason) enrichmentLoading=\(enrichmentLoading)"
+      "[HOST_AI_GATE] surface=hostBoard allowed=\(allowed) reason=\(reason)\(categorySuffix) enrichmentLoading=\(enrichmentLoading)"
     )
     if !categoryTrace.isEmpty {
       print(

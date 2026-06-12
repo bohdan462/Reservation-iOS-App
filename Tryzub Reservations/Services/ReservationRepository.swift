@@ -30,6 +30,7 @@ protocol ReservationRepositoryProtocol {
     func upsertYielding(_ reservations: [ReservationDTO]) async throws -> ReservationUpsertStats
     func replaceReviewQueue(with reservations: [ReservationDTO]) throws
     func deleteReservation(remoteID: Int) throws
+    func rowVersion(forRemoteID remoteID: Int) -> String?
 }
 
 @MainActor
@@ -68,11 +69,13 @@ final class ReservationRepository: ReservationRepositoryProtocol {
         let existingRecords = try records(remoteIDs: reservations.map(\.id))
         let upsertStarted = ContinuousClock.now
         let stats = upsertWithStats(reservations, into: existingRecords)
+        let upsertMs = upsertStarted.duration(to: .now).pressureTraceTimeInterval * 1000
         UIPressureTrace.phase(
             "repository_upsert",
             duration: upsertStarted.duration(to: .now).pressureTraceTimeInterval,
             extra: "rows=\(reservations.count) changed=\(stats.written)"
         )
+        SwiftDataTrace.upsert(rows: reservations.count, changed: stats.written, durationMs: upsertMs)
         guard stats.written > 0 else { return }
 
         try measuredContextSave(changed: stats.written)
@@ -194,6 +197,19 @@ final class ReservationRepository: ReservationRepositoryProtocol {
             afterCount: afterCount,
             removedIDs: []
         )
+    }
+
+    // Intent: Reads the cached row version (server updated_at ?? created_at) for an
+    // optimistic-concurrency expected_updated_at guard. Returns nil when the row is
+    // not cached so the caller omits the field rather than inventing a timestamp.
+    func rowVersion(forRemoteID remoteID: Int) -> String? {
+        var descriptor = FetchDescriptor<ReservationRecord>(
+            predicate: #Predicate { record in
+                record.remoteID == remoteID
+            }
+        )
+        descriptor.fetchLimit = 1
+        return (try? context.fetch(descriptor))?.first?.rowVersion
     }
 
     // Intent: Removes a row from the local cache after an admin/developer hard-delete succeeds on the server.
@@ -335,12 +351,15 @@ final class ReservationRepository: ReservationRepositoryProtocol {
     }
 
     private func measuredContextSave(changed: Int) throws {
+        let saveStarted = ContinuousClock.now
         try UIPressureTrace.measure(
             phase: "context_save",
             extra: "changed=\(changed)"
         ) {
             try context.save()
         }
+        let saveMs = saveStarted.duration(to: .now).pressureTraceTimeInterval * 1000
+        SwiftDataTrace.save(changed: changed, durationMs: saveMs)
     }
 }
 
@@ -419,6 +438,11 @@ enum ReservationSyncDiagnostics {
     static func cacheUpsertFinished(scope: String, written: Int, skipped: Int, removed: Int) {
         guard isEnabled else { return }
         emit("[CACHE] upsert finished scope=\(scope) written=\(written) skipped=\(skipped) removed=\(removed)")
+        // A no-op refresh writes/removes nothing. SwiftData @Query observers only fire on
+        // an actual context change, so no semantic publish should follow. This trace lets
+        // device proof confirm Host did not rebuild to 0 reservations on a no-op refresh.
+        let publishSemanticChange = (written > 0 || removed > 0)
+        emit("[NOOP_REFRESH_TRACE] scope=\(scope) rows=\(written + skipped) written=\(written) skipped=\(skipped) removed=\(removed) publishSemanticChange=\(publishSemanticChange)")
     }
 
     static func historyPrefetchStarted() {

@@ -70,6 +70,55 @@ class ReservationRecord: Identifiable {
         self.updatedAt = nil
     }
 
+    #if DEBUG
+    /// In-memory fixture for deterministic proof harnesses (not inserted into a context).
+    init(
+        fixtureRemoteID: Int,
+        reservationDate: String,
+        reservationTime: String,
+        partySize: Int,
+        status: ReservationStatus,
+        tableName: String? = nil
+    ) {
+        self.id = UUID()
+        self.remoteID = fixtureRemoteID
+        self.sourceSubmissionID = 0
+        self.guestName = "Fixture"
+        self.email = ""
+        self.phone = ""
+        self.reservationDate = reservationDate
+        self.reservationTime = reservationTime
+        self.partySize = partySize
+        self.status = status.rawValue
+        self.guestNotes = nil
+        self.tableName = tableName
+        self.staffNotes = nil
+        self.createdAt = ""
+        self.apiUpdatedAt = nil
+        self.confirmedAt = nil
+        self.confirmationEmailSentAt = nil
+        self.reminderEmailSentAt = nil
+        self.supersededById = nil
+        self.sourceType = nil
+        self.createdByUserId = nil
+        self.createdByDevice = nil
+        self.isHidden = false
+        self.hiddenAt = nil
+        self.hiddenReason = nil
+        self.hiddenByUserId = nil
+        self.lastSyncedAt = Date()
+        self.updatedAt = nil
+    }
+    #endif
+
+    /// Canonical row version for optimistic mutation guards (sent as expected_updated_at).
+    /// Matches backend rule: row_version = updated_at ?? created_at.
+    /// `apiUpdatedAt` is the server `updated_at`; `updatedAt` is a local SwiftData stamp
+    /// and must not be used as a server version.
+    var rowVersion: String {
+        apiUpdatedAt ?? createdAt
+    }
+
     /// True when cached row already matches the server payload (skip rewrite).
     func isContentEquivalent(to dto: ReservationDTO) -> Bool {
         remoteID == dto.id

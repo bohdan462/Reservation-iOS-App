@@ -10,6 +10,10 @@ enum FloorPlanError: Error, Equatable {
     case network(Error)
     case decoding(Error)
     case serverMessage(String)
+    /// A backend validation rejection that carries the WordPress error code and HTTP
+    /// status so the developer trace can show the exact reason (e.g. unknown field,
+    /// overlap, capacity) while staff copy stays simple.
+    case serverValidation(code: String, status: Int, message: String)
 
     static func == (lhs: FloorPlanError, rhs: FloorPlanError) -> Bool {
         switch (lhs, rhs) {
@@ -17,6 +21,8 @@ enum FloorPlanError: Error, Equatable {
             return left == right
         case let (.serverMessage(left), .serverMessage(right)):
             return left == right
+        case let (.serverValidation(lCode, lStatus, lMessage), .serverValidation(rCode, rStatus, rMessage)):
+            return lCode == rCode && lStatus == rStatus && lMessage == rMessage
         case (.network, .network), (.decoding, .decoding):
             return true
         default:
@@ -35,6 +41,8 @@ extension FloorPlanError: LocalizedError {
         case let .decoding(error):
             return error.localizedDescription
         case let .serverMessage(message):
+            return message
+        case let .serverValidation(_, _, message):
             return message
         }
     }

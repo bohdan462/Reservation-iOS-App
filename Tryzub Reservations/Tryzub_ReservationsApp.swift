@@ -20,7 +20,9 @@ struct Tryzub_ReservationsApp: App {
     init() {
         do {
             try PersistenceDirectoryBootstrap.ensureApplicationSupportDirectoryExists()
-            modelContainer = try ModelContainer(for: ReservationRecord.self)
+            modelContainer = try ModelContainer(
+                for: ReservationRecord.self, ReservationAttachmentRecord.self, ReservationStructuredNoteRecord.self
+            )
         } catch {
             #if DEBUG
             print("[PERSISTENCE] ModelContainer creation failed: \(error)")

@@ -272,6 +272,13 @@ extension ReservationDTO {
     var reservationSortKey: String {
         "\(reservationDate) \(reservationTime)"
     }
+
+    /// Canonical row version for optimistic mutation guards.
+    /// Matches backend rule: row_version = updated_at ?? created_at.
+    /// Use as expected_updated_at on PATCH/DELETE/confirm/tables mutations.
+    var rowVersion: String {
+        updatedAt ?? createdAt
+    }
 }
 
 struct ReservationUpdateRequest: Encodable {
@@ -288,6 +295,10 @@ struct ReservationUpdateRequest: Encodable {
     var supersededById: Int? = nil
     var isHidden: Bool? = nil
     var hiddenReason: String? = nil
+    /// Optimistic concurrency guard. Pass rowVersion from the cached ReservationDTO
+    /// so the server can reject mutations against a stale row.
+    /// Omit (nil) when the caller does not have a known version.
+    var expectedUpdatedAt: String? = nil
 }
 
 struct ReservationCreateRequest: Encodable {

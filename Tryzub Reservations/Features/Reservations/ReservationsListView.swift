@@ -1270,6 +1270,10 @@ private struct ReservationMoreView: View {
                 }
 
                 Section("Business") {
+                    NavigationLink(value: ReservationMoreDestination.serviceIntelligence) {
+                        Label("Service Intelligence", systemImage: "sparkles")
+                    }
+
                     if controller.capabilities.canViewAnalytics {
                         NavigationLink(value: ReservationMoreDestination.businessAnalytics) {
                             Label("Business Analytics", systemImage: "chart.bar")
@@ -1374,6 +1378,8 @@ private struct ReservationMoreView: View {
             WeeklyHoursView(settingsStore: settingsStore)
         case .blockedTimeSlots:
             BlockedTimeSlotsView(settingsStore: settingsStore)
+        case .serviceIntelligence:
+            GlobalServiceIntelligenceView(environment: environment)
         case .businessAnalytics:
             BusinessAnalyticsView(settingsStore: settingsStore)
         case .regularGuests:
@@ -1405,6 +1411,7 @@ private enum ReservationMoreDestination: Hashable {
     case todayAvailability
     case weeklyHours
     case blockedTimeSlots
+    case serviceIntelligence
     case businessAnalytics
     case regularGuests
     case hostIntelligenceSettings
@@ -1949,6 +1956,7 @@ private extension String {
 private struct ReservationNavigationRow: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var floorPlanStore: FloorPlanStore
 
     let reservation: ReservationRecord
     let environment: AppEnvironment
@@ -2135,9 +2143,11 @@ private struct ReservationNavigationRow: View {
         }
         .sheet(item: $tableAssignmentReservation) { reservation in
             TableAssignmentSheet(reservation: reservation) { tableName in
-                _ = try await controller.updateReservation(
-                    id: reservation.remoteID,
-                    request: ReservationUpdateRequest(tableName: tableName),
+                await TableAssignmentCoordinator.assign(
+                    reservationID: reservation.remoteID,
+                    tableName: tableName,
+                    floorPlanStore: floorPlanStore,
+                    controller: controller,
                     context: modelContext
                 )
                 if seatAfterTableAssignment {

@@ -69,6 +69,12 @@ final class ReservationsController: ObservableObject {
         didSet { refreshHomeServicePresentation() }
     }
 
+    /// Shared app-wide freshness authority (owned by AppReservationSession). The
+    /// controller keeps its proven scope-state machine as the executor and mirrors its
+    /// active-window decisions here so all surfaces read one [FRESHNESS_COORDINATOR] log
+    /// and Phase 6 surfaces can consult a single source of truth.
+    var freshnessCoordinator: FreshnessCoordinator?
+
     @Published private(set) var startupBackgroundWorkState: StartupBackgroundWorkState = .idle {
         didSet {
             #if DEBUG
@@ -160,6 +166,11 @@ final class ReservationsController: ObservableObject {
     // MARK: - Refresh Timing
 
     private let autoRefreshInterval: TimeInterval = 60
+    /// TTL for IDLE automatic active-window refresh. The 60s `autoRefreshInterval` only
+    /// throttles how often we *evaluate*; freshness must be judged against a much longer
+    /// window so a successful startup delta is not re-fetched ~60s later while idle.
+    /// Manual refresh, mutation reconcile, and window/date change bypass this.
+    private let activeWindowAutoRefreshTTL: TimeInterval = 300
     private let autoRefreshFailureCooldown: TimeInterval = 180
     private let historyPrefetchStabilizationDelay: TimeInterval = 25
     private let historyPrefetchDateNavigationCooldown: TimeInterval = 5
@@ -442,6 +453,13 @@ final class ReservationsController: ObservableObject {
         switch policy {
         case .skip:
             noteFreshnessChecked(reason: "fresh_cache")
+            // Anchor the active-window freshness clock to this startup confirmation
+            // (session-only; not persisted). Without this, the TTL keeps counting from
+            // the stale persisted lastSuccessAt, so a Bookings/schedule activation a few
+            // minutes after launch full-fetched even though startup just confirmed fresh.
+            markScopeRecentlyTouched(scope)
+            recordActiveWindowFreshness(.useCache(reason: "startup_cache_fresh"))
+            freshnessCoordinator?.markCacheHit(freshnessActiveWindowScope())
             recordRefreshDecision(scope: scope, mode: .startup, outcome: "skipped_fresh")
             StartupTrace.activeWindow(
                 controllerID: controllerInstanceID,
@@ -661,6 +679,7 @@ final class ReservationsController: ObservableObject {
 
     func noteHostBoardSelectedDate(_ dateKey: String) {
         if hostBoardSelectedDateKey != dateKey {
+            DateSwitchTrace.begin(from: hostBoardSelectedDateKey, to: dateKey)
             hostBoardDateNavigationAt = Date()
         }
         hostBoardSelectedDateKey = dateKey
@@ -1119,6 +1138,7 @@ final class ReservationsController: ObservableObject {
             return
         }
         guard !isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) else {
+            recordActiveWindowFreshness(.useCache(reason: "fresh_schedule_activation"))
             recordRefreshDecision(scope: scope, mode: .schedule, outcome: "skipped_fresh")
             ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "\(scope.description) schedule activation skipped because cache is fresh")
             return
@@ -1352,6 +1372,39 @@ final class ReservationsController: ObservableObject {
             return
         }
 
+        // Respect active-window freshness against the long IDLE TTL (300s), NOT the 60s
+        // evaluation throttle. A fresh-cache launch or a recent successful startup delta
+        // must not trigger another automatic delta until the TTL expires; this is what
+        // previously caused "use_cache reason=startup_cache_fresh" to be followed ~60s
+        // later by "fetch reason=stale_automatic". Manual pull-to-refresh, mutation
+        // reconcile, and window/date change all bypass this gate (they don't run here).
+        let elapsedSinceSuccess = syncStateByScope[scope]?.lastSuccessAt
+            .map { now.timeIntervalSince($0) }
+        if isScopeFresh(scope, freshnessInterval: activeWindowAutoRefreshTTL) {
+            recordActiveWindowFreshness(.useCache(reason: "fresh_automatic"))
+            recordRefreshDecision(scope: scope, mode: .automatic, outcome: "skipped_fresh")
+            ActiveWindowFreshnessTrace.autoCheck(
+                source: "autoRefreshDashboard",
+                decision: "skip",
+                reason: "recent_success",
+                elapsed: elapsedSinceSuccess,
+                ttl: activeWindowAutoRefreshTTL
+            )
+            ReservationAPILogger.skip(
+                reason: .scopeSkipFresh,
+                message: "\(scope.description) auto refresh skipped because cache is fresh"
+            )
+            return
+        }
+
+        ActiveWindowFreshnessTrace.autoCheck(
+            source: "autoRefreshDashboard",
+            decision: "fetch",
+            reason: "ttl_expired",
+            elapsed: elapsedSinceSuccess,
+            ttl: activeWindowAutoRefreshTTL
+        )
+
         lastAutoRefreshAttemptAt = now
 
         let didRefresh = await performActiveWindowRefresh(context: context, mode: .automatic, force: false)
@@ -1478,6 +1531,7 @@ final class ReservationsController: ObservableObject {
         if !force,
            mode != .automatic,
            isScopeFresh(scope, freshnessInterval: mode == .review ? reviewFreshnessInterval : scheduleFreshnessInterval) {
+            recordActiveWindowFreshness(.useCache(reason: "scope_fresh_\(mode)"))
             recordRefreshDecision(scope: scope, mode: mode, outcome: "skipped_fresh")
             StartupTrace.activeWindow(
                 controllerID: controllerInstanceID,
@@ -1496,6 +1550,7 @@ final class ReservationsController: ObservableObject {
         }
 
         guard beginScope(scope, intent: mode.syncIntent) else {
+            recordActiveWindowFreshness(.joinInFlight(reason: "scope_in_flight"))
             recordRefreshDecision(scope: scope, mode: mode, outcome: "skipped_in_flight")
             StartupTrace.activeWindow(
                 controllerID: controllerInstanceID,
@@ -1520,6 +1575,10 @@ final class ReservationsController: ObservableObject {
             isSyncing = true
         }
         clearScopedMessages(for: mode.noticeSource)
+
+        recordActiveWindowFreshness(.fetch(reason: force ? "forced_\(mode)" : "stale_\(mode)"))
+        let freshnessScope = freshnessActiveWindowScope()
+        freshnessCoordinator?.markInFlight(freshnessScope)
 
         do {
             let repository = ReservationRepository(context: context)
@@ -1603,7 +1662,14 @@ final class ReservationsController: ObservableObject {
             updateServerCursor(for: scope, with: result.serverTime)
             noteReservationServerSyncCompleted()
             markScopeSuccess(scope)
+            freshnessCoordinator?.markCompleted(freshnessScope)
             persistActiveWindowBoundsIfNeeded(scope: scope, window: window)
+            ActiveWindowFreshnessTrace.markSuccess(
+                source: allowStartupDelta ? "startup_delta" : String(describing: mode),
+                scope: scope.description,
+                cursorSaved: serverCursor(for: scope) != nil,
+                autoFreshUntil: Date().addingTimeInterval(activeWindowAutoRefreshTTL)
+            )
             StartupPolicyTrace.persisted(
                 scope: scope.persistenceKey,
                 cursorSaved: serverCursor(for: scope) != nil,
@@ -1624,6 +1690,7 @@ final class ReservationsController: ObservableObject {
         } catch {
             if error.isCancellationLike {
                 markScopeCancelled(scope)
+                freshnessCoordinator?.markFailed(freshnessScope, cooldown: 0)
                 if mode == .automatic {
                     isAutoRefreshing = false
                 } else if showsGlobalProgress {
@@ -1636,6 +1703,7 @@ final class ReservationsController: ObservableObject {
                 lastAutoRefreshFailureAt = Date()
             }
             markScopeFailure(scope, cooldown: mode == .automatic || mode == .startup ? autoRefreshFailureCooldown : nil)
+            freshnessCoordinator?.markFailed(freshnessScope)
             recordRefreshDecision(scope: scope, mode: mode, outcome: error.isOfflineLike ? "failed_offline" : "failed")
             if mode != .automatic {
                 postRefreshFailureNotice(mode: mode, error: error)
@@ -2281,18 +2349,24 @@ final class ReservationsController: ObservableObject {
     }
 
     func ensureAvailabilitySummary(date: String, force: Bool = false) {
+        let bundleScope = FreshnessScope.availabilityBundle(date: date)
+
         if !force,
            let summary = availabilitySummaryByDate[date],
            Date().timeIntervalSince(summary.loadedAt) < availabilitySummaryFreshnessInterval {
+            freshnessCoordinator?.record(scope: bundleScope, decision: .useCache(reason: "fresh"))
             ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "availability_summary(\(date)) skipped because cache is fresh")
             return
         }
 
         if availabilitySummaryTasksByDate[date] != nil {
+            freshnessCoordinator?.record(scope: bundleScope, decision: .joinInFlight(reason: "in_flight"))
             ReservationAPILogger.skip(reason: .scopeSkipInFlight, message: "availability_summary(\(date)) skipped because request is already in flight")
             return
         }
 
+        freshnessCoordinator?.record(scope: bundleScope, decision: .fetch(reason: force ? "forced" : "host_visible_stale"))
+        freshnessCoordinator?.markInFlight(bundleScope)
         availabilitySummaryLoadingDates.insert(date)
         availabilitySummaryErrorsByDate[date] = nil
         let task = Task { [weak self] in
@@ -2321,13 +2395,22 @@ final class ReservationsController: ObservableObject {
     }
 
     private func loadAvailabilitySummary(date: String) async {
+        let bundleScope = FreshnessScope.availabilityBundle(date: date)
         defer {
             availabilitySummaryLoadingDates.remove(date)
             availabilitySummaryTasksByDate[date] = nil
+            // Guarantee the coordinator never leaks an in-flight marker. On success the
+            // scope was already marked completed (fresh); this is a no-op there.
+            freshnessCoordinator?.endInFlight(bundleScope)
             refreshHomeServicePresentation()
         }
 
         let started = ContinuousClock.now
+        DateSwitchTrace.availabilityStart(date: date)
+        // Availability completion only touches @Published in-memory dictionaries on the
+        // MainActor; it never opens or reads a SwiftData ModelContext. This trace pins
+        // that fact so the unsafeForcedSync warning can be excluded from this path.
+        DateSwitchTrace.concurrency(context: "availability_completion", modelContextUsed: false)
 
         do {
             // Serialize availability reads so they do not race the active-window sync.
@@ -2366,7 +2449,9 @@ final class ReservationsController: ObservableObject {
                 loadedAt: Date()
             )
             availabilitySummaryErrorsByDate[date] = nil
+            freshnessCoordinator?.markCompleted(bundleScope)
             let durationMs = Int(started.duration(to: .now).pressureTraceTimeInterval * 1000)
+            DateSwitchTrace.availabilityPublish(date: date, durationMs: durationMs)
             DateLoadTrace.completed(date: date, type: "availability", durationMs: durationMs)
         } catch {
             if error.isCancellationLike {
@@ -2377,6 +2462,7 @@ final class ReservationsController: ObservableObject {
                 DateLoadTrace.ignoredResponse(date: date, reason: "not_selected")
                 return
             }
+            freshnessCoordinator?.markFailed(bundleScope, cooldown: 15)
             availabilitySummaryErrorsByDate[date] = error.isOfflineLike
                 ? "Offline. Availability preview may be stale."
                 : "Could not refresh availability preview."
@@ -2519,7 +2605,8 @@ final class ReservationsController: ObservableObject {
     func updateReservation(
         id: Int,
         request: ReservationUpdateRequest,
-        context: ModelContext
+        context: ModelContext,
+        action: String = "edit"
     ) async throws -> ReservationDTO {
         try ensureMutationsAllowedOnline()
 
@@ -2533,6 +2620,18 @@ final class ReservationsController: ObservableObject {
         let repository = ReservationRepository(context: context)
         let service = ReservationMutationService(client: environment.apiClient, repository: repository)
 
+        // Optimistic concurrency: attach the cached row version as expected_updated_at
+        // when the caller did not already supply one. Omitted when the row is uncached.
+        var request = request
+        if request.expectedUpdatedAt == nil {
+            request.expectedUpdatedAt = repository.rowVersion(forRemoteID: id)
+        }
+        MutationVersionTrace.log(
+            action: action,
+            reservationID: id,
+            expectedUpdatedAt: request.expectedUpdatedAt
+        )
+
         do {
             let reservation = try await service.updateReservation(id: id, request: request)
             markScopesTouched(after: reservation)
@@ -2545,6 +2644,19 @@ final class ReservationsController: ObservableObject {
 
             if error.isOfflineLike {
                 postOfflineNotice(source: .mutation, requestReason: .mutationPatch, error: error)
+            }
+
+            // Staff-safe reconcile: 404 (already gone) and 409 (already changed /
+            // invalid transition) refresh server truth instead of showing a misleading
+            // "could not update". Uncertain network falls through to the block below.
+            if await applyMutationReconcilePolicy(
+                error: error,
+                action: action,
+                id: id,
+                reservationDate: nil,
+                context: context
+            ) {
+                throw error
             }
 
             if error.mayHaveReachedReservationServer {
@@ -2599,7 +2711,8 @@ final class ReservationsController: ObservableObject {
             let updated = try await updateReservation(
                 id: reservation.remoteID,
                 request: ReservationUpdateRequest(status: status),
-                context: context
+                context: context,
+                action: "status"
             )
             updateLocalSeatedTimestamp(after: updated)
         } catch {
@@ -2839,6 +2952,16 @@ final class ReservationsController: ObservableObject {
                 postOfflineNotice(source: .mutation, requestReason: .mutationConfirm, error: error)
             }
 
+            if await applyMutationReconcilePolicy(
+                error: error,
+                action: "confirm",
+                id: id,
+                reservationDate: reservation.reservationDate,
+                context: context
+            ) {
+                return
+            }
+
             if error.mayHaveReachedReservationServer {
                 postNotice(
                     severity: .warning,
@@ -3044,8 +3167,22 @@ final class ReservationsController: ObservableObject {
                 message: cleanupReason
             )
         } catch {
+            if error.isCancellationLike {
+                throw error
+            }
             if error.isOfflineLike {
                 postOfflineNotice(source: .admin, requestReason: .hardDelete, error: error)
+            }
+            // 404 means another device already removed the row: treat as already gone,
+            // drop the local cache copy, and show staff-safe copy instead of "not deleted".
+            if await applyMutationReconcilePolicy(
+                error: error,
+                action: "delete",
+                id: id,
+                reservationDate: reservationDate,
+                context: context
+            ) {
+                return
             }
             postNotice(
                 severity: .error,
@@ -3082,9 +3219,14 @@ final class ReservationsController: ObservableObject {
         do {
             let repository = ReservationRepository(context: context)
             let service = ReservationMutationService(client: environment.apiClient, repository: repository)
+            MutationVersionTrace.log(action: "hide", reservationID: id, expectedUpdatedAt: reservation.rowVersion)
             let hiddenReservation = try await service.updateReservation(
                 id: id,
-                request: ReservationUpdateRequest(isHidden: true, hiddenReason: hiddenReason)
+                request: ReservationUpdateRequest(
+                    isHidden: true,
+                    hiddenReason: hiddenReason,
+                    expectedUpdatedAt: reservation.rowVersion
+                )
             )
             markScopesTouched(after: hiddenReservation)
             postNotice(
@@ -3095,8 +3237,20 @@ final class ReservationsController: ObservableObject {
             )
             return hiddenReservation
         } catch {
+            if error.isCancellationLike {
+                throw error
+            }
             if error.isOfflineLike {
                 postOfflineNotice(source: .mutation, requestReason: .mutationPatch, error: error)
+            }
+            if await applyMutationReconcilePolicy(
+                error: error,
+                action: "hide",
+                id: id,
+                reservationDate: reservation.reservationDate,
+                context: context
+            ) {
+                throw error
             }
             errorMessage = "Could not hide this entry. Please retry before relying on service lists."
             postMutationFailureNotice(
@@ -3127,16 +3281,32 @@ final class ReservationsController: ObservableObject {
         do {
             let repository = ReservationRepository(context: context)
             let service = ReservationMutationService(client: environment.apiClient, repository: repository)
+            MutationVersionTrace.log(action: "restore", reservationID: id, expectedUpdatedAt: reservation.rowVersion)
             let restoredReservation = try await service.updateReservation(
                 id: id,
-                request: ReservationUpdateRequest(isHidden: false)
+                request: ReservationUpdateRequest(
+                    isHidden: false,
+                    expectedUpdatedAt: reservation.rowVersion
+                )
             )
             markScopesTouched(after: restoredReservation)
             postNotice(severity: .success, source: .mutation, title: "Reservation restored")
             return restoredReservation
         } catch {
+            if error.isCancellationLike {
+                throw error
+            }
             if error.isOfflineLike {
                 postOfflineNotice(source: .mutation, requestReason: .mutationPatch, error: error)
+            }
+            if await applyMutationReconcilePolicy(
+                error: error,
+                action: "restore",
+                id: id,
+                reservationDate: reservation.reservationDate,
+                context: context
+            ) {
+                throw error
             }
             postMutationFailureNotice(
                 title: "Restore did not sync",
@@ -3261,6 +3431,88 @@ final class ReservationsController: ObservableObject {
         }
     }
 
+    // MARK: - Mutation Reconcile Policy Wiring
+
+    /// Classifies a failed mutation into a staff-safe outcome and, for server-truth
+    /// outcomes (already gone / already changed elsewhere), reconciles local cache and
+    /// posts staff-safe copy. Returns true when the failure was fully handled here so
+    /// the caller skips its generic "could not update" path.
+    ///
+    /// Emits [MUTATION_RECONCILE] via ReservationMutationReconcilePolicy.classify.
+    /// The `.uncertainNeedsReconcile` outcome intentionally returns false so callers
+    /// keep their existing uncertain-network reconcile flow.
+    @discardableResult
+    private func applyMutationReconcilePolicy(
+        error: Error,
+        action: String,
+        id: Int,
+        reservationDate: String?,
+        context: ModelContext
+    ) async -> Bool {
+        let outcome = ReservationMutationReconcilePolicy.classify(
+            error: error,
+            action: action,
+            reservationID: id
+        )
+
+        switch outcome {
+        case .alreadyGone:
+            removeLocalReservationAfterServerGone(
+                id: id,
+                reservationDate: reservationDate,
+                context: context
+            )
+            errorMessage = nil
+            postNotice(
+                severity: .warning,
+                source: .mutation,
+                title: "Reservation already gone",
+                message: MutationOutcome.copyAlreadyGone
+            )
+            return true
+
+        case .alreadyChanged, .invalidTransition:
+            _ = await reconcileReservation(id: id, context: context)
+            errorMessage = nil
+            postNotice(
+                severity: .warning,
+                source: .mutation,
+                title: "Reservation changed elsewhere",
+                message: MutationOutcome.copyAlreadyChanged
+            )
+            return true
+
+        case .uncertainNeedsReconcile, .tableConflict, .failedStaffSafe, .success:
+            // Uncertain network is handled by the caller's existing reconcile flow.
+            // Table conflict is surfaced by the Floor Plan path. Generic failures fall
+            // through to the caller's staff-safe failure notice.
+            return false
+        }
+    }
+
+    /// Cached row version (server updated_at ?? created_at) for an optimistic
+    /// expected_updated_at guard. Returns nil when the row is not cached.
+    func cachedReservationRowVersion(id: Int, context: ModelContext) -> String? {
+        ReservationRepository(context: context).rowVersion(forRemoteID: id)
+    }
+
+    /// Removes a locally cached reservation after the server confirms it is gone (404),
+    /// then marks affected scopes stale so the next read reflects server truth.
+    private func removeLocalReservationAfterServerGone(
+        id: Int,
+        reservationDate: String?,
+        context: ModelContext
+    ) {
+        let repository = ReservationRepository(context: context)
+        try? repository.deleteReservation(remoteID: id)
+        if let reservationDate {
+            markScopesTouched(afterDeletingReservationDate: reservationDate)
+        } else {
+            let window = activeWindow()
+            markScopeStale(.activeWindow(from: window.from, to: window.to))
+        }
+    }
+
     // MARK: - Notice Handling
 
     func clearErrorMessage() {
@@ -3348,7 +3600,19 @@ final class ReservationsController: ObservableObject {
                     to: window.to,
                     reason: .intelligenceSystemStatus
                 )
-                summary = "system status \(status.status), \(status.checks.count) checks"
+                var parts = ["status=\(status.status)", "\(status.checks.count) checks"]
+                if let msg = status.managerMessage { parts.append("mgr=\(msg.prefix(60))") }
+                if let msg = status.developerMessage { parts.append("dev=\(msg.prefix(60))") }
+                let ds = status.developerSummary
+                if let v = ds.flamingoInboundTotal { parts.append("flamingo=\(v)") }
+                if let v = ds.reservationIntakeTotal { parts.append("intake=\(v)") }
+                if let v = ds.failedImports { parts.append("failed_imports=\(v)") }
+                if let v = ds.duplicateImports { parts.append("dup_imports=\(v)") }
+                if let v = ds.manualRowsWithoutFlamingoSource { parts.append("manual_no_src=\(v)") }
+                if let v = ds.unexplainedMissing { parts.append("unexplained=\(v)") }
+                if !status.warnings.isEmpty { parts.append("warnings=\(status.warnings.count)") }
+                if !status.items.isEmpty { parts.append("items=\(status.items.count)") }
+                summary = parts.joined(separator: " | ")
             case .startupToday:
                 let response = try await environment.apiClient.fetchReservations(
                     page: 1,
@@ -3580,6 +3844,19 @@ final class ReservationsController: ObservableObject {
         return Date().timeIntervalSince(lastSuccessAt) < freshnessInterval
     }
 
+    /// Maps the current active-window reservation scope to the shared coordinator scope.
+    private func freshnessActiveWindowScope() -> FreshnessScope {
+        let window = activeWindow()
+        return .activeWindow(from: window.from, to: window.to)
+    }
+
+    /// Mirrors an active-window decision into the shared FreshnessCoordinator log so all
+    /// surfaces read one [FRESHNESS_COORDINATOR] vocabulary. No-op when no coordinator
+    /// is injected (e.g. unit tests / intro warmup).
+    private func recordActiveWindowFreshness(_ decision: FreshnessDecision) {
+        freshnessCoordinator?.record(scope: freshnessActiveWindowScope(), decision: decision)
+    }
+
     private func beginScope(_ scope: ReservationSyncScope, intent: ReservationSyncIntent? = nil) -> Bool {
         var state = syncStateByScope[scope] ?? SyncScopeState()
         if state.isInFlight {
@@ -3743,6 +4020,7 @@ final class ReservationsController: ObservableObject {
             homeServiceStatusPresentation = presentation
             #if DEBUG
             StartupPolicyTrace.headerPresentation(presentation)
+            StartupPolicyTrace.homeStatus(presentation)
             #endif
         }
 

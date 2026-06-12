@@ -15,22 +15,22 @@ enum FloorPlanTableSizePreset: Int, CaseIterable, Identifiable {
     var shortTitle: String {
         switch self {
         case .oneCube:
-            return "1 cube"
+            return "Small"
         case .twoCubes:
-            return "2 cubes"
+            return "Medium"
         case .threeCubes:
-            return "3 cubes"
+            return "Large"
         }
     }
 
     var capacityLine: String {
         switch self {
         case .oneCube:
-            return "Fits 1–4 guests"
+            return "2–4 guests"
         case .twoCubes:
-            return "Fits 4–6 guests"
+            return "4–6 guests"
         case .threeCubes:
-            return "Fits 6–8 guests"
+            return "6–8 guests"
         }
     }
 
@@ -118,10 +118,68 @@ struct FloorPlanLayoutDraftTable: Identifiable, Equatable {
     }
 
     static func defaultSeedTables(restaurantKey: String) -> [FloorPlanLayoutDraftTable] {
-        [
-            newTable(index: 1, restaurantKey: restaurantKey, preset: .oneCube, x: 0, y: 0),
-            newTable(index: 2, restaurantKey: restaurantKey, preset: .twoCubes, x: 1, y: 0),
-            newTable(index: 3, restaurantKey: restaurantKey, preset: .threeCubes, x: 3, y: 0)
+        tryzubDefaultTables(restaurantKey: restaurantKey)
+    }
+
+    /// The full Tryzub Ukrainian Kitchen table inventory.
+    ///
+    /// A1–A5:  2-top tables (max 6)     Row 0
+    /// A6–A7:  booth tables (max 8)     Row 1
+    /// A8–A15: 4-top tables (max 4)     Row 2
+    /// Bar:    bar seats (max 4)        Row 3
+    /// Patio:  patio seating (max 4)    Row 3
+    ///
+    /// Grid coordinates use 1-unit cells. Wider tables use widthUnits > 1.
+    static func tryzubDefaultTables(restaurantKey: String) -> [FloorPlanLayoutDraftTable] {
+        func make(
+            label: String,
+            sortOrder: Int,
+            minCap: Int,
+            maxCap: Int,
+            x: Int,
+            y: Int,
+            widthUnits: Int = 1,
+            heightUnits: Int = 1,
+            section: String? = nil
+        ) -> FloorPlanLayoutDraftTable {
+            FloorPlanLayoutDraftTable(
+                backendID: 0,
+                restaurantKey: restaurantKey,
+                tableKey: label.lowercased(),
+                label: label,
+                x: x,
+                y: y,
+                widthUnits: widthUnits,
+                heightUnits: heightUnits,
+                minCapacity: minCap,
+                maxCapacity: maxCap,
+                sortOrder: sortOrder,
+                isActive: true
+            )
+        }
+
+        return [
+            // Row 0 — 6-top dining tables (A1–A5), 2 units wide each
+            make(label: "A1",  sortOrder: 1,  minCap: 2, maxCap: 6, x: 0,  y: 0, widthUnits: 2),
+            make(label: "A2",  sortOrder: 2,  minCap: 2, maxCap: 6, x: 2,  y: 0, widthUnits: 2),
+            make(label: "A3",  sortOrder: 3,  minCap: 2, maxCap: 6, x: 4,  y: 0, widthUnits: 2),
+            make(label: "A4",  sortOrder: 4,  minCap: 2, maxCap: 6, x: 6,  y: 0, widthUnits: 2),
+            make(label: "A5",  sortOrder: 5,  minCap: 2, maxCap: 6, x: 8,  y: 0, widthUnits: 2),
+            // Row 1 — 8-top booths (A6–A7), 3 units wide
+            make(label: "A6",  sortOrder: 6,  minCap: 2, maxCap: 8, x: 0,  y: 2, widthUnits: 3),
+            make(label: "A7",  sortOrder: 7,  minCap: 2, maxCap: 8, x: 4,  y: 2, widthUnits: 3),
+            // Row 2 — 4-top tables (A8–A15), 1 unit each
+            make(label: "A8",  sortOrder: 8,  minCap: 1, maxCap: 4, x: 0,  y: 4),
+            make(label: "A9",  sortOrder: 9,  minCap: 1, maxCap: 4, x: 2,  y: 4),
+            make(label: "A10", sortOrder: 10, minCap: 1, maxCap: 4, x: 4,  y: 4),
+            make(label: "A11", sortOrder: 11, minCap: 1, maxCap: 4, x: 6,  y: 4),
+            make(label: "A12", sortOrder: 12, minCap: 1, maxCap: 4, x: 8,  y: 4),
+            make(label: "A13", sortOrder: 13, minCap: 1, maxCap: 4, x: 10, y: 4),
+            make(label: "A14", sortOrder: 14, minCap: 1, maxCap: 4, x: 12, y: 4),
+            make(label: "A15", sortOrder: 15, minCap: 1, maxCap: 4, x: 14, y: 4),
+            // Row 3 — Bar and Patio, 2 units wide
+            make(label: "Bar",   sortOrder: 16, minCap: 1, maxCap: 4, x: 0, y: 6, widthUnits: 2),
+            make(label: "Patio", sortOrder: 17, minCap: 1, maxCap: 4, x: 3, y: 6, widthUnits: 2),
         ]
     }
 
@@ -155,6 +213,7 @@ struct FloorPlanLayoutSetupView: View {
     @State private var drafts: [FloorPlanLayoutDraftTable] = []
     @State private var selectedTableKey: String?
     @State private var restaurantKey = "tryzub"
+    @State private var showImportConfirm = false
     @FocusState private var focusedLabelField: Bool
 
     private var selectedDraftIndex: Int? {
@@ -167,20 +226,18 @@ struct FloorPlanLayoutSetupView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     instructionCard
-                    Text("Layout editor v14H")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
                     saveStateBanner
                     floorMapCard
                     tableChipsSection
                     selectedTableEditor
                     addTableButton
+                    importTryzubTablesButton
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
             .background(TryzubColors.screenBackground)
-            .navigationTitle("Set Up Tables")
+            .navigationTitle("Floor Plan Setup")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -204,8 +261,8 @@ struct FloorPlanLayoutSetupView: View {
     // MARK: - Sections
 
     private var instructionCard: some View {
-        TryzubSectionCard(title: "Build the floor layout", systemImage: "square.grid.3x3") {
-            Text("Build a compact table map once, then staff can assign reservations from the Floor tab.")
+        TryzubSectionCard(title: "Set up your floor plan", systemImage: "mappin.and.ellipse") {
+            Text("Place each table on the map below. Tap a table chip to select it, then tap any empty spot on the map to move it there. Staff will pick tables from this layout when seating guests.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -274,7 +331,7 @@ struct FloorPlanLayoutSetupView: View {
             )
             .frame(height: 200)
 
-            Text("Tap a table to edit. Tap empty space to place selected table.")
+            Text("Select a table chip below, then tap any empty dot on the map to move it there.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -358,22 +415,22 @@ struct FloorPlanLayoutSetupView: View {
 
     private func selectedTableEditorContent(for draft: Binding<FloorPlanLayoutDraftTable>) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("\(draft.wrappedValue.capacityLine) · X \(draft.wrappedValue.x) · Y \(draft.wrappedValue.y)")
+            Text("Fits \(draft.wrappedValue.minCapacity)–\(draft.wrappedValue.maxCapacity) guests · col \(draft.wrappedValue.x), row \(draft.wrappedValue.y)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("LABEL")
+                Text("TABLE NAME")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                TextField("Table label", text: draft.label)
+                TextField("e.g. A1, Bar, Patio", text: draft.label)
                     .focused($focusedLabelField)
                     .textInputAutocapitalization(.words)
                     .staffFormFieldChrome(isFocused: focusedLabelField)
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("SIZE")
+                Text("SEATS")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 HStack(spacing: 8) {
@@ -383,8 +440,8 @@ struct FloorPlanLayoutSetupView: View {
                 }
             }
 
-            axisControl(title: "X", value: draft.x, range: 0...24)
-            axisControl(title: "Y", value: draft.y, range: 0...24)
+            axisControl(title: "Column  ←→", value: draft.x, range: 0...24)
+            axisControl(title: "Row  ↑↓", value: draft.y, range: 0...24)
 
             Toggle("Active", isOn: draft.isActive)
 
@@ -423,11 +480,15 @@ struct FloorPlanLayoutSetupView: View {
             draft.wrappedValue.minCapacity = preset.minCapacity
             draft.wrappedValue.maxCapacity = preset.maxCapacity
         } label: {
-            Text(preset.shortTitle)
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity)
+            VStack(spacing: 1) {
+                Text(preset.shortTitle)
+                    .font(.caption.weight(.semibold))
+                Text(preset.capacityLine)
+                    .font(.system(size: 10))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
                 .background(
                     isSelected
                         ? TryzubColors.primaryControl
@@ -447,7 +508,7 @@ struct FloorPlanLayoutSetupView: View {
         HStack {
             Text(title)
                 .font(.subheadline.weight(.medium))
-                .frame(width: 20, alignment: .leading)
+                .frame(minWidth: 20, alignment: .leading)
             Spacer()
             Button {
                 value.wrappedValue = max(range.lowerBound, value.wrappedValue - 1)
@@ -503,6 +564,41 @@ struct FloorPlanLayoutSetupView: View {
         .buttonStyle(.plain)
     }
 
+    private var importTryzubTablesButton: some View {
+        Button {
+            if drafts.isEmpty {
+                importTryzubDefaultTables()
+            } else {
+                showImportConfirm = true
+            }
+        } label: {
+            Label("Import Tryzub default tables", systemImage: "square.grid.3x3.fill")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(TryzubColors.primaryControl)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(TryzubColors.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(TryzubColors.primaryControl.opacity(0.35), lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .confirmationDialog(
+            "Import Tryzub tables?",
+            isPresented: $showImportConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Import — replace current tables", role: .destructive) {
+                importTryzubDefaultTables()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("A1–A15, Bar, and Patio will replace the current layout. Unsaved changes will be lost.")
+        }
+    }
+
     // MARK: - Actions
 
     private func seedDrafts() {
@@ -520,9 +616,43 @@ struct FloorPlanLayoutSetupView: View {
 
     private func addTable() {
         let nextIndex = (drafts.map(\.sortOrder).max() ?? 0) + 1
-        let table = FloorPlanLayoutDraftTable.newTable(index: nextIndex, restaurantKey: restaurantKey)
+        let (col, row) = firstAvailablePosition()
+        let table = FloorPlanLayoutDraftTable.newTable(
+            index: nextIndex,
+            restaurantKey: restaurantKey,
+            x: col,
+            y: row
+        )
         drafts.append(table)
         selectedTableKey = table.tableKey
+    }
+
+    /// Scans the grid row-by-row and returns the first cell not occupied by any draft.
+    private func firstAvailablePosition() -> (Int, Int) {
+        let maxX = max(10, drafts.map { $0.x + max($0.widthUnits, 1) }.max() ?? 0)
+        let maxY = max(5, drafts.map { $0.y + max($0.heightUnits, 1) }.max() ?? 0)
+        let occupied: Set<String> = Set(
+            drafts.flatMap { d in
+                (0..<max(d.widthUnits, 1)).flatMap { dx in
+                    (0..<max(d.heightUnits, 1)).map { dy in "\(d.x + dx),\(d.y + dy)" }
+                }
+            }
+        )
+        for row in 0...maxY {
+            for col in 0...maxX {
+                if !occupied.contains("\(col),\(row)") {
+                    return (col, row)
+                }
+            }
+        }
+        return (0, maxY + 1)
+    }
+
+    private func importTryzubDefaultTables() {
+        let tables = FloorPlanLayoutDraftTable.tryzubDefaultTables(restaurantKey: restaurantKey)
+        drafts = tables
+        selectedTableKey = drafts.first?.tableKey
+        FloorLayoutTrace.layoutImportDefaults(count: tables.count)
     }
 
     private func deactivateDraft(tableKey: String) {
@@ -558,8 +688,10 @@ struct FloorPlanLayoutSetupView: View {
 
     private func saveLayout() async {
         let payload = drafts.map { $0.toDTO() }
+        FloorLayoutTrace.layoutSaveStarted(count: payload.count)
         let saved = await store.saveLayout(payload)
         if saved {
+            FloorLayoutTrace.layoutSaveCompleted(count: payload.count)
             try? await Task.sleep(for: .milliseconds(350))
             onDismiss()
         }

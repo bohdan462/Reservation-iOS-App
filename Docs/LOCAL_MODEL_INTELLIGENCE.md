@@ -167,3 +167,33 @@ Mail / Messages presenters
 6. Staff records sent status manually if needed (legacy manual-email log path unchanged)
 
 No step auto-sends or mutates the reservation.
+
+## Final TestFlight AI Safety Checklist
+
+The Host Intelligence / local-LLM layer is **advisory only**. Deterministic facts,
+actions, and a template briefing always render; the model only improves wording when
+there is real operational tension. Proof traces (all `#if DEBUG`, OSLog category `HostAI`):
+
+| Trace | Emitted from | Proves |
+|-------|--------------|--------|
+| `[HOST_AI_FACTS_TRACE]` | `HostIntelligenceController.evaluate` | deterministic facts/categories per date; guestSignals=server\|local_bounded; floorTables=backend\|local |
+| `[HOST_AI_GATE] allowed=… reason=… categories=…` | `HostBriefingHostBoardGate.logGateDecision` | model runs only for tension; skips simple days with an explicit reason |
+| `[HOST_AI_PACKET_TRACE] containsRawContact=false containsRawNotes=false` | `ManagerNarrativeWriter.write` | sanitized packet; no raw email/phone/notes/JSON reach the model |
+| `[HOST_AI_LIFECYCLE] event=model_started\|model_completed\|model_unavailable\|model_cancelled\|fallback_used` | `ManagerNarrativeWriter` / `HostIntelligenceController` | model actually runs, falls back, or is cancelled — never silent |
+| `[HOST_AI_VALIDATOR] result=pass\|blocked reason=<token>` | `ManagerNarrativeWriter.write` | unsupported output is blocked before UI |
+| `[HOST_AI_TEST] scenario=… result=pass\|blocked` | `HostAIValidatorProofHarness` (DEBUG, once per launch) | validator blocks raw contact, leaked labels, completed-status, guest-facing, invented "regular/always", over-long; passes calm supported case |
+
+### Guarantees
+- **Skip:** no facts / simple count / simple peak / unchanged packet / backgrounded / view hidden / model or validator unavailable.
+- **Run:** no-table-soon, late attention, seated-too-long, table pressure, allergy/dietary/accessibility note, prior service issue, returning-guest context, multiple competing actions.
+- **Sanitize:** `ManagerNarrativePacketSanitizer` strips email, phone, JSON-like text, evidence markers, invented occasion language; max 180 chars/line.
+- **Validate:** blocks invented guest/table/status facts, "always/never", "regular/VIP" without evidence, raw phone/email, auto-action instructions, over-long output.
+- **Fallback:** deterministic template is always available and never blank.
+- **Non-blocking:** engine eval measured by `[UI_PRESSURE_TRACE] phase=host_engine_evaluate` (~<15ms); model runs async; actions stay tappable.
+
+### Known limitations (device sign-off)
+- `model_started`/`model_completed` and a real `[HOST_AI_VALIDATOR] result=pass` from genuine
+  model output require a physical device with the GGUF bundled and an AI-worthy day.
+- No hard inference timeout / `Task.cancel`; bounded instead by `maxOutputTokens=100` and the
+  date-change/view-hidden generation guard. `model_timeout` trace exists but is not yet wired
+  to a timer.

@@ -296,6 +296,19 @@ struct HostIntelligenceEngine {
       $0.reservationDate == selectedDateKey && !$0.isHidden
     }
 
+    // When the backend floor plan has been loaded for this date, use those active
+    // tables as the engine's table inventory. This aligns capacity-based table
+    // suggestions with actual backend layout rather than the local UserDefaults store.
+    // Falls back to tableConfigs (local store) when no backend layout is available yet.
+    let effectiveTableConfigs: [RestaurantTableConfig]
+    if !input.backendFloorTables.isEmpty {
+      effectiveTableConfigs = input.backendFloorTables
+        .filter(\.isActive)
+        .map { $0.asRestaurantTableConfig() }
+    } else {
+      effectiveTableConfigs = input.tableConfigs
+    }
+
     return ServiceDayContext(
       now: input.now,
       selectedDate: input.selectedDate,
@@ -305,7 +318,7 @@ struct HostIntelligenceEngine {
       restaurantSetup: input.restaurantSetup,
       localSeatedAtByReservationID: input.localSeatedAtByReservationID,
       settings: input.settings,
-      tableConfigs: input.tableConfigs,
+      tableConfigs: effectiveTableConfigs,
       allKnownReservations: input.allKnownReservations,
       guestIntelligenceSummariesByReservationID: input.guestIntelligenceSummariesByReservationID,
       guestProfilePacksByReservationID: input.guestProfilePacksByReservationID
@@ -611,13 +624,13 @@ struct HostIntelligenceEngine {
           severity: severity,
           category: .table,
           title: headline,
-          detail: "Check the table plan.",
+          detail: "Assign a table on the floor plan.",
           evidence: [
             "partySize=\(reservation.partySize)",
             "dueWindowMinutes=\(HostOperationalNoTableSoonSupport.windowMinutes)"
           ],
           relatedReservationIDs: [reservation.remoteID],
-          suggestedActionTitle: "Check table plan for \(firstName)"
+          suggestedActionTitle: "Assign floor plan table for \(firstName)"
         )
       )
 
@@ -626,7 +639,7 @@ struct HostIntelligenceEngine {
           id: "assign-table-\(reservation.remoteID)",
           severity: severity,
           kind: .assignTable,
-          title: "Check table plan for \(firstName)",
+          title: "Assign floor plan table for \(firstName)",
           reason: HostStaffLanguage.compactReservationDetail(
             timeLabel: timeLabel,
             partySize: reservation.partySize
@@ -839,7 +852,7 @@ struct HostIntelligenceEngine {
         ],
         relatedReservationIDs: [lateReservation.remoteID]
           + longSeated.map(\.reservation.remoteID),
-        suggestedActionTitle: "Review table plan for late \(lateReservation.guestName)"
+        suggestedActionTitle: "Review floor plan for late \(lateReservation.guestName)"
       )
     ]
   }
@@ -1155,15 +1168,15 @@ struct HostIntelligenceEngine {
         let factTitle: String
 
         if best.isCombination {
-          factTitle = "Combined table plan may be needed"
-          detail = "Party of \(partySize) for \(guestName) may need a combined table plan."
-          suggestedActionTitle = "Review combined table option."
-          actionTitle = "Review combined table option"
+          factTitle = "Combined floor plan needed"
+          detail = "Party of \(partySize) for \(guestName) may need a combined floor plan."
+          suggestedActionTitle = "Review combined floor plan option."
+          actionTitle = "Review combined floor plan for \(guestName)"
         } else {
-          factTitle = "Large party needs table planning"
-          detail = "Party of \(partySize) for \(guestName) needs table planning."
-          suggestedActionTitle = "Review table plan for \(guestName)."
-          actionTitle = "Review table plan for \(guestName)"
+          factTitle = "Large party needs floor plan"
+          detail = "Party of \(partySize) for \(guestName) needs a floor plan."
+          suggestedActionTitle = "Review floor plan for \(guestName)."
+          actionTitle = "Review floor plan for \(guestName)"
         }
 
         facts.append(
@@ -1227,7 +1240,7 @@ struct HostIntelligenceEngine {
             detail: detail,
             evidence: ["partySize=\(partySize)"],
             relatedReservationIDs: [reservation.remoteID],
-            suggestedActionTitle: "Review table plan for \(guestName)."
+            suggestedActionTitle: "Review floor plan for \(guestName)."
           )
         )
 
@@ -1236,7 +1249,7 @@ struct HostIntelligenceEngine {
             id: "no-table-fit-action-\(reservation.remoteID)",
             severity: severity,
             kind: .reviewReservation,
-            title: "Review table plan for \(guestName)",
+            title: "Review floor plan for \(guestName)",
             reason: detail,
             relatedReservationIDs: [reservation.remoteID],
             targetSlotTime: reservation.reservationTime,

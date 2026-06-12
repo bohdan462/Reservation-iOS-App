@@ -38,14 +38,19 @@ actor LocalModelGuestMessageDraftWriter: GuestMessageDraftWriting {
         HostLocalModelInferenceTracker.begin()
         defer { HostLocalModelInferenceTracker.end() }
 
+        ModelTaskTrace.started(task: .guestMessageDraft)
         do {
-            let generated = try await runtime.generateBriefing(prompt: prompt)
+            // Guest-draft profile: guest-facing system prompt + larger token budget so a
+            // full email body + SMS JSON fits (the host-briefing 100-token cap truncated it).
+            let generated = try await runtime.generate(prompt: prompt, profile: .guestMessageDraft)
             guard let parsed = GuestMessageDraftOutputParser.parse(generated) else {
+                ModelTaskTrace.fallback(task: .guestMessageDraft, reason: "parse_failed")
                 return templateWithNote(template, note: "Could not parse model output; using template draft.")
             }
 
             switch GuestMessageDraftValidator.validate(parsed, packet: packet) {
             case .valid:
+                ModelTaskTrace.completed(task: .guestMessageDraft, detail: "source=localModel")
                 return GuestMessageDraft(
                     emailSubject: parsed.emailSubject,
                     emailBody: parsed.emailBody,
@@ -55,9 +60,11 @@ actor LocalModelGuestMessageDraftWriter: GuestMessageDraftWriting {
                     source: .localModel
                 )
             case .blocked(let reason):
+                ModelTaskTrace.blocked(task: .guestMessageDraft, reason: reason)
                 return templateWithNote(template, note: reason)
             }
         } catch {
+            ModelTaskTrace.fallback(task: .guestMessageDraft, reason: "inference_failed")
             return templateWithNote(
                 template,
                 note: "Local model failed; using template draft."

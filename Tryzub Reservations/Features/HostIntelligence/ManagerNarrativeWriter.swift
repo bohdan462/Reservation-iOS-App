@@ -93,6 +93,8 @@ struct ManagerNarrativeWriter {
     let readiness = HostLocalModelReadinessProvider.currentReadiness()
     switch readiness.status {
     case .runtimeMissing, .modelMissing, .unavailable:
+      HostAILifecycleTrace.modelUnavailable(reason: "\(readiness.status)")
+      HostAILifecycleTrace.fallbackUsed(reason: "model_unavailable")
       ManagerNarrativeWriterDiagnostics.recordFailure(
         raw: nil,
         reason: readiness.detail
@@ -105,6 +107,19 @@ struct ManagerNarrativeWriter {
     let prompt = ManagerNarrativePromptBuilder.buildPrompt(from: narrativePacket)
     let runtime = HostLocalModelRuntimeFactory.makeRuntime()
     let packetKey = hostPacket.briefingFingerprint
+
+    // Proof trace: the sanitized packet handed to the writer. containsRaw* are
+    // computed on the already-sanitized prompt, so they must be false in a healthy
+    // build (a true value means sanitization regressed).
+    let promptLower = prompt.lowercased()
+    HostAIPacketTrace.log(
+      packetID: packetKey,
+      facts: narrativePacket.headlineFacts.count,
+      actions: narrativePacket.availableActions.count,
+      containsRawContact: HostAIPacketTrace.looksLikeRawContact(prompt),
+      containsRawNotes: promptLower.contains("guest_key") || promptLower.contains("payload") || promptLower.contains("source="),
+      source: narrativePacket.surface.rawValue
+    )
     let inferenceStarted = ContinuousClock.now
     let themes = HostBriefingHostBoardGate.operationalCategories(for: hostPacket)
       .map(\.traceLabel)
@@ -164,6 +179,11 @@ struct ManagerNarrativeWriter {
         result: validation.isValid ? "valid" : "rejected",
         reason: validation.isValid ? nil : validation.reason
       )
+      if validation.isValid {
+        HostAIValidatorTrace.pass(packetID: packetKey)
+      } else {
+        HostAIValidatorTrace.blocked(packetID: packetKey, reason: validation.reason)
+      }
 
       if validation.isValid {
         HostLocalModelWarmthTracker.markWarm()
@@ -184,6 +204,7 @@ struct ManagerNarrativeWriter {
       HostIntelligenceDiagnostics.modelOutputRejected(reason: rejectionReason)
       HostAILifecycleTrace.modelOutputRejected(reason: rejectionReason)
       HostAILifecycleTrace.templateFallbackUsed(reason: rejectionReason)
+      HostAILifecycleTrace.fallbackUsed(reason: "validator_blocked")
       HostBoardModelDecisionTrace.recordRejectionReason(rejectionReason)
       ManagerNarrativeWriterDiagnostics.recordFailure(
         raw: generated,

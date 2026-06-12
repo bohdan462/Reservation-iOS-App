@@ -160,8 +160,11 @@ enum GuestInsightsProfilePresentation {
                 .filter { !$0.value.isEmpty }
                 .sorted { $0.key < $1.key }
                 .map { key, values in
-                    let label = key.replacingOccurrences(of: "_", with: " ")
-                    return "\(label.capitalized): \(values.joined(separator: ", "))"
+                    // .convertFromSnakeCase rewrites dict keys too (table_preference → tablePreference,
+                    // service_issue → serviceIssue). Map known keys to staff-readable labels;
+                    // fallback splits camelCase/snake_case for unknown future keys.
+                    let label = GuestIntelligenceSignalLabels.display(for: key)
+                    return "\(label): \(values.joined(separator: ", "))"
                 }
             lines.append(contentsOf: bucketLines)
         }

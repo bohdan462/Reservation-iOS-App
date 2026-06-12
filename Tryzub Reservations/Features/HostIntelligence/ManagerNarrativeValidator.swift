@@ -443,7 +443,7 @@ enum ManagerNarrativeValidator {
 
   private static func destinationHintKeywords(for hint: String) -> [String] {
     switch hint {
-    case "table plan": return ["table plan", "joined tables", "table fit"]
+    case "floor plan": return ["floor plan", "joined tables", "table fit"]
     case "guest note": return ["guest note", "allergy", "accessibility"]
     case "new bookings": return ["new booking", "needs attention"]
     case "schedule": return ["open times", "seating wave", "arrival"]

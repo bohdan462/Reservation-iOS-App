@@ -146,6 +146,7 @@ final class HostIntelligenceController: ObservableObject {
       settings: settingsStore.settings,
       tableConfigs: input.tableConfigs,
       allKnownReservations: input.allKnownReservations,
+      backendFloorTables: input.backendFloorTables,
       guestIntelligenceSummariesByReservationID: input.guestIntelligenceSummariesByReservationID,
       guestProfilePacksByReservationID: input.guestProfilePacksByReservationID
     )
@@ -160,6 +161,16 @@ final class HostIntelligenceController: ObservableObject {
     ) {
       engine.evaluateHostDecisionSnapshot(input: enriched)
     }
+
+    HostAIFactsTrace.log(
+      date: selectedDateKey,
+      facts: candidate.briefingFacts.count,
+      actions: candidate.suggestedActions.count,
+      categories: HostBriefingHostBoardGate.operationalCategories(for: candidate.llmPacket).map(\.traceLabel).sorted(),
+      guestSignals: guestSignalMode,
+      floorTables: input.backendFloorTables.isEmpty ? "local" : "backend"
+    )
+
     let shouldBlockEmptyReplacement = !stability.allowsEmptyReplacement
       && !candidate.hasAttentionContent
       && lastAttentionSnapshot?.hasAttentionContent == true
@@ -324,6 +335,7 @@ final class HostIntelligenceController: ObservableObject {
       guard refreshGeneration == briefingRefreshGeneration,
             refreshDateKey == latestSelectedDateKey else {
         HostAILifecycleTrace.modelResultIgnored(reason: "date_changed")
+        HostAILifecycleTrace.modelCancelled(reason: "date_changed")
         return
       }
 
@@ -422,6 +434,13 @@ final class HostIntelligenceController: ObservableObject {
   }
 
   func reset() {
+    // If the model is mid-generation when the Host Board is hidden, discard any
+    // in-flight result (bump the generation guard) and log the cancellation. The
+    // llama runtime itself is not force-killed, but its output can no longer reach UI.
+    if HostLocalModelInferenceTracker.isActive {
+      briefingRefreshGeneration += 1
+      HostAILifecycleTrace.modelCancelled(reason: "view_hidden")
+    }
     decisionSnapshot = .empty
     clearAttentionPreservation()
     clearBriefingCache()

@@ -105,6 +105,14 @@ enum StartupPolicyTrace {
         emit("startupBackgroundWork=\(state)")
     }
 
+    static func homeStatus(_ presentation: HomeServiceStatusPresentation) {
+        guard isEnabled else { return }
+        let secondary = presentation.secondaryProgressText ?? "none"
+        logger.debug(
+            "[HOME_STATUS_TRACE] state=\(presentation.primarySyncText, privacy: .public) copy=\(secondary, privacy: .public) dot=\(String(describing: presentation.dotStyle), privacy: .public)"
+        )
+    }
+
     static func headerInitialTrust(checked: Bool, persistedFresh: Bool) {
         guard isEnabled else { return }
         emit("header initialTrust=checked persistedFresh=\(persistedFresh) checked=\(checked)")

@@ -151,7 +151,7 @@ enum ManagerNarrativePacketBuilder {
   private static func destinationHintLabel(_ hint: ManagerAttentionDestinationHint) -> String {
     switch hint {
     case .reservation: return "reservation"
-    case .tablePlan: return "table plan"
+    case .tablePlan: return "floor plan"
     case .guestNote: return "guest note"
     case .newBookings: return "new bookings"
     case .schedule: return "schedule"
