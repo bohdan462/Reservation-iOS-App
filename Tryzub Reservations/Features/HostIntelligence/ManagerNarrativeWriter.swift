@@ -46,6 +46,22 @@ enum ManagerNarrativeWriterDiagnostics {
   }
 }
 
+enum HostModelPacketTrace {
+  static func log(
+    task: String,
+    grouped: Bool,
+    facts: Int,
+    actions: Int,
+    fingerprint: String
+  ) {
+    #if DEBUG
+    print(
+      "[HOST_MODEL_PACKET_TRACE] task=\(task) grouped=\(grouped) facts=\(facts) actions=\(actions) fingerprint=\(fingerprint)"
+    )
+    #endif
+  }
+}
+
 struct ManagerNarrativeWriter {
 
   @MainActor
@@ -61,8 +77,11 @@ struct ManagerNarrativeWriter {
       return fallback
     }
 
-    if HostBriefingHostBoardGate.shouldUseTemplateOnlyOnHostBoard(packet: hostPacket)
-      || LocalModelHostBriefingWriter.shouldUseTemplateForLowRiskSingleFact(hostPacket) {
+    let groupedEligible = narrativePacket.groupedPresentation
+      && narrativePacket.modelEligibleReason != nil
+    if !groupedEligible,
+       HostBriefingHostBoardGate.shouldUseTemplateOnlyOnHostBoard(packet: hostPacket)
+        || LocalModelHostBriefingWriter.shouldUseTemplateForLowRiskSingleFact(hostPacket) {
       let skipReason = HostBriefingHostBoardGate.hasOperationalTension(packet: hostPacket)
         ? "host_board_template_only"
         : "independent_simple_facts"
@@ -75,7 +94,8 @@ struct ManagerNarrativeWriter {
        let skipReason = HostBriefingHostBoardGate.localModelSkipReason(
         settings: settings,
         context: hostBoardContext,
-        packet: hostPacket
+        packet: hostPacket,
+        modelEligibleReason: narrativePacket.modelEligibleReason
        ) {
       HostIntelligenceDiagnostics.skipLocalModel(reason: skipReason.rawValue)
       HostAILifecycleTrace.modelSkipped(reason: skipReason.rawValue)
@@ -116,7 +136,7 @@ struct ManagerNarrativeWriter {
 
     let prompt = ManagerNarrativePromptBuilder.buildPrompt(from: narrativePacket)
     let runtime = HostLocalModelRuntimeFactory.makeRuntime()
-    let packetKey = hostPacket.briefingFingerprint
+    let packetKey = narrativePacket.presentationFingerprint ?? hostPacket.briefingFingerprint
 
     // Proof trace: the sanitized packet handed to the writer. containsRaw* are
     // computed on the already-sanitized prompt, so they must be false in a healthy
@@ -129,6 +149,13 @@ struct ManagerNarrativeWriter {
       containsRawContact: HostAIPacketTrace.looksLikeRawContact(prompt),
       containsRawNotes: promptLower.contains("guest_key") || promptLower.contains("payload") || promptLower.contains("source="),
       source: narrativePacket.surface.rawValue
+    )
+    HostModelPacketTrace.log(
+      task: "managerNarrative",
+      grouped: narrativePacket.groupedPresentation,
+      facts: narrativePacket.headlineFacts.count,
+      actions: narrativePacket.availableActions.count,
+      fingerprint: packetKey
     )
     let inferenceStarted = ContinuousClock.now
     let themes = HostBriefingHostBoardGate.operationalCategories(for: hostPacket)

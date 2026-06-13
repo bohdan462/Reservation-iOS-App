@@ -35,6 +35,16 @@ struct ManagerNarrativePacket: Codable, Equatable {
     let writingRules: [String]
     /// Deterministic arrival-pressure facts from the service wave engine.
     var arrivalPressureFacts: ArrivalPressureManagerFacts?
+    var selectedServiceDate: String?
+    var serviceMode: String?
+    var floorSourceLabel: String?
+    var groupedPresentation: Bool = false
+    var groupedHeadline: String?
+    var groupedSummary: String?
+    var forbiddenClaims: [String] = []
+    var maxOutputShape: String?
+    var presentationFingerprint: String?
+    var modelEligibleReason: String?
 }
 
 struct ManagerNarrative: Equatable {
@@ -87,26 +97,46 @@ struct ManagerNarrative: Equatable {
 
 enum ManagerNarrativePacketBuilder {
 
-  static func buildHostHome(from snapshot: HostDecisionSnapshot) -> ManagerNarrativePacket {
-    let facts = snapshot.llmPacket.topFacts.compactMap { fact -> ManagerNarrativeFact? in
-      guard !GuestHistorySemantics.containsInventedOccasionNoteLanguage(
-        title: fact.title,
-        detail: fact.detail
-      ) else {
-        return nil
+  static func buildHostHome(
+    from snapshot: HostDecisionSnapshot,
+    presentation: HostAttentionPresentation? = nil,
+    selectedDateKey: String? = nil,
+    floorSourceLabel: String? = nil
+  ) -> ManagerNarrativePacket {
+    let activePresentation = presentation ?? .empty
+    let facts: [ManagerNarrativeFact]
+    if activePresentation.hasVisibleContent {
+      facts = activePresentation.groupedFacts.compactMap { line in
+        guard let title = ManagerNarrativePacketSanitizer.staffSafeLine(line) else {
+          return nil
+        }
+        return ManagerNarrativeFact(
+          priority: "staff",
+          title: title,
+          detail: nil
+        )
       }
-      guard let title = ManagerNarrativePacketSanitizer.staffSafeLine(fact.title) else {
-        return nil
+    } else {
+      facts = snapshot.llmPacket.topFacts.compactMap { fact -> ManagerNarrativeFact? in
+        guard !GuestHistorySemantics.containsInventedOccasionNoteLanguage(
+          title: fact.title,
+          detail: fact.detail
+        ) else {
+          return nil
+        }
+        guard let title = ManagerNarrativePacketSanitizer.staffSafeLine(fact.title) else {
+          return nil
+        }
+        return ManagerNarrativeFact(
+          priority: fact.severity.rawValue,
+          title: title,
+          detail: ManagerNarrativePacketSanitizer.staffSafeOptionalLine(fact.detail.nilIfBlank)
+        )
       }
-      return ManagerNarrativeFact(
-        priority: fact.severity.rawValue,
-        title: title,
-        detail: ManagerNarrativePacketSanitizer.staffSafeOptionalLine(fact.detail.nilIfBlank)
-      )
     }
 
     let actions = ManagerAttentionItemBuilder
-      .build(from: snapshot, maxItems: 3)
+      .build(from: snapshot, presentation: activePresentation, maxItems: 3)
       .compactMap { item -> ManagerNarrativeAction? in
         guard let title = ManagerNarrativePacketSanitizer.staffSafeLine(item.title) else {
           return nil
@@ -122,7 +152,7 @@ enum ManagerNarrativePacketBuilder {
       snapshot.llmPacket.generatedAtDescription
     ) ?? ""
 
-    return ManagerNarrativePacket(
+    var packet = ManagerNarrativePacket(
       surface: .hostHome,
       generatedAtDescription: generatedAt,
       serviceState: snapshot.serviceState.rawValue,
@@ -131,6 +161,23 @@ enum ManagerNarrativePacketBuilder {
       writingRules: ManagerNarrativeWritingRules.standard,
       arrivalPressureFacts: snapshot.arrivalPressureFacts
     )
+    packet.selectedServiceDate = selectedDateKey
+    packet.serviceMode = snapshot.serviceState.rawValue
+    packet.floorSourceLabel = floorSourceLabel ?? activePresentation.floorSourceLabel
+    packet.groupedPresentation = activePresentation.hasVisibleContent
+    packet.groupedHeadline = activePresentation.hasVisibleContent ? activePresentation.headline : nil
+    packet.groupedSummary = activePresentation.summary
+    packet.forbiddenClaims = [
+      "Do not add guest names not shown in grouped facts or actions.",
+      "Do not mention unavailable floor, capacity, or table fit unless supplied.",
+      "Do not decide tables, guest history, priorities, or reservation status.",
+      "Do not create reservation mutations or commands.",
+      "Do not use guest-facing language."
+    ]
+    packet.maxOutputShape = "title/headline plus 1-2 sentence summary and optional check-next line; max 3 short sentences"
+    packet.presentationFingerprint = activePresentation.presentationFingerprint
+    packet.modelEligibleReason = activePresentation.modelEligibleReason
+    return packet
   }
 
   /// Future phase — safe aggregate metrics only, no raw backend JSON.
@@ -168,7 +215,20 @@ enum ManagerNarrativePacketBuilder {
 
 enum ManagerNarrativeTemplateBuilder {
 
-  static func build(from snapshot: HostDecisionSnapshot) -> ManagerNarrative {
+  static func build(
+    from snapshot: HostDecisionSnapshot,
+    presentation: HostAttentionPresentation? = nil
+  ) -> ManagerNarrative {
+    if let presentation, presentation.hasVisibleContent {
+      return ManagerNarrative(
+        headline: punctuate(presentation.headline),
+        whyItMatters: presentation.summary.map(punctuate),
+        checkNext: presentation.primaryItems.first?.actionTitle,
+        source: .template,
+        failedReason: nil
+      )
+    }
+
     let ranked = HostBriefingService().rankHostFacts(snapshot.briefingFacts)
     let headline = headlineLine(from: ranked, snapshot: snapshot)
     let whyItMatters = whyLine(from: ranked, snapshot: snapshot, headline: headline)

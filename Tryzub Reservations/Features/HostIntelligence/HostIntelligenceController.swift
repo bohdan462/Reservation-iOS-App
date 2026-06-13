@@ -11,6 +11,7 @@ import Foundation
 final class HostIntelligenceController: ObservableObject {
 
   @Published private(set) var decisionSnapshot: HostDecisionSnapshot = .empty
+  @Published private(set) var attentionPresentation: HostAttentionPresentation = .empty
   @Published private(set) var briefingText: String = HostDecisionSnapshot.empty.templateBriefingText
   @Published private(set) var briefingSource: HostBriefingWriterSource = .template
   @Published private(set) var briefingFailureReason: String?
@@ -24,12 +25,14 @@ final class HostIntelligenceController: ObservableObject {
   private let engine: HostIntelligenceEngine
 
   private var lastAttentionSnapshot: HostDecisionSnapshot?
+  private var lastAttentionPresentation: HostAttentionPresentation?
   private var lastAttentionNarrative: ManagerNarrative?
   private var lastAttentionBriefingText: String?
   private var lastAttentionSelectedDateKey = ""
   private var latestStabilityContext = HostEvaluationStabilityContext()
   private var latestTraceCandidate: HostCardTraceNoTableCandidate?
   private var latestSelectedDateKey = ""
+  private var latestFloorTableSource: HostFloorTableSource = .pendingBackend
 
   private var lastBriefingCacheKey: String?
   private var lastBriefingPacketFingerprint: String?
@@ -60,6 +63,14 @@ final class HostIntelligenceController: ObservableObject {
       return lastAttentionSnapshot
     }
     return decisionSnapshot
+  }
+
+  var displayAttentionPresentation: HostAttentionPresentation {
+    if shouldPreservePreviousAttentionCard,
+       let lastAttentionPresentation {
+      return lastAttentionPresentation
+    }
+    return attentionPresentation
   }
 
   var displayManagerNarrative: ManagerNarrative {
@@ -112,11 +123,13 @@ final class HostIntelligenceController: ObservableObject {
       clearAttentionPreservation()
       clearValidModelBriefingCache()
       decisionSnapshot = .empty
-      applyTemplateBriefing(from: .empty)
+      attentionPresentation = .empty
+      applyTemplateBriefing(from: .empty, presentation: .empty)
       localEvaluationComplete = false
       isEnrichmentLoading = false
     }
     latestSelectedDateKey = selectedDateKey
+    latestFloorTableSource = input.floorTableSource
     latestTraceCandidate = HostCardTrace.noTableSoonCandidate(
       in: input.reservations,
       selectedDate: input.selectedDate,
@@ -126,9 +139,10 @@ final class HostIntelligenceController: ObservableObject {
 
     guard settingsStore.settings.isEnabled else {
       decisionSnapshot = .empty
+      attentionPresentation = .empty
       clearAttentionPreservation()
       clearBriefingCache()
-      applyTemplateBriefing(from: .empty)
+      applyTemplateBriefing(from: .empty, presentation: .empty)
       localEvaluationComplete = true
       renderState = .ready
       traceEvaluation(snapshot: .empty, preservedPrevious: false, emptyAllowed: true)
@@ -162,6 +176,11 @@ final class HostIntelligenceController: ObservableObject {
     ) {
       engine.evaluateHostDecisionSnapshot(input: enriched)
     }
+    let candidatePresentation = HostAttentionGrouper.build(
+      from: candidate,
+      selectedDateKey: selectedDateKey,
+      floorTableSource: input.floorTableSource
+    )
 
     HostAIFactsTrace.log(
       date: selectedDateKey,
@@ -191,10 +210,12 @@ final class HostIntelligenceController: ObservableObject {
     }
 
     decisionSnapshot = candidate
-    applyTemplateBriefing(from: candidate)
+    attentionPresentation = candidatePresentation
+    applyTemplateBriefing(from: candidate, presentation: candidatePresentation)
 
     if candidate.hasAttentionContent {
       lastAttentionSnapshot = candidate
+      lastAttentionPresentation = candidatePresentation
       lastAttentionNarrative = managerNarrative
       lastAttentionBriefingText = briefingText
       lastAttentionSelectedDateKey = selectedDateKey
@@ -233,28 +254,39 @@ final class HostIntelligenceController: ObservableObject {
       }
     }
 
-    let fallback = decisionSnapshot.templateBriefingText
+    let currentPresentation = attentionPresentation
+    let templateNarrative = ManagerNarrativeTemplateBuilder.build(
+      from: decisionSnapshot,
+      presentation: currentPresentation
+    )
+    let fallback = templateNarrative.compactBriefingText
     let settings = settingsStore.settings
     let packet = decisionSnapshot.llmPacket
-    let fingerprint = packet.briefingFingerprint
+    let fingerprint = hostBriefingFingerprint(
+      packet: packet,
+      presentation: currentPresentation,
+      hostBoardContext: hostBoardContext
+    )
     let settingsStamp = briefingSettingsStamp(settings)
-    let actionStamp = narrativeActionStamp(from: decisionSnapshot)
+    let actionStamp = narrativeActionStamp(
+      from: decisionSnapshot,
+      presentation: currentPresentation
+    )
     let cacheKey = briefingCacheKey(
       fingerprint: fingerprint,
       settingsStamp: settingsStamp,
       hostBoardContext: hostBoardContext,
       settings: settings,
       packet: packet,
-      actionStamp: actionStamp
+      actionStamp: actionStamp,
+      presentation: currentPresentation
     )
 
     guard settings.isEnabled else {
       clearBriefingCache()
-      applyTemplateBriefing(from: .empty)
+      applyTemplateBriefing(from: .empty, presentation: .empty)
       return
     }
-
-    let templateNarrative = ManagerNarrativeTemplateBuilder.build(from: decisionSnapshot)
 
     if cacheKey == lastBriefingCacheKey,
        let cachedText = lastBriefingText {
@@ -282,11 +314,13 @@ final class HostIntelligenceController: ObservableObject {
       recordHostBoardGateDecision(
         context: hostBoardContext,
         settings: settings,
-        packet: packet
+        packet: packet,
+        presentation: currentPresentation
       )
     }
 
     if hostBoardContext != nil,
+       currentPresentation.modelEligibleReason == nil,
        HostBriefingHostBoardGate.shouldUseTemplateOnlyOnHostBoard(packet: packet) {
       let skipReason = HostBriefingHostBoardGate.hasOperationalTension(packet: packet)
         ? HostBriefingHostBoardGate.SkipReason.host_board_template_only.rawValue
@@ -308,7 +342,8 @@ final class HostIntelligenceController: ObservableObject {
     let provider = resolvedBriefingProvider(
       settings: settings,
       hostBoardContext: hostBoardContext,
-      packet: packet
+      packet: packet,
+      presentation: currentPresentation
     )
 
     if provider == .template {
@@ -325,7 +360,12 @@ final class HostIntelligenceController: ObservableObject {
 
     if let hostBoardContext, provider == .localModel {
       HostIntelligenceDiagnostics.localModelAttempted(surface: "host_home")
-      let narrativePacket = ManagerNarrativePacketBuilder.buildHostHome(from: decisionSnapshot)
+      let narrativePacket = ManagerNarrativePacketBuilder.buildHostHome(
+        from: decisionSnapshot,
+        presentation: currentPresentation,
+        selectedDateKey: latestSelectedDateKey,
+        floorSourceLabel: currentPresentation.floorSourceLabel
+      )
       let narrativeResult = await ManagerNarrativeWriter().write(
         narrativePacket: narrativePacket,
         hostPacket: packet,
@@ -443,17 +483,27 @@ final class HostIntelligenceController: ObservableObject {
       HostAILifecycleTrace.modelCancelled(reason: "view_hidden")
     }
     decisionSnapshot = .empty
+    attentionPresentation = .empty
     clearAttentionPreservation()
     clearBriefingCache()
-    applyTemplateBriefing(from: .empty)
+    applyTemplateBriefing(from: .empty, presentation: .empty)
     renderState = .evaluating
     localEvaluationComplete = false
     isEnrichmentLoading = false
   }
 
-  private func applyTemplateBriefing(from snapshot: HostDecisionSnapshot) {
-    let narrative = ManagerNarrativeTemplateBuilder.build(from: snapshot)
-    briefingText = snapshot.templateBriefingText
+  private func applyTemplateBriefing(
+    from snapshot: HostDecisionSnapshot,
+    presentation: HostAttentionPresentation? = nil
+  ) {
+    let activePresentation = presentation ?? attentionPresentation
+    let narrative = ManagerNarrativeTemplateBuilder.build(
+      from: snapshot,
+      presentation: activePresentation
+    )
+    briefingText = activePresentation.hasVisibleContent
+      ? narrative.compactBriefingText
+      : snapshot.templateBriefingText
     briefingSource = .template
     briefingFailureReason = nil
     managerNarrative = narrative
@@ -481,6 +531,7 @@ final class HostIntelligenceController: ObservableObject {
 
   private func clearAttentionPreservation() {
     lastAttentionSnapshot = nil
+    lastAttentionPresentation = nil
     lastAttentionNarrative = nil
     lastAttentionBriefingText = nil
     lastAttentionSelectedDateKey = ""
@@ -513,7 +564,8 @@ final class HostIntelligenceController: ObservableObject {
   private func resolvedBriefingProvider(
     settings: HostIntelligenceSettings,
     hostBoardContext: HostBriefingHostBoardContext?,
-    packet: HostLLMPacket
+    packet: HostLLMPacket,
+    presentation: HostAttentionPresentation
   ) -> HostBriefingProviderKind {
     let requested = settings.enhancedBriefingProvider
 
@@ -522,7 +574,8 @@ final class HostIntelligenceController: ObservableObject {
          let skipReason = HostBriefingHostBoardGate.localModelSkipReason(
           settings: settings,
           context: hostBoardContext,
-          packet: packet
+          packet: packet,
+          modelEligibleReason: presentation.modelEligibleReason
          ) {
         HostIntelligenceDiagnostics.skipLocalModel(reason: skipReason.rawValue)
       }
@@ -534,7 +587,8 @@ final class HostIntelligenceController: ObservableObject {
         hostBoardAllowsLocalModel: HostBriefingHostBoardGate.shouldUseLocalModelOnHostBoard(
           settings: settings,
           context: hostBoardContext,
-          packet: packet
+          packet: packet,
+          modelEligibleReason: presentation.modelEligibleReason
         )
       )
     }
@@ -550,47 +604,91 @@ final class HostIntelligenceController: ObservableObject {
     "\(settings.useEnhancedBriefing)-\(settings.enhancedBriefingProvider.rawValue)-\(settings.useLocalModelOnHostBoard)"
   }
 
+  private func hostBriefingFingerprint(
+    packet: HostLLMPacket,
+    presentation: HostAttentionPresentation,
+    hostBoardContext: HostBriefingHostBoardContext?
+  ) -> String {
+    let selectedDate = nonBlank(hostBoardContext?.selectedDateKey) ?? latestSelectedDateKey
+    let floorSource = nonBlank(hostBoardContext?.floorSourceLabel)
+      ?? presentation.floorSourceLabel
+    let layout = nonBlank(hostBoardContext?.layoutFingerprint) ?? "layout-unknown"
+    let guestGeneration = nonBlank(hostBoardContext?.guestIntelligenceGeneration) ?? "guest-unknown"
+    let enrichmentState = hostBoardContext?.enrichmentCompletionState ?? "manual"
+
+    return HostAttentionStableDigest.hexDigest(
+      [
+        "date=\(selectedDate)",
+        "floor=\(floorSource)",
+        "layout=\(layout)",
+        "guest=\(guestGeneration)",
+        "grouped=\(presentation.presentationFingerprint)",
+        "actions=\(presentation.primaryActionsFingerprint)",
+        "enrichment=\(enrichmentState)",
+        "packet=\(packet.briefingFingerprint)"
+      ].joined(separator: "|")
+    )
+  }
+
+  private func nonBlank(_ value: String?) -> String? {
+    let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
   private func briefingCacheKey(
     fingerprint: String,
     settingsStamp: String,
     hostBoardContext: HostBriefingHostBoardContext?,
     settings: HostIntelligenceSettings,
     packet: HostLLMPacket,
-    actionStamp: String
+    actionStamp: String,
+    presentation: HostAttentionPresentation
   ) -> String {
     if let hostBoardContext {
       let localModelAllowed = HostBriefingHostBoardGate.shouldUseLocalModelOnHostBoard(
         settings: settings,
         context: hostBoardContext,
-        packet: packet
+        packet: packet,
+        modelEligibleReason: presentation.modelEligibleReason
       )
       return "\(fingerprint)|\(settingsStamp)|host|\(localModelAllowed)|\(actionStamp)"
     }
     return "\(fingerprint)|\(settingsStamp)|manual|\(actionStamp)"
   }
 
-  private func narrativeActionStamp(from snapshot: HostDecisionSnapshot) -> String {
-    snapshot.suggestedActions
-      .prefix(3)
-      .map { "\($0.kind.rawValue):\($0.title)" }
-      .joined(separator: ";")
+  private func narrativeActionStamp(
+    from snapshot: HostDecisionSnapshot,
+    presentation: HostAttentionPresentation
+  ) -> String {
+    if presentation.hasVisibleContent {
+      return presentation.primaryActionsFingerprint
+    }
+    return HostAttentionStableDigest.hexDigest(
+      snapshot.suggestedActions
+        .prefix(3)
+        .map { "\($0.kind.rawValue):\($0.title)" }
+        .joined(separator: ";")
+    )
   }
 
   private func recordHostBoardGateDecision(
     context: HostBriefingHostBoardContext,
     settings: HostIntelligenceSettings,
-    packet: HostLLMPacket
+    packet: HostLLMPacket,
+    presentation: HostAttentionPresentation
   ) {
     let skipReason = HostBriefingHostBoardGate.localModelSkipReason(
       settings: settings,
       context: context,
-      packet: packet
+      packet: packet,
+      modelEligibleReason: presentation.modelEligibleReason
     )
     HostBoardModelDecisionTrace.record(
       allowed: skipReason == nil,
       skipReason: skipReason,
       packet: packet,
-      enrichmentLoading: context.isEnrichmentLoading
+      enrichmentLoading: context.isEnrichmentLoading,
+      modelEligibleReason: presentation.modelEligibleReason
     )
   }
 

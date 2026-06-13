@@ -9,6 +9,7 @@ import SwiftUI
 
 struct HostIntelligenceCard: View {
   let snapshot: HostDecisionSnapshot
+  var attentionPresentation: HostAttentionPresentation = .empty
   var briefingTextOverride: String? = nil
   var managerNarrative: ManagerNarrative? = nil
   var briefingSource: HostBriefingWriterSource? = nil
@@ -91,9 +92,15 @@ struct HostIntelligenceCard: View {
       if !attentionItems.isEmpty {
         VStack(alignment: .leading, spacing: 4) {
           ForEach(attentionItems) { item in
-            if let action = item.sourceAction {
-              attentionRow(item, action: action)
-            }
+            attentionRow(item)
+          }
+        }
+      }
+
+      if attentionItems.isEmpty, !attentionPresentation.secondaryContext.isEmpty {
+        VStack(alignment: .leading, spacing: 4) {
+          ForEach(attentionPresentation.secondaryContext) { item in
+            contextRow(item)
           }
         }
       }
@@ -105,6 +112,7 @@ struct HostIntelligenceCard: View {
       }
     }
     .cardStyle()
+    .background(renderTraceView)
   }
 
   private var cardTitleRow: some View {
@@ -120,8 +128,8 @@ struct HostIntelligenceCard: View {
   }
 
   @ViewBuilder
-  private func attentionRow(_ item: ManagerAttentionItem, action: HostSuggestedAction) -> some View {
-    if let onActionTapped {
+  private func attentionRow(_ item: ManagerAttentionItem) -> some View {
+    if let onActionTapped, let action = item.sourceAction {
       Button {
         onActionTapped(action)
       } label: {
@@ -132,6 +140,26 @@ struct HostIntelligenceCard: View {
     } else {
       attentionRowContent(item, isTappable: false)
     }
+  }
+
+  private func contextRow(_ item: HostAttentionContextItem) -> some View {
+    HStack(alignment: .top, spacing: 8) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(item.title)
+          .font(.caption.weight(.semibold))
+          .fixedSize(horizontal: false, vertical: true)
+        if let detail = item.detail {
+          Text(detail)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+    }
+    .padding(.horizontal, 8)
+    .padding(.vertical, 5)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
   }
 
   private func attentionRowContent(_ item: ManagerAttentionItem, isTappable: Bool) -> some View {
@@ -322,6 +350,7 @@ struct HostIntelligenceCard: View {
   private var attentionItems: [ManagerAttentionItem] {
     ManagerAttentionItemBuilder.build(
       from: snapshot,
+      presentation: attentionPresentation,
       maxItems: 3,
       compactPresentation: staffFacingPresentation,
       briefingText: displayBriefingText
@@ -341,6 +370,46 @@ struct HostIntelligenceCard: View {
       + snapshot.guestSignals.count
       + snapshot.tableSignals.count
       + snapshot.seatedTimingSignals.count
+  }
+
+  private var renderTraceKey: String {
+    [
+      cardRenderSource,
+      "\(attentionItems.count)",
+      "\(attentionPresentation.secondaryContext.count)",
+      attentionPresentation.presentationFingerprint,
+      displayBriefingText
+    ].joined(separator: "|")
+  }
+
+  private var cardRenderSource: String {
+    switch briefingSource {
+    case .localModel, .repairedLocalModel:
+      return "localModel3B"
+    case .failedFallback:
+      return "fallbackTemplate"
+    case .template, .localPlaceholder, nil:
+      return attentionPresentation.hasVisibleContent ? "groupedTemplate" : "fallbackTemplate"
+    }
+  }
+
+  private var renderTraceView: some View {
+    Color.clear
+      .frame(width: 0, height: 0)
+      .onAppear {
+        logRenderTrace()
+      }
+      .onChange(of: renderTraceKey) { _, _ in
+        logRenderTrace()
+      }
+  }
+
+  private func logRenderTrace() {
+    #if DEBUG
+    print(
+      "[HOST_CARD_RENDER_TRACE] source=\(cardRenderSource) rows=\(attentionItems.count) context=\(attentionPresentation.secondaryContext.count)"
+    )
+    #endif
   }
 
   @ViewBuilder

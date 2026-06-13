@@ -14,7 +14,10 @@ enum ManagerNarrativePromptBuilder {
 
     sections.append(
       """
-      You are writing a short manager briefing for restaurant staff on the Host board.
+      Rewrite this approved staff briefing for restaurant staff on the Host board.
+      Do not add facts. Do not invent guest history. Do not decide tables.
+      Do not mention unavailable floor, capacity, or table fit unless supplied below.
+      Return concise staff-facing wording.
       Write natural host or manager language in at most 3 short sentences when rich context exists; otherwise 1–2.
       Lead with service pressure or the most urgent reservation first.
       Explain the arrival pressure wave in plain staff language using only the provided pressure facts.
@@ -38,10 +41,35 @@ enum ManagerNarrativePromptBuilder {
     )
 
     sections.append("Surface: \(packet.surface.rawValue)")
+    if let selectedDate = packet.selectedServiceDate?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !selectedDate.isEmpty {
+      sections.append("Selected service date: \(selectedDate)")
+    }
     if !packet.generatedAtDescription.isEmpty {
       sections.append("Generated at: \(packet.generatedAtDescription)")
     }
-    sections.append("Service state: \(packet.serviceState)")
+    sections.append("Current service mode: \(packet.serviceMode ?? packet.serviceState)")
+    if let floorSource = packet.floorSourceLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !floorSource.isEmpty {
+      sections.append("Floor source: \(floorSource)")
+    }
+    if packet.groupedPresentation {
+      sections.append("Grouped presentation: true")
+      if let reason = packet.modelEligibleReason?.trimmingCharacters(in: .whitespacesAndNewlines),
+         !reason.isEmpty {
+        sections.append("Model eligibility reason: \(reason)")
+      }
+      if let headline = packet.groupedHeadline?.trimmingCharacters(in: .whitespacesAndNewlines),
+         !headline.isEmpty {
+        sections.append("Grouped headline: \(headline)")
+      }
+      if let summary = packet.groupedSummary?.trimmingCharacters(in: .whitespacesAndNewlines),
+         !summary.isEmpty {
+        sections.append("Grouped summary: \(summary)")
+      }
+    } else {
+      sections.append("Grouped presentation: false")
+    }
 
     if let pressure = packet.arrivalPressureFacts {
       sections.append("Service pressure facts (deterministic — do not recalculate):")
@@ -92,6 +120,16 @@ enum ManagerNarrativePromptBuilder {
     if !packet.writingRules.isEmpty {
       sections.append("Writing rules:")
       packet.writingRules.forEach { sections.append("- \($0)") }
+    }
+
+    if !packet.forbiddenClaims.isEmpty {
+      sections.append("Forbidden claims:")
+      packet.forbiddenClaims.forEach { sections.append("- \($0)") }
+    }
+
+    if let shape = packet.maxOutputShape?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !shape.isEmpty {
+      sections.append("Max output shape: \(shape)")
     }
 
     sections.append("Write the manager narrative now:")

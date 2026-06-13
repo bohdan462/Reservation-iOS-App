@@ -839,6 +839,10 @@ enum HostLLMPacketDebugFormatter {
 // MARK: - Host Board Context & Gate
 
 struct HostBriefingHostBoardContext: Equatable {
+  var selectedDateKey: String = ""
+  var floorSourceLabel: String = ""
+  var layoutFingerprint: String = ""
+  var guestIntelligenceGeneration: String = ""
   var isStartupNetworkPassInFlight: Bool
   var isHistoryPrefetching: Bool
   var isLocalModelInferenceActive: Bool
@@ -851,6 +855,10 @@ struct HostBriefingHostBoardContext: Equatable {
 
   var isEnrichmentLoading: Bool {
     isAvailabilitySummaryLoading || isGuestIntelligenceLoading
+  }
+
+  var enrichmentCompletionState: String {
+    isEnrichmentLoading ? "loading" : "complete"
   }
 }
 
@@ -917,7 +925,8 @@ enum HostBoardModelDecisionTrace {
     packet: HostLLMPacket,
     enrichmentLoading: Bool,
     visibleSource: String? = nil,
-    modelRunAt: Date? = nil
+    modelRunAt: Date? = nil,
+    modelEligibleReason: String? = nil
   ) {
     let categories = HostBriefingHostBoardGate.operationalCategories(for: packet)
     let categoryLabels = categories.map(\.traceLabel).sorted().joined(separator: ",")
@@ -925,7 +934,8 @@ enum HostBoardModelDecisionTrace {
     let gateReason = HostBriefingHostBoardGate.gateReason(
       allowed: allowed,
       skipReason: skipReason,
-      packet: packet
+      packet: packet,
+      modelEligibleReason: modelEligibleReason
     )
     latest = Snapshot(
       decision: allowed ? "Used" : "Skipped",
@@ -980,6 +990,7 @@ enum HostBriefingHostBoardGate {
     case model_not_ready
     case startup_in_flight
     case reservation_refresh_in_flight
+    case enrichment_loading
     case date_navigation
     case local_model_in_flight
     case stabilization_delay
@@ -1043,9 +1054,13 @@ enum HostBriefingHostBoardGate {
   static func gateReason(
     allowed: Bool,
     skipReason: SkipReason?,
-    packet: HostLLMPacket
+    packet: HostLLMPacket,
+    modelEligibleReason: String? = nil
   ) -> String {
     if allowed {
+      if let modelEligibleReason, !modelEligibleReason.isEmpty {
+        return modelEligibleReason
+      }
       return hasOperationalTension(packet: packet) ? "operational_tension" : "complex_packet"
     }
     if skipReason == .host_board_template_only {
@@ -1079,22 +1094,32 @@ enum HostBriefingHostBoardGate {
   static func shouldUseLocalModelOnHostBoard(
     settings: HostIntelligenceSettings,
     context: HostBriefingHostBoardContext,
-    packet: HostLLMPacket
+    packet: HostLLMPacket,
+    modelEligibleReason: String? = nil
   ) -> Bool {
-    localModelSkipReason(settings: settings, context: context, packet: packet) == nil
+    localModelSkipReason(
+      settings: settings,
+      context: context,
+      packet: packet,
+      modelEligibleReason: modelEligibleReason
+    ) == nil
   }
 
   @MainActor
   static func localModelSkipReason(
     settings: HostIntelligenceSettings,
     context: HostBriefingHostBoardContext,
-    packet: HostLLMPacket
+    packet: HostLLMPacket,
+    modelEligibleReason: String? = nil
   ) -> SkipReason? {
     guard settings.useEnhancedBriefing else { return .host_board_gate_off }
     guard settings.enhancedBriefingProvider == .localModel else { return .host_board_gate_off }
     guard settings.useLocalModelOnHostBoard else { return .host_board_gate_off }
     guard packet.hasMeaningfulBriefingFacts else { return .no_meaningful_facts }
-    if shouldUseTemplateOnlyOnHostBoard(packet: packet) { return .host_board_template_only }
+    if modelEligibleReason == nil,
+       shouldUseTemplateOnlyOnHostBoard(packet: packet) {
+      return .host_board_template_only
+    }
     // Use the best available profile so the 3B model is recognized as ready when
     // it is bundled (iPad/demo build), even when the 0.5B file is absent.
     if HostLocalModelReadinessProvider.currentReadiness().status != .ready {
@@ -1102,6 +1127,7 @@ enum HostBriefingHostBoardGate {
     }
     if context.isStartupNetworkPassInFlight { return .startup_in_flight }
     if context.isReservationRefreshInFlight { return .reservation_refresh_in_flight }
+    if context.isEnrichmentLoading { return .enrichment_loading }
     if let navigationAt = context.hostBoardDateNavigationAt,
        context.now.timeIntervalSince(navigationAt) < dateNavigationCooldown {
       return .date_navigation
@@ -1243,6 +1269,8 @@ enum HostIntelligenceDiagnostics {
       return "startup reservation refresh still in flight"
     case "reservation_refresh_in_flight":
       return "reservation refresh still in flight"
+    case "enrichment_loading":
+      return "guest or availability enrichment is still loading"
     case "date_navigation":
       return "host date navigation still settling"
     case "local_model_in_flight":

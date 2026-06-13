@@ -42,10 +42,26 @@ enum ManagerAttentionItemBuilder {
 
   static func build(
     from snapshot: HostDecisionSnapshot,
+    presentation: HostAttentionPresentation? = nil,
     maxItems: Int = 3,
     compactPresentation: Bool = false,
     briefingText: String = ""
   ) -> [ManagerAttentionItem] {
+    if let presentation, presentation.hasVisibleContent {
+      return Array(presentation.primaryItems.prefix(maxItems)).map { item in
+        ManagerAttentionItem(
+          id: item.id,
+          priority: item.priority,
+          title: item.title,
+          detail: item.detail,
+          actionTitle: item.actionTitle,
+          destinationHint: item.destinationHint,
+          relatedReservationIDs: item.relatedReservationIDs,
+          sourceAction: item.sourceAction
+        )
+      }
+    }
+
     let actions = Array(snapshot.suggestedActions.prefix(maxItems))
     return actions.map { action in
       staffItem(

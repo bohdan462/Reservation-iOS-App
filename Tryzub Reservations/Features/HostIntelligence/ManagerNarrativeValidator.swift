@@ -358,6 +358,9 @@ enum ManagerNarrativeValidator {
       if let failure = validatePressureClaims(field, packet: packet) {
         return failure
       }
+      if let failure = validateGuestNames(field, packet: packet) {
+        return failure
+      }
       if let failure = validateField(field, packet: packet, hostPacket: hostPacket) {
         return failure
       }
@@ -547,6 +550,64 @@ enum ManagerNarrativeValidator {
     }
 
     return nil
+  }
+
+  private static func validateGuestNames(
+    _ text: String,
+    packet: ManagerNarrativePacket
+  ) -> ManagerNarrativeValidationResult? {
+    let outputNames = potentialGuestNameTokens(in: text)
+    guard !outputNames.isEmpty else { return nil }
+
+    let approvedCorpus = (
+      packet.headlineFacts.flatMap { [$0.title, $0.detail ?? ""] }
+        + packet.availableActions.map(\.title)
+        + [packet.groupedHeadline ?? "", packet.groupedSummary ?? ""]
+    ).joined(separator: " ")
+    let approvedNames = potentialGuestNameTokens(in: approvedCorpus)
+    let unapproved = outputNames.subtracting(approvedNames)
+
+    guard !unapproved.isEmpty else { return nil }
+    return ManagerNarrativeValidationResult(
+      isValid: false,
+      reason: "Narrative mentions a guest name not present in the packet."
+    )
+  }
+
+  private static func potentialGuestNameTokens(in text: String) -> Set<String> {
+    let cleaned = text.replacingOccurrences(
+      of: #"[^A-Za-z'\s-]"#,
+      with: " ",
+      options: .regularExpression
+    )
+    let commonWords: Set<String> = [
+      "allergy", "anniversary", "attention", "birthday", "booking", "bookings",
+      "capacity", "check", "context", "dietary", "floor", "guest", "guests",
+      "host", "kitchen", "manager", "note", "notes", "party", "peak",
+      "preference", "pressure", "reservation", "reservations", "returning",
+      "service", "staff", "table", "tables", "today", "tonight", "tryzub",
+      "ukrainian", "window"
+    ]
+
+    return Set(
+      cleaned
+        .split(whereSeparator: \.isWhitespace)
+        .compactMap { rawToken -> String? in
+          var token = String(rawToken)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "'-"))
+          if token.lowercased().hasSuffix("'s") {
+            token = String(token.dropLast(2))
+          }
+          guard token.count >= 2 else { return nil }
+          guard let first = token.unicodeScalars.first,
+                CharacterSet.uppercaseLetters.contains(first) else {
+            return nil
+          }
+          let lower = token.lowercased()
+          guard !commonWords.contains(lower) else { return nil }
+          return token
+        }
+    )
   }
 
   private static func extractFirstInteger(after keywords: [String], in lower: String) -> Int? {

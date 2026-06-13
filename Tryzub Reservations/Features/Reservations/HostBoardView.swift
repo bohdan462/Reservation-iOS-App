@@ -459,8 +459,23 @@ struct HostBoardView: View {
         }
         .task(id: hostIntelligenceEnrichmentKey) {
             guard isVisible else { return }
+            let options = hostFloorLegacyOptions
+            let floorSource = hostFloorTableSource
+            let layoutStamp = floorPlanStore.layoutFingerprint(
+                for: selectedDateKey,
+                allowsLegacyFallback: options.allowsFallback,
+                localActiveTableCount: options.localActiveTableCount
+            )
+            let guestGeneration = [
+                guestIntelligenceStore.cacheStamp(for: selectedDateKey),
+                guestIntelligenceStore.profilePackCacheStamp(for: reservations.map(\.remoteID))
+            ].joined(separator: "|")
             await hostIntelligenceController.refreshBriefing(
                 hostBoardContext: HostBriefingHostBoardContext(
+                    selectedDateKey: selectedDateKey,
+                    floorSourceLabel: floorSource.traceLabel,
+                    layoutFingerprint: layoutStamp,
+                    guestIntelligenceGeneration: guestGeneration,
                     isStartupNetworkPassInFlight: controller.isStartupNetworkPassInFlight,
                     isHistoryPrefetching: controller.isHistoryPrefetching,
                     isLocalModelInferenceActive: HostLocalModelInferenceTracker.isActive,
@@ -939,6 +954,7 @@ struct HostBoardView: View {
 
         HostIntelligenceCard(
             snapshot: snapshot,
+            attentionPresentation: hostIntelligenceController.displayAttentionPresentation,
             briefingTextOverride: hostIntelligenceController.displayBriefingText,
             managerNarrative: hostIntelligenceController.displayManagerNarrative,
             briefingSource: hostIntelligenceController.briefingSource,
