@@ -505,11 +505,6 @@ private struct ReservationFormContent: View {
             suppressedGuestPhoneSuggestionID = nil
             guestPhoneLookupStore.schedulePhoneLookup(draft.phone)
         }
-        .onChange(of: guestPhoneLookupStore.phoneMatch?.id) { _, _ in
-            guard let match = guestPhoneLookupStore.phoneMatch else { return }
-            guard shouldAutoApplyGuestPhoneSuggestion(match) else { return }
-            applyGuestPhoneSuggestion(match)
-        }
         .onChange(of: draft.reservationDate.reservationDateString()) { _, newDateKey in
             cachedDayReservationsDateKey = nil
             cachedDayReservations = []
@@ -712,7 +707,7 @@ private struct ReservationFormContent: View {
 
     private var visibleGuestPhoneSuggestion: GuestLookupResult? {
         guard mode.usesManualGuestInput else { return nil }
-        guard draft.phone.filter(\.isNumber).count >= 10 else { return nil }
+        guard GuestLookupPhoneNormalizer.digits(draft.phone).count >= ManualPhoneSuggestTrace.threshold else { return nil }
         guard let match = guestPhoneLookupStore.phoneMatch else { return nil }
         guard suppressedGuestPhoneSuggestionID != match.id else { return nil }
         guard !draftAlreadyMatchesGuest(match) else { return nil }
@@ -728,29 +723,19 @@ private struct ReservationFormContent: View {
         guestPhoneLookupStore.schedulePhoneLookup(draft.phone)
     }
 
-    private func shouldAutoApplyGuestPhoneSuggestion(_ result: GuestLookupResult) -> Bool {
-        let draftDigits = draft.phone.filter(\.isNumber)
-        guard draftDigits.count >= 10,
-              let phoneDigits = result.phoneDigits else {
-            return false
-        }
-        guard phoneDigits == draftDigits || phoneDigits.hasSuffix(draftDigits) else {
-            return false
-        }
-        return draft.guestName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
     private func draftAlreadyMatchesGuest(_ result: GuestLookupResult) -> Bool {
         let trimmedName = draft.guestName.trimmingCharacters(in: .whitespacesAndNewlines)
         let nameMatches = !trimmedName.isEmpty
             && trimmedName.localizedCaseInsensitiveCompare(result.displayName) == .orderedSame
 
-        let draftDigits = draft.phone.filter(\.isNumber)
+        let draftDigits = GuestLookupPhoneNormalizer.digits(draft.phone)
         guard let resultDigits = result.phoneDigits, !draftDigits.isEmpty else {
             return nameMatches
         }
 
         let phoneMatches = draftDigits == resultDigits
+            || resultDigits.hasPrefix(draftDigits)
+            || (draftDigits.count == ManualPhoneSuggestTrace.threshold && resultDigits.hasSuffix(draftDigits))
             || (draftDigits.count >= 10 && resultDigits.hasSuffix(String(draftDigits.suffix(10))))
 
         if let email = result.email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
@@ -761,7 +746,31 @@ private struct ReservationFormContent: View {
         return nameMatches && phoneMatches
     }
 
+    private func phoneSuggestionMatchReason(
+        draftDigits: String,
+        resultDigits: String
+    ) -> String {
+        if draftDigits == resultDigits { return "exact_match" }
+        if resultDigits.hasPrefix(draftDigits) { return "starts_with_match" }
+        if draftDigits.count == ManualPhoneSuggestTrace.threshold,
+           resultDigits.hasSuffix(draftDigits) {
+            return "last4_match"
+        }
+        if resultDigits.contains(draftDigits) { return "contains_match" }
+        return "cache_match"
+    }
+
     private func applyGuestPhoneSuggestion(_ result: GuestLookupResult) {
+        let draftDigits = GuestLookupPhoneNormalizer.digits(draft.phone)
+        if let resultDigits = result.phoneDigits, draftDigits.count >= ManualPhoneSuggestTrace.threshold {
+            ManualPhoneSuggestTrace.selectedGuest(
+                name: result.displayName,
+                reason: phoneSuggestionMatchReason(
+                    draftDigits: draftDigits,
+                    resultDigits: resultDigits
+                )
+            )
+        }
         draft.guestName = result.displayName
         if let phoneDigits = result.phoneDigits {
             draft.phone = ReservationInputNormalizer.sanitizedUSPhoneInput(phoneDigits)
@@ -2197,17 +2206,18 @@ private struct GuestPhoneLookupSuggestionRow: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .top, spacing: 10) {
             Image(systemName: "person.crop.circle.badge.checkmark")
                 .font(.title3)
                 .foregroundStyle(ReservationUIStyle.selectedControlColor)
+                .padding(.top, 2)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(result.displayName)
                     .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
                     if let phoneDigits = result.phoneDigits {
                         Text(GuestLookupFormatting.phoneDisplay(phoneDigits))
                     }
@@ -2220,23 +2230,24 @@ private struct GuestPhoneLookupSuggestionRow: View {
                 }
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Spacer(minLength: 4)
+            VStack(spacing: 8) {
+                Button("Use", action: onUse)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(ReservationUIStyle.selectedControlColor)
 
-            Button("Use", action: onUse)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(ReservationUIStyle.selectedControlColor)
-
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(6)
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(6)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss guest suggestion")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss guest suggestion")
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)

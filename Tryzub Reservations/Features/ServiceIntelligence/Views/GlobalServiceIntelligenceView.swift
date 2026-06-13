@@ -614,7 +614,31 @@ struct GlobalServiceIntelligenceView: View {
     }
 
     private func buildBookingLoadReport(bounds: (open: Date?, close: Date?)) -> BookingLoadReport {
-        let capacitySummary = floorPlanStore.capacitySummary
+        let allowsLegacy = hostIntelligenceSettingsStore.settings.useLegacyAdvisoryTableFallback
+        let localActiveCount = hostTableConfigStore.activeTables.count
+        let source = floorPlanStore.floorSourceStatus(
+            for: todayKey,
+            allowsLegacyFallback: allowsLegacy,
+            localActiveTableCount: localActiveCount
+        )
+        let capacitySummary: TableCapacitySummary
+        switch source {
+        case .backend:
+            capacitySummary = floorPlanStore.capacitySummary(
+                for: todayKey,
+                allowsLegacyFallback: allowsLegacy,
+                localActiveTableCount: localActiveCount
+            )
+        case .legacyFallback:
+            capacitySummary = TableCapacitySummary.build(
+                from: hostTableConfigStore.activeTables,
+                source: .legacyFallback
+            )
+            TableCapacityTrace.summary(capacitySummary)
+        default:
+            capacitySummary = TableCapacitySummary.empty(source: source)
+            TableCapacityTrace.summary(capacitySummary)
+        }
         let (seats, isBackendLayout) = BookingLoadSupport.plannedSeats(
             from: capacitySummary,
             localCapacity: hostTableConfigStore.totalActiveCapacity

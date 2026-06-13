@@ -225,7 +225,8 @@ private struct ReservationsTabShell: View {
         TabView(selection: $selectedTab) {
             HomeDashboardView(
                 environment: environment,
-                isActive: selectedTab == .host
+                isActive: selectedTab == .host,
+                onOpenFloorSetup: { selectedTab = .floorPlan }
             )
             .tabItem {
                 Label(hostTabTitle, systemImage: ReservationsAppTab.host.systemImage)
@@ -296,6 +297,9 @@ private struct ReservationsTabShell: View {
         .environmentObject(activityStore)
         .onAppear {
             restaurantSettingsStore.adoptRestaurantSetup(controller.restaurantSetup)
+            if floorPlanStore.freshnessCoordinator == nil {
+                floorPlanStore.freshnessCoordinator = controller.freshnessCoordinator
+            }
             let raw = UserDefaults.standard.string(forKey: HostTableCapacityTextParser.storageKey) ?? ""
             let result = HostTableCapacityTextParser.parse(raw)
             if !result.tables.isEmpty {
@@ -363,10 +367,12 @@ private struct HomeDashboardView: View {
 
     let environment: AppEnvironment
     let isActive: Bool
+    var onOpenFloorSetup: (() -> Void)? = nil
 
-    init(environment: AppEnvironment, isActive: Bool) {
+    init(environment: AppEnvironment, isActive: Bool, onOpenFloorSetup: (() -> Void)? = nil) {
         self.environment = environment
         self.isActive = isActive
+        self.onOpenFloorSetup = onOpenFloorSetup
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
         let toDate = bounds.to
@@ -400,11 +406,20 @@ private struct HomeDashboardView: View {
         // HostBoardView receives isVisible:isActive to gate network and animation behavior.
         let selectedDateKey = selectedDate.reservationDateString()
         let allForDate = reservations.filter { $0.reservationDate == selectedDateKey }
-        let filtered = allForDate.filter { !hiddenReservations.isHidden($0) }
+        let filtered = allForDate.filter { record in
+            !hiddenReservations.isHidden(record) && record.isHostBoardOperational
+        }
         #if DEBUG
         if isActive {
             for record in allForDate {
-                let included = !hiddenReservations.isHidden(record)
+                let isHidden = hiddenReservations.isHidden(record)
+                let isOperational = record.isHostBoardOperational
+                let included = !isHidden && isOperational
+                let reason: String = {
+                    if isHidden { return "hidden" }
+                    if !isOperational { return "terminal_status" }
+                    return "operational"
+                }()
                 MultiDeviceSyncTrace.hostFilterTrace(
                     selectedDate: selectedDateKey,
                     id: record.remoteID,
@@ -414,7 +429,7 @@ private struct HomeDashboardView: View {
                     hidden: record.isHidden,
                     superseded: record.supersededById != nil,
                     included: included,
-                    reason: included ? "included" : "hidden"
+                    reason: reason
                 )
             }
         }
@@ -447,7 +462,8 @@ private struct HomeDashboardView: View {
                 },
                 onOpenReservation: { reservation in
                     navigationPath.append(reservation.remoteID)
-                }
+                },
+                onOpenFloorSetup: onOpenFloorSetup
             )
             .refreshable {
                 guard isActive else { return }

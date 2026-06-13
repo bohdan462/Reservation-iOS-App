@@ -172,6 +172,17 @@ class ReservationRecord: Identifiable {
         ReservationStatus(rawValue: status) ?? .new
     }
 
+    /// Active host-board rows: terminal statuses stay in SwiftData but are excluded
+    /// from the operational pool that feeds Host Intelligence and the live board.
+    var isHostBoardOperational: Bool {
+        switch statusValue {
+        case .new, .needsReview, .confirmed, .seated:
+            return true
+        case .completed, .cancelled, .noShow:
+            return false
+        }
+    }
+
     var sourceTypeValue: ReservationSourceType {
         guard let sourceType else {
             return sourceSubmissionID > 0 ? .form : .manualCallIn

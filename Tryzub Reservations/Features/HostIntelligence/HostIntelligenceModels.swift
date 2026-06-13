@@ -417,6 +417,9 @@ struct HostIntelligenceSettings: Codable, Equatable {
     var useLocalModelForNoteAnalysis: Bool
     /// When true, Host board may show separated operational prompts from deterministic facts.
     var useSeparatedBriefingPrompts: Bool
+    /// When true and backend floor is unavailable/empty, advisory HostTableConfigStore may
+    /// feed table intelligence. Default off — local tables must never pretend to be canonical.
+    var useLegacyAdvisoryTableFallback: Bool
 
     init(
         isEnabled: Bool = true,
@@ -449,7 +452,8 @@ struct HostIntelligenceSettings: Codable, Equatable {
         useLocalModelOnHostBoard: Bool = true,
         useLocalModelForGuestMessageDrafts: Bool = true,
         useLocalModelForNoteAnalysis: Bool = true,
-        useSeparatedBriefingPrompts: Bool = false
+        useSeparatedBriefingPrompts: Bool = false,
+        useLegacyAdvisoryTableFallback: Bool = false
     ) {
         self.isEnabled = isEnabled
         self.slotIntervalMinutes = slotIntervalMinutes
@@ -479,6 +483,7 @@ struct HostIntelligenceSettings: Codable, Equatable {
         self.useLocalModelForGuestMessageDrafts = useLocalModelForGuestMessageDrafts
         self.useLocalModelForNoteAnalysis = useLocalModelForNoteAnalysis
         self.useSeparatedBriefingPrompts = useSeparatedBriefingPrompts
+        self.useLegacyAdvisoryTableFallback = useLegacyAdvisoryTableFallback
     }
 
     init(from decoder: Decoder) throws {
@@ -511,7 +516,8 @@ struct HostIntelligenceSettings: Codable, Equatable {
             useLocalModelOnHostBoard: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelOnHostBoard) ?? true,
             useLocalModelForGuestMessageDrafts: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelForGuestMessageDrafts) ?? true,
             useLocalModelForNoteAnalysis: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelForNoteAnalysis) ?? true,
-            useSeparatedBriefingPrompts: try container.decodeIfPresent(Bool.self, forKey: .useSeparatedBriefingPrompts) ?? false
+            useSeparatedBriefingPrompts: try container.decodeIfPresent(Bool.self, forKey: .useSeparatedBriefingPrompts) ?? false,
+            useLegacyAdvisoryTableFallback: try container.decodeIfPresent(Bool.self, forKey: .useLegacyAdvisoryTableFallback) ?? false
         )
     }
 
@@ -544,6 +550,7 @@ struct HostIntelligenceSettings: Codable, Equatable {
             enhancedBriefingProvider.rawValue,
             useLocalModelOnHostBoard ? "1" : "0",
             useSeparatedBriefingPrompts ? "1" : "0",
+            useLegacyAdvisoryTableFallback ? "1" : "0",
         ].joined(separator: "|")
     }
 }
@@ -632,10 +639,10 @@ struct HostEngineInput {
     let tableConfigs: [RestaurantTableConfig]
     /// Broader local cache for guest memory. Falls back to `reservations` when empty.
     let allKnownReservations: [ReservationRecord]
-    /// Active backend floor tables from GET /floor-plan.
-    /// When non-empty, the engine prefers these over tableConfigs for capacity-based table suggestions
-    /// because they reflect actual backend table inventory, not the local UserDefaults store.
+    /// Active backend floor tables from GET /floor-plan when `floorTableSource == .backend`.
     let backendFloorTables: [RestaurantTableDTO]
+    /// Explicit floor inventory provenance — never infer from empty backend tables alone.
+    let floorTableSource: HostFloorTableSource
     /// Backend guest intelligence summaries for the selected service date, keyed by reservation ID.
     let guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO]
     /// Loaded reservation profile packs (Detail/Guest Insights), keyed by reservation ID.
@@ -653,6 +660,7 @@ struct HostEngineInput {
         tableConfigs: [RestaurantTableConfig],
         allKnownReservations: [ReservationRecord],
         backendFloorTables: [RestaurantTableDTO] = [],
+        floorTableSource: HostFloorTableSource = .pendingBackend,
         guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO] = [:],
         guestProfilePacksByReservationID: [Int: GuestIntelligenceProfilePackDTO] = [:]
     ) {
@@ -667,6 +675,7 @@ struct HostEngineInput {
         self.tableConfigs = tableConfigs
         self.allKnownReservations = allKnownReservations
         self.backendFloorTables = backendFloorTables
+        self.floorTableSource = floorTableSource
         self.guestIntelligenceSummariesByReservationID = guestIntelligenceSummariesByReservationID
         self.guestProfilePacksByReservationID = guestProfilePacksByReservationID
     }

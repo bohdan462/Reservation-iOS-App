@@ -23,6 +23,7 @@ struct HostBoardView: View {
     let onManualRefresh: () -> Void
     let onShowFormProblems: () -> Void
     let onOpenReservation: (ReservationRecord) -> Void
+    var onOpenFloorSetup: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
@@ -169,10 +170,28 @@ struct HostBoardView: View {
         return hasher.finalize()
     }
 
+    private var hostFloorLegacyOptions: (allowsFallback: Bool, localActiveTableCount: Int) {
+        let settings = hostIntelligenceSettingsStore.settings
+        return (
+            settings.useLegacyAdvisoryTableFallback,
+            hostTableConfigStore.activeTables.count
+        )
+    }
+
+    private var hostFloorTableSource: HostFloorTableSource {
+        let options = hostFloorLegacyOptions
+        return floorPlanStore.floorSourceStatus(
+            for: selectedDateKey,
+            allowsLegacyFallback: options.allowsFallback,
+            localActiveTableCount: options.localActiveTableCount
+        )
+    }
+
     /// Local deterministic Host facts: reservations, date, seated times, settings.
     /// History cache enrichment is intentionally excluded; guest intelligence uses `hostIntelligenceEnrichmentKey`.
     private var hostIntelligenceEvaluationKey: String {
-        "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceSeatedStamp)-\(hostIntelligenceOperationalMinuteStamp)-\(hostIntelligenceSettingsStore.settings.hostDecisionFingerprint)-\(hostTableConfigStore.tableConfigFingerprint)"
+        let options = hostFloorLegacyOptions
+        return "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceSeatedStamp)-\(hostIntelligenceOperationalMinuteStamp)-\(hostIntelligenceSettingsStore.settings.hostDecisionFingerprint)-\(floorPlanStore.layoutFingerprint(for: selectedDateKey, allowsLegacyFallback: options.allowsFallback, localActiveTableCount: options.localActiveTableCount))"
     }
 
     private var hostHistoryEnrichmentGenerationKey: String {
@@ -187,13 +206,15 @@ struct HostBoardView: View {
         let profilePackStamp = guestIntelligenceStore.profilePackCacheStamp(
             for: reservations.map(\.remoteID)
         )
-        return "\(selectedDateKey)-\(availabilityStamp)-\(guestIntelStamp)-\(analyticsStamp)-\(profilePackStamp)"
+        let options = hostFloorLegacyOptions
+        return "\(selectedDateKey)-\(availabilityStamp)-\(guestIntelStamp)-\(analyticsStamp)-\(profilePackStamp)-\(floorPlanStore.layoutFingerprint(for: selectedDateKey, allowsLegacyFallback: options.allowsFallback, localActiveTableCount: options.localActiveTableCount))"
     }
 
     private var hostBoardOperationalLoading: Bool {
         guard selectedDateKey == Date.reservationDateString() else { return false }
         return isLoadingAvailabilitySummary
             || guestIntelligenceStore.isLoading(dateKey: selectedDateKey)
+            || hostFloorTableSource == .pendingBackend
     }
 
     private var hostIntelligenceOperationalMinuteStamp: String {
@@ -396,9 +417,8 @@ struct HostBoardView: View {
             rebuildServiceBriefing()
         }
         // Single coordinated task replaces the two independent availability +
-        // guest-intelligence tasks. HostBoardLifecycleCoordinator emits [HOST_LIFECYCLE]
-        // traces, skips work when data is already fresh/in-flight, and provides one
-        // visible lifecycle path: visible → date_changed → hidden.
+        // guest-intelligence tasks. Floor plan fetch is scheduled immediately on Host
+        // visibility (never deferred). Availability/guest intel may defer during startup.
         .task(id: "\(isVisible)-\(deferNetworkLoads)-\(controller.canStartNoncriticalStartupLoads)-\(selectedDateKey)") {
             guard !isRunningForPreviews else { return }
             lifecycleCoordinator.handle(
@@ -406,7 +426,8 @@ struct HostBoardView: View {
                 date: selectedDateKey,
                 shouldDefer: deferNetworkLoads || shouldDeferStartupOptionalLoads,
                 controller: controller,
-                guestIntelligenceStore: guestIntelligenceStore
+                guestIntelligenceStore: guestIntelligenceStore,
+                floorPlanStore: floorPlanStore
             )
         }
         .task(id: hostIntelligenceEvaluationKey) {
@@ -797,7 +818,7 @@ struct HostBoardView: View {
 
     /// Cache-only deterministic booking-load analysis for the selected date.
     private func buildBookingLoadReport(bounds: (open: Date?, close: Date?)) -> BookingLoadReport {
-        let capacitySummary = floorPlanStore.capacitySummary
+        let capacitySummary = hostFloorCapacitySummary()
         let (seats, isBackendLayout) = BookingLoadSupport.plannedSeats(
             from: capacitySummary,
             localCapacity: hostTableConfigStore.totalActiveCapacity
@@ -827,10 +848,82 @@ struct HostBoardView: View {
             }
         } else {
             liveHostIntelligenceSection
+            hostFloorSetupPrompt
             if let bookingTopItem {
                 BookingLoadHostCard(item: bookingTopItem, knownOnlyNote: bookingKnownOnlyNote)
             }
         }
+    }
+
+    @ViewBuilder
+    private var hostFloorSetupPrompt: some View {
+        let source = hostFloorTableSource
+        let showManagerPrompt = environment.role == .manager || environment.role == .developer
+        if showManagerPrompt, source == .notConfigured {
+            HostFloorSetupPromptCard(onOpenFloorSetup: onOpenFloorSetup)
+        }
+    }
+
+    private func hostFloorCapacitySummary() -> TableCapacitySummary {
+        let options = hostFloorLegacyOptions
+        let source = floorPlanStore.floorSourceStatus(
+            for: selectedDateKey,
+            allowsLegacyFallback: options.allowsFallback,
+            localActiveTableCount: options.localActiveTableCount
+        )
+        switch source {
+        case .backend:
+            return floorPlanStore.capacitySummary(
+                for: selectedDateKey,
+                allowsLegacyFallback: options.allowsFallback,
+                localActiveTableCount: options.localActiveTableCount
+            )
+        case .legacyFallback:
+            let summary = TableCapacitySummary.build(
+                from: hostTableConfigStore.activeTables,
+                source: .legacyFallback
+            )
+            TableCapacityTrace.summary(summary)
+            return summary
+        default:
+            let summary = TableCapacitySummary.empty(source: source)
+            TableCapacityTrace.summary(summary)
+            return summary
+        }
+    }
+
+    private func makeHostEngineInput(now: Date) -> HostEngineInput {
+        let options = hostFloorLegacyOptions
+        let source = floorPlanStore.floorSourceStatus(
+            for: selectedDateKey,
+            allowsLegacyFallback: options.allowsFallback,
+            localActiveTableCount: options.localActiveTableCount
+        )
+        let resolved = HostFloorSourceSupport.resolveEngineTables(
+            source: source,
+            backendTables: floorPlanStore.backendTables(for: selectedDateKey),
+            advisoryTables: hostTableConfigStore.tables
+        )
+        return HostEngineInput(
+            now: now,
+            selectedDate: selectedDate,
+            reservations: reservations,
+            availabilitySummary: availabilitySummary,
+            analyticsSummary: cachedAnalyticsSummary,
+            restaurantSetup: controller.hasLoadedRestaurantSetup ? controller.restaurantSetup : nil,
+            localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
+            settings: hostIntelligenceSettingsStore.settings,
+            tableConfigs: resolved.tableConfigs,
+            allKnownReservations: allKnownReservations.isEmpty ? reservations : allKnownReservations,
+            backendFloorTables: resolved.backendFloorTables,
+            floorTableSource: source,
+            guestIntelligenceSummariesByReservationID: guestIntelligenceStore.summariesByReservationID(
+                for: selectedDateKey
+            ),
+            guestProfilePacksByReservationID: guestIntelligenceStore.profilePacks(
+                for: reservations.map(\.remoteID)
+            )
+        )
     }
 
     @ViewBuilder
@@ -915,33 +1008,6 @@ struct HostBoardView: View {
             knownReservations: allKnownReservations
         ) else { return }
         onOpenReservation(reservation)
-    }
-
-    private func makeHostEngineInput(now: Date) -> HostEngineInput {
-        // Use the broader history pool (all known reservations from the shell) so
-        // guest-memory signals draw on history beyond the selected day.
-        // backendFloorTables feeds the engine canonical table layout when available,
-        // so table suggestions reflect actual backend table inventory rather than
-        // the local UserDefaults HostTableConfigStore.
-        HostEngineInput(
-            now: now,
-            selectedDate: selectedDate,
-            reservations: reservations,
-            availabilitySummary: availabilitySummary,
-            analyticsSummary: cachedAnalyticsSummary,
-            restaurantSetup: controller.hasLoadedRestaurantSetup ? controller.restaurantSetup : nil,
-            localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
-            settings: hostIntelligenceSettingsStore.settings,
-            tableConfigs: hostTableConfigStore.tables,
-            allKnownReservations: allKnownReservations.isEmpty ? reservations : allKnownReservations,
-            backendFloorTables: floorPlanStore.viewState.tables,
-            guestIntelligenceSummariesByReservationID: guestIntelligenceStore.summariesByReservationID(
-                for: selectedDateKey
-            ),
-            guestProfilePacksByReservationID: guestIntelligenceStore.profilePacks(
-                for: reservations.map(\.remoteID)
-            )
-        )
     }
 
     private func phoneLists(snapshot: HostBoardSnapshot) -> some View {
@@ -1944,5 +2010,28 @@ private enum ReservationPresentationTime {
         let adjustedHour = hour % 12 == 0 ? 12 : hour % 12
         let suffix = hour < 12 ? "AM" : "PM"
         return "\(adjustedHour) \(suffix)"
+    }
+}
+
+// MARK: - Floor Setup Prompt
+
+private struct HostFloorSetupPromptCard: View {
+    var onOpenFloorSetup: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Floor plan not set up yet", systemImage: "square.grid.3x3.topleft.filled")
+                .font(.subheadline.weight(.semibold))
+            Text("Set up tables in the Floor tab.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            if let onOpenFloorSetup {
+                Button("Open Floor Setup", action: onOpenFloorSetup)
+                    .font(.footnote.weight(.semibold))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 }

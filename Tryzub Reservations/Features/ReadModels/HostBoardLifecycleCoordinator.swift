@@ -43,7 +43,8 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         date: String,
         shouldDefer: Bool,
         controller: ReservationsController,
-        guestIntelligenceStore: GuestIntelligenceStore
+        guestIntelligenceStore: GuestIntelligenceStore,
+        floorPlanStore: FloorPlanStore
     ) {
         let visibilityChanged = lastEmittedVisible != isVisible
         let dateChanged = lastEmittedDate != date && lastEmittedDate != nil
@@ -71,7 +72,8 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
                 date: date,
                 shouldDefer: shouldDefer,
                 controller: controller,
-                guestIntelligenceStore: guestIntelligenceStore
+                guestIntelligenceStore: guestIntelligenceStore,
+                floorPlanStore: floorPlanStore
             )
             return
         } else {
@@ -87,7 +89,8 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
             date: date,
             shouldDefer: shouldDefer,
             controller: controller,
-            guestIntelligenceStore: guestIntelligenceStore
+            guestIntelligenceStore: guestIntelligenceStore,
+            floorPlanStore: floorPlanStore
         )
     }
 
@@ -97,10 +100,15 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         date: String,
         shouldDefer: Bool,
         controller: ReservationsController,
-        guestIntelligenceStore: GuestIntelligenceStore
+        guestIntelligenceStore: GuestIntelligenceStore,
+        floorPlanStore: FloorPlanStore
     ) {
+        // Floor plan is canonical for Host Intelligence and must start as soon as Host
+        // is visible — never wait for startup deferral, availability, or guest intel.
+        scheduleFloorPlanIfNeeded(date: date, floorPlanStore: floorPlanStore)
+
         guard !shouldDefer else {
-            log(event: "deferred", date: date)
+            log(event: "deferred", date: date, reason: "optional_startup_loads")
             return
         }
 
@@ -126,6 +134,17 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         } else {
             log(event: "schedule_guest_intel", date: date)
             guestIntelligenceStore.scheduleLoad(dateKey: date)
+        }
+    }
+
+    private func scheduleFloorPlanIfNeeded(date: String, floorPlanStore: FloorPlanStore) {
+        if floorPlanStore.isLoading(date: date) {
+            log(event: "skip_floor_plan", date: date, reason: "in_flight")
+        } else if floorPlanStore.hasCachedLayout(for: date) {
+            log(event: "skip_floor_plan", date: date, reason: "fresh")
+        } else {
+            log(event: "schedule_floor_plan", date: date, reason: "host_visible")
+            floorPlanStore.load(date: date)
         }
     }
 

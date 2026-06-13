@@ -103,6 +103,8 @@ struct HostIntelligenceEngine {
     suggestedActions.append(contentsOf: tableIntelligence.actions)
     tableSignals.append(contentsOf: tableIntelligence.signals)
 
+    briefingFacts.append(contentsOf: HostFloorSourceSupport.briefingFacts(for: input.floorTableSource))
+
     let cancellationIntelligence = HostCancellationIntelligenceSupport.analyze(
       activeReservations: activeReservations,
       allDayReservations: context.reservations,
@@ -340,17 +342,18 @@ struct HostIntelligenceEngine {
       $0.reservationDate == selectedDateKey && !$0.isHidden
     }
 
-    // When the backend floor plan has been loaded for this date, use those active
-    // tables as the engine's table inventory. This aligns capacity-based table
-    // suggestions with actual backend layout rather than the local UserDefaults store.
-    // Falls back to tableConfigs (local store) when no backend layout is available yet.
+    // When the backend floor plan is loaded, use those active tables as inventory.
+    // Local HostTableConfigStore is advisory fallback only when floorTableSource says so.
     let effectiveTableConfigs: [RestaurantTableConfig]
-    if !input.backendFloorTables.isEmpty {
+    switch input.floorTableSource {
+    case .backend:
       effectiveTableConfigs = input.backendFloorTables
         .filter(\.isActive)
         .map { $0.asRestaurantTableConfig() }
-    } else {
+    case .legacyFallback:
       effectiveTableConfigs = input.tableConfigs
+    case .pendingBackend, .notConfigured, .unavailable:
+      effectiveTableConfigs = []
     }
 
     return ServiceDayContext(

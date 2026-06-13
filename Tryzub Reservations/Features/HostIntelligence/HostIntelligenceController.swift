@@ -147,6 +147,7 @@ final class HostIntelligenceController: ObservableObject {
       tableConfigs: input.tableConfigs,
       allKnownReservations: input.allKnownReservations,
       backendFloorTables: input.backendFloorTables,
+      floorTableSource: input.floorTableSource,
       guestIntelligenceSummariesByReservationID: input.guestIntelligenceSummariesByReservationID,
       guestProfilePacksByReservationID: input.guestProfilePacksByReservationID
     )
@@ -168,7 +169,7 @@ final class HostIntelligenceController: ObservableObject {
       actions: candidate.suggestedActions.count,
       categories: HostBriefingHostBoardGate.operationalCategories(for: candidate.llmPacket).map(\.traceLabel).sorted(),
       guestSignals: guestSignalMode,
-      floorTables: input.backendFloorTables.isEmpty ? "local" : "backend"
+      floorTables: input.floorTableSource.traceLabel
     )
 
     let shouldBlockEmptyReplacement = !stability.allowsEmptyReplacement

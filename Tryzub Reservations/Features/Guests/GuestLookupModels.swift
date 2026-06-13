@@ -46,12 +46,24 @@ enum ManualReservationPrefillSource: String, Equatable {
     case callInGuestLookup
 }
 
+enum GuestLookupPhoneNormalizer {
+    /// Digits-only US phone for guest lookup. Strips punctuation and leading country code `1`.
+    static func digits(_ value: String) -> String {
+        var digits = value.filter(\.isNumber)
+        while digits.first == "1" {
+            digits.removeFirst()
+        }
+        if digits.count > 10 {
+            return String(digits.prefix(10))
+        }
+        return digits
+    }
+}
+
 enum GuestLookupFormatting {
     static func phoneDisplay(_ digits: String) -> String {
-        let cleaned = digits.filter(\.isNumber)
-        let local = cleaned.count == 11 && cleaned.first == "1"
-            ? String(cleaned.dropFirst())
-            : cleaned
+        let cleaned = GuestLookupPhoneNormalizer.digits(digits)
+        let local = cleaned
 
         guard local.count == 10 else { return cleaned }
 

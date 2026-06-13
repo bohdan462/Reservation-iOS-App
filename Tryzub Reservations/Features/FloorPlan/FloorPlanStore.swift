@@ -13,6 +13,13 @@ enum FloorPlanLayoutSaveState: Equatable {
     case failed(String)
 }
 
+private enum FloorPlanFetchPhase: Equatable {
+    case notAttempted
+    case inFlight
+    case succeeded(activeTableCount: Int)
+    case failed
+}
+
 @MainActor
 final class FloorPlanStore: ObservableObject {
     @Published private(set) var viewState: FloorPlanViewState = .empty
@@ -27,6 +34,7 @@ final class FloorPlanStore: ObservableObject {
     private let service: any FloorPlanServiceProtocol
     private var cacheByDate: [String: FloorPlanResponseDTO] = [:]
     private var lastCheckedAtByDate: [String: Date] = [:]
+    private var fetchPhaseByDate: [String: FloorPlanFetchPhase] = [:]
     private var selectedDate: String = Date().reservationDateString()
     private var activeLoadGeneration = 0
     private var loadTask: Task<Void, Never>?
@@ -54,6 +62,9 @@ final class FloorPlanStore: ObservableObject {
 
     func load(date: String) {
         selectedDate = date
+        if backendActiveTableCount(for: date) == 0 {
+            fetchPhaseByDate[date] = .inFlight
+        }
         loadTask?.cancel()
         loadTask = Task { [weak self] in
             await self?.refresh(date: date, force: false)
@@ -83,25 +94,34 @@ final class FloorPlanStore: ObservableObject {
             let decision = coordinator.decide(scope: scope)
             switch decision {
             case .useCache:
-                if cacheByDate[targetDate] != nil {
+                if let cached = cacheByDate[targetDate] {
                     applyCached(date: targetDate)
+                    markFetchSucceeded(date: targetDate, response: cached)
                     errorMessage = nil
                     return
                 }
                 // Coordinator says fresh but local cache is empty (relaunch):
                 // fall through to fetch.
             case .joinInFlight:
+                if backendActiveTableCount(for: targetDate) == 0 {
+                    fetchPhaseByDate[targetDate] = .inFlight
+                }
                 return
             case .blockedByCooldown:
                 return
             case .fetch:
                 break
             }
-        } else if !force, cacheByDate[targetDate] != nil {
+        } else if !force, let cached = cacheByDate[targetDate] {
             // Fallback when no coordinator is wired yet.
             applyCached(date: targetDate)
+            markFetchSucceeded(date: targetDate, response: cached)
             errorMessage = nil
             return
+        }
+
+        if backendActiveTableCount(for: targetDate) == 0 {
+            fetchPhaseByDate[targetDate] = .inFlight
         }
 
         isLoading = true
@@ -128,6 +148,7 @@ final class FloorPlanStore: ObservableObject {
 
             cacheByDate[targetDate] = response
             lastCheckedAtByDate[targetDate] = Date()
+            markFetchSucceeded(date: targetDate, response: response)
             freshnessCoordinator?.markCompleted(scope)
             viewState = FloorPlanViewStateBuilder.build(
                 response: response,
@@ -142,12 +163,14 @@ final class FloorPlanStore: ObservableObject {
             guard !Task.isCancelled else { return }
             guard generation == activeLoadGeneration, selectedDate == targetDate else { return }
             freshnessCoordinator?.markFailed(scope)
+            markFetchFailed(date: targetDate)
             errorMessage = staffMessage(for: error)
         } catch {
             guard !Task.isCancelled else { return }
             guard generation == activeLoadGeneration, selectedDate == targetDate else { return }
             if !error.isCancellationLike {
                 freshnessCoordinator?.markFailed(scope)
+                markFetchFailed(date: targetDate)
                 errorMessage = error.localizedDescription
             }
         }
@@ -390,19 +413,166 @@ final class FloorPlanStore: ObservableObject {
 
     /// True when a backend floor layout is available and canonical assignment can be used.
     var hasBackendLayout: Bool {
-        viewState.hasTables || !layoutTables.isEmpty
+        floorSourceStatus(for: selectedDate) == .backend
     }
 
-    /// Typed capacity summary built from the backend floor layout.
-    /// Service Intelligence and BookingLoadAnalyzer should prefer this over free-form text.
-    var capacitySummary: TableCapacitySummary {
-        let tables = viewState.tables.isEmpty ? layoutTables : viewState.tables
-        let summary = TableCapacitySummary.build(from: tables)
+    func isLoading(date: String) -> Bool {
+        isLoading && selectedDate == date
+    }
+
+    /// True when a floor-plan response is already cached or applied for this date.
+    func hasCachedLayout(for date: String) -> Bool {
+        if cacheByDate[date] != nil { return true }
+        if viewState.selectedDate == date,
+           viewState.lastCheckedLine != FloorPlanViewState.empty.lastCheckedLine {
+            return true
+        }
+        return false
+    }
+
+    /// Canonical backend tables for a date — reads cache when viewState is not yet applied.
+    func backendTables(for date: String) -> [RestaurantTableDTO] {
+        if viewState.selectedDate == date, !viewState.tables.isEmpty {
+            return viewState.tables
+        }
+        if let cached = cacheByDate[date], !cached.tables.isEmpty {
+            return cached.tables
+        }
+        if selectedDate == date, !layoutTables.isEmpty {
+            return layoutTables
+        }
+        return []
+    }
+
+    func floorSourceStatus(
+        for date: String,
+        allowsLegacyFallback: Bool = false,
+        localActiveTableCount: Int = 0
+    ) -> HostFloorTableSource {
+        let cachedTables = backendTables(for: date)
+        let activeCount = cachedTables.filter(\.isActive).count
+        if activeCount > 0 {
+            let source: HostFloorTableSource = .backend
+            FloorSourceTrace.log(
+                date: date,
+                source: source,
+                reason: "cached_backend_layout",
+                cachedTables: cachedTables.count
+            )
+            return source
+        }
+
+        let phase = fetchPhaseByDate[date] ?? .notAttempted
+        let source: HostFloorTableSource
+        let reason: String
+
+        switch phase {
+        case .inFlight:
+            source = .pendingBackend
+            reason = "fetch_in_flight"
+        case .notAttempted:
+            source = .pendingBackend
+            reason = "fetch_not_attempted"
+        case .succeeded:
+            if allowsLegacyFallback, localActiveTableCount > 0 {
+                source = .legacyFallback
+                reason = "backend_empty_advisory_fallback"
+            } else {
+                source = .notConfigured
+                reason = "backend_empty_layout"
+            }
+        case .failed:
+            if allowsLegacyFallback, localActiveTableCount > 0 {
+                source = .legacyFallback
+                reason = "fetch_failed_advisory_fallback"
+            } else {
+                source = .unavailable
+                reason = "fetch_failed_no_cache"
+            }
+        }
+
+        FloorSourceTrace.log(
+            date: date,
+            source: source,
+            reason: reason,
+            cachedTables: cachedTables.count
+        )
+        return source
+    }
+
+    func layoutFingerprint(
+        for date: String,
+        allowsLegacyFallback: Bool = false,
+        localActiveTableCount: Int = 0
+    ) -> String {
+        let source = floorSourceStatus(
+            for: date,
+            allowsLegacyFallback: allowsLegacyFallback,
+            localActiveTableCount: localActiveTableCount
+        )
+        switch source {
+        case .backend:
+            let tables = backendTables(for: date)
+            let activeCount = tables.filter(\.isActive).count
+            return "backend-\(tables.count)-\(activeCount)"
+        case .legacyFallback:
+            return "legacy-\(localActiveTableCount)"
+        case .pendingBackend:
+            return "pending"
+        case .notConfigured:
+            return "not-configured"
+        case .unavailable:
+            return "unavailable"
+        }
+    }
+
+    /// Typed capacity summary with explicit floor source (never silent local fallback).
+    func capacitySummary(
+        for date: String,
+        allowsLegacyFallback: Bool = false,
+        localActiveTableCount: Int = 0
+    ) -> TableCapacitySummary {
+        let source = floorSourceStatus(
+            for: date,
+            allowsLegacyFallback: allowsLegacyFallback,
+            localActiveTableCount: localActiveTableCount
+        )
+        let summary: TableCapacitySummary
+        switch source {
+        case .backend:
+            summary = TableCapacitySummary.build(
+                from: backendTables(for: date),
+                source: .backend
+            )
+        case .legacyFallback:
+            summary = TableCapacitySummary.empty(source: .legacyFallback)
+        default:
+            summary = TableCapacitySummary.empty(source: source)
+        }
         TableCapacityTrace.summary(summary)
         return summary
     }
 
+    var capacitySummary: TableCapacitySummary {
+        capacitySummary(for: selectedDate)
+    }
+
     // MARK: - Helpers
+
+    private func backendActiveTableCount(for date: String) -> Int {
+        backendTables(for: date).filter(\.isActive).count
+    }
+
+    private func markFetchSucceeded(date: String, response: FloorPlanResponseDTO) {
+        let activeCount = response.tables.filter(\.isActive).count
+        fetchPhaseByDate[date] = .succeeded(activeTableCount: activeCount)
+    }
+
+    private func markFetchFailed(date: String) {
+        if backendActiveTableCount(for: date) == 0 {
+            fetchPhaseByDate[date] = .failed
+        }
+    }
 
     private func applyCached(date: String) {
         guard let response = cacheByDate[date] else { return }

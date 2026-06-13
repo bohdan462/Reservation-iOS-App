@@ -12,33 +12,40 @@ import Foundation
 
 enum BookingLoadSupport {
 
-    /// Planned reservable seats, preferring the real backend floor-plan table inventory,
-    /// then the local host table config. Returns nil when there is no table plan at all
-    /// (the analyzer then falls back to reservation/guest counts only).
-    static func plannedReservableSeats(floorTables: [RestaurantTableDTO], localCapacity: Int) -> Int? {
-        let floorSeats = floorTables
-            .filter { $0.isActive }
-            .reduce(0) { $0 + max(0, $1.maxCapacity) }
-        if floorSeats > 0 { return floorSeats }
-        if localCapacity > 0 { return localCapacity }
-        return nil
+    /// Planned reservable seats from explicit floor source. Never silently substitutes
+    /// local advisory capacity while backend floor is pending or unavailable.
+    static func plannedReservableSeats(
+        floorTables: [RestaurantTableDTO],
+        source: HostFloorTableSource,
+        localCapacity: Int
+    ) -> Int? {
+        switch source {
+        case .backend:
+            let floorSeats = floorTables
+                .filter(\.isActive)
+                .reduce(0) { $0 + max(0, $1.maxCapacity) }
+            return floorSeats > 0 ? floorSeats : nil
+        case .legacyFallback:
+            return localCapacity > 0 ? localCapacity : nil
+        case .pendingBackend, .notConfigured, .unavailable:
+            return nil
+        }
     }
 
-    /// Resolves planned seats and `hasBackendLayout` from a typed `TableCapacitySummary`.
-    /// Returns `(seats: Int?, isBackendLayout: Bool)`.
-    /// - If the summary has backend data, returns `(summary.totalSeats, true)`.
-    /// - Falls back to `localCapacity` (host table config) if no backend layout.
+    /// Resolves planned seats and backend-layout flag from a typed `TableCapacitySummary`.
     static func plannedSeats(
         from summary: TableCapacitySummary,
         localCapacity: Int
     ) -> (seats: Int?, isBackendLayout: Bool) {
-        if summary.hasBackendLayout && summary.totalSeats > 0 {
-            return (summary.totalSeats, true)
+        switch summary.source {
+        case .backend:
+            return (summary.totalSeats > 0 ? summary.totalSeats : nil, true)
+        case .legacyFallback:
+            let seats = summary.totalSeats > 0 ? summary.totalSeats : (localCapacity > 0 ? localCapacity : nil)
+            return (seats, false)
+        case .pendingBackend, .notConfigured, .unavailable:
+            return (nil, false)
         }
-        if localCapacity > 0 {
-            return (localCapacity, false)
-        }
-        return (nil, false)
     }
 
     static func minutesOfDay(from date: Date?, calendar: Calendar = .current) -> Int? {

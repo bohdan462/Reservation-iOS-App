@@ -73,10 +73,11 @@ final class GuestLookupStore: ObservableObject {
     func schedulePhoneLookup(_ phoneInput: String) {
         searchTask?.cancel()
 
-        let queryDigits = GuestLookupNormalizer.phoneDigits(phoneInput)
-        guard queryDigits.count >= 4 else {
+        let queryDigits = GuestLookupPhoneNormalizer.digits(phoneInput)
+        guard queryDigits.count >= ManualPhoneSuggestTrace.threshold else {
             phoneMatch = nil
             lastExecutedPhoneDigits = nil
+            ManualPhoneSuggestTrace.lookup(digits: queryDigits.count, matches: 0, reason: "below_threshold")
             return
         }
 
@@ -100,8 +101,14 @@ final class GuestLookupStore: ObservableObject {
 
             guard !Task.isCancelled else { return }
 
-            phoneMatch = match
+            phoneMatch = match?.result
             lastExecutedPhoneDigits = queryDigits
+            ManualPhoneSuggestTrace.lookup(
+                digits: queryDigits.count,
+                matches: match == nil ? 0 : 1,
+                mode: match?.mode,
+                reason: match == nil ? "no_normalized_match" : nil
+            )
         }
     }
 }
@@ -116,7 +123,7 @@ private struct GuestLookupNormalizedQuery: Equatable {
 
     init(query: String) {
         raw = GuestLookupNormalizer.collapsedWhitespace(query)
-        queryDigits = GuestLookupNormalizer.phoneDigits(raw)
+        queryDigits = GuestLookupPhoneNormalizer.digits(raw)
         normalizedName = GuestLookupNormalizer.normalizedName(raw)
         normalizedEmail = GuestLookupNormalizer.normalizedEmail(raw)
     }
@@ -150,6 +157,10 @@ private struct GuestLookupSearchIndex {
             for length in 4...phoneDigits.count {
                 let prefix = String(phoneDigits.prefix(length))
                 phonePrefixToProfileIndexes[prefix, default: []].append(index)
+            }
+            if phoneDigits.count >= 4 {
+                let suffix = String(phoneDigits.suffix(4))
+                phonePrefixToProfileIndexes["s:\(suffix)", default: []].append(index)
             }
         }
 
@@ -202,13 +213,22 @@ private struct GuestLookupSearchIndex {
             .map(\.profile.result)
     }
 
-    func bestPhoneMatch(queryDigits: String) -> GuestLookupResult? {
-        guard queryDigits.count >= 4 else { return nil }
+    func bestPhoneMatch(queryDigits: String) -> GuestPhoneLookupMatch? {
+        guard queryDigits.count >= ManualPhoneSuggestTrace.threshold else { return nil }
+
+        var candidateIndexes: [Int] = []
+        if let indexes = phonePrefixToProfileIndexes[queryDigits] {
+            candidateIndexes.append(contentsOf: indexes)
+        }
+        if queryDigits.count == ManualPhoneSuggestTrace.threshold,
+           let suffixIndexes = phonePrefixToProfileIndexes["s:\(queryDigits)"] {
+            candidateIndexes.append(contentsOf: suffixIndexes)
+        }
 
         let candidateProfiles: [GuestLookupProfile]
-        if let indexes = phonePrefixToProfileIndexes[queryDigits] {
+        if !candidateIndexes.isEmpty {
             var seen = Set<Int>()
-            candidateProfiles = indexes.compactMap { index in
+            candidateProfiles = candidateIndexes.compactMap { index in
                 guard seen.insert(index).inserted else { return nil }
                 return profiles[index]
             }
@@ -216,33 +236,43 @@ private struct GuestLookupSearchIndex {
             candidateProfiles = profiles
         }
 
-        let scoredMatches: [GuestLookupScoredResult] = candidateProfiles.compactMap { profile in
-            guard let score = profile.score(
-                queryDigits: queryDigits,
-                normalizedName: "",
-                normalizedEmail: ""
-            ), score <= 1 else {
+        let maxAllowedScore = maxPhoneMatchScore(for: queryDigits)
+
+        let scoredMatches: [GuestPhoneLookupScoredResult] = candidateProfiles.compactMap { profile in
+            guard let phoneDigits = profile.phoneDigits,
+                  let score = profile.phoneMatchScore(
+                      queryDigits: queryDigits,
+                      phoneDigits: phoneDigits
+                  ),
+                  score <= maxAllowedScore else {
                 return nil
             }
-            return GuestLookupScoredResult(score: score, profile: profile)
+            return GuestPhoneLookupScoredResult(
+                score: score,
+                mode: GuestPhoneLookupMatch.mode(
+                    queryDigits: queryDigits,
+                    phoneDigits: phoneDigits,
+                    score: score
+                ),
+                profile: profile
+            )
         }
 
-        return scoredMatches
-            .sorted { lhs, rhs in
-                if lhs.score != rhs.score {
-                    return lhs.score < rhs.score
-                }
-                if lhs.profile.lastReservationDate != rhs.profile.lastReservationDate {
-                    return (lhs.profile.lastReservationDate ?? "") > (rhs.profile.lastReservationDate ?? "")
-                }
-                if lhs.profile.totalReservations != rhs.profile.totalReservations {
-                    return lhs.profile.totalReservations > rhs.profile.totalReservations
-                }
-                return lhs.profile.displayName.localizedCaseInsensitiveCompare(rhs.profile.displayName) == .orderedAscending
-            }
-            .first?
-            .profile
-            .result
+        guard let best = scoredMatches
+            .sorted(by: GuestPhoneLookupScoredResult.preferredOrder)
+            .first else {
+            return nil
+        }
+
+        return GuestPhoneLookupMatch(result: best.profile.result, mode: best.mode)
+    }
+
+    private func maxPhoneMatchScore(for queryDigits: String) -> Int {
+        if queryDigits.count == ManualPhoneSuggestTrace.threshold {
+            // Exact, starts-with, and last-4 only — no weak contains-only matches.
+            return 2
+        }
+        return 3
     }
 
     private static func buildProfiles(from records: [ReservationRecord]) -> [GuestLookupProfile] {
@@ -253,7 +283,7 @@ private struct GuestLookupSearchIndex {
             let normalizedName = GuestLookupNormalizer.normalizedName(record.guestName)
             guard normalizedName.count >= 2 else { continue }
 
-            let phoneDigits = GuestLookupNormalizer.phoneDigits(record.phone).nilIfBlank
+            let phoneDigits = GuestLookupPhoneNormalizer.digits(record.phone).nilIfBlank
             let email = GuestLookupNormalizer.normalizedEmail(record.email).nilIfBlank
             let key: String
 
@@ -303,6 +333,51 @@ private struct GuestLookupScoredResult {
     let profile: GuestLookupProfile
 }
 
+private struct GuestPhoneLookupMatch {
+    let result: GuestLookupResult
+    let mode: String
+
+    static func mode(queryDigits: String, phoneDigits: String, score: Int) -> String {
+        switch score {
+        case 0:
+            return "exact"
+        case 1:
+            return "prefix"
+        case 2:
+            return "last4"
+        case 3:
+            return "contains"
+        default:
+            if phoneDigits == queryDigits { return "exact" }
+            if phoneDigits.hasPrefix(queryDigits) { return "prefix" }
+            if queryDigits.count == ManualPhoneSuggestTrace.threshold,
+               phoneDigits.hasSuffix(queryDigits) {
+                return "last4"
+            }
+            return "contains"
+        }
+    }
+}
+
+private struct GuestPhoneLookupScoredResult {
+    let score: Int
+    let mode: String
+    let profile: GuestLookupProfile
+
+    static func preferredOrder(lhs: GuestPhoneLookupScoredResult, rhs: GuestPhoneLookupScoredResult) -> Bool {
+        if lhs.score != rhs.score {
+            return lhs.score < rhs.score
+        }
+        if lhs.profile.lastReservationDate != rhs.profile.lastReservationDate {
+            return (lhs.profile.lastReservationDate ?? "") > (rhs.profile.lastReservationDate ?? "")
+        }
+        if lhs.profile.totalReservations != rhs.profile.totalReservations {
+            return lhs.profile.totalReservations > rhs.profile.totalReservations
+        }
+        return lhs.profile.displayName.localizedCaseInsensitiveCompare(rhs.profile.displayName) == .orderedAscending
+    }
+}
+
 private struct GuestLookupProfile {
     let key: String
     let displayName: String
@@ -329,25 +404,42 @@ private struct GuestLookupProfile {
 
     func score(queryDigits: String, normalizedName: String, normalizedEmail: String) -> Int? {
         if !queryDigits.isEmpty, let phoneDigits {
-            if phoneDigits == queryDigits {
-                return 0
-            }
-            if phoneDigits.hasSuffix(queryDigits) || phoneDigits.contains(queryDigits) {
-                return 1
+            if let phoneScore = phoneMatchScore(queryDigits: queryDigits, phoneDigits: phoneDigits) {
+                return phoneScore
             }
         }
 
         if normalizedEmail.count >= 3,
            let email,
            email.contains(normalizedEmail) {
-            return 2
+            return 10
         }
 
         if normalizedName.count >= 2,
            self.normalizedName.contains(normalizedName) {
-            return 3
+            return 11
         }
 
+        return nil
+    }
+
+    /// Lower score = stronger phone match.
+    func phoneMatchScore(queryDigits: String, phoneDigits: String) -> Int? {
+        guard queryDigits.count >= ManualPhoneSuggestTrace.threshold else { return nil }
+
+        if phoneDigits == queryDigits {
+            return 0
+        }
+        if phoneDigits.hasPrefix(queryDigits) {
+            return 1
+        }
+        if queryDigits.count == ManualPhoneSuggestTrace.threshold,
+           phoneDigits.hasSuffix(queryDigits) {
+            return 2
+        }
+        if phoneDigits.contains(queryDigits) {
+            return 3
+        }
         return nil
     }
 }
@@ -378,7 +470,7 @@ private struct GuestLookupProfileBuilder {
                 normalizedName = GuestLookupNormalizer.normalizedName(name)
             }
 
-            let digits = GuestLookupNormalizer.phoneDigits(record.phone).nilIfBlank
+            let digits = GuestLookupPhoneNormalizer.digits(record.phone).nilIfBlank
             if let digits {
                 phoneDigits = digits
             }
@@ -422,7 +514,7 @@ private enum GuestLookupNormalizer {
     }
 
     static func phoneDigits(_ value: String) -> String {
-        value.filter(\.isNumber)
+        GuestLookupPhoneNormalizer.digits(value)
     }
 
     static func normalizedEmail(_ value: String) -> String {
