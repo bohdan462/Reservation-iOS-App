@@ -67,6 +67,9 @@ enum ManagerNarrativePromptBuilder {
          !summary.isEmpty {
         sections.append("Grouped summary: \(summary)")
       }
+      if !packet.presentationThemes.isEmpty {
+        sections.append("Grouped themes: \(packet.presentationThemes.joined(separator: ", "))")
+      }
     } else {
       sections.append("Grouped presentation: false")
     }

@@ -107,7 +107,7 @@ enum HostAIValidatorTrace {
 
     static func pass(packetID: String) {
         guard isEnabled else { return }
-        logger.debug("[HOST_AI_VALIDATOR] result=pass packetID=\(packetID, privacy: .public)")
+        logger.debug("[HOST_AI_VALIDATOR] result=accepted packetID=\(packetID, privacy: .public)")
     }
 
     static func blocked(packetID: String, reason: String?) {
@@ -126,7 +126,8 @@ enum HostAIValidatorTrace {
             "unsupported_table_available_claim",
             "unsupported_no_table_claim_for_seated_reservation",
             "unsupported_late_claim_for_seated_reservation",
-            "unsupported_seated_claim_for_unseated_reservation"
+            "unsupported_seated_claim_for_unseated_reservation",
+            "unknown_guest_name"
         ]
         for token in knownTokens where reason == token {
             return token

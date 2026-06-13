@@ -12,6 +12,24 @@ struct ManagerNarrativeValidationResult: Equatable {
   let reason: String?
 }
 
+struct ManagerNarrativeNameValidation: Equatable {
+  let allowedNames: [String]
+  let mentionedNames: [String]
+  let rejectedNames: [String]
+
+  var isValid: Bool { rejectedNames.isEmpty }
+}
+
+enum HostAIValidatorNameTrace {
+  static func log(_ validation: ManagerNarrativeNameValidation) {
+    #if DEBUG
+    print(
+      "[HOST_AI_VALIDATOR_TRACE] allowedNames=\(validation.allowedNames.joined(separator: ",")) mentionedNames=\(validation.mentionedNames.joined(separator: ",")) rejectedNames=\(validation.rejectedNames.joined(separator: ","))"
+    )
+    #endif
+  }
+}
+
 enum ManagerNarrativeOutputParser {
 
   static func parse(_ raw: String) -> ManagerNarrative {
@@ -120,6 +138,7 @@ enum ManagerNarrativeValidator {
 
   private static let maxLineLength = 220
   private static let maxCombinedLength = 500
+  static let unknownGuestNameReason = "unknown_guest_name"
   private static let phonePattern = #"\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b"#
   private static let emailPattern = #"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#
 
@@ -556,59 +575,205 @@ enum ManagerNarrativeValidator {
     _ text: String,
     packet: ManagerNarrativePacket
   ) -> ManagerNarrativeValidationResult? {
-    let outputNames = potentialGuestNameTokens(in: text)
-    guard !outputNames.isEmpty else { return nil }
+    let validation = guestNameValidation(text, packet: packet)
+    HostAIValidatorNameTrace.log(validation)
+    guard !validation.isValid else { return nil }
+    return ManagerNarrativeValidationResult(
+      isValid: false,
+      reason: unknownGuestNameReason
+    )
+  }
 
+  static func guestNameValidation(
+    _ text: String,
+    packet: ManagerNarrativePacket
+  ) -> ManagerNarrativeNameValidation {
+    let allowed = allowedGuestNameSet(packet: packet)
+    let mentions = nameMentions(in: text)
+    var rejected: [String] = []
+
+    for mention in mentions {
+      if mention.components.count >= 2 {
+        if !allowed.fullNames.contains(mention.normalized) {
+          rejected.append(mention.display)
+        }
+      } else if let first = mention.components.first {
+        if !allowed.singleNames.contains(first) {
+          rejected.append(mention.display)
+        }
+      }
+    }
+
+    return ManagerNarrativeNameValidation(
+      allowedNames: (allowed.fullNames.union(allowed.singleNames)).sorted(),
+      mentionedNames: mentions.map(\.display).stableUnique(),
+      rejectedNames: rejected.stableUnique()
+    )
+  }
+
+  static func repairUnknownGuestNames(
+    in narrative: ManagerNarrative,
+    packet: ManagerNarrativePacket
+  ) -> ManagerNarrative? {
+    func repairLine(_ value: String?) -> String? {
+      guard let value else { return nil }
+      var repaired = value
+      let validation = guestNameValidation(value, packet: packet)
+      for name in validation.rejectedNames.sorted(by: { $0.count > $1.count }) {
+        repaired = replaceName(name, in: repaired, replacement: "a guest")
+      }
+      repaired = repaired.replacingOccurrences(of: "a guest's", with: "a guest")
+      repaired = repaired.replacingOccurrences(of: "a guest’s", with: "a guest")
+      repaired = repaired.replacingOccurrences(of: "  ", with: " ")
+      return repaired.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    let repaired = ManagerNarrative(
+      headline: repairLine(narrative.headline) ?? narrative.headline,
+      whyItMatters: repairLine(narrative.whyItMatters),
+      checkNext: repairLine(narrative.checkNext),
+      source: .repairedLocalModel,
+      failedReason: nil
+    )
+
+    guard repaired != narrative else { return nil }
+    return repaired
+  }
+
+  struct NameMention: Equatable {
+    let display: String
+    let normalized: String
+    let components: [String]
+  }
+
+  private static func allowedGuestNameSet(
+    packet: ManagerNarrativePacket
+  ) -> (fullNames: Set<String>, singleNames: Set<String>) {
     let approvedCorpus = (
       packet.headlineFacts.flatMap { [$0.title, $0.detail ?? ""] }
         + packet.availableActions.map(\.title)
         + [packet.groupedHeadline ?? "", packet.groupedSummary ?? ""]
     ).joined(separator: " ")
-    let approvedNames = potentialGuestNameTokens(in: approvedCorpus)
-    let unapproved = outputNames.subtracting(approvedNames)
+    let mentions = nameMentions(in: approvedCorpus)
+    var fullNames = Set<String>()
+    var singleNames = Set<String>()
 
-    guard !unapproved.isEmpty else { return nil }
-    return ManagerNarrativeValidationResult(
-      isValid: false,
-      reason: "Narrative mentions a guest name not present in the packet."
+    for mention in mentions {
+      if mention.components.count >= 2 {
+        fullNames.insert(mention.normalized)
+        if let first = mention.components.first {
+          singleNames.insert(first)
+        }
+      } else if let first = mention.components.first {
+        singleNames.insert(first)
+      }
+    }
+
+    return (fullNames, singleNames)
+  }
+
+  private static func nameMentions(in text: String) -> [NameMention] {
+    let rawTokens = text
+      .split(whereSeparator: \.isWhitespace)
+      .map(String.init)
+
+    var mentions: [NameMention] = []
+    var current: [(display: String, normalized: String)] = []
+
+    func flush() {
+      guard !current.isEmpty else { return }
+      if current.count >= 2 {
+        let display = current.map(\.display).joined(separator: " ")
+        let normalized = current.map(\.normalized).joined(separator: " ")
+        mentions.append(
+          NameMention(
+            display: display,
+            normalized: normalized,
+            components: current.map(\.normalized)
+          )
+        )
+      } else if let token = current.first {
+        mentions.append(
+          NameMention(
+            display: token.display,
+            normalized: token.normalized,
+            components: [token.normalized]
+          )
+        )
+      }
+      current.removeAll()
+    }
+
+    for rawToken in rawTokens {
+      guard let token = normalizedNameToken(rawToken) else {
+        flush()
+        continue
+      }
+      current.append(token)
+    }
+    flush()
+    return mentions.stableMentionUnique()
+  }
+
+  private static func normalizedNameToken(_ rawToken: String) -> (display: String, normalized: String)? {
+    let trimmed = rawToken
+      .trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?()[]{}\""))
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    let strippedPossessive = trimmed
+      .replacingOccurrences(of: #"(?i)(?:'s|’s)$"#, with: "", options: .regularExpression)
+      .trimmingCharacters(in: CharacterSet(charactersIn: "'’"))
+    guard strippedPossessive.count >= 2 else { return nil }
+    guard let first = strippedPossessive.unicodeScalars.first,
+          CharacterSet.uppercaseLetters.contains(first) else {
+      return nil
+    }
+
+    let normalized = normalizeName(strippedPossessive)
+    guard !normalized.isEmpty, !commonNameWords.contains(normalized) else { return nil }
+    return (strippedPossessive, normalized)
+  }
+
+  private static func normalizeName(_ value: String) -> String {
+    value
+      .replacingOccurrences(of: "’", with: "'")
+      .replacingOccurrences(of: #"[^A-Za-z'\-\s]"#, with: " ", options: .regularExpression)
+      .replacingOccurrences(of: #"(?i)(?:'s)$"#, with: "", options: .regularExpression)
+      .lowercased()
+      .split(whereSeparator: \.isWhitespace)
+      .joined(separator: " ")
+      .trimmingCharacters(in: CharacterSet(charactersIn: "'- "))
+  }
+
+  private static func replaceName(
+    _ name: String,
+    in text: String,
+    replacement: String
+  ) -> String {
+    let escaped = NSRegularExpression.escapedPattern(for: name)
+    let pattern = #"(?i)\b"# + escaped + #"(?:(?:'|’)s)?\b"#
+    return text.replacingOccurrences(
+      of: pattern,
+      with: replacement,
+      options: .regularExpression
     )
   }
 
-  private static func potentialGuestNameTokens(in text: String) -> Set<String> {
-    let cleaned = text.replacingOccurrences(
-      of: #"[^A-Za-z'\s-]"#,
-      with: " ",
-      options: .regularExpression
-    )
+  private static let commonNameWords: Set<String> = {
     let commonWords: Set<String> = [
       "allergy", "anniversary", "attention", "birthday", "booking", "bookings",
       "capacity", "check", "context", "dietary", "floor", "guest", "guests",
       "host", "kitchen", "manager", "note", "notes", "party", "peak",
       "preference", "pressure", "reservation", "reservations", "returning",
       "service", "staff", "table", "tables", "today", "tonight", "tryzub",
-      "ukrainian", "window"
+      "ukrainian", "window", "pm", "am", "next", "consider", "new", "open",
+      "times", "heavy", "very", "review", "watch", "steer", "slow", "shift",
+      "move", "use", "confirm", "ask", "seat", "seating", "load",
+      "loads", "arrival", "arrivals", "check-in", "checkins", "check-ins"
     ]
-
-    return Set(
-      cleaned
-        .split(whereSeparator: \.isWhitespace)
-        .compactMap { rawToken -> String? in
-          var token = String(rawToken)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "'-"))
-          if token.lowercased().hasSuffix("'s") {
-            token = String(token.dropLast(2))
-          }
-          guard token.count >= 2 else { return nil }
-          guard let first = token.unicodeScalars.first,
-                CharacterSet.uppercaseLetters.contains(first) else {
-            return nil
-          }
-          let lower = token.lowercased()
-          guard !commonWords.contains(lower) else { return nil }
-          return token
-        }
-    )
-  }
+    return commonWords
+  }()
 
   private static func extractFirstInteger(after keywords: [String], in lower: String) -> Int? {
     for keyword in keywords {
@@ -805,5 +970,34 @@ enum ManagerNarrativeValidator {
     }
 
     return false
+  }
+}
+
+private extension Array where Element == String {
+  func stableUnique() -> [String] {
+    var seen = Set<String>()
+    var result: [String] = []
+    for value in self {
+      let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmed.isEmpty else { continue }
+      let key = trimmed.lowercased()
+      guard !seen.contains(key) else { continue }
+      seen.insert(key)
+      result.append(trimmed)
+    }
+    return result
+  }
+}
+
+private extension Array where Element == ManagerNarrativeValidator.NameMention {
+  func stableMentionUnique() -> [ManagerNarrativeValidator.NameMention] {
+    var seen = Set<String>()
+    var result: [ManagerNarrativeValidator.NameMention] = []
+    for mention in self {
+      guard !seen.contains(mention.normalized) else { continue }
+      seen.insert(mention.normalized)
+      result.append(mention)
+    }
+    return result
   }
 }

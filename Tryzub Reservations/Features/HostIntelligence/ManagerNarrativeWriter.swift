@@ -52,12 +52,21 @@ enum HostModelPacketTrace {
     grouped: Bool,
     facts: Int,
     actions: Int,
-    fingerprint: String
+    fingerprint: String,
+    themes: [String]
   ) {
     #if DEBUG
     print(
-      "[HOST_MODEL_PACKET_TRACE] task=\(task) grouped=\(grouped) facts=\(facts) actions=\(actions) fingerprint=\(fingerprint)"
+      "[HOST_MODEL_PACKET_TRACE] task=\(task) grouped=\(grouped) facts=\(facts) actions=\(actions) themes=\(themes.joined(separator: ",")) fingerprint=\(fingerprint)"
     )
+    #endif
+  }
+}
+
+enum HostAIValidatorRepairTrace {
+  static func log(reason: String, repaired: Bool) {
+    #if DEBUG
+    print("[HOST_AI_VALIDATOR_REPAIR_TRACE] reason=\(reason) repaired=\(repaired)")
     #endif
   }
 }
@@ -155,12 +164,15 @@ struct ManagerNarrativeWriter {
       grouped: narrativePacket.groupedPresentation,
       facts: narrativePacket.headlineFacts.count,
       actions: narrativePacket.availableActions.count,
-      fingerprint: packetKey
+      fingerprint: packetKey,
+      themes: narrativePacket.presentationThemes
     )
     let inferenceStarted = ContinuousClock.now
-    let themes = HostBriefingHostBoardGate.operationalCategories(for: hostPacket)
-      .map(\.traceLabel)
-      .sorted()
+    let themes = narrativePacket.presentationThemes.isEmpty
+      ? HostBriefingHostBoardGate.operationalCategories(for: hostPacket)
+        .map(\.traceLabel)
+        .sorted()
+      : narrativePacket.presentationThemes
 
     do {
       HostAILifecycleTrace.modelStarted(
@@ -196,7 +208,7 @@ struct ManagerNarrativeWriter {
           reason: normalizedResult.failureReason ?? "rejected labeled or unnatural staff output"
         )
       }
-      let usedRepair = normalizedResult.usedRepair
+      var usedRepair = normalizedResult.usedRepair
 
       ManagerNarrativeWriterDiagnostics.recordSuccess(raw: normalized)
 
@@ -210,12 +222,38 @@ struct ManagerNarrativeWriter {
       )
 
       let validationStarted = ContinuousClock.now
-      let validation = ManagerNarrativeValidator.validationResult(
+      var validation = ManagerNarrativeValidator.validationResult(
         parsed,
         packet: narrativePacket,
         hostPacket: hostPacket,
         fallback: fallback
       )
+      if !validation.isValid,
+         validation.reason == ManagerNarrativeValidator.unknownGuestNameReason {
+        if let repaired = ManagerNarrativeValidator.repairUnknownGuestNames(
+          in: parsed,
+          packet: narrativePacket
+        ) {
+          let repairedValidation = ManagerNarrativeValidator.validationResult(
+            repaired,
+            packet: narrativePacket,
+            hostPacket: hostPacket,
+            fallback: fallback
+          )
+          HostAIValidatorRepairTrace.log(
+            reason: "unknown_name",
+            repaired: repairedValidation.isValid
+          )
+          if repairedValidation.isValid {
+            parsed = repaired
+            validation = repairedValidation
+            usedRepair = true
+            ManagerNarrativeWriterDiagnostics.recordSuccess(raw: repaired.compactBriefingText)
+          }
+        } else {
+          HostAIValidatorRepairTrace.log(reason: "unknown_name", repaired: false)
+        }
+      }
       let validationDurationMs = Int(
         validationStarted.duration(to: .now).pressureTraceTimeInterval * 1000
       )

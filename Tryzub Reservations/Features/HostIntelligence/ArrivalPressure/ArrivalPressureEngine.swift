@@ -354,9 +354,6 @@ enum ArrivalPressureEngine {
       }
     }
 
-    if subtitleParts.isEmpty {
-      subtitleParts.append("Tap a wave to see who is coming.")
-    }
 
     let peakLegend = "\(peak.displayTime) · \(guestLabel)"
     let nextLegend: String? = {

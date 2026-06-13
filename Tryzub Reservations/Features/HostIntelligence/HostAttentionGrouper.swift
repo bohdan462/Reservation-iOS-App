@@ -12,7 +12,8 @@ enum HostAttentionGrouper {
   static func build(
     from snapshot: HostDecisionSnapshot,
     selectedDateKey: String,
-    floorTableSource: HostFloorTableSource
+    floorTableSource: HostFloorTableSource,
+    bookingLoadReport: BookingLoadReport? = nil
   ) -> HostAttentionPresentation {
     let plan = HostActionPresentationPolicy.plan(
       snapshot: snapshot,
@@ -30,12 +31,16 @@ enum HostAttentionGrouper {
     }
 
     let guestReservationIDs = Set(primaryItems.flatMap(\.relatedReservationIDs))
+    let bookingLoadItem = bookingLoadReport.flatMap(bookingLoadPresentationItem(from:))
     let operationalItems = plan.operationalActions
       .filter { action in
         Set(action.relatedReservationIDs).isDisjoint(with: guestReservationIDs)
       }
       .map(item(for:))
 
+    if let bookingLoadItem {
+      primaryItems.append(bookingLoadItem)
+    }
     primaryItems.append(contentsOf: operationalItems)
     primaryItems = primaryItems
       .stableItemDedupe()
@@ -64,7 +69,14 @@ enum HostAttentionGrouper {
       snapshot: snapshot,
       actionableSignals: plan.actionableGuestSignals,
       primaryItems: visiblePrimaryItems,
-      floorTableSource: floorTableSource
+      floorTableSource: floorTableSource,
+      bookingLoadItem: bookingLoadItem
+    )
+    let themes = presentationThemes(
+      actionableSignals: plan.actionableGuestSignals,
+      returningSignals: plan.returningGuestSignals,
+      bookingLoadItem: bookingLoadItem,
+      snapshot: snapshot
     )
 
     let presentation = HostAttentionPresentation(
@@ -75,7 +87,8 @@ enum HostAttentionGrouper {
       primaryActions: visiblePrimaryItems.compactMap(\.sourceAction),
       suppressedItems: plan.suppressedItems,
       modelEligibleReason: eligibleReason,
-      floorSourceLabel: floorTableSource.traceLabel
+      floorSourceLabel: floorTableSource.traceLabel,
+      themes: themes
     )
 
     HostAttentionTrace.logGroup(
@@ -84,7 +97,8 @@ enum HostAttentionGrouper {
       groupCount: groupCount(
         actionableSignals: plan.actionableGuestSignals,
         returningSignals: plan.returningGuestSignals,
-        operationalItems: operationalItems
+        operationalItems: operationalItems,
+        bookingLoadItem: bookingLoadItem
       )
     )
     return presentation
@@ -117,6 +131,44 @@ enum HostAttentionGrouper {
       actionTitle: HostActionPresentationPolicy.actionTitle(for: action),
       destinationHint: HostActionPresentationPolicy.destinationHint(for: action),
       relatedReservationIDs: action.relatedReservationIDs,
+      sourceAction: action
+    )
+  }
+
+  private static func bookingLoadPresentationItem(
+    from report: BookingLoadReport
+  ) -> HostAttentionPresentationItem? {
+    guard let suggestion = report.suggestions.max(by: { lhs, rhs in
+      if lhs.window.severity != rhs.window.severity {
+        return severityRank(lhs.window.severity) < severityRank(rhs.window.severity)
+      }
+      if lhs.window.knownGuestCount != rhs.window.knownGuestCount {
+        return lhs.window.knownGuestCount < rhs.window.knownGuestCount
+      }
+      return lhs.window.reservationCount < rhs.window.reservationCount
+    }) else { return nil }
+
+    let window = suggestion.window
+    let action = HostSuggestedAction(
+      id: "booking-load-close-\(window.slotValue)",
+      severity: window.severity == .veryBusy ? .warning : .watch,
+      kind: .closeSlot,
+      title: "\(window.label) is \(window.severity == .veryBusy ? "very heavy" : "heavy")",
+      reason: bookingLoadDetail(for: suggestion),
+      relatedReservationIDs: [],
+      targetSlotTime: window.slotValue,
+      targetTableName: nil,
+      requiresStaffConfirmation: true
+    )
+
+    return HostAttentionPresentationItem(
+      id: "booking-load-\(window.slotValue)",
+      priority: window.severity == .veryBusy ? .high : .normal,
+      title: action.title,
+      detail: action.reason,
+      actionTitle: "Check open times",
+      destinationHint: .schedule,
+      relatedReservationIDs: [],
       sourceAction: action
     )
   }
@@ -204,6 +256,15 @@ enum HostAttentionGrouper {
     return summary.isEmpty ? nil : summary
   }
 
+  private static func bookingLoadDetail(for suggestion: BookingLoadSuggestion) -> String {
+    let window = suggestion.window
+    let load = "\(window.reservationCount) reservations / \(window.knownGuestCount) guests"
+    if let alternate = suggestion.alternateLabel {
+      return "\(load). Consider steering new bookings to \(alternate)."
+    }
+    return "\(load). Consider slowing new bookings for this time."
+  }
+
   private static func summarySentence(for signal: HostGuestSignal) -> String? {
     let name = firstName(signal.guestName)
     let message = HostStaffLanguage.rewrite(signal.message)
@@ -245,8 +306,13 @@ enum HostAttentionGrouper {
     snapshot: HostDecisionSnapshot,
     actionableSignals: [HostGuestSignal],
     primaryItems: [HostAttentionPresentationItem],
-    floorTableSource: HostFloorTableSource
+    floorTableSource: HostFloorTableSource,
+    bookingLoadItem: HostAttentionPresentationItem?
   ) -> String? {
+    if bookingLoadItem != nil, primaryItems.count >= 1 {
+      return "grouped_staff_facts_\(max(primaryItems.count, 2))"
+    }
+
     let meaningfulCount = primaryItems.count
     if meaningfulCount >= 2 {
       return "grouped_staff_facts_\(meaningfulCount)"
@@ -266,6 +332,28 @@ enum HostAttentionGrouper {
     }
 
     return nil
+  }
+
+  private static func presentationThemes(
+    actionableSignals: [HostGuestSignal],
+    returningSignals: [HostGuestSignal],
+    bookingLoadItem: HostAttentionPresentationItem?,
+    snapshot: HostDecisionSnapshot
+  ) -> [String] {
+    var themes: [String] = []
+    if !actionableSignals.isEmpty {
+      themes.append("guestNote")
+    }
+    if !returningSignals.isEmpty {
+      themes.append("seenBefore")
+    }
+    if bookingLoadItem != nil {
+      themes.append("bookingLoad")
+    }
+    if snapshot.briefingFacts.contains(where: { $0.category == .arrivalWave }) {
+      themes.append("pressure")
+    }
+    return themes.stableUnique()
   }
 
   private static func hasHighPriorityTableFact(_ snapshot: HostDecisionSnapshot) -> Bool {
@@ -314,11 +402,21 @@ enum HostAttentionGrouper {
   private static func groupCount(
     actionableSignals: [HostGuestSignal],
     returningSignals: [HostGuestSignal],
-    operationalItems: [HostAttentionPresentationItem]
+    operationalItems: [HostAttentionPresentationItem],
+    bookingLoadItem: HostAttentionPresentationItem?
   ) -> Int {
     (actionableSignals.isEmpty ? 0 : 1)
       + (returningSignals.isEmpty ? 0 : 1)
+      + (bookingLoadItem == nil ? 0 : 1)
       + operationalItems.count
+  }
+
+  private static func severityRank(_ severity: BookingLoadSeverity) -> Int {
+    switch severity {
+    case .veryBusy: return 2
+    case .busy: return 1
+    case .normal: return 0
+    }
   }
 
   private static func firstName(_ name: String) -> String {
@@ -345,7 +443,7 @@ enum HostAttentionTrace {
   ) {
     #if DEBUG
     print(
-      "[HOST_ATTENTION_GROUP_TRACE] date=\(date) groups=\(groupCount) primary=\(presentation.primaryItems.count) context=\(presentation.secondaryContext.count) suppressed=\(presentation.suppressedItems.count)"
+      "[HOST_ATTENTION_GROUP_TRACE] date=\(date) groups=\(groupCount) includes=\(presentation.themes.joined(separator: ",")) primary=\(presentation.primaryItems.count) context=\(presentation.secondaryContext.count) suppressed=\(presentation.suppressedItems.count)"
     )
     #endif
   }

@@ -34,14 +34,14 @@ enum HostOperationalFutureTablePlanningSupport {
       severity: .warning,
       category: .table,
       title: "\(reservationCount) reservations still need tables.",
-      detail: "Assign floor plan tables before service.",
+      detail: "Assign tables before service.",
       evidence: [
         "reservationCount=\(reservationCount)",
         "guestCount=\(guestCount)",
         "selectedDate=\(dateKey)"
       ],
       relatedReservationIDs: needingTables.map(\.remoteID),
-      suggestedActionTitle: "Assign floor plan tables before service."
+      suggestedActionTitle: "Assign tables before service."
     )
 
     let action = HostSuggestedAction(

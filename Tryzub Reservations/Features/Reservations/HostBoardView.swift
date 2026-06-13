@@ -439,9 +439,11 @@ struct HostBoardView: View {
                 trigger: "selected_day_reservation_change",
                 immediate: true
             )
+            let bookingReport = buildBookingLoadReport(bounds: serviceDensityBounds)
             hostIntelligenceController.evaluate(
                 input: makeHostEngineInput(now: clockTick),
-                stability: hostEvaluationStabilityContext
+                stability: hostEvaluationStabilityContext,
+                bookingLoadReport: bookingReport
             )
         }
         .task(id: hostHistoryEnrichmentGenerationKey) {
@@ -470,6 +472,7 @@ struct HostBoardView: View {
                 guestIntelligenceStore.cacheStamp(for: selectedDateKey),
                 guestIntelligenceStore.profilePackCacheStamp(for: reservations.map(\.remoteID))
             ].joined(separator: "|")
+            let bookingReport = buildBookingLoadReport(bounds: serviceDensityBounds)
             await hostIntelligenceController.refreshBriefing(
                 hostBoardContext: HostBriefingHostBoardContext(
                     selectedDateKey: selectedDateKey,
@@ -485,7 +488,8 @@ struct HostBoardView: View {
                     hostBoardDateNavigationAt: controller.hostBoardDateNavigationAt,
                     startupUIReleasedAt: controller.startupUIReleasedAt,
                     now: clockTick
-                )
+                ),
+                bookingLoadReport: bookingReport
             )
         }
         .onChange(of: hostBoardOperationalLoading) { _, isLoading in

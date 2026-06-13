@@ -34,6 +34,7 @@ struct HostAttentionPresentation: Equatable {
   let suppressedItems: [String]
   let modelEligibleReason: String?
   let floorSourceLabel: String
+  let themes: [String]
 
   static let empty = HostAttentionPresentation(
     headline: "Nothing needs attention right now.",
@@ -43,7 +44,8 @@ struct HostAttentionPresentation: Equatable {
     primaryActions: [],
     suppressedItems: [],
     modelEligibleReason: nil,
-    floorSourceLabel: HostFloorTableSource.pendingBackend.traceLabel
+    floorSourceLabel: HostFloorTableSource.pendingBackend.traceLabel,
+    themes: []
   )
 
   var hasVisibleContent: Bool {
@@ -86,7 +88,8 @@ struct HostAttentionPresentation: Equatable {
       secondaryContext.map { "\($0.id):\($0.title):\($0.detail ?? "")" }.joined(separator: ";"),
       primaryActions.map { "\($0.id):\($0.title)" }.joined(separator: ";"),
       suppressedItems.joined(separator: ";"),
-      modelEligibleReason ?? "notEligible"
+      modelEligibleReason ?? "notEligible",
+      themes.joined(separator: ",")
     ]
     return HostAttentionStableDigest.hexDigest(parts.joined(separator: "|"))
   }

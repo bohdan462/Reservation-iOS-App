@@ -113,7 +113,8 @@ final class HostIntelligenceController: ObservableObject {
 
   func evaluate(
     input: HostEngineInput,
-    stability: HostEvaluationStabilityContext
+    stability: HostEvaluationStabilityContext,
+    bookingLoadReport: BookingLoadReport? = nil
   ) {
     latestStabilityContext = stability
     let selectedDateKey = input.selectedDate.reservationDateString()
@@ -179,7 +180,8 @@ final class HostIntelligenceController: ObservableObject {
     let candidatePresentation = HostAttentionGrouper.build(
       from: candidate,
       selectedDateKey: selectedDateKey,
-      floorTableSource: input.floorTableSource
+      floorTableSource: input.floorTableSource,
+      bookingLoadReport: bookingLoadReport
     )
 
     HostAIFactsTrace.log(
@@ -235,7 +237,10 @@ final class HostIntelligenceController: ObservableObject {
   }
 
   /// Presentation-only rewrite of the approved LLM packet. Does not change engine output.
-  func refreshBriefing(hostBoardContext: HostBriefingHostBoardContext? = nil) async {
+  func refreshBriefing(
+    hostBoardContext: HostBriefingHostBoardContext? = nil,
+    bookingLoadReport: BookingLoadReport? = nil
+  ) async {
     briefingRefreshGeneration += 1
     let refreshGeneration = briefingRefreshGeneration
     let refreshDateKey = latestSelectedDateKey
@@ -254,7 +259,18 @@ final class HostIntelligenceController: ObservableObject {
       }
     }
 
-    let currentPresentation = attentionPresentation
+    let currentPresentation: HostAttentionPresentation
+    if let bookingLoadReport {
+      currentPresentation = HostAttentionGrouper.build(
+        from: decisionSnapshot,
+        selectedDateKey: latestSelectedDateKey,
+        floorTableSource: latestFloorTableSource,
+        bookingLoadReport: bookingLoadReport
+      )
+      attentionPresentation = currentPresentation
+    } else {
+      currentPresentation = attentionPresentation
+    }
     let templateNarrative = ManagerNarrativeTemplateBuilder.build(
       from: decisionSnapshot,
       presentation: currentPresentation

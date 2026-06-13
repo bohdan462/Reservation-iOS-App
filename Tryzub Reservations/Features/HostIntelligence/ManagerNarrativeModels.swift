@@ -45,6 +45,7 @@ struct ManagerNarrativePacket: Codable, Equatable {
     var maxOutputShape: String?
     var presentationFingerprint: String?
     var modelEligibleReason: String?
+    var presentationThemes: [String] = []
 }
 
 struct ManagerNarrative: Equatable {
@@ -177,6 +178,7 @@ enum ManagerNarrativePacketBuilder {
     packet.maxOutputShape = "title/headline plus 1-2 sentence summary and optional check-next line; max 3 short sentences"
     packet.presentationFingerprint = activePresentation.presentationFingerprint
     packet.modelEligibleReason = activePresentation.modelEligibleReason
+    packet.presentationThemes = activePresentation.themes
     return packet
   }
 

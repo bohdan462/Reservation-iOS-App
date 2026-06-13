@@ -385,7 +385,7 @@ struct HostIntelligenceCard: View {
   private var cardRenderSource: String {
     switch briefingSource {
     case .localModel, .repairedLocalModel:
-      return "localModel3B"
+      return "model"
     case .failedFallback:
       return "fallbackTemplate"
     case .template, .localPlaceholder, nil:

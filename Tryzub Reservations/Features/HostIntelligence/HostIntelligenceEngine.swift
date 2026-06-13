@@ -686,7 +686,7 @@ struct HostIntelligenceEngine {
           id: "assign-table-\(reservation.remoteID)",
           severity: severity,
           kind: .assignTable,
-          title: "Assign floor plan table for \(firstName)",
+          title: "Assign table for \(firstName)",
           reason: HostStaffLanguage.compactReservationDetail(
             timeLabel: timeLabel,
             partySize: reservation.partySize
