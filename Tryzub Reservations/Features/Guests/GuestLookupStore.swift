@@ -58,6 +58,11 @@ final class GuestLookupStore: ObservableObject {
             results = matches
             isSearchActive = true
             lastExecutedQuery = normalized
+            MultiDeviceSyncTrace.guestLookup(
+                query: normalized.raw,
+                matched: matches.count,
+                firstIDs: matches.map(\.id)
+            )
         }
     }
 

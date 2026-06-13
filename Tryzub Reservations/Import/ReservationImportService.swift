@@ -28,11 +28,14 @@ struct ReservationSyncResult: Equatable {
     let serverTime: String?
     /// Rows actually written to SwiftData; nil when not measured.
     let rowsWritten: Int?
+    /// Leading decoded reservation IDs from this response (capped), for delta-visibility traces.
+    let firstIDs: [Int]
 
-    init(rowCount: Int, serverTime: String?, rowsWritten: Int? = nil) {
+    init(rowCount: Int, serverTime: String?, rowsWritten: Int? = nil, firstIDs: [Int] = []) {
         self.rowCount = rowCount
         self.serverTime = serverTime
         self.rowsWritten = rowsWritten
+        self.firstIDs = firstIDs
     }
 }
 
@@ -174,7 +177,8 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             serverTime: resolvedSyncCursor(
                 serverTime: syncResponse.serverTime,
                 reservations: syncResponse.reservations
-            )
+            ),
+            firstIDs: syncResponse.reservations.prefix(10).map(\.id)
         )
     }
 
@@ -256,7 +260,8 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             serverTime: resolvedSyncCursor(
                 serverTime: syncResponse.serverTime,
                 reservations: syncResponse.reservations
-            )
+            ),
+            firstIDs: syncResponse.reservations.prefix(10).map(\.id)
         )
     }
 

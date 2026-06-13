@@ -340,6 +340,11 @@ struct HostBoardView: View {
                 duration: started.duration(to: .now).pressureTraceTimeInterval,
                 extra: "date=\(selectedDateKey) reservations=\(reservations.count)"
             )
+            MultiDeviceSyncTrace.hostRender(
+                selectedDate: selectedDateKey,
+                reservations: reservations.count,
+                visibleIDs: reservations.map(\.remoteID)
+            )
         }
         .onChange(of: selectedDateKey) { _, dateKey in
             controller.noteHostBoardSelectedDate(dateKey)
@@ -967,7 +972,8 @@ struct HostBoardView: View {
             await controller.autoRefreshDashboardIfAllowed(
                 context: modelContext,
                 isInteractionActive: hasOpenInteraction,
-                isAppActive: isAppActive
+                isAppActive: isAppActive,
+                source: .host
             )
         }
     }

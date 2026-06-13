@@ -472,6 +472,7 @@ private struct HomeDashboardView: View {
 
 private struct ReservationScheduleView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
@@ -791,6 +792,10 @@ private struct ReservationScheduleView: View {
                 // Bookings tab activation: controller fetches only when cached active window is stale.
                 await controller.scheduleBecameActive(context: modelContext)
             }
+            .task(id: isActive) {
+                guard isActive else { return }
+                await runBookingsAutoRefreshLoop()
+            }
             .task(id: searchText) {
                 guard isActive else { return }
                 let value = searchText
@@ -830,6 +835,30 @@ private struct ReservationScheduleView: View {
             .navigationDestination(for: Int.self) { remoteID in
                 reservationDestination(remoteID: remoteID)
             }
+        }
+    }
+
+    // Intent: Keeps Bookings current on other devices without interrupting staff.
+    // Mirrors the Host board's visible-live loop: a lightweight active-window delta
+    // every 60s while the Bookings tab is visible and the app is active. Cache TTL may
+    // skip a full sync but the controller never suppresses a cursor-backed delta here.
+    @MainActor
+    private func runBookingsAutoRefreshLoop() async {
+        guard isActive else { return }
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                return
+            }
+            guard isActive else { return }
+            guard scenePhase == .active else { continue }
+            await controller.autoRefreshDashboardIfAllowed(
+                context: modelContext,
+                isInteractionActive: showManualCreate,
+                isAppActive: scenePhase == .active,
+                source: .bookings
+            )
         }
     }
 

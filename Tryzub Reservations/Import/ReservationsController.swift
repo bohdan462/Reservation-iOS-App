@@ -1338,14 +1338,17 @@ final class ReservationsController: ObservableObject {
     func autoRefreshDashboardIfAllowed(
         context: ModelContext,
         isInteractionActive: Bool,
-        isAppActive: Bool
+        isAppActive: Bool,
+        source: VisibleLiveRefreshSource = .host
     ) async {
         guard isAppActive else {
+            MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "app_inactive")
             ReservationAPILogger.skip(reason: .autoSkipInactive, message: "app is not active")
             return
         }
 
         guard !isInteractionActive else {
+            MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "interaction_active")
             ReservationAPILogger.skip(reason: .autoSkipBusy, message: "host interaction is active")
             return
         }
@@ -1353,6 +1356,7 @@ final class ReservationsController: ObservableObject {
         guard !hasActiveReservationRefresh,
               !hasActiveMutation,
               !isCheckingImportFailureCount else {
+            MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "controller_busy")
             ReservationAPILogger.skip(reason: .autoSkipBusy, message: "controller is busy")
             return
         }
@@ -1362,48 +1366,64 @@ final class ReservationsController: ObservableObject {
 
         if let lastAttempt = lastAutoRefreshAttemptAt,
            now.timeIntervalSince(lastAttempt) < autoRefreshInterval {
+            MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "interval_throttle")
             ReservationAPILogger.skip(reason: .autoSkipBusy, message: "auto-refresh interval has not passed")
             return
         }
 
         if let lastFailure = lastAutoRefreshFailureAt,
            now.timeIntervalSince(lastFailure) < autoRefreshFailureCooldown {
+            MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "failure_cooldown")
             ReservationAPILogger.skip(reason: .autoSkipCooldown, message: "auto-refresh failure cooldown active")
             return
         }
 
-        // Respect active-window freshness against the long IDLE TTL (300s), NOT the 60s
-        // evaluation throttle. A fresh-cache launch or a recent successful startup delta
-        // must not trigger another automatic delta until the TTL expires; this is what
-        // previously caused "use_cache reason=startup_cache_fresh" to be followed ~60s
-        // later by "fetch reason=stale_automatic". Manual pull-to-refresh, mutation
-        // reconcile, and window/date change all bypass this gate (they don't run here).
         let elapsedSinceSuccess = syncStateByScope[scope]?.lastSuccessAt
             .map { now.timeIntervalSince($0) }
-        if isScopeFresh(scope, freshnessInterval: activeWindowAutoRefreshTTL) {
+        let hasCursor = serverCursor(for: scope) != nil
+
+        // Visible live refresh policy:
+        //   • When a server cursor exists we ALWAYS run a lightweight active-window delta
+        //     GET — cache freshness (the 300s idle TTL) must NOT suppress this. This is
+        //     what lets a manual reservation created on another device appear here within
+        //     one 60s auto-refresh interval.
+        //   • When no cursor exists yet, only a full sync can advance us. Cache freshness
+        //     MAY skip that full sync to avoid hammering full GETs while idle.
+        if hasCursor {
+            MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "delta", reason: "cursor_exists")
+            ActiveWindowFreshnessTrace.autoCheck(
+                source: "autoRefreshDashboard",
+                decision: "fetch",
+                reason: "visible_live_delta",
+                elapsed: elapsedSinceSuccess,
+                ttl: activeWindowAutoRefreshTTL
+            )
+        } else if isScopeFresh(scope, freshnessInterval: activeWindowAutoRefreshTTL) {
+            MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "full_fresh_no_cursor")
             recordActiveWindowFreshness(.useCache(reason: "fresh_automatic"))
             recordRefreshDecision(scope: scope, mode: .automatic, outcome: "skipped_fresh")
             ActiveWindowFreshnessTrace.autoCheck(
                 source: "autoRefreshDashboard",
                 decision: "skip",
-                reason: "recent_success",
+                reason: "recent_success_no_cursor",
                 elapsed: elapsedSinceSuccess,
                 ttl: activeWindowAutoRefreshTTL
             )
             ReservationAPILogger.skip(
                 reason: .scopeSkipFresh,
-                message: "\(scope.description) auto refresh skipped because cache is fresh"
+                message: "\(scope.description) auto refresh skipped: full sync fresh and no delta cursor"
             )
             return
+        } else {
+            MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "full", reason: "no_cursor_stale")
+            ActiveWindowFreshnessTrace.autoCheck(
+                source: "autoRefreshDashboard",
+                decision: "fetch",
+                reason: "visible_live_full",
+                elapsed: elapsedSinceSuccess,
+                ttl: activeWindowAutoRefreshTTL
+            )
         }
-
-        ActiveWindowFreshnessTrace.autoCheck(
-            source: "autoRefreshDashboard",
-            decision: "fetch",
-            reason: "ttl_expired",
-            elapsed: elapsedSinceSuccess,
-            ttl: activeWindowAutoRefreshTTL
-        )
 
         lastAutoRefreshAttemptAt = now
 
@@ -1590,6 +1610,8 @@ final class ReservationsController: ObservableObject {
             let result: ReservationSyncResult
             let deltaCursor: String?
             let shouldAttemptDelta: Bool
+            var resolvedSyncMode = "full"
+            var resolvedCursorUsed: String?
             if mode == .automatic || (mode == .startup && allowStartupDelta) {
                 deltaCursor = serverCursor(for: scope)
                 shouldAttemptDelta = deltaCursor != nil
@@ -1598,6 +1620,8 @@ final class ReservationsController: ObservableObject {
                 shouldAttemptDelta = false
             }
             if shouldAttemptDelta, let cursor = deltaCursor {
+                resolvedSyncMode = "delta"
+                resolvedCursorUsed = cursor
                 recordRefreshDecision(scope: scope, mode: mode, outcome: "delta")
                 StartupTrace.activeWindow(
                     controllerID: controllerInstanceID,
@@ -1620,6 +1644,7 @@ final class ReservationsController: ObservableObject {
                     )
                 } catch {
                     if error.isCancellationLike { throw error }
+                    resolvedSyncMode = "delta_fallback_full"
                     recordRefreshDecision(scope: scope, mode: mode, outcome: "delta_failed_full_recovery")
                     StartupTrace.activeWindow(
                         controllerID: controllerInstanceID,
@@ -1664,6 +1689,14 @@ final class ReservationsController: ObservableObject {
             markScopeSuccess(scope)
             freshnessCoordinator?.markCompleted(freshnessScope)
             persistActiveWindowBoundsIfNeeded(scope: scope, window: window)
+            MultiDeviceSyncTrace.activeWindowSync(
+                reason: mode == .automatic ? "visible_live_\(resolvedSyncMode)" : "\(mode)_\(resolvedSyncMode)",
+                decoded: result.rowCount,
+                firstIDs: result.firstIDs,
+                from: window.from,
+                to: window.to,
+                cursor: resolvedCursorUsed
+            )
             ActiveWindowFreshnessTrace.markSuccess(
                 source: allowStartupDelta ? "startup_delta" : String(describing: mode),
                 scope: scope.description,
@@ -2525,6 +2558,12 @@ final class ReservationsController: ObservableObject {
             let service = ReservationMutationService(client: environment.apiClient, repository: repository)
             let reservation = try await service.createReservation(request)
             markScopesTouched(after: reservation)
+            MultiDeviceSyncTrace.manualCreateSuccess(
+                remoteID: reservation.id,
+                date: reservation.reservationDate,
+                time: reservation.reservationTime,
+                apiUpdatedAt: reservation.updatedAt
+            )
             postNotice(severity: .success, source: .mutation, title: "Manual reservation created")
             return reservation
         } catch {
@@ -2570,6 +2609,12 @@ final class ReservationsController: ObservableObject {
             let service = ReservationMutationService(client: environment.apiClient, repository: repository)
             let acceptedReservation = try await service.createReservation(request)
             markScopesTouched(after: acceptedReservation)
+            MultiDeviceSyncTrace.manualCreateSuccess(
+                remoteID: acceptedReservation.id,
+                date: acceptedReservation.reservationDate,
+                time: acceptedReservation.reservationTime,
+                apiUpdatedAt: acceptedReservation.updatedAt
+            )
             postNotice(
                 severity: .success,
                 source: .mutation,
