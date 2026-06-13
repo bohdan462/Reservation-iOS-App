@@ -1,77 +1,108 @@
-# Table Configuration (iOS)
+# Table & Floor Plan Configuration (iOS)
 
-**Branch:** `intelligence`
+**Branch:** `intelligence`  
+**Status:** Backend floor layout and table assignments are canonical. Local table inventory is legacy advisory fallback only.
 
 ## Sources of truth
 
-| Layer | Owns |
-|-------|------|
-| **Backend `RestaurantSetup`** | Booking policy, hours, slot interval, `largePartyReviewThreshold`, max online party — **not** per-table capacity |
-| **`HostTableConfigStore`** | Canonical **local** iOS table inventory (shared per app session) |
-| **`ReservationRecord.tableName`** | Assigned table string on the reservation row (backend PATCH) |
-| **`ReservationTableOptionsStore`** | Legacy fallback chip names **only when structured inventory is empty** |
+| Domain | Canonical owner | iOS read path |
+|--------|-----------------|---------------|
+| **Restaurant table layout** (keys, labels, capacity, sections, positions) | Backend `restaurant_tables` + floor-plan tables | `FloorPlanStore` via `GET /restaurant-tables`, `GET /floor-plan?date=` |
+| **Per-date table assignments** | Backend `reservation_table_assignments` | `FloorPlanStore` via `GET /floor-plan?date=` |
+| **Assignment mutation** | Backend | `PATCH /managed-reservations/{id}/tables` |
+| **Reservation display field** | Backend `ReservationDTO.tableName` | SwiftData `ReservationRecord.tableName` — compatibility/display only |
+| **Local table inventory** | **Not canonical** — UserDefaults advisory | `HostTableConfigStore` — chips, host intelligence fit, manual form hints |
+| **Legacy chip names** | **Not canonical** | `ReservationTableOptionsStore` — only when structured local inventory is empty |
 
-## `HostTableConfigStore` (canonical local inventory)
+**Staff rule:** Configure production tables through **Floor tab → Edit Layout** (backend `PUT /restaurant-tables`). Assign tables through **Floor Plan** or assignment sheets that route through `TableAssignmentCoordinator` when backend layout exists.
 
-Persisted in UserDefaults (`tryzub.hostIntelligence.tableConfig.v1`). Each `RestaurantTableConfig` includes:
+## Backend endpoints (canonical)
 
-- **name** — matches reservation `tableName` when assigned
-- **capacity** — seat count for advisory fit/mismatch
-- **section** — optional grouping
-- **active** — included in chips and intelligence when true
-- **combinable tables** — pair combinations for large-party fit
-- **sort order** — chip and display ordering
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /restaurant-tables` | Active restaurant table inventory (`table_key`, label, capacity, section, combinable) |
+| `PUT /restaurant-tables` | Save layout from Floor Plan edit mode |
+| `GET /floor-plan?date=YYYY-MM-DD` | Per-date floor state: tables + reservation assignments |
+| `PATCH /managed-reservations/{id}/tables` | Assign or clear tables by `table_key`; backend checks same-time/seated conflicts |
 
-Edited via **Host Intelligence → Manage Table Inventory** (`HostTableConfigView`).
+### Backend concepts
 
-## Import path (not a competing source)
+- **`table_key`** — stable identity (e.g. `a6`). Assignment mutations use keys, not free-text labels.
+- **Labels** — display only; staff may see "A6" while the key is `a6`.
+- **Per-date assignments** — backend-owned; iOS reads via floor-plan, does not invent layout locally.
+- **409 conflicts** — backend rejects overlapping seated/same-time assignments; iOS surfaces staff-safe copy.
 
-**`HostTableCapacityTextParser`**:
+## iOS assignment path (production)
 
-- **Import:** text like `A1:4` → parses → writes **`HostTableConfigStore`**
-- **Export:** `exportText(from:)` round-trips structured inventory for display/sync
-- Restaurant Settings **“Import table capacity text”** is a quick-setup path into the same store
-
-## Assignment chips
-
+```text
+TableAssignmentCoordinator
+  ├─ hasBackendLayout + known table_key
+  │    → FloorPlanStore.assign → PATCH /managed-reservations/{id}/tables
+  └─ else (no layout / unknown label)
+       → legacy PATCH /managed-reservations/{id} with tableName string
 ```
-HostTableConfigStore (active tables)
-        ↓
-TableAssignmentOptionsBuilder.assignmentTableNames(legacyFallback:)
-        ↓
-TableAssignmentSheet chip grid
-```
 
-- When structured inventory has active tables → chips come from inventory (sorted)
-- When inventory is empty → fallback to `ReservationTableOptionsStore` legacy names
-- Staff may always type any table string manually — **manual override allowed**
+**Call sites:** `FloorPlanView`, `HostBoardView`, `ReservationDetailView`, `TableAssignmentSheet`.
+
+The **preferred path** is always `PATCH .../tables` when `FloorPlanStore.hasBackendLayout` is true.
+
+## `ReservationRecord.tableName`
+
+- Cached display string from reservation DTO after sync or mutation.
+- Updated when canonical assignment succeeds (from backend response).
+- **Not** the preferred mutation input when floor layout exists.
+- Legacy `tableName` PATCH remains for migration/offline-layout edge cases only.
+
+## Legacy: `HostTableConfigStore` (advisory / compatibility)
+
+**File:** `Features/HostIntelligence/HostTableConfigStore.swift`  
+**Storage:** UserDefaults `tryzub.hostIntelligence.tableConfig.v1`
+
+Still used for:
+
+- Host intelligence table-fit / capacity advisory (`HostTableIntelligenceSupport`)
+- Assignment chip names when backend layout unavailable (`TableAssignmentOptionsBuilder`)
+- Manual reservation form slot banners
+- More → Host Intelligence Settings → Manage Table Inventory (developer/migration UI)
+
+**Not used for:** canonical floor layout, backend assignment writes, or production table configuration when backend floor exists.
+
+`HostBoardView` prefers `floorPlanStore.viewState.tables` for engine input when backend layout is loaded.
+
+## Legacy: `ReservationTableOptionsStore`
+
+- UserDefaults chip-name fallback when `HostTableConfigStore` has no active tables.
+- Compatibility only.
+
+## Legacy: `HostTableCapacityTextParser`
+
+- Parses text like `A1:4` into `HostTableConfigStore`.
+- Restaurant Settings "Import table capacity text" is a **quick local setup** path.
+- **Not** a competing source of truth when backend tables exist.
+- Documented as migration/fallback; production staff should use Floor Plan edit layout.
 
 ## Intelligence (advisory only)
 
-```
-HostTableConfigStore
-        ↓
-HostTableIntelligenceSupport → fit, mismatch, combinations
-        ↓
-Host engine / slot context → pressure signals
+```text
+Backend floor tables (preferred) or HostTableConfigStore (fallback)
+  → HostTableIntelligenceSupport → fit, mismatch, combinations
+  → HostIntelligenceEngine → advisory signals only
 ```
 
-- Capacity mismatch and table-fit suggestions **warn** — they do **not block** assign/save
-- Suggestions **never auto-assign** a table
-- Manual reservation form slot banner uses the same inventory for advisory context
+- Capacity mismatch warnings **do not block** assign/save.
+- Suggestions **never auto-assign** a table.
 
 ## Large party thresholds
 
 | Setting | Default | Role |
 |---------|---------|------|
 | Backend `largePartyReviewThreshold` | **7** | Operational review policy (`RestaurantSetup`) |
-| Host `largePartyThreshold` | **7** (new installs) | Advisory slot/table pressure (`HostIntelligenceSettings`) |
-| Guest draft `largePartyMinimumPartySize` | **7** | Large-party draft kind visibility only |
-
-**Note:** Existing persisted Host Intelligence settings keep whatever value staff saved until reset or edited.
+| Host `largePartyThreshold` | **7** (new installs) | Advisory slot/table pressure |
+| Guest draft `largePartyMinimumPartySize` | **7** | Large-party draft kind visibility |
 
 ## Staff rules
 
-- Staff is the final operator for table assignment and guest messaging
-- Backend stores **table name only** on the reservation; seat counts stay on-device
-- See also `Docs/LOCAL_MODEL_INTELLIGENCE.md` for guest draft table flags
+- Staff is the final operator for table assignment.
+- Backend owns floor layout and per-date assignments.
+- Local inventory and capacity text import are **fallback/migration** tools only.
+- See `Docs/LOCAL_MODEL_INTELLIGENCE.md` for guest draft table flags (advisory context only).

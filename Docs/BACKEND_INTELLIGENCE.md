@@ -17,7 +17,20 @@ All intelligence endpoints:
 - use contract version `1.0` for business/guest/system-status payloads
 - use contract version `1.1` for reservation pipeline diagnostics payloads
 
-Because these are read-only, they are not part of the optimistic-concurrency contract: iOS does not send `expected_updated_at` here. Concurrency tokens (`row_version`), lifecycle timestamps (`seated_at`, `completed_at`), `409 tryzub_reservation_conflict`, the status transition map, and floor-plan advisory locking apply to the managed-reservation write endpoints and are documented in `README.md` (db `1.6.0`).
+Because these are read-only, they are not part of the optimistic-concurrency contract: iOS does not send `expected_updated_at` here. Concurrency tokens (`row_version`), lifecycle timestamps (`seated_at`, `completed_at`), `409 tryzub_reservation_conflict`, the status transition map, floor-plan advisory locking, and **activity history** (schema **1.7.0**) apply to managed-reservation write endpoints and are documented in backend `README.md` (db **1.7.0**).
+
+### Activity history (schema 1.7.0)
+
+Deterministic operational evidence written automatically on mutation. iOS reads only.
+
+| Endpoint | Use |
+|----------|-----|
+| `GET /managed-reservations/{id}/activity` | Reservation detail history |
+| `GET /activity?date=` | Service-day / manager recap context |
+
+- Do not expose raw old/new debug blobs in normal staff UI
+- iOS does not POST separate activity log events
+- No backfill for reservations unchanged before deploy — see `Docs/ACTIVITY_HISTORY.md`
 
 ### `GET /tryzub/v1/business-intelligence/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`
 
@@ -422,7 +435,7 @@ It is form/Flamingo scoped and is not the same contract as business intelligence
 
 ## Performance and caching
 
-Current indexes (db `1.6.0` for reservations intelligence queries; floor-plan tables documented in `README.md`):
+Current indexes (db **1.7.0** for reservations intelligence queries; floor-plan and activity tables documented in backend `README.md`):
 
 - `email`, `phone`, `reservation_date`, `status`, `source_submission_id`
 - composite: `email_reservation_date`, `phone_reservation_date`, `reservation_date_hidden_superseded`, `status_reservation_date`, `source_type_reservation_date`

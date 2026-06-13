@@ -3969,6 +3969,11 @@ final class ReservationsController: ObservableObject {
     private func markScopesTouched(after reservation: ReservationDTO) {
         invalidateAvailabilityCache(for: reservation.reservationDate)
 
+        ReservationActivityInvalidation.post(
+            reservationID: reservation.id,
+            date: reservation.reservationDate
+        )
+
         let today = Date.reservationDateString()
         if reservation.reservationDate == today {
             markScopeRecentlyTouched(.today(date: today))

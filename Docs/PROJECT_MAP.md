@@ -27,8 +27,9 @@ One-restaurant internal iOS app. **WordPress REST API is source of truth.** **Sw
 | SwiftData model | `Persistence/ReservationRecord.swift` |
 | DTOs | `Network/ReservationDTO.swift` |
 | Settings UI + store | `Features/Reservations/RestaurantSettingsStore.swift` |
-| Table inventory (local) | `Features/HostIntelligence/HostTableConfigStore.swift`, `Docs/TABLE_CONFIGURATION.md` |
-| Backend intelligence stores | `BusinessIntelligenceStore`, `GuestIntelligenceStore`, `IntelligenceSystemStatusStore` |
+| Floor plan (backend canonical) | `Features/FloorPlan/*`, `FloorPlanStore`, `Docs/TABLE_CONFIGURATION.md` |
+| Table inventory (legacy advisory) | `Features/HostIntelligence/HostTableConfigStore.swift`, `Docs/TABLE_CONFIGURATION.md` |
+| Activity history (backend-owned) | `ReservationActivityStore`, `Docs/ACTIVITY_HISTORY.md` |
 | Business analytics UI | `Features/Reservations/BusinessAnalyticsView.swift`, `BusinessIntelligenceOverviewSection.swift` |
 | Host intelligence | `Features/HostIntelligence/*`, `HostIntelligenceController.swift` |
 | Guest messaging drafts | `Features/GuestMessaging/*`, `Docs/LOCAL_MODEL_INTELLIGENCE.md` |
@@ -42,65 +43,34 @@ One-restaurant internal iOS app. **WordPress REST API is source of truth.** **Sw
 
 ---
 
-## 1. Source tree (47 Swift files)
+## 1. Source tree (~255 Swift files)
+
+High-level layout (not an exhaustive file list):
 
 ```
 Tryzub Reservations/
 ├── Tryzub_ReservationsApp.swift          # @main, login gate, SwiftData container
-├── App/
-│   ├── AppCredentials.swift            # AppCredentialStore, Keychain
-│   ├── AppEnvironment.swift            # apiClient + role + capabilities
-│   ├── AppRoleStore.swift              # selected Manager/Developer role
-│   └── AppNotice.swift                 # Notice model (severity, source)
-├── Core/Roles/AppUserRole.swift        # staff | manager | developer + AppCapabilities
+├── App/                                # credentials, role, notices, session
+├── Core/Roles/                         # AppUserRole, AppCapabilities
 ├── Features/
-│   ├── Guests/                         # 3 files — cache-derived call-in lookup
-│   │   ├── GuestLookupModels.swift
-│   │   ├── GuestLookupStore.swift
-│   │   └── GuestLookupView.swift
-│   ├── GuestInsights/                  # 7 files — cache-only analytics
-│   │   ├── GuestInsightsController.swift
-│   │   ├── GuestInsightsModels.swift
-│   │   ├── GuestInsightsView.swift
-│   │   ├── GuestIdentityResolver.swift
-│   │   ├── GuestReservationIntentDeduper.swift
-│   │   ├── RegularGuestsController.swift
-│   │   └── RegularGuestsView.swift
-│   └── Reservations/                   # 18 files — main UI
-│       ├── ReservationsListView.swift  # Root shell + tab views (private structs)
-│       ├── HostBoardView.swift
-│       ├── ReservationDetailView.swift
-│       ├── ManualReservationFormView.swift   # Create + ReservationEditFormView
-│       ├── ReservationRowView.swift
-│       ├── ReservationSharedUI.swift
-│       ├── ReservationActionButtons.swift
-│       ├── ReservationEmailWorkflow.swift
-│       ├── GuestConfirmationMail.swift
-│       ├── ReservationPresentation.swift
-│       ├── ReservationFloatingTabBar.swift
-│       ├── RestaurantPrivacyCover.swift
-│       ├── RestaurantSettingsStore.swift     # Store + embedded settings views
-│       ├── DeveloperDiagnosticsView.swift
-│       ├── ImportFailuresView.swift
-│       ├── HiddenReservationsStore.swift
-│       ├── AppNoticeOverlay.swift
-│       └── ReservationHaptics.swift
-├── Import/
-│   ├── ReservationsController.swift
-│   └── ReservationImportService.swift  # class ReservationSyncService
-├── Network/
-│   ├── ReservationsAPIClient.swift
-│   ├── ReservationDTO.swift
-│   ├── ReservationsResponse.swift
-│   ├── ReservationAPIError.swift
-│   └── APIRequestLogStore.swift
-├── Persistence/ReservationRecord.swift
-├── Preview/ReservationPreviewData.swift
-└── Services/
-    ├── ReservationRepository.swift
-    ├── ReservationMutationService.swift
-    └── ImportFailureService.swift
+│   ├── Reservations/                   # tab shell, host, detail, schedule, more, diagnostics
+│   │   └── ActivityHistory/            # backend activity read-model + UI
+│   ├── FloorPlan/                      # backend floor layout + PATCH /tables assignment
+│   ├── HostIntelligence/               # engine, controller, local model, arrival pressure
+│   ├── GuestMessaging/                 # staff-reviewed draft messages (no auto-send)
+│   ├── GuestInsights/                  # cache-only guest memory / regulars
+│   ├── Guests/                         # operational call-in lookup tab
+│   ├── ServiceIntelligence/            # More → Service Intelligence
+│   ├── ServiceTimeline/                # host timeline preview + full-screen view
+│   └── Siri/                           # host summary intents
+├── Import/                             # ReservationsController, ReservationSyncService
+├── Network/                            # API client, DTOs (incl. ReservationActivityDTO)
+├── Persistence/                        # ReservationRecord + attachment/note records
+├── Preview/                            # preview API client + sample data
+└── Services/                           # repository, mutations, freshness, floor plan service
 ```
+
+**Mounted stores** (from `ReservationsTabShell`): `RestaurantSettingsStore`, `HostTableConfigStore`, `HostIntelligenceSettingsStore`, `HostIntelligenceController`, `GuestIntelligenceStore`, `BusinessIntelligenceStore`, `IntelligenceSystemStatusStore`, `FloorPlanStore`, `ReservationActivityStore`.
 
 ---
 
@@ -127,10 +97,11 @@ Root navigation now uses native SwiftUI `TabView(selection:)`. The custom `Reser
 
 | Tab | Label | Root | Fetches when |
 | --- | --- | --- | --- |
-| `.host` | Host / Dev | `HomeDashboardView` → `HostBoardView` | Active-window cache; pull-refresh; guarded active-window delta/full auto-refresh when visible; cached availability summary |
+| `.host` | Host / Dev | `HomeDashboardView` → `HostBoardView` | Active-window cache; pull-refresh; guarded active-window delta/full auto-refresh when visible; cached availability summary; guest intelligence on selected date (deferred) |
+| `.floorPlan` | Floor | `FloorPlanView` | `GET /floor-plan?date=` when tab active / date changes; assignment via `PATCH /tables` |
 | `.bookings` | Bookings | `ReservationScheduleView` | Upcoming/Needs Review/Cancelled filters use active-window cache; All mode pages history explicitly |
 | `.guests` | Guests | `GuestLookupView` | Cache-derived search only; no network while typing |
-| `.more` | More | `ReservationMoreView` | Child screens only on navigation |
+| `.more` | More | `ReservationMoreView` | Child screens only on navigation (activity history, analytics, settings, etc.) |
 
 **Navigation strategy:** Each visible tab owns a native `NavigationStack`. Review is not a top-level tab; pending and needs-review work now lives in the Bookings segmented filter. More uses a typed destination path to avoid cancelled-detail path mismatch crashes.
 
@@ -244,11 +215,15 @@ DTOs: `BusinessIntelligenceDTO.swift`, `GuestIntelligenceDTO.swift`, `Intelligen
 
 ### Table configuration (local)
 
-- **`HostTableConfigStore`** — canonical on-device table inventory (capacity, section, combinable)
-- **`TableAssignmentOptionsBuilder`** — assignment chips from structured inventory; legacy chip fallback when empty
-- **`HostTableCapacityTextParser`** — import/export into structured inventory (not a competing source)
+## Table & floor (see `Docs/TABLE_CONFIGURATION.md`)
+
+- **Canonical:** `FloorPlanStore` + backend `GET/PUT /restaurant-tables`, `GET /floor-plan`, `PATCH /managed-reservations/{id}/tables`
+- **`ReservationRecord.tableName`** — display/cache field; not preferred assignment mutation when backend layout exists
+- **`HostTableConfigStore`** — legacy local advisory inventory (chips, host intelligence fit); **not** production floor source of truth
+- **`TableAssignmentOptionsBuilder`** — assignment chips; prefers backend layout labels when available
+- **`ReservationTableOptionsStore`** — legacy chip fallback when local inventory empty
+- **`HostTableCapacityTextParser`** — import text into local store; migration/fallback only
 - **Advisory only** — fit/mismatch/suggestions warn; staff manual override always allowed
-- See `Docs/TABLE_CONFIGURATION.md`
 
 ---
 
@@ -286,7 +261,7 @@ DTOs: `BusinessIntelligenceDTO.swift`, `GuestIntelligenceDTO.swift`, `Intelligen
 
 ### Detail — `ReservationDetailView`
 
-- Layered cards: hero, actions, contact, notes, service load, guest insights preview
+- Layered cards: hero, actions, contact, notes, **history** (backend activity), service load, guest insights preview
 - Edit sheet → `ReservationEditFormView`
 - Table assignment sheet
 - More menu: hide, restore, guest manage link (manager+)
@@ -302,7 +277,7 @@ DTOs: `BusinessIntelligenceDTO.swift`, `GuestIntelligenceDTO.swift`, `Intelligen
 
 ### More — `ReservationMoreView`
 
-- Notices screen, Account/logout, Cancelled, Hidden, settings links, manual create, analytics, guest memory
+- Notices screen, Account/logout, Cancelled, Hidden, settings links, manual create, analytics, guest memory, **Activity History**
 - Developer / Support section: Failed Imports sheet for roles with `canViewFailedImports`, API Diagnostics for developer
 - Duplicate resolution instructions (manual supersede workflow)
 
@@ -349,6 +324,8 @@ DTOs: `BusinessIntelligenceDTO.swift`, `GuestIntelligenceDTO.swift`, `Intelligen
 | `POST /managed-reservations/{id}/confirm` | Backend/provider Confirm + Email fallback | Disabled in MVP UI |
 | `POST /managed-reservations/{id}/guest-manage-link` | Detail More menu | ✓ |
 | `POST /managed-reservations/{id}/manual-email-log` | Detail manual Gmail/Mail activity | ✓ |
+| `GET /managed-reservations/{id}/activity` | Reservation Detail history, full history sheet | ✓ (lazy on detail open) |
+| `GET /activity?date=` | More → Activity History | ✓ (lazy on screen open) |
 | Local manual confirmation draft | Detail More menu after manage link | Local compose/copy only |
 | `DELETE /managed-reservations/{id}?force=1` | Hidden screen hard delete | Dev cleanup only |
 | `GET /managed-reservations/import-failures` | Failed Imports screen, explicit diagnostics/count checks | Dev/support |
@@ -380,6 +357,8 @@ DTOs: `BusinessIntelligenceDTO.swift`, `GuestIntelligenceDTO.swift`, `Intelligen
 | More → Cancelled open | Cancelled window upsert | Screen loading state |
 | More → Settings child | Per-screen lazy GET | Screen loading state |
 | More → Analytics | Summary GET | Screen loading state |
+| More → Activity History | `GET /activity?date=` | Screen loading state |
+| Reservation detail open | `GET /managed-reservations/{id}/activity` | No — section loads in background |
 | Tab switch alone | **Nothing** | — |
 
 **Do not fetch during normal tab switching** except gated auto-refresh on Home when already visible.
@@ -401,6 +380,8 @@ DTOs: `BusinessIntelligenceDTO.swift`, `GuestIntelligenceDTO.swift`, `Intelligen
 | Hard delete | `hardDeleteReservation` | DELETE `force=1` | No |
 
 **MVP email direction:** Manual Gmail/Mail with pasted manage link for call-ins. `manual_sent` records staff-reported activity only; backend cannot prove inbox delivery. Optional backend/provider email remains `/confirm` and is not the normal pilot path.
+
+**Activity history (schema 1.7.0):** Backend writes activity inside mutation endpoints. iOS **reads** history only — never logs a second activity row after mutations. Old reservations may show “No history yet” until changed after backend deploy (no backfill).
 
 **Guest self-service truth:** Public guest page is “Your Booking Details.” Guests may cancel online until 2 hours before reservation time, including same-day bookings more than 2 hours away. Inside 2 hours they must call. Guest change-request UI is hidden for MVP.
 

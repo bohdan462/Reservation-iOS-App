@@ -20,7 +20,9 @@ flowchart TB
         Env["AppEnvironment<br/>apiClient + selected role + capabilities"]
         Shell["ReservationsListView<br/>native TabView shell"]
         Ctrl["ReservationsController<br/>workflow coordinator"]
-        Views["Feature views<br/>Host · Bookings · Guests · More"]
+        Views["Feature views<br/>Host · Floor · Bookings · Guests · More"]
+        Floor["FloorPlanStore"]
+        Intel["HostIntelligenceController<br/>GuestIntelligenceStore<br/>ReservationActivityStore"]
         GuestLookup["GuestLookup<br/>cache-derived call-in"]
         Guest["GuestInsights<br/>cache-only analytics"]
         Settings["RestaurantSettingsStore<br/>lazy settings/ops UI"]
@@ -53,7 +55,11 @@ flowchart TB
     Views --> Ctrl
     Views --> GuestLookup
     Views --> Guest
+    Views --> Intel
+    Views --> Floor
     Views --> Settings
+    Floor --> API
+    Intel --> API
     Settings --> API
     Ctrl --> Sync
     Ctrl --> Mut
@@ -121,6 +127,7 @@ flowchart TD
 flowchart LR
     subgraph Shell["ReservationsListView — native TabView"]
         H["Host<br/>HomeDashboardView → HostBoardView"]
+        F["Floor<br/>FloorPlanView"]
         L["Bookings<br/>ReservationScheduleView"]
         G["Guests<br/>GuestLookupView"]
         M["More<br/>ReservationMoreView"]
@@ -133,16 +140,33 @@ flowchart LR
 | Tab | Root view | `isActive` gating | Primary data source |
 | --- | --- | --- | --- |
 | Host | `HomeDashboardView` → `HostBoardView` | Yes — auto-refresh, clock, availability | active-window `@Query` filtered to selected date |
+| Floor | `FloorPlanView` | Yes — date load when tab active | `FloorPlanStore` → `GET /floor-plan?date=` |
 | Bookings | `ReservationScheduleView` | Yes — activation ensure-fresh | active-window `@Query`; Upcoming/Needs Review/Cancelled are cache filters; All mode paged on demand |
 | Guests | `GuestLookupView` | Yes — search/debounce only while active | non-hidden cached reservations grouped into lightweight guest profiles |
-| More | `ReservationMoreView` | No | Navigation pushes only |
+| More | `ReservationMoreView` | No | Navigation pushes only (activity history, analytics, settings) |
 
 **What matters**
 - Native `TabView` owns tab safe areas, selection, and iPad tab behavior.
 - Review is a Bookings filter, not a top-level tab.
 - Inactive tabs do not run auto-refresh loops (`isActive` guards `.task` loops).
 - Guests search is cache-only and does not call Guest Insights / Regular Guests clustering.
-- More sub-screens fetch **only when navigated to** (settings, hidden, cancelled, diagnostics).
+- More sub-screens fetch **only when navigated to** (settings, hidden, cancelled, activity history, diagnostics).
+- Floor tab loads backend floor-plan for selected date; does not block Host startup.
+
+---
+
+## 3b. Source of truth by domain
+
+| Domain | Truth | iOS role |
+| --- | --- | --- |
+| Reservations (status, fields, visibility) | Backend `managed-reservations` | Cache in SwiftData after GET/mutation |
+| Floor layout + per-date assignments | Backend `restaurant_tables`, `floor-plan`, `PATCH /tables` | `FloorPlanStore` read-model |
+| Activity history | Backend activity tables (schema 1.7.0) | `ReservationActivityStore` read-only display |
+| Guest intelligence evidence | Backend `guest-intelligence` APIs | `GuestIntelligenceStore` cache |
+| Business / system analytics | Backend intelligence summary routes | `BusinessIntelligenceStore`, `IntelligenceSystemStatusStore` |
+| Host operational signals | Deterministic `HostIntelligenceEngine` | No network; uses cache + backend guest/floor inputs |
+| Local model output | **Not truth** — wording only | Template fallback when unavailable/unsafe |
+| Local table inventory (`HostTableConfigStore`) | **Not truth** — advisory fallback | Chips, fit warnings, migration UI |
 
 ---
 
@@ -218,6 +242,13 @@ sequenceDiagram
     API-->>M: ReservationDTO
     M->>R: upsert
     C->>C: markScopesTouched
+    Note over C: ReservationActivityInvalidation<br/>backend also writes activity row<br/>iOS never POSTs activity log
+
+    Staff->>C: assign table (floor layout)
+    C->>API: PATCH /managed-reservations/{id}/tables
+    API-->>C: FloorPlanPatchResponseDTO
+    C->>R: upsert(if reservation in response)
+    C->>C: markScopesTouched + activity invalidation
 
     Staff->>C: confirmReservation (Confirm + Email)
     C->>M: POST /confirm
@@ -258,7 +289,10 @@ sequenceDiagram
 | Hide wrong entry | PATCH `is_hidden=true` | No | Upsert after success |
 | Restore hidden | PATCH `is_hidden=false` | No | Upsert after success |
 | Hard delete | DELETE `?force=1` | No | Local delete after success |
+| Table assign (canonical) | PATCH `/{id}/tables` | No | Upsert + activity invalidation |
 | Guest manage link | POST `/{id}/guest-manage-link` | **No** — copy link or local Gmail/Mail draft | None |
+
+**Activity history:** Backend writes activity rows on successful mutations (schema 1.7.0). iOS reads via `ReservationActivityStore`; does not POST separate activity events. See `Docs/ACTIVITY_HISTORY.md`.
 
 **Reconcile:** `updateReservation` and `confirmReservation` call `reconcileReservation` when `error.mayHaveReachedReservationServer` (timeout, connection lost, bad response).
 
@@ -490,6 +524,13 @@ flowchart LR
         R3["POST /guest-manage-link"]
         R4["DELETE ?force=1"]
         R5["GET /managed-reservations/import-failures"]
+        R6["GET /managed-reservations/{id}/activity"]
+        R7["GET /activity?date="]
+        FP1["GET/PUT /restaurant-tables"]
+        FP2["GET /floor-plan"]
+        FP3["PATCH /managed-reservations/{id}/tables"]
+        GI1["GET /guest-intelligence"]
+        BI1["GET /business-intelligence/summary"]
         S1["restaurant-setup"]
         S2["restaurant-hours"]
         S3["restaurant-day-availability"]
@@ -511,7 +552,7 @@ flowchart LR
 ### Strong
 
 - Backend remains the source of truth. SwiftData writes happen after successful GET/PATCH/POST/DELETE responses, not as optimistic truth.
-- Native `TabView` owns Host / Bookings / Guests / More; the custom floating tab bar is deprecated.
+- Native `TabView` owns Host / **Floor** / Bookings / Guests / More; the custom floating tab bar is deprecated (enum + padding constants only).
 - Home, Bookings upcoming, and Bookings Needs Review now share the active operational window cache.
 - Active-window delta sync is correctly scoped with `from`, `to`, and `updated_since`; delta responses upsert only and never delete missing rows.
 - Startup is cache-first: `ReservationsListView` renders immediately behind a minimum-duration launch overlay while network work runs in the background.
@@ -581,6 +622,46 @@ flowchart LR
 
 ## 15. Intelligence & messaging flows (current)
 
+### Table & floor (backend canonical)
+
+```text
+GET /restaurant-tables + GET /floor-plan?date=
+  → FloorPlanStore
+  → FloorPlanView / assignment sheets
+PATCH /managed-reservations/{id}/tables
+  → TableAssignmentCoordinator (preferred)
+PATCH /managed-reservations/{id} tableName
+  → legacy fallback when no backend layout
+```
+
+- `HostTableConfigStore` — **legacy advisory** chips + host intelligence fit only
+- `ReservationTableOptionsStore` — legacy chip fallback
+- Staff manual override always allowed on legacy path
+
+### Activity history (backend canonical)
+
+```text
+Mutation → backend writes reservation + activity row
+iOS upserts reservation cache
+ReservationActivityInvalidation → visible history screens refetch
+GET /managed-reservations/{id}/activity | GET /activity?date=
+  → ReservationActivityStore (in-memory, no SwiftData)
+```
+
+iOS never POSTs activity log events.
+
+### Deterministic intelligence + optional local wording
+
+```text
+Backend intelligence APIs
+  → GuestIntelligenceStore, BusinessIntelligenceStore, IntelligenceSystemStatusStore
+  → HostIntelligenceEngine (deterministic signals, arrival pressure)
+  → HostIntelligenceController (briefing, manager narrative)
+  → Local llama.cpp wording ONLY when staff enabled (template fallback always)
+```
+
+Local model does **not** own truth, status, tables, or guest history.
+
 ### Guest message draft (staff-controlled)
 
 ```text
@@ -596,28 +677,13 @@ ReservationDetailView
 - No reservation mutation from draft path
 - Legacy Confirm + Email (`POST /confirm`) remains separate
 
-### Table source of truth (local)
+### Table source of truth — superseded
 
-```text
-HostTableConfigStore (structured inventory)
-  → TableAssignmentOptionsBuilder → assignment chips
-  → HostTableIntelligenceSupport → advisory fit / capacity signals
-  → Host engine slot pressure (advisory)
-```
+> **Outdated section removed.** See **Table & floor (backend canonical)** above and `Docs/TABLE_CONFIGURATION.md`.
 
-- `ReservationTableOptionsStore` — legacy chip fallback when inventory empty
-- `HostTableCapacityTextParser` — import/export into store, not a competing source
-- Staff manual table override always allowed
+### Deterministic intelligence — superseded
 
-### Deterministic intelligence
-
-```text
-Backend intelligence APIs
-  → iOS stores (BusinessIntelligenceStore, GuestIntelligenceStore, IntelligenceSystemStatusStore)
-  → Host board / Business Analytics views
-  → HostIntelligenceEngine (deterministic signals)
-  → Local on-device llama.cpp wording only where staff explicitly enabled (briefing; guest drafts planned opt-in)
-```
+> **Outdated section removed.** See **Deterministic intelligence + optional local wording** above.
 
 ---
 

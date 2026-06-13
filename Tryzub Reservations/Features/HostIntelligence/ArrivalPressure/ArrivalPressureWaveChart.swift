@@ -2,7 +2,7 @@
 //  ArrivalPressureWaveChart.swift
 //  Tryzub Reservations
 //
-//  Service-pressure wave chart: smooth area curve + rounded bars.
+//  Service-pressure wave chart: smooth area curve with tap targets.
 //  Deterministic rendering — no LLM.
 //
 
@@ -34,13 +34,14 @@ enum ArrivalPressureChartTrace {
 
 struct ArrivalPressureWaveChart: View {
   let summary: ArrivalPressureSummary
-  var height: CGFloat = 108
+  var height: CGFloat = 120
   var isToday: Bool = true
   var now: Date = Date()
   var onOpenReservation: ((Int) -> Void)?
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+  @Environment(\.colorScheme) private var colorScheme
 
   @State private var revealProgress: CGFloat = 0
   @State private var peakPulse = false
@@ -49,10 +50,9 @@ struct ArrivalPressureWaveChart: View {
   @State private var measuredPlotWidth: CGFloat = 0
   @State private var clockNow = Date()
 
-  private let leftGutter: CGFloat = 22
-  private let bottomGutter: CGFloat = 14
-  private let topGutter: CGFloat = 8
-  private static let minChartHeight: CGFloat = 72
+  private let bottomGutter: CGFloat = 16
+  private let topGutter: CGFloat = 10
+  private static let minChartHeight: CGFloat = 88
 
   private var buckets: [ArrivalPressureBucket] { summary.buckets }
   private var resolvedHeight: CGFloat { max(height, Self.minChartHeight) }
@@ -75,7 +75,7 @@ struct ArrivalPressureWaveChart: View {
       emptyState
     } else {
       VStack(alignment: .leading, spacing: 6) {
-        chartWithAxes
+        chartBody
           .onAppear {
             clockNow = now
             playEntrance()
@@ -163,8 +163,8 @@ struct ArrivalPressureWaveChart: View {
       return
     }
     revealProgress = 0
-    withAnimation(.easeOut(duration: 0.55)) { revealProgress = 1 }
-    withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { peakPulse = true }
+    withAnimation(.easeOut(duration: 0.7)) { revealProgress = 1 }
+    withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) { peakPulse = true }
   }
 
   private func traceRender() {
@@ -177,38 +177,320 @@ struct ArrivalPressureWaveChart: View {
     )
   }
 
-  // MARK: - Axes + Chart
+  // MARK: - Chart
 
-  private var chartWithAxes: some View {
-    HStack(alignment: .top, spacing: 4) {
-      yAxisLabels
-      VStack(spacing: 2) {
-        chartBody
-        xAxisLabels
-      }
-    }
-  }
+  private var chartBody: some View {
+    let plotHeight = max(resolvedHeight - bottomGutter, Self.minChartHeight - bottomGutter)
+    let usableHeight = max(plotHeight - topGutter, 1)
 
-  private var yAxisLabels: some View {
-    let plotHeight = resolvedHeight - bottomGutter - topGutter
-    let ticks = [0, 50, 100].map { Int($0) }
-    return ZStack(alignment: .topLeading) {
-      ForEach(ticks.reversed(), id: \.self) { tick in
-        if tick > 0 {
-          Text("\(tick)%")
-            .font(.system(size: 7, weight: .medium, design: .rounded))
-            .foregroundStyle(TryzubColors.mutedText.opacity(0.7))
-            .offset(y: yOffsetForNormalized(Double(tick) / 100.0, plotHeight: plotHeight))
+    return VStack(spacing: 0) {
+      GeometryReader { proxy in
+        let plotWidth = max(proxy.size.width, 1)
+
+        ZStack(alignment: .bottomLeading) {
+          // Subtle horizontal guides
+          gridLines(plotWidth: plotWidth, plotHeight: plotHeight, usableHeight: usableHeight)
+
+          if plotWidth > 1 {
+            // Past wave (muted)
+            if let split = nowBucketIndex, split > 0 {
+              waveSegment(
+                plotWidth: plotWidth,
+                usableHeight: usableHeight,
+                plotHeight: plotHeight,
+                range: 0..<split,
+                fillOpacity: 0.10,
+                strokeOpacity: 0.22,
+                strokeWidth: 1.2
+              )
+              waveSegment(
+                plotWidth: plotWidth,
+                usableHeight: usableHeight,
+                plotHeight: plotHeight,
+                range: max(0, split - 1)..<buckets.count,
+                fillOpacity: 0.28,
+                strokeOpacity: 0.55,
+                strokeWidth: 2.0
+              )
+            } else {
+              waveSegment(
+                plotWidth: plotWidth,
+                usableHeight: usableHeight,
+                plotHeight: plotHeight,
+                range: 0..<buckets.count,
+                fillOpacity: isToday ? 0.26 : 0.22,
+                strokeOpacity: 0.50,
+                strokeWidth: 2.0
+              )
+            }
+
+            // Arrival dots on the wave
+            ForEach(Array(buckets.enumerated()), id: \.element.id) { index, bucket in
+              if bucket.hasArrivals {
+                arrivalDot(
+                  bucket: bucket,
+                  index: index,
+                  plotWidth: plotWidth,
+                  usableHeight: usableHeight,
+                  plotHeight: plotHeight
+                )
+              }
+            }
+
+            // Peak ring
+            if let peakIndex = buckets.firstIndex(where: { $0.isPeak && $0.hasArrivals }) {
+              peakMarker(
+                index: peakIndex,
+                plotWidth: plotWidth,
+                usableHeight: usableHeight,
+                plotHeight: plotHeight
+              )
+            }
+
+            // Now line
+            if let nowIndex = nowBucketIndex {
+              nowMarker(index: nowIndex, plotWidth: plotWidth, plotHeight: plotHeight)
+            }
+
+            // Tap zones
+            ForEach(Array(buckets.enumerated()), id: \.element.id) { index, bucket in
+              if bucket.hasArrivals {
+                tapZone(index: index, plotWidth: plotWidth, plotHeight: plotHeight)
+              }
+            }
+          }
         }
+        .frame(width: plotWidth, height: plotHeight, alignment: .bottomLeading)
+        .onAppear { measuredPlotWidth = plotWidth }
+        .onChange(of: plotWidth) { _, w in measuredPlotWidth = w }
       }
+      .frame(height: plotHeight)
+
+      xAxisLabels
     }
-    .frame(width: leftGutter - 2, height: resolvedHeight, alignment: .topLeading)
-    .accessibilityHidden(true)
   }
 
-  private func yOffsetForNormalized(_ fraction: Double, plotHeight: CGFloat) -> CGFloat {
-    topGutter + plotHeight * CGFloat(1 - fraction) - 5
+  // MARK: - Wave segments
+
+  @ViewBuilder
+  private func waveSegment(
+    plotWidth: CGFloat,
+    usableHeight: CGFloat,
+    plotHeight: CGFloat,
+    range: Range<Int>,
+    fillOpacity: Double,
+    strokeOpacity: Double,
+    strokeWidth: CGFloat
+  ) -> some View {
+    let waveColor = colorScheme == .dark
+      ? Color.accentColor
+      : TryzubColors.primaryControl
+
+    wavePath(
+      plotWidth: plotWidth,
+      usableHeight: usableHeight,
+      plotHeight: plotHeight,
+      range: range
+    )
+    .fill(
+      LinearGradient(
+        colors: [
+          waveColor.opacity(fillOpacity),
+          waveColor.opacity(fillOpacity * 0.15)
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+      )
+    )
+    .opacity(Double(revealProgress))
+    .allowsHitTesting(false)
+
+    wavePath(
+      plotWidth: plotWidth,
+      usableHeight: usableHeight,
+      plotHeight: plotHeight,
+      range: range
+    )
+    .stroke(
+      waveColor.opacity(strokeOpacity),
+      style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round, lineJoin: .round)
+    )
+    .opacity(Double(revealProgress))
+    .allowsHitTesting(false)
   }
+
+  private func wavePath(
+    plotWidth: CGFloat,
+    usableHeight: CGFloat,
+    plotHeight: CGFloat,
+    range: Range<Int>
+  ) -> Path {
+    var path = Path()
+    guard !range.isEmpty, buckets.count > 1 else { return path }
+
+    let indices = Array(range).filter { buckets.indices.contains($0) }
+    guard indices.count >= 2 else {
+      if let only = indices.first {
+        let x = centerX(only, plotWidth: plotWidth)
+        let h = usableHeight * CGFloat(buckets[only].normalizedPressure) * revealProgress
+        path.move(to: CGPoint(x: x, y: plotHeight))
+        path.addLine(to: CGPoint(x: x, y: plotHeight - h))
+        path.addLine(to: CGPoint(x: x, y: plotHeight))
+        path.closeSubpath()
+      }
+      return path
+    }
+
+    let points: [CGPoint] = indices.map { index in
+      let bucket = buckets[index]
+      let x = centerX(index, plotWidth: plotWidth)
+      let h = usableHeight * CGFloat(bucket.normalizedPressure) * revealProgress
+      return CGPoint(x: x, y: plotHeight - max(h, 2))
+    }
+
+    path.move(to: CGPoint(x: points[0].x, y: plotHeight))
+    path.addLine(to: points[0])
+
+    for index in 1..<points.count {
+      let prev = points[index - 1]
+      let curr = points[index]
+      let tension: CGFloat = 0.35
+      let dx = (curr.x - prev.x) * tension
+      path.addCurve(
+        to: curr,
+        control1: CGPoint(x: prev.x + dx, y: prev.y),
+        control2: CGPoint(x: curr.x - dx, y: curr.y)
+      )
+    }
+
+    if let last = points.last {
+      path.addLine(to: CGPoint(x: last.x, y: plotHeight))
+    }
+    path.closeSubpath()
+    return path
+  }
+
+  // MARK: - Markers
+
+  private func gridLines(plotWidth: CGFloat, plotHeight: CGFloat, usableHeight: CGFloat) -> some View {
+    ZStack(alignment: .bottomLeading) {
+      ForEach([0.25, 0.5, 0.75], id: \.self) { fraction in
+        Rectangle()
+          .fill(Color.primary.opacity(0.05))
+          .frame(width: plotWidth, height: 0.5)
+          .offset(y: -(usableHeight * CGFloat(fraction)))
+      }
+      Rectangle()
+        .fill(TryzubColors.border.opacity(0.35))
+        .frame(width: plotWidth, height: 0.75)
+    }
+    .frame(width: plotWidth, height: plotHeight, alignment: .bottomLeading)
+    .allowsHitTesting(false)
+  }
+
+  private func arrivalDot(
+    bucket: ArrivalPressureBucket,
+    index: Int,
+    plotWidth: CGFloat,
+    usableHeight: CGFloat,
+    plotHeight: CGFloat
+  ) -> some View {
+    let x = centerX(index, plotWidth: plotWidth)
+    let h = usableHeight * CGFloat(bucket.normalizedPressure) * revealProgress
+    let y = plotHeight - max(h, 4)
+    let isSelected = selectedBucketID == bucket.id
+    let isPast = bucket.isPast
+
+    let dotColor: Color = {
+      if bucket.isPeak { return Color.accentColor }
+      if bucket.noTableCount > 0 { return TryzubColors.warning }
+      return Color.accentColor.opacity(0.75)
+    }()
+
+    return ZStack {
+      Circle()
+        .fill(dotColor.opacity(isPast ? 0.45 : 0.9))
+        .frame(width: isSelected ? 7 : 5, height: isSelected ? 7 : 5)
+        .overlay {
+          if isSelected {
+            Circle().stroke(Color.accentColor, lineWidth: 1.5).frame(width: 11, height: 11)
+          }
+        }
+
+      if bucket.isPeak || isSelected {
+        Text("\(bucket.guestCount)")
+          .font(.system(size: 8, weight: .bold, design: .rounded))
+          .monospacedDigit()
+          .foregroundStyle(bucket.isPeak ? Color.accentColor : TryzubColors.mutedText)
+          .opacity(isPast ? 0.55 : 1)
+          .offset(y: -14)
+      }
+    }
+    .position(x: x, y: y)
+    .opacity(Double(revealProgress))
+    .allowsHitTesting(false)
+  }
+
+  private func peakMarker(
+    index: Int,
+    plotWidth: CGFloat,
+    usableHeight: CGFloat,
+    plotHeight: CGFloat
+  ) -> some View {
+    let x = centerX(index, plotWidth: plotWidth)
+    let h = usableHeight * CGFloat(buckets[index].normalizedPressure) * revealProgress
+    let y = plotHeight - max(h, 4)
+
+    return Circle()
+      .stroke(Color.accentColor.opacity(0.35), lineWidth: 1.5)
+      .frame(width: peakPulse && !reduceMotion ? 18 : 14, height: peakPulse && !reduceMotion ? 18 : 14)
+      .position(x: x, y: y)
+      .opacity(Double(revealProgress) * 0.8)
+      .allowsHitTesting(false)
+  }
+
+  private func nowMarker(index: Int, plotWidth: CGFloat, plotHeight: CGFloat) -> some View {
+    let x = centerX(index, plotWidth: plotWidth)
+    return ZStack(alignment: .top) {
+      Rectangle()
+        .fill(Color.accentColor.opacity(0.40))
+        .frame(width: 1, height: plotHeight - topGutter)
+
+      Text("Now")
+        .font(.system(size: 8, weight: .bold))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(Color.accentColor.opacity(0.85), in: Capsule())
+        .offset(y: 2)
+    }
+    .frame(width: 1, height: plotHeight, alignment: .top)
+    .position(x: x, y: plotHeight / 2)
+    .allowsHitTesting(false)
+  }
+
+  private func tapZone(index: Int, plotWidth: CGFloat, plotHeight: CGFloat) -> some View {
+    let x = centerX(index, plotWidth: plotWidth)
+    let bucket = buckets[index]
+    return Circle()
+      .fill(Color.clear)
+      .frame(width: max(tapRadius(plotWidth: plotWidth), 28), height: max(tapRadius(plotWidth: plotWidth), 28))
+      .contentShape(Circle())
+      .position(x: x, y: plotHeight * 0.45)
+      .onTapGesture {
+        selectedBucketID = bucket.id
+        sheetBucket = bucket
+      }
+      .accessibilityLabel(accessibilityLabel(for: bucket))
+      .accessibilityAddTraits(.isButton)
+  }
+
+  private func tapRadius(plotWidth: CGFloat) -> CGFloat {
+    guard buckets.count > 0 else { return 14 }
+    return max(plotWidth / CGFloat(buckets.count) * 0.7, 14)
+  }
+
+  // MARK: - X axis
 
   private var xAxisLabels: some View {
     GeometryReader { proxy in
@@ -220,9 +502,9 @@ struct ArrivalPressureWaveChart: View {
                : buckets[index].axisLabel)
             .font(.system(size: 8, weight: .medium, design: .rounded))
             .monospacedDigit()
-            .foregroundStyle(TryzubColors.mutedText.opacity(0.9))
+            .foregroundStyle(TryzubColors.mutedText.opacity(0.85))
             .fixedSize()
-            .position(x: centerX(index, plotWidth: plotWidth), y: 6)
+            .position(x: centerX(index, plotWidth: plotWidth), y: 7)
         }
       }
     }
@@ -259,197 +541,6 @@ struct ArrivalPressureWaveChart: View {
     return Array(Swift.stride(from: 0, to: buckets.count, by: fallback))
   }
 
-  private var chartBody: some View {
-    let plotHeight = max(resolvedHeight - bottomGutter, Self.minChartHeight - bottomGutter)
-    let usableHeight = max(plotHeight - topGutter, 1)
-
-    return GeometryReader { proxy in
-      let plotWidth = max(proxy.size.width, 1)
-      let barWidth = self.barWidth(plotWidth: plotWidth)
-
-      ZStack(alignment: .bottomLeading) {
-        baselineRule(plotWidth: plotWidth, plotHeight: plotHeight)
-
-        if plotWidth > 1 {
-          // Wave fill
-          wavePath(plotWidth: plotWidth, usableHeight: usableHeight, plotHeight: plotHeight)
-            .fill(
-              LinearGradient(
-                colors: [
-                  TryzubColors.primaryControl.opacity(0.22),
-                  TryzubColors.primaryControl.opacity(0.04)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-              )
-            )
-            .opacity(Double(revealProgress) * 0.85)
-            .allowsHitTesting(false)
-
-          // Wave stroke
-          wavePath(plotWidth: plotWidth, usableHeight: usableHeight, plotHeight: plotHeight)
-            .stroke(TryzubColors.primaryControl.opacity(0.35), lineWidth: 1.2)
-            .opacity(Double(revealProgress))
-            .allowsHitTesting(false)
-
-          // Current-time marker
-          if let nowIndex = nowBucketIndex {
-            nowMarker(index: nowIndex, plotWidth: plotWidth, plotHeight: plotHeight)
-          }
-
-          // Bars
-          ForEach(Array(buckets.enumerated()), id: \.element.id) { index, bucket in
-            barView(
-              bucket: bucket,
-              index: index,
-              plotWidth: plotWidth,
-              plotHeight: plotHeight,
-              usableHeight: usableHeight,
-              barWidth: barWidth
-            )
-          }
-        }
-      }
-      .frame(width: plotWidth, height: plotHeight, alignment: .bottomLeading)
-      .contentShape(Rectangle())
-      .gesture(
-        DragGesture(minimumDistance: 0)
-          .onEnded { value in
-            selectBucket(at: value.location.x, plotWidth: plotWidth)
-          }
-      )
-      .onAppear { measuredPlotWidth = plotWidth }
-      .onChange(of: plotWidth) { _, w in measuredPlotWidth = w }
-    }
-    .frame(height: plotHeight)
-  }
-
-  private func wavePath(plotWidth: CGFloat, usableHeight: CGFloat, plotHeight: CGFloat) -> Path {
-    var path = Path()
-    guard buckets.count > 1 else { return path }
-
-    let points: [CGPoint] = buckets.indices.map { index in
-      let bucket = buckets[index]
-      let x = centerX(index, plotWidth: plotWidth)
-      let h = usableHeight * CGFloat(bucket.normalizedPressure) * revealProgress
-      let y = plotHeight - h
-      return CGPoint(x: x, y: y)
-    }
-
-    guard let first = points.first else { return path }
-    path.move(to: CGPoint(x: first.x, y: plotHeight))
-    path.addLine(to: first)
-
-    for index in 1..<points.count {
-      let prev = points[index - 1]
-      let curr = points[index]
-      let midX = (prev.x + curr.x) / 2
-      path.addCurve(
-        to: curr,
-        control1: CGPoint(x: midX, y: prev.y),
-        control2: CGPoint(x: midX, y: curr.y)
-      )
-    }
-
-    if let last = points.last {
-      path.addLine(to: CGPoint(x: last.x, y: plotHeight))
-    }
-    path.closeSubpath()
-    return path
-  }
-
-  private func nowMarker(index: Int, plotWidth: CGFloat, plotHeight: CGFloat) -> some View {
-    let x = centerX(index, plotWidth: plotWidth)
-    return Rectangle()
-      .fill(Color.accentColor.opacity(0.45))
-      .frame(width: 1, height: plotHeight - topGutter)
-      .position(x: x, y: plotHeight / 2)
-      .allowsHitTesting(false)
-  }
-
-  @ViewBuilder
-  private func barView(
-    bucket: ArrivalPressureBucket,
-    index: Int,
-    plotWidth: CGFloat,
-    plotHeight: CGFloat,
-    usableHeight: CGFloat,
-    barWidth: CGFloat
-  ) -> some View {
-    let pressureHeight = max(usableHeight * CGFloat(bucket.normalizedPressure), bucket.hasArrivals ? 6 : 2)
-    let animatedHeight = pressureHeight * revealProgress
-    let isSelected = selectedBucketID == bucket.id
-    let centerX = centerX(index, plotWidth: plotWidth)
-
-    let opacity: Double = {
-      if bucket.isPast { return 0.38 }
-      if bucket.isNextArrival { return 1.0 }
-      return 0.82
-    }()
-
-    let tint: Color = {
-      if !bucket.hasArrivals { return TryzubColors.border.opacity(0.4) }
-      if bucket.isPeak { return TryzubColors.primaryControl }
-      if bucket.noTableCount > 0 { return TryzubColors.warning.opacity(0.85) }
-      return TryzubColors.primaryControl.opacity(0.72)
-    }()
-
-    ZStack(alignment: .bottom) {
-      Capsule()
-        .fill(tint.opacity(opacity))
-        .frame(width: barWidth, height: animatedHeight)
-        .overlay {
-          if isSelected {
-            Capsule()
-              .stroke(TryzubColors.primaryControl, lineWidth: 1.5)
-              .frame(width: barWidth, height: animatedHeight)
-          }
-        }
-        .scaleEffect(
-          x: 1,
-          y: bucket.isPeak && peakPulse && !reduceMotion && !isSelected ? 1.05 : 1,
-          anchor: .bottom
-        )
-
-      if bucket.hasArrivals {
-        Text("\(bucket.guestCount)")
-          .font(.system(size: 8, weight: .bold, design: .rounded))
-          .monospacedDigit()
-          .foregroundStyle(bucket.isPeak ? TryzubColors.primaryControl : TryzubColors.mutedText)
-          .opacity(Double(revealProgress) * (bucket.isPast ? 0.5 : 1))
-          .offset(y: -(animatedHeight + 7))
-      }
-    }
-    .frame(width: barWidth, height: plotHeight, alignment: .bottom)
-    .position(x: centerX, y: plotHeight / 2)
-    .accessibilityLabel(accessibilityLabel(for: bucket))
-    .accessibilityAddTraits(isSelected ? .isSelected : [])
-  }
-
-  private func accessibilityLabel(for bucket: ArrivalPressureBucket) -> String {
-    var parts = [bucket.windowLabel]
-    parts.append(bucket.guestCount == 1 ? "1 guest" : "\(bucket.guestCount) guests")
-    if bucket.isPeak { parts.insert("Peak pressure", at: 0) }
-    if bucket.noTableCount > 0 {
-      parts.append("\(bucket.noTableCount) without tables")
-    }
-    return parts.joined(separator: ", ")
-  }
-
-  private func baselineRule(plotWidth: CGFloat, plotHeight: CGFloat) -> some View {
-    Rectangle()
-      .fill(TryzubColors.border.opacity(0.4))
-      .frame(width: plotWidth, height: 0.75)
-      .position(x: plotWidth / 2, y: plotHeight - 0.5)
-      .allowsHitTesting(false)
-  }
-
-  private func barWidth(plotWidth: CGFloat) -> CGFloat {
-    guard buckets.count > 0 else { return 6 }
-    let slot = plotWidth / CGFloat(buckets.count)
-    return min(max(slot * 0.55, 4), 20)
-  }
-
   private func centerX(_ index: Int, plotWidth: CGFloat) -> CGFloat {
     guard buckets.count > 1 else { return plotWidth / 2 }
     let slot = plotWidth / CGFloat(buckets.count)
@@ -461,21 +552,17 @@ struct ArrivalPressureWaveChart: View {
     return buckets.first(where: { $0.id == selectedBucketID })
   }
 
-  private func selectBucket(at x: CGFloat, plotWidth: CGFloat) {
-    guard !buckets.isEmpty else { return }
-    let nearestIndex = buckets.indices.min(by: { lhs, rhs in
-      abs(centerX(lhs, plotWidth: plotWidth) - x) < abs(centerX(rhs, plotWidth: plotWidth) - x)
-    })
-    guard let nearestIndex else { return }
-    let bucket = buckets[nearestIndex]
-    guard bucket.hasArrivals else { return }
-
-    selectedBucketID = bucket.id
-    sheetBucket = bucket
+  private func accessibilityLabel(for bucket: ArrivalPressureBucket) -> String {
+    var parts = [bucket.windowLabel]
+    parts.append(bucket.guestCount == 1 ? "1 guest" : "\(bucket.guestCount) guests")
+    if bucket.isPeak { parts.insert("Peak pressure", at: 0) }
+    if bucket.noTableCount > 0 {
+      parts.append("\(bucket.noTableCount) without tables")
+    }
+    return parts.joined(separator: ", ")
   }
 }
 
-// Make bucket identifiable for sheet
 extension ArrivalPressureBucket: Hashable {
   func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }

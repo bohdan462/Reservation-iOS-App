@@ -32,6 +32,8 @@ enum FreshnessScope: Hashable, CustomStringConvertible {
     case restaurantHours
     case restaurantDayAvailability(date: String)
     case restaurantBlockedSlots(date: String)
+    case reservationActivity(reservationID: Int)
+    case activityFeed(dateKey: String)
 
     var description: String {
         switch self {
@@ -63,6 +65,10 @@ enum FreshnessScope: Hashable, CustomStringConvertible {
             return "dayAvailability(\(d))"
         case .restaurantBlockedSlots(let d):
             return "blockedSlots(\(d))"
+        case .reservationActivity(let id):
+            return "reservationActivity(\(id))"
+        case .activityFeed(let d):
+            return "activityFeed(\(d))"
         }
     }
 
@@ -93,6 +99,10 @@ enum FreshnessScope: Hashable, CustomStringConvertible {
             return 300
         case .restaurantBlockedSlots:
             return 120
+        case .reservationActivity:
+            return 90
+        case .activityFeed:
+            return 90
         }
     }
 }

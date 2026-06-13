@@ -341,6 +341,7 @@ struct ReservationDetailView: View {
     @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
     @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
+    @EnvironmentObject private var activityStore: ReservationActivityStore
     // Guest Insights uses the active reservation window, not the full SwiftData cache.
     @Query private var windowCachedReservations: [ReservationRecord]
     /// Local-device attachments for this reservation (Phase 5). Persisted by reservationRemoteID.
@@ -738,6 +739,10 @@ struct ReservationDetailView: View {
                         VStack(spacing: 14) {
                             contactCard
                             draftMessageCard
+                            ReservationActivityHistorySection(
+                                reservationID: reservation.remoteID,
+                                reservationLabel: presentation.header.guestName
+                            )
                             ReservationServiceLoadCard(
                                 reservation: reservation,
                                 sameDayReservations: sameDayReservations
@@ -760,6 +765,10 @@ struct ReservationDetailView: View {
                     detailsCard(presentation)
                     contactCard
                     draftMessageCard
+                    ReservationActivityHistorySection(
+                        reservationID: reservation.remoteID,
+                        reservationLabel: presentation.header.guestName
+                    )
                     ReservationServiceLoadCard(
                         reservation: reservation,
                         sameDayReservations: sameDayReservations

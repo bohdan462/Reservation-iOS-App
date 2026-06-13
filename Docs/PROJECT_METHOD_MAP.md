@@ -682,33 +682,62 @@ Delegates network to `ReservationsController` (or API via controller wrappers).
 
 ---
 
-## Table configuration (local advisory)
+## Table & floor (backend canonical)
+
+### FloorPlanStore / FloorPlanService
+| Method | Endpoint | Caller |
+| --- | --- | --- |
+| `load(date:)` | `GET /floor-plan?date=` | `FloorPlanView`, Host assignment when layout needed |
+| `saveLayout` | `PUT /restaurant-tables` | Floor Plan edit layout |
+| `assign(reservationID:tableKeys:)` | `PATCH /managed-reservations/{id}/tables` | `TableAssignmentCoordinator`, Floor Plan sheet |
+
+### TableAssignmentCoordinator
+| Method | Role |
+| --- | --- |
+| `assignTable(...)` | Routes to `PATCH /tables` when `hasBackendLayout`; else legacy `tableName` PATCH |
+
+**Production path:** `PATCH /managed-reservations/{id}/tables` when backend layout exists.
+
+## Table configuration (legacy advisory)
 
 ### HostTableConfigStore
 | Field | Value |
 | --- | --- |
 | File | `Features/HostIntelligence/HostTableConfigStore.swift` |
 | Persistence | UserDefaults `tryzub.hostIntelligence.tableConfig.v1` |
-| Injection | Single shared instance from `ReservationsTabShell` |
+| Role | **Legacy advisory** — chips, host intelligence fit; not canonical floor inventory |
+| Injection | Shared instance from `ReservationsTabShell` |
 
 ### TableAssignmentOptionsBuilder
 | Field | Value |
 | --- | --- |
 | File | `Features/HostIntelligence/TableAssignmentOptionsBuilder.swift` |
-| Role | Assignment chip names from active `RestaurantTableConfig`; legacy fallback when empty |
+| Role | Assignment chip names; prefers backend floor labels when layout loaded |
 
 ### HostTableCapacityTextParser
 | Field | Value |
 | --- | --- |
 | File | `Features/HostIntelligence/HostTableCapacityTextParser.swift` |
-| Import | `parse(_:)` → structured tables |
-| Export | `exportText(from:)` — round-trip for settings import UI |
+| Role | Import text → `HostTableConfigStore`; migration/fallback only |
 
 ### HostTableIntelligenceSupport
 | Field | Value |
 | --- | --- |
 | File | `Features/HostIntelligence/HostTableIntelligenceSupport.swift` |
-| Role | Table fit, combination capacity, assigned mismatch — **advisory**; used by Host engine and assignment proposals |
+| Role | Table fit, combination capacity — **advisory only** |
+
+## Activity history (backend read-only)
+
+### ReservationActivityStore
+| Method | Endpoint | Trigger |
+| --- | --- | --- |
+| `loadReservationActivity(reservationID:)` | `GET /managed-reservations/{id}/activity` | Reservation Detail open |
+| `loadActivityFeed(date:)` | `GET /activity?date=` | More → Activity History |
+
+**Rules:** iOS never POSTs activity. Backend writes on mutation. In-memory cache only (no SwiftData). See `Docs/ACTIVITY_HISTORY.md`.
+
+### ReservationActivityInvalidation
+Posts after successful mutations from `ReservationsController.markScopesTouched`; visible detail/feed screens refetch.
 
 ---
 

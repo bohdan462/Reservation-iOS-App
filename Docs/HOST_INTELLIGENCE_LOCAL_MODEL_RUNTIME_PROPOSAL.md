@@ -1,13 +1,19 @@
 # Host Intelligence — On-Device Briefing Model Runtime Proposal (Phase 8A)
 
+> **⚠️ Historical document — not current implementation.**  
+> For the shipped runtime, models, task profiles, settings, and boundaries, read **`Docs/LOCAL_MODEL_INTELLIGENCE.md`**.  
+> This file preserves Phase 8A research and option comparison only.
+
 **Branch:** `intelligence`  
 **Date:** 2026-05-29  
-**Status:** **Historical architecture research (Phase 8A).** For current implementation state, see **`Docs/LOCAL_MODEL_INTELLIGENCE.md`**.
+**Status:** **Historical architecture research (Phase 8A).**
 
-**Implemented today:**
-- On-device **llama.cpp** via **LlamaSwift** — **not Ollama**
-- **Host briefing rewrite** — optional / staff-gated; template fallback always available
-- **Guest message drafting** — separate packet, writer, validator, and template path; Reservation Detail UI shipped; local model for guest drafts **not default**
+**What actually shipped (see LOCAL_MODEL_INTELLIGENCE.md):**
+- On-device **llama.cpp** via **LlamaSwift** — **not Ollama**, not Apple Foundation Models
+- `HostLlamaBriefingRuntime` as sole integrated runtime
+- 0.5B + optional 3B GGUF profiles with template fallback
+- Per-task `HostLocalModelTaskProfile` (tokens, timeouts, system prompts)
+- Host briefing + manager narrative + guest drafts (opt-in) + note analysis
 
 ## Executive summary
 

@@ -20,6 +20,7 @@ struct ReservationsResponse: Codable {
 struct ReservationUpdateResponse: Codable {
     let success: Bool
     let data: ReservationDTO
+    let activity: MutationActivityResultDTO?
 }
 
 struct ReservationFetchResponse: Codable {
@@ -30,6 +31,7 @@ struct ReservationFetchResponse: Codable {
 struct ReservationCreateResponse: Codable {
     let success: Bool
     let data: ReservationDTO
+    let activity: MutationActivityResultDTO?
 }
 
 struct ReservationConfirmResponse: Codable {
@@ -38,6 +40,7 @@ struct ReservationConfirmResponse: Codable {
     let emailError: String?
     let message: String?
     let data: ReservationDTO
+    let activity: MutationActivityResultDTO?
 }
 
 struct ReservationGuestManageLinkResponse: Codable {

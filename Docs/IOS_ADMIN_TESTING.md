@@ -134,6 +134,15 @@ Marks green check when `APIRequestLogStore.hasSuccessfulCall(containing:)` match
 - `GET /managed-reservations/import-failures`
 - `POST /restaurant-blocked-slots`
 - `DELETE /restaurant-blocked-slots`
+- `GET /guest-intelligence`
+- `GET /guest-intelligence/reservation/{id}`
+- `GET /business-intelligence/summary`
+- `GET /intelligence/system-status`
+- `GET /restaurant-tables`
+- `GET /floor-plan`
+- `PATCH /managed-reservations/{id}/tables`
+- `GET /managed-reservations/{id}/activity`
+- `GET /activity?date=YYYY-MM-DD`
 
 **Import monitor:** `NOT USED: POST /managed-reservations/import` — must stay **Clean** during normal use.
 
@@ -339,6 +348,38 @@ Staff on a live floor should **never** use these casually:
 
 ---
 
+## 12b. Activity history testing
+
+**Docs:** `Docs/ACTIVITY_HISTORY.md`
+
+### Staff UI (all roles with reservation access)
+
+| Step | Expected |
+| --- | --- |
+| Open reservation detail | History section loads via `GET /managed-reservations/{id}/activity` |
+| Old untouched reservation | *"No history yet. New changes will appear here."* |
+| Assign table / change status | Backend writes activity; detail history refreshes when visible |
+| More → Activity History | Today feed via `GET /activity?date=` |
+| Change date on feed | Correct date feed loads |
+
+### Auth / privacy
+
+- Protected endpoints require valid credentials (401/403 without auth)
+- UI shows `summary`, actor, time — **not** raw metadata, phone, email, tokens
+- iOS **does not** POST activity log events after mutations
+
+### Safe GET buttons
+
+Activity endpoints are listed in the **Endpoint Contract Checklist** (session log match). There is **no** dedicated AdminFetchTest button yet — use checklist after opening detail or Activity History, or verify via curl/Insomnia.
+
+### Traces (DEBUG)
+
+- `[ACTIVITY_API_TRACE]` — fetch start/complete
+- `[ACTIVITY_DETAIL_TRACE]` — loaded/empty
+- `[ACTIVITY_MUTATION_TRACE]` — optional backend `activity` sidecar on mutation response
+
+---
+
 ## 12. Notices and notification behavior
 
 The app uses `controller.notices` as an in-session notice center:
@@ -396,4 +437,8 @@ Developer diagnostics can show extra request reason / error code / developer det
 - [ ] Guest manage link POST appears in log; pasteboard works
 - [ ] Manual email log POST appears for draft_created/manual_sent; no raw manage token appears in diagnostics
 - [ ] Confirm + Email POST `/confirm` appears only when explicitly tested
+- [ ] Reservation detail History loads or shows correct empty copy
+- [ ] More → Activity History loads today feed; date change works
+- [ ] Activity checklist rows green after viewing detail or feed
+- [ ] Mutation does not POST separate activity log (only normal mutation endpoints)
 - [ ] Airplane mode → offline notice → recovery refresh

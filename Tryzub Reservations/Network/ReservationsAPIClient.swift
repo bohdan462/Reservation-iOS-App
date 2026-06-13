@@ -56,6 +56,8 @@ enum ReservationAPIRequestReason: String {
     case restaurantTables = "restaurant_tables"
     case restaurantTablesPut = "restaurant_tables_put"
     case reservationTablesPatch = "reservation_tables_patch"
+    case reservationActivity = "reservation_activity"
+    case activityFeed = "activity_feed"
     case manualSkipBusy = "manual_skip_busy"
     case manualSkipCooldown = "manual_skip_cooldown"
     case scopeSkipInFlight = "scope_skip_in_flight"
@@ -345,6 +347,25 @@ protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
         request: PatchReservationTablesRequest,
         reason: ReservationAPIRequestReason
     ) async throws -> FloorPlanPatchResponseDTO
+    func fetchReservationActivity(
+        reservationID: Int,
+        page: Int,
+        perPage: Int,
+        reason: ReservationAPIRequestReason
+    ) async throws -> ReservationActivityResponseDTO
+    func fetchActivityFeed(
+        date: Date,
+        page: Int,
+        perPage: Int,
+        reason: ReservationAPIRequestReason
+    ) async throws -> ReservationActivityFeedResponseDTO
+    func fetchActivityFeed(
+        from: Date,
+        to: Date,
+        page: Int,
+        perPage: Int,
+        reason: ReservationAPIRequestReason
+    ) async throws -> ReservationActivityFeedResponseDTO
 }
 
 // MARK: - Default Protocol Convenience
@@ -387,6 +408,47 @@ extension ReservationsAPIClientProtocol {
             slots: slots,
             reason: reason,
             requestReason: .restaurantBlockedSlotsCreate
+        )
+    }
+
+    func fetchReservationActivity(
+        reservationID: Int,
+        page: Int = 1,
+        perPage: Int = 25
+    ) async throws -> ReservationActivityResponseDTO {
+        try await fetchReservationActivity(
+            reservationID: reservationID,
+            page: page,
+            perPage: perPage,
+            reason: .reservationActivity
+        )
+    }
+
+    func fetchActivityFeed(
+        date: Date,
+        page: Int = 1,
+        perPage: Int = 50
+    ) async throws -> ReservationActivityFeedResponseDTO {
+        try await fetchActivityFeed(
+            date: date,
+            page: page,
+            perPage: perPage,
+            reason: .activityFeed
+        )
+    }
+
+    func fetchActivityFeed(
+        from: Date,
+        to: Date,
+        page: Int = 1,
+        perPage: Int = 50
+    ) async throws -> ReservationActivityFeedResponseDTO {
+        try await fetchActivityFeed(
+            from: from,
+            to: to,
+            page: page,
+            perPage: perPage,
+            reason: .activityFeed
         )
     }
 }
@@ -595,7 +657,9 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let request = try makeJSONRequest(url: url, method: "PATCH", body: updateRequest)
         let data = try await perform(request, reason: reason)
 
-        return try decode(ReservationUpdateResponse.self, from: data, request: request).data
+        let response = try decode(ReservationUpdateResponse.self, from: data, request: request)
+        traceOptionalMutationActivity(reservationID: id, activity: response.activity)
+        return response.data
     }
 
     // Intent: Staff creates a manual/call-in reservation.
@@ -612,7 +676,9 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         )
         let data = try await perform(request, reason: reason)
 
-        return try decode(ReservationCreateResponse.self, from: data, request: request).data
+        let response = try decode(ReservationCreateResponse.self, from: data, request: request)
+        traceOptionalMutationActivity(reservationID: response.data.id, activity: response.activity)
+        return response.data
     }
 
     // MARK: - Confirm With Email
@@ -628,7 +694,9 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let request = makeRequest(url: url, method: "POST")
         let data = try await perform(request, reason: reason)
 
-        return try decode(ReservationConfirmResponse.self, from: data, request: request)
+        let response = try decode(ReservationConfirmResponse.self, from: data, request: request)
+        traceOptionalMutationActivity(reservationID: id, activity: response.activity)
+        return response
     }
 
     // Intent: Generates a guest self-service URL for manual Gmail/Mail workflows.
@@ -1040,7 +1108,76 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
             request: request,
             reason: reason
         )
-        return try decode(FloorPlanPatchResponseDTO.self, from: data, request: request)
+        let response = try decode(FloorPlanPatchResponseDTO.self, from: data, request: request)
+        traceOptionalMutationActivity(reservationID: reservationID, activity: response.activity)
+        return response
+    }
+
+    // MARK: - Activity History
+
+    // Intent: Staff reads backend-owned mutation history for one reservation.
+    // Network: GET /managed-reservations/{id}/activity.
+    func fetchReservationActivity(
+        reservationID: Int,
+        page: Int = 1,
+        perPage: Int = 25,
+        reason: ReservationAPIRequestReason = .reservationActivity
+    ) async throws -> ReservationActivityResponseDTO {
+        let url = try makeURL(
+            path: "managed-reservations/\(reservationID)/activity",
+            queryItems: [
+                URLQueryItem(name: "page", value: String(page)),
+                URLQueryItem(name: "per_page", value: String(perPage))
+            ]
+        )
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, retryCount: 0, reason: reason)
+        return try decode(ReservationActivityResponseDTO.self, from: data, request: request)
+    }
+
+    // Intent: Staff reads service-day activity feed.
+    // Network: GET /activity?date=YYYY-MM-DD.
+    func fetchActivityFeed(
+        date: Date,
+        page: Int = 1,
+        perPage: Int = 50,
+        reason: ReservationAPIRequestReason = .activityFeed
+    ) async throws -> ReservationActivityFeedResponseDTO {
+        let dateKey = date.reservationDateString()
+        let url = try makeURL(
+            path: "activity",
+            queryItems: [
+                URLQueryItem(name: "date", value: dateKey),
+                URLQueryItem(name: "page", value: String(page)),
+                URLQueryItem(name: "per_page", value: String(perPage))
+            ]
+        )
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, retryCount: 0, reason: reason)
+        return try decode(ReservationActivityFeedResponseDTO.self, from: data, request: request)
+    }
+
+    // Intent: Staff reads activity feed for a date range.
+    // Network: GET /activity?from=YYYY-MM-DD&to=YYYY-MM-DD.
+    func fetchActivityFeed(
+        from: Date,
+        to: Date,
+        page: Int = 1,
+        perPage: Int = 50,
+        reason: ReservationAPIRequestReason = .activityFeed
+    ) async throws -> ReservationActivityFeedResponseDTO {
+        let url = try makeURL(
+            path: "activity",
+            queryItems: [
+                URLQueryItem(name: "from", value: from.reservationDateString()),
+                URLQueryItem(name: "to", value: to.reservationDateString()),
+                URLQueryItem(name: "page", value: String(page)),
+                URLQueryItem(name: "per_page", value: String(perPage))
+            ]
+        )
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, retryCount: 0, reason: reason)
+        return try decode(ReservationActivityFeedResponseDTO.self, from: data, request: request)
     }
 
     // MARK: - Import Failure Diagnostics
@@ -1587,6 +1724,17 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
                 diagnostics: diagnostics
             )
         }
+    }
+
+    private func traceOptionalMutationActivity(
+        reservationID: Int,
+        activity: MutationActivityResultDTO?
+    ) {
+        guard let activity else { return }
+        ReservationActivityMutationTrace.emit(
+            reservationID: reservationID,
+            mutationActivity: activity
+        )
     }
 }
 

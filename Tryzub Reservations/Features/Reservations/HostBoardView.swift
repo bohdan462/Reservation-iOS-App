@@ -1281,7 +1281,7 @@ private struct HostBoardSummaryCard: View {
 
                 ArrivalPressureWaveChart(
                     summary: arrivalPressure,
-                    height: 108,
+                    height: 112,
                     isToday: isSelectedDateToday,
                     now: referenceNow,
                     onOpenReservation: onOpenReservationByID
@@ -1463,32 +1463,25 @@ private struct HomeServiceHeader: View {
     let onShowFormProblems: () -> Void
     var onOpenTimeline: (() -> Void)? = nil
 
-    private var serviceDateText: String {
-        selectedDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
+    private var compactServiceDateText: String {
+        if Calendar.current.isDateInToday(selectedDate) {
+            return selectedDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+        }
+        return selectedDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            // Wide (iPad): everything on one row
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 8) {
                 titleBlock
-                ReservationServiceDateSelector(selectedDate: $selectedDate)
-                    .frame(maxWidth: .infinity)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(0)
                 actionBar
                     .fixedSize()
+                    .layoutPriority(1)
             }
 
-            // Narrow (iPhone): title + actions, then dates below
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 10) {
-                    titleBlock
-                    Spacer(minLength: 8)
-                    actionBar
-                        .fixedSize()
-                }
-
-                ReservationServiceDateSelector(selectedDate: $selectedDate)
-            }
+            ReservationServiceDateSelector(selectedDate: $selectedDate)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -1549,49 +1542,52 @@ private struct HomeServiceHeader: View {
 //    }
 
     private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(ReservationUIStyle.serviceTitleColor)
                 .lineLimit(1)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text(serviceDateText)
-                        .lineLimit(1)
-                        .contentTransition(.interpolate)
-                        .animation(.snappy(duration: 0.35), value: selectedDate.reservationDateString())
+            Text(compactServiceDateText)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .allowsTightening(true)
+                .contentTransition(.interpolate)
+                .animation(.snappy(duration: 0.35), value: selectedDate.reservationDateString())
 
-                    Text("·")
-                        .foregroundStyle(.quaternary)
+            HStack(spacing: 6) {
+                Text(statusPresentation.primarySyncText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .allowsTightening(true)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.25), value: statusPresentation.primarySyncText)
 
-                    Text(statusPresentation.primarySyncText)
-                        .lineLimit(1)
-                        .contentTransition(.opacity)
-                        .animation(.easeInOut(duration: 0.25), value: statusPresentation.primarySyncText)
-
-                    TryzubStaffStatusIndicator(
-                        style: statusPresentation.dotStyle,
-                        showsOfflineIcon: controller.isNetworkDegraded
-                    )
-                }
-
-                if let secondary = statusPresentation.secondaryProgressText {
-                    Text(secondary)
-                        .lineLimit(1)
-                        .foregroundStyle(.tertiary)
-                        .contentTransition(.opacity)
-                        .animation(.easeInOut(duration: 0.25), value: secondary)
-                }
+                TryzubStaffStatusIndicator(
+                    style: statusPresentation.dotStyle,
+                    showsOfflineIcon: controller.isNetworkDegraded
+                )
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(.secondary)
+
+            if let secondary = statusPresentation.secondaryProgressText {
+                Text(secondary)
+                    .font(.caption2.weight(.medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .foregroundStyle(.tertiary)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.25), value: secondary)
+            }
         }
-        .frame(minWidth: 168, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var actionBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             Menu {
                 Button {
                     ReservationHaptics.selection()
@@ -1612,7 +1608,7 @@ private struct HomeServiceHeader: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.subheadline.weight(.semibold))
-                    .frame(width: 42, height: 40)
+                    .frame(width: 36, height: 36)
             }
             .buttonStyle(ReservationHeaderIconButtonStyle())
 
@@ -1623,7 +1619,7 @@ private struct HomeServiceHeader: View {
                 } label: {
                     Image(systemName: "chart.bar.xaxis.ascending")
                         .font(.subheadline.weight(.semibold))
-                        .frame(width: 42, height: 40)
+                        .frame(width: 36, height: 36)
                 }
                 .buttonStyle(ReservationHeaderIconButtonStyle())
                 .accessibilityLabel("Service Timeline")
@@ -1636,7 +1632,7 @@ private struct HomeServiceHeader: View {
                 } label: {
                    Image(systemName: "plus")
                         .font(.subheadline.weight(.semibold))
-                        .frame(width: 42, height: 40)
+                        .frame(width: 36, height: 36)
                 }
                 .buttonStyle(ReservationHeaderIconButtonStyle())
             }

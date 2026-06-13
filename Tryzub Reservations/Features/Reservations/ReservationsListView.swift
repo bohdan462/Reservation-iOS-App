@@ -160,6 +160,7 @@ private struct ReservationsTabShell: View {
     @StateObject private var businessIntelligenceStore: BusinessIntelligenceStore
     @StateObject private var intelligenceSystemStatusStore: IntelligenceSystemStatusStore
     @StateObject private var floorPlanStore: FloorPlanStore
+    @StateObject private var activityStore: ReservationActivityStore
     @State private var selectedTab: ReservationsAppTab = .host
 
     let environment: AppEnvironment
@@ -192,6 +193,9 @@ private struct ReservationsTabShell: View {
         )
         _floorPlanStore = StateObject(
             wrappedValue: FloorPlanStore(apiClient: environment.apiClient)
+        )
+        _activityStore = StateObject(
+            wrappedValue: ReservationActivityStore(apiClient: environment.apiClient)
         )
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
@@ -289,6 +293,7 @@ private struct ReservationsTabShell: View {
         .environmentObject(businessIntelligenceStore)
         .environmentObject(intelligenceSystemStatusStore)
         .environmentObject(floorPlanStore)
+        .environmentObject(activityStore)
         .onAppear {
             restaurantSettingsStore.adoptRestaurantSetup(controller.restaurantSetup)
             let raw = UserDefaults.standard.string(forKey: HostTableCapacityTextParser.storageKey) ?? ""
@@ -1333,6 +1338,19 @@ private struct ReservationMoreView: View {
                 }
 
                 Section("Business") {
+                    NavigationLink(value: ReservationMoreDestination.activityHistory) {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Activity History")
+                                Text("Changes, cancellations, and table updates")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "clock.arrow.circlepath")
+                        }
+                    }
+
                     NavigationLink(value: ReservationMoreDestination.serviceIntelligence) {
                         Label("Service Intelligence", systemImage: "sparkles")
                     }
@@ -1443,6 +1461,8 @@ private struct ReservationMoreView: View {
             BlockedTimeSlotsView(settingsStore: settingsStore)
         case .serviceIntelligence:
             GlobalServiceIntelligenceView(environment: environment)
+        case .activityHistory:
+            ActivityHistoryView()
         case .businessAnalytics:
             BusinessAnalyticsView(settingsStore: settingsStore)
         case .regularGuests:
@@ -1475,6 +1495,7 @@ private enum ReservationMoreDestination: Hashable {
     case weeklyHours
     case blockedTimeSlots
     case serviceIntelligence
+    case activityHistory
     case businessAnalytics
     case regularGuests
     case hostIntelligenceSettings

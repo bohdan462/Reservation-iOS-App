@@ -345,7 +345,7 @@ enum ArrivalPressureEngine {
     }
 
     if peak.noTableCount > 0 {
-      subtitleParts.append("No-table pressure inside the \(peak.displayTime) wave")
+      subtitleParts.append("Pressure inside the \(peak.displayTime) wave")
     } else if pressureLevel == .calm {
       let upcoming = buckets.filter { $0.hasArrivals && (!$0.isPast || !isToday) }
       if let first = upcoming.first, isToday, first.startTime > now {

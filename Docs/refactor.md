@@ -1,5 +1,52 @@
 # Tryzub Reservations Refactor Blueprint
 
+## 0. Current completed stabilization (2026-06)
+
+Code-audited state on branch `intelligence`:
+
+| Area | Status |
+|------|--------|
+| Native `TabView` shell | Host, Floor, Bookings, Guests, More — no floating tab bar UI |
+| Active-window sync | Canonical normal refresh path for Host/Bookings filters |
+| Backend floor plan | `FloorPlanStore`, `PATCH /tables`, `TableAssignmentCoordinator` — canonical assignment when layout exists |
+| Activity history | Backend 1.7.0; iOS read-only via `ReservationActivityStore` |
+| Guest intelligence | Backend-first via `GuestIntelligenceStore`; local cache fallback on some surfaces |
+| Local model | `HostLlamaBriefingRuntime`; 3B/0.5B + template; wording only |
+| Guest message drafts | Template default; staff-reviewed; no auto-send |
+| Docs corrected | `TABLE_CONFIGURATION.md`, `LOCAL_MODEL_INTELLIGENCE.md`, `ACTIVITY_HISTORY.md`, `PROJECT_MAP.md` |
+
+### Current source-of-truth rules
+
+1. **Reservations** — backend `managed-reservations`; SwiftData cache after GET/mutation response.
+2. **Floor/tables** — backend `restaurant_tables` + `floor-plan` + `PATCH /tables`.
+3. **Activity history** — backend writes on mutation; iOS reads `/activity` endpoints only.
+4. **Guest intelligence evidence** — backend GET routes; local SwiftData is not multi-device history truth.
+5. **Local model** — wording assistant only; validated or template fallback.
+
+### Still-open risks (highest)
+
+- `ReservationsController` remains a god-object (sync + mutations + availability + notices).
+- Dual table assignment path (`PATCH /tables` vs legacy `tableName` PATCH) until backend layout always present.
+- `HostTableConfigStore` still active for chips/advisory — migration to backend-only inventory incomplete.
+- Broad `@Query` on mounted tabs can recompute after upserts during service.
+- In-memory sync cursors lost on app restart.
+
+### Deferred refactors
+
+- Extract availability cache from controller
+- Retire legacy `syncReviewQueues` / dead `ReservationReviewQueueView`
+- Persist active-window delta cursor
+- Batch repository fetches by remote ID
+
+### Do-not-change-before-TestFlight rules
+
+- Do not re-enable `POST /managed-reservations/import`
+- Do not let local model auto-send or mutate reservations
+- Do not let iOS write activity history rows
+- Do not replace backend floor assignment with local-only layout
+
+---
+
 ## 1. Why this audit exists
 
 The iOS app has grown from a cache-backed reservation list into a multi-surface operations console: startup cache policy, active-window sync, SwiftData persistence, Host Board intelligence, Guest Intelligence, Business Analytics, local model wording, manual guest drafts, restaurant availability, and backend Floor Plan now all run inside the same mounted SwiftUI tab shell.
@@ -34,7 +81,7 @@ This file is an audit and staged refactor blueprint only. It does not authorize 
 
 ### 2.3 Current biggest architecture conflicts
 
-- `Docs/TABLE_CONFIGURATION.md` says `HostTableConfigStore` is canonical local table inventory. Backend README now says `{prefix}tryzub_restaurant_tables` and `{prefix}tryzub_reservation_table_assignments` are canonical.
+- `Docs/TABLE_CONFIGURATION.md` ~~said `HostTableConfigStore` is canonical~~ — **corrected** (backend floor canonical; local store advisory only).
 - Reservation detail and Host assignment sheets still mutate `ReservationUpdateRequest(tableName:)`; Floor Plan mutates `PATCH /managed-reservations/{id}/tables`.
 - Guest Intelligence backend says iOS should trust backend profile packs when available; local cache guest memory still appears as fallback on detail and guest insight surfaces.
 - Docs describe tab switches as mostly non-fetching; Floor Plan tab activation currently calls `FloorPlanStore.load(date:)`, and Host tab performs several non-reservation loads when visible.
@@ -223,6 +270,8 @@ Risk: startup is better than earlier phases, but there are still multiple noncri
 | `GET /floor-plan` | `FloorPlanStore` | `floor_plan` | Floor tab/date/refresh/auto | No | Floor active | Yes | Yes | No | No | date cache for force false | Generic. |
 | `PATCH /managed-reservations/{id}/tables` | `FloorPlanStore` | `reservation_tables_patch` | Floor assignment sheet | No | User action | Selected date | No | Yes | upsert through controller.save | 409 handled; 404 generic. |
 | `GET /managed-reservations/import-failures` | Controller/import service | `failure_count`, `import_failures_full` | More/diagnostics/badge | Deferred | More child | No | No | No | No | capability/freshness for count | Generic. |
+| `GET /managed-reservations/{id}/activity` | `ReservationActivityStore` | `reservation_activity` | Reservation Detail / full history sheet | No | Detail open | No | No | No | No | 90s in-memory | Staff-safe errors; no SwiftData. |
+| `GET /activity?date=` | `ReservationActivityStore` | `activity_feed` | More → Activity History | No | More child | Date picker | No | No | No | 90s in-memory | Optional guest name from active-window cache. |
 | `POST /managed-reservations/import` | None in iOS client | N/A | Should not be called | No | No | No | No | Forbidden normal workflow | No | N/A | Must remain unused. |
 
 ## 10. Mutation and multi-device conflict audit
@@ -244,6 +293,8 @@ Risk: startup is better than earlier phases, but there are still multiple noncri
 | Floor layout save | PUT `/restaurant-tables` | Save returned layout; refresh floor plan | Generic staff-safe save error | No reconcile | No SwiftData | If PUT 200 but floor returns 0, log request/response summary, restaurant_key, is_active. |
 | Manual email log | POST `/manual-email-log` | Log result; `manual_sent` reconciles by ID | Generic log failure | No special uncertain handling | Only reconcile for sent | 404 means reservation gone; refresh and do not imply email state changed. |
 | Guest manage link | POST `/guest-manage-link` | Returns URL; no cache write | Generic link failed | No special uncertain handling | None | 404/hidden means row changed; refresh and clear draft flow. |
+
+**Activity history (1.7.0):** Backend owns mutation audit rows. iOS reads `GET /managed-reservations/{id}/activity` on detail open and `GET /activity?date=` from More. Successful mutations post `ReservationActivityInvalidation` to refresh visible history screens; iOS does **not** write activity separately. Optional `activity` object on mutation responses is decoded for traces only. No backfill — pre-deploy reservations stay empty until next mutation.
 
 Target staff-safe copy:
 
@@ -398,7 +449,7 @@ Do not weaken validators. Refactor should reduce when intelligence runs, not bro
 
 ## 15. Documentation drift
 
-- `Docs/TABLE_CONFIGURATION.md` is materially stale: it says backend stores table name only and `HostTableConfigStore` is canonical. Backend README now documents canonical floor layout and assignment tables.
+- ~~`Docs/TABLE_CONFIGURATION.md` is materially stale~~ — **corrected** in 2026-06 doc audit (backend floor canonical; local store advisory).
 - `Docs/PROJECT_MAP.md` source tree count is stale after Floor Plan, read models, BI coordinator, startup polish, and local model additions.
 - `Docs/ARCHITECTURE_DIAGRAMS.md` tab diagram omits Floor tab and the new floor-plan stores/endpoints.
 - `Docs/PROJECT_METHOD_MAP.md` documents table configuration as local advisory; it needs a new floor-plan canonical section.

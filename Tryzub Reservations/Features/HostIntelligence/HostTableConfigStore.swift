@@ -2,7 +2,8 @@
 //  HostTableConfigStore.swift
 //  Tryzub Reservations
 //
-//  Canonical local iOS table inventory (UserDefaults). See Docs/TABLE_CONFIGURATION.md.
+//  Legacy local advisory table inventory (UserDefaults). Backend floor plan is canonical.
+//  See Docs/TABLE_CONFIGURATION.md.
 //
 
 import Foundation

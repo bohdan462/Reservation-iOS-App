@@ -206,6 +206,7 @@ struct FloorPlanPatchResponseDTO: Decodable, Equatable {
     let success: Bool
     let data: FloorPlanPatchDataDTO?
     let message: String?
+    let activity: MutationActivityResultDTO?
 
     var reservation: ManagedReservationDTO? {
         data?.reservation ?? directReservation
@@ -222,6 +223,7 @@ struct FloorPlanPatchResponseDTO: Decodable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         success = try container.decode(Bool.self, forKey: .success)
         message = try container.decodeIfPresent(String.self, forKey: .message)
+        activity = try container.decodeIfPresent(MutationActivityResultDTO.self, forKey: .activity)
 
         if let wrapped = try container.decodeIfPresent(FloorPlanPatchDataDTO.self, forKey: .data) {
             data = wrapped
@@ -240,6 +242,7 @@ struct FloorPlanPatchResponseDTO: Decodable, Equatable {
         case message
         case reservation
         case assignment
+        case activity
     }
 }
 
