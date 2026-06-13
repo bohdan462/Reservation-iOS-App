@@ -251,6 +251,20 @@ struct HostIntelligenceEngine {
       settings: context.settings
     )
 
+    let returningIDs = Set(
+      guestSignals.filter { $0.kind == .regularGuest }.map(\.reservationID)
+    )
+    let serviceBounds = serviceWindowBounds(context: context)
+    let arrivalPressure = ArrivalPressureEngine.build(
+      from: activeReservations.filter(\.isExpectedGuest),
+      selectedDate: context.selectedDate,
+      serviceOpen: serviceBounds.open,
+      serviceClose: serviceBounds.close,
+      now: context.now,
+      largePartyThreshold: context.settings.largePartyThreshold,
+      returningGuestReservationIDs: returningIDs
+    )
+
     return HostDecisionSnapshot(
       generatedAt: context.now,
       serviceState: serviceState,
@@ -269,8 +283,38 @@ struct HostIntelligenceEngine {
       seatedTimingSignals: seatedTimingSignals,
       bookingDecisions: bookingIntelligence.decisions,
       templateBriefingText: templateBriefingText,
-      llmPacket: llmPacket
+      llmPacket: llmPacket,
+      arrivalPressureFacts: arrivalPressure.managerFacts
     )
+  }
+
+  private func serviceWindowBounds(context: ServiceDayContext) -> (open: Date?, close: Date?) {
+    let dateKey = context.selectedDate.reservationDateString()
+    func serviceDate(from timeValue: String?) -> Date? {
+      guard let timeValue else { return nil }
+      let trimmed = timeValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmed.isEmpty else { return nil }
+      let time = trimmed.count >= 5 ? String(trimmed.prefix(5)) : trimmed
+      return ReservationFormatters.serverDateMinute.date(from: "\(dateKey) \(time)")
+    }
+
+    if let open = serviceDate(from: context.availabilitySummary?.availability.openTime),
+       let close = serviceDate(from: context.availabilitySummary?.availability.closeTime),
+       open <= close {
+      return (open, close)
+    }
+
+    let slotHours = (context.availabilitySummary?.slots.slots ?? []).compactMap { slot -> Int? in
+      guard let h = Int(slot.value.prefix(2)) else { return nil }
+      return h
+    }
+    if let lo = slotHours.min(), let hi = slotHours.max(), lo <= hi {
+      let open = serviceDate(from: String(format: "%02d:00", lo))
+      let close = serviceDate(from: String(format: "%02d:00", hi))
+      return (open, close)
+    }
+
+    return (nil, nil)
   }
 
   // MARK: - Service Day Context

@@ -23,9 +23,14 @@ final class GuestCommunicationCoordinator: ObservableObject {
     @Published private(set) var lastErrorMessage: String?
 
     var useLocalModelProvider: () -> Bool
+    var wordingProfileProvider: () -> LocalWordingModelProfile
 
-    init(useLocalModelProvider: @escaping () -> Bool = { false }) {
+    init(
+        useLocalModelProvider: @escaping () -> Bool = { false },
+        wordingProfileProvider: @escaping () -> LocalWordingModelProfile = { .template }
+    ) {
         self.useLocalModelProvider = useLocalModelProvider
+        self.wordingProfileProvider = wordingProfileProvider
     }
 
     static func templateOnly() -> GuestCommunicationCoordinator {
@@ -59,9 +64,11 @@ final class GuestCommunicationCoordinator: ObservableObject {
         lastErrorMessage = nil
         defer { isDrafting = false }
 
-        let draftService = GuestMessageDraftServiceFactory.make(
-            useLocalModel: useLocalModelProvider()
-        )
+        let selectedProfile = wordingProfileProvider()
+        let effectiveProfile: LocalWordingModelProfile = selectedProfile == .template && useLocalModelProvider()
+            ? .smallFastLocal
+            : selectedProfile
+        let draftService = GuestMessageDraftServiceFactory.make(profile: effectiveProfile)
         let draft = await draftService.draft(
             kind: kind,
             reservation: reservation,

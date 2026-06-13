@@ -20,6 +20,7 @@ enum ReservationAPIRequestReason: String {
     case activeWindowDelta = "active_window_delta"
     case autoToday = "auto_today"
     case autoTodayDelta = "auto_today_delta"
+    case siriHostSummary = "siri_host_summary"
     case autoSkipCooldown = "auto_skip_cooldown"
     case failureCount = "failure_count"
     case importFailuresFull = "import_failures_full"

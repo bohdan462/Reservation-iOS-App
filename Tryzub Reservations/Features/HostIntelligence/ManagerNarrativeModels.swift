@@ -27,12 +27,14 @@ struct ManagerNarrativeAction: Codable, Equatable {
 }
 
 struct ManagerNarrativePacket: Codable, Equatable {
-  let surface: ManagerNarrativeSurface
-  let generatedAtDescription: String
-  let serviceState: String
-  let headlineFacts: [ManagerNarrativeFact]
-  let availableActions: [ManagerNarrativeAction]
-  let writingRules: [String]
+    let surface: ManagerNarrativeSurface
+    let generatedAtDescription: String
+    let serviceState: String
+    let headlineFacts: [ManagerNarrativeFact]
+    let availableActions: [ManagerNarrativeAction]
+    let writingRules: [String]
+    /// Deterministic arrival-pressure facts from the service wave engine.
+    var arrivalPressureFacts: ArrivalPressureManagerFacts?
 }
 
 struct ManagerNarrative: Equatable {
@@ -126,7 +128,8 @@ enum ManagerNarrativePacketBuilder {
       serviceState: snapshot.serviceState.rawValue,
       headlineFacts: facts,
       availableActions: actions,
-      writingRules: ManagerNarrativeWritingRules.standard
+      writingRules: ManagerNarrativeWritingRules.standard,
+      arrivalPressureFacts: snapshot.arrivalPressureFacts
     )
   }
 
@@ -144,7 +147,8 @@ enum ManagerNarrativePacketBuilder {
           ManagerNarrativeFact(priority: "info", title: $0, detail: nil)
         },
       availableActions: [],
-      writingRules: ManagerNarrativeWritingRules.standard
+      writingRules: ManagerNarrativeWritingRules.standard,
+      arrivalPressureFacts: nil
     )
   }
 
@@ -179,10 +183,37 @@ enum ManagerNarrativeTemplateBuilder {
     )
   }
 
+  private static func pressureHeadline(from facts: ArrivalPressureManagerFacts) -> String? {
+    guard facts.peakGuestCount > 0 || facts.peakReservationCount > 0 else { return nil }
+    var parts: [String] = []
+    if let peak = facts.peakWindow {
+      parts.append("Pressure builds toward \(peak)")
+    } else {
+      parts.append("Arrival pressure is \(facts.pressureLevel)")
+    }
+    if facts.peakReservationCount > 0 {
+      let res = facts.peakReservationCount == 1 ? "1 reservation" : "\(facts.peakReservationCount) reservations"
+      parts.append(res)
+    }
+    if facts.noTableInPeakCount > 0 {
+      parts.append("\(facts.noTableInPeakCount) still need tables in the peak window")
+    }
+    return punctuate(parts.joined(separator: ", "))
+  }
+
   private static func headlineLine(
     from rankedFacts: [HostBriefingFact],
     snapshot: HostDecisionSnapshot
   ) -> String {
+    if let pressure = snapshot.arrivalPressureFacts,
+       let pressureLine = pressureHeadline(from: pressure),
+       snapshot.arrivalPressureFacts?.pressureLevel != ArrivalPressureLevel.calm.displayName
+           || rankedFacts.isEmpty {
+      if rankedFacts.isEmpty || rankedFacts.first?.severity == .info {
+        return pressureLine
+      }
+    }
+
     if let first = rankedFacts.first {
       let title = HostStaffLanguage.rewrite(first.title)
       if !title.isEmpty, !HostStaffLanguage.isGenericCheckLine(title) {
@@ -226,6 +257,21 @@ enum ManagerNarrativeTemplateBuilder {
          !HostStaffLanguage.isGenericCheckLine(title),
          !HostStaffLanguage.areSameStaffMeaning(title, headline) {
         return punctuate(title)
+      }
+    }
+
+    if let pressure = snapshot.arrivalPressureFacts,
+       pressure.returningGuestSignalsInPeak > 0 || pressure.noteSignalsInPeak > 0 {
+      var detailParts: [String] = []
+      if pressure.returningGuestSignalsInPeak > 0 {
+        detailParts.append("Returning guests are in the peak window")
+      }
+      if pressure.noteSignalsInPeak > 0 {
+        detailParts.append("guest notes need a quick review before seating")
+      }
+      let line = punctuate(detailParts.joined(separator: "; "))
+      if !HostStaffLanguage.areSameStaffMeaning(line, headline) {
+        return line
       }
     }
 
@@ -315,15 +361,18 @@ enum ManagerNarrativeWritingRules {
   static let standard: [String] = [
     "Use simple restaurant staff language.",
     "Write so a busy host understands in five seconds.",
-    "Use only provided facts and actions.",
+    "Use only provided facts, pressure facts, and actions.",
     "Do not invent guests, tables, times, counts, allergies, notes, or actions.",
     "Do not say anything was confirmed, sent, assigned, cancelled, or changed.",
     "Do not mention AI or local model.",
-    "Use at most 2 short sentences of plain prose.",
-    "Lead with the most urgent reservation first.",
+    "Use at most 3 short sentences of plain prose when rich context exists; otherwise 1–2.",
+    "Lead with service pressure or the most urgent reservation first.",
+    "Explain the arrival pressure wave using only the provided pressure facts.",
     "Never start with Manager: or Host:.",
     "Never use announcement tone or guest-facing you/your language.",
-    "Never use quotation marks."
+    "Never use quotation marks.",
+    "Never promise cake, discounts, decorations, VIP treatment, or special surprises.",
+    "Mention returning guest, party size, dietary, occasion, or note signals only when provided."
   ]
 }
 

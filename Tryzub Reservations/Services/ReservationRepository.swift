@@ -280,7 +280,63 @@ final class ReservationRepository: ReservationRepositoryProtocol {
             afterCount: afterCount,
             removedIDs: removedIDs
         )
+        #if DEBUG
+        emitRepositoryDateTraces(
+            scope: "window=\(from)...\(to)",
+            reservations: reservations,
+            existingRecords: existingRecords,
+            removedIDs: removedIDs
+        )
+        #endif
         return (stats.written, stats.skipped, removedIDs.count)
+    }
+
+    // MARK: - Repository date trace
+
+    private func emitRepositoryDateTraces(
+        scope: String,
+        reservations: [ReservationDTO],
+        existingRecords: [ReservationRecord],
+        removedIDs: [Int]
+    ) {
+        let existingByID: [Int: ReservationRecord] = Dictionary(
+            uniqueKeysWithValues: existingRecords.map { ($0.remoteID, $0) }
+        )
+        let byDate = Dictionary(grouping: reservations, by: \.reservationDate)
+        let removedByDate: [String: [Int]] = Dictionary(
+            grouping: removedIDs.compactMap { id -> (String, Int)? in
+                guard let record = existingRecords.first(where: { $0.remoteID == id }) else { return nil }
+                return (record.reservationDate, id)
+            },
+            by: { $0.0 }
+        ).mapValues { $0.map(\.1) }
+
+        for (date, rows) in byDate.sorted(by: { $0.key < $1.key }) {
+            let serverIDs = rows.map(\.id)
+            var upsertedIDs: [Int] = []
+            var skippedIDs: [Int] = []
+            for row in rows {
+                if let existing = existingByID[row.id] {
+                    if existing.isContentEquivalent(to: row) {
+                        skippedIDs.append(row.id)
+                    } else {
+                        upsertedIDs.append(row.id)
+                    }
+                } else {
+                    upsertedIDs.append(row.id)
+                }
+            }
+            let removed = removedByDate[date] ?? []
+            MultiDeviceSyncTrace.repositoryDateTrace(
+                scope: scope,
+                date: date,
+                serverIDs: serverIDs,
+                upsertedIDs: upsertedIDs,
+                skippedIDs: skippedIDs,
+                removedIDs: removed,
+                afterIDs: serverIDs
+            )
+        }
     }
 
     private func upsertRecordsYielding(

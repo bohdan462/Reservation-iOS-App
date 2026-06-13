@@ -32,6 +32,8 @@ enum GuestMessageDraftPromptBuilder {
         - For kind "tableReady" (staff-triggered): you may say the table is ready; do not invent a table number if tableName is missing.
         - For other kinds: do not say the table is ready.
         - Do not include raw guest notes.
+        - Occasion wording may use only occasion, hasDietaryFlag, and hasAccessibilityFlag.
+        - Never say "your birthday", "VIP", "regular", "always", "never", "cake", "discount", "decorations", "prepared something special", or "we will make it special".
         - Write in \(packet.language.rawValue) with a \(packet.tone.rawValue) tone.
         - shortMessageBody must be at most \(GuestMessageDraftValidator.maximumShortMessageLength) characters.
 
@@ -64,6 +66,12 @@ enum GuestMessageDraftPromptBuilder {
             tableName: packet.tableName,
             isLargeParty: packet.isLargeParty,
             hasSpecialOccasionFlag: packet.hasSpecialOccasionFlag,
+            occasion: packet.occasion.rawValue,
+            hasBirthdayFlag: packet.hasBirthdayFlag,
+            hasAnniversaryFlag: packet.hasAnniversaryFlag,
+            hasCelebrationFlag: packet.hasCelebrationFlag,
+            hasDietaryFlag: packet.hasDietaryFlag,
+            hasAccessibilityFlag: packet.hasAccessibilityFlag,
             hasSeatingPreferenceFlag: packet.hasSeatingPreferenceFlag,
             hasAllergyOrAccessibilityFlag: packet.hasAllergyOrAccessibilityFlag,
             needsReview: packet.needsReview,
@@ -93,6 +101,12 @@ enum GuestMessageDraftPromptBuilder {
         let tableName: String?
         let isLargeParty: Bool
         let hasSpecialOccasionFlag: Bool
+        let occasion: String
+        let hasBirthdayFlag: Bool
+        let hasAnniversaryFlag: Bool
+        let hasCelebrationFlag: Bool
+        let hasDietaryFlag: Bool
+        let hasAccessibilityFlag: Bool
         let hasSeatingPreferenceFlag: Bool
         let hasAllergyOrAccessibilityFlag: Bool
         let needsReview: Bool

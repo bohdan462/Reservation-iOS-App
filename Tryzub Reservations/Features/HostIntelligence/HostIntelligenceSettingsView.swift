@@ -65,7 +65,7 @@ struct HostIntelligenceSettingsView: View {
         Toggle("Use local model on Host board", isOn: binding(\.useLocalModelOnHostBoard))
           .disabled(!settingsStore.settings.useEnhancedBriefing)
 
-        Text("Host board use should stay off until smoke tests pass consistently.")
+        Text(hostBoardModelNote)
           .font(.caption)
           .foregroundStyle(.secondary)
       }
@@ -92,6 +92,18 @@ struct HostIntelligenceSettingsView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
     }
+  }
+
+  private var hostBoardModelNote: String {
+    let is3BBundled = HostLocalModelFileLocator.is3BBundled
+    let isSmallBundled = HostLocalModelFileLocator.bundledModelURL(profile: .smallFastLocal) != nil
+    if is3BBundled {
+      return "Better local model (3B) is bundled and active. Wording is generated on-device. Template is always the critical fallback."
+    }
+    if isSmallBundled {
+      return "Fast local model (0.5B) is bundled. For the best experience, add the 3B model via Host Intelligence diagnostics."
+    }
+    return "No local model is bundled. Host board uses template wording until a model is installed."
   }
 
   private var providerBinding: Binding<HostBriefingProviderKind> {

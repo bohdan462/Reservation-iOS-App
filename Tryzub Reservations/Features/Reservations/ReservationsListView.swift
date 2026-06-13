@@ -388,13 +388,33 @@ private struct HomeDashboardView: View {
     }
 
     private var selectedDateReservations: [ReservationRecord] {
-        guard isActive else { return [] }
+        // No isActive guard — the @Query is live regardless of tab visibility.
+        // Previously this returned [] when isActive==false, which cascaded through
+        // hostIntelligenceReservationStamp → boardSnapshotBuildKey → snapshot task,
+        // publishing an empty board on every tab switch and causing the 0→7 flicker.
+        // HostBoardView receives isVisible:isActive to gate network and animation behavior.
         let selectedDateKey = selectedDate.reservationDateString()
-        return ReservationRecord.sortedChronologically(
-            reservations.filter {
-                $0.reservationDate == selectedDateKey && !hiddenReservations.isHidden($0)
+        let allForDate = reservations.filter { $0.reservationDate == selectedDateKey }
+        let filtered = allForDate.filter { !hiddenReservations.isHidden($0) }
+        #if DEBUG
+        if isActive {
+            for record in allForDate {
+                let included = !hiddenReservations.isHidden(record)
+                MultiDeviceSyncTrace.hostFilterTrace(
+                    selectedDate: selectedDateKey,
+                    id: record.remoteID,
+                    recordDate: record.reservationDate,
+                    time: record.reservationTime,
+                    status: record.status,
+                    hidden: record.isHidden,
+                    superseded: record.supersededById != nil,
+                    included: included,
+                    reason: included ? "included" : "hidden"
+                )
             }
-        )
+        }
+        #endif
+        return ReservationRecord.sortedChronologically(filtered)
     }
 
     var body: some View {

@@ -25,7 +25,8 @@ enum GuestMessageDraftPacketBuilder {
         tone: GuestMessageTone = .warmProfessional,
         language: GuestMessageLanguage = .english
     ) -> GuestMessageDraftPacket {
-        GuestMessageDraftPacket(
+        let flags = safeNoteFlags(from: reservation.guestNotes)
+        return GuestMessageDraftPacket(
             version: GuestMessageDraftPacket.currentVersion,
             kind: kind,
             createdAt: Date(),
@@ -39,9 +40,15 @@ enum GuestMessageDraftPacketBuilder {
             partySize: max(reservation.partySize, 1),
             tableName: sanitizedOptional(reservation.tableName),
             isLargeParty: reservation.partySize >= largePartyMinimumPartySize,
-            hasSpecialOccasionFlag: false,
+            hasSpecialOccasionFlag: flags.occasion != .none,
+            occasion: flags.occasion,
+            hasBirthdayFlag: flags.occasion == .birthday,
+            hasAnniversaryFlag: flags.occasion == .anniversary,
+            hasCelebrationFlag: flags.occasion == .celebration,
+            hasDietaryFlag: flags.hasDietary,
+            hasAccessibilityFlag: flags.hasAccessibility,
             hasSeatingPreferenceFlag: false,
-            hasAllergyOrAccessibilityFlag: false,
+            hasAllergyOrAccessibilityFlag: flags.hasDietary || flags.hasAccessibility,
             needsReview: reservation.statusValue == .needsReview,
             tone: tone,
             language: language,
@@ -85,5 +92,46 @@ enum GuestMessageDraftPacketBuilder {
         }
 
         return hints
+    }
+
+    private struct SafeNoteFlags {
+        let occasion: GuestMessageOccasionFlag
+        let hasDietary: Bool
+        let hasAccessibility: Bool
+    }
+
+    private static func safeNoteFlags(from notes: String?) -> SafeNoteFlags {
+        let lower = notes?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        guard !lower.isEmpty else {
+            return SafeNoteFlags(occasion: .none, hasDietary: false, hasAccessibility: false)
+        }
+
+        let occasion: GuestMessageOccasionFlag
+        if containsAny(lower, ["birthday", "bday", "birth day"]) {
+            occasion = .birthday
+        } else if containsAny(lower, ["anniversary"]) {
+            occasion = .anniversary
+        } else if containsAny(lower, ["celebration", "celebrate", "occasion", "graduation", "engagement"]) {
+            occasion = .celebration
+        } else {
+            occasion = .none
+        }
+
+        let hasDietary = containsAny(lower, [
+            "allergy", "allergic", "dietary", "gluten", "celiac", "vegan",
+            "vegetarian", "nut", "peanut", "shellfish", "dairy", "lactose"
+        ])
+        let hasAccessibility = containsAny(lower, [
+            "wheelchair", "accessible", "accessibility", "mobility", "walker"
+        ])
+        return SafeNoteFlags(
+            occasion: occasion,
+            hasDietary: hasDietary,
+            hasAccessibility: hasAccessibility
+        )
+    }
+
+    private static func containsAny(_ text: String, _ needles: [String]) -> Bool {
+        needles.contains { text.contains($0) }
     }
 }

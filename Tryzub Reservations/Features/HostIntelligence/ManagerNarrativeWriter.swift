@@ -90,7 +90,17 @@ struct ManagerNarrativeWriter {
     HostLocalModelInferenceTracker.begin()
     defer { HostLocalModelInferenceTracker.end() }
 
-    let readiness = HostLocalModelReadinessProvider.currentReadiness()
+    // Resolve the best available wording profile. For the iPad/demo build this is
+    // betterLocal3B when bundled. Falls back to smallFastLocal if 3B is absent, and
+    // to template if neither is available (handled by the readiness check below).
+    let resolvedWordingProfile = HostLocalModelFileLocator.bestAvailableProfile()
+    HostProductionTrace.localModelProfile(
+      requested: .betterLocal3B,
+      resolved: resolvedWordingProfile,
+      reason: "manager_narrative"
+    )
+
+    let readiness = HostLocalModelReadinessProvider.currentReadiness(profile: resolvedWordingProfile)
     switch readiness.status {
     case .runtimeMissing, .modelMissing, .unavailable:
       HostAILifecycleTrace.modelUnavailable(reason: "\(readiness.status)")
@@ -135,13 +145,21 @@ struct ManagerNarrativeWriter {
         themes: themes,
         visibleSurface: narrativePacket.surface.rawValue
       )
-      let generated = try await runtime.generateBriefing(prompt: prompt)
+      // Use the managerNarrative task profile: larger token budget and better system
+      // prompt tuned for 2-sentence operational briefings from the 3B model.
+      let generated = try await runtime.generate(prompt: prompt, profile: .managerNarrative)
       let inferenceDurationMs = Int(
         inferenceStarted.duration(to: .now).pressureTraceTimeInterval * 1000
       )
       HostAILifecycleTrace.modelCompleted(
         durationMs: inferenceDurationMs,
         outputChars: generated.count
+      )
+      HostProductionTrace.localModelGeneration(
+        surface: narrativePacket.surface.rawValue,
+        profile: resolvedWordingProfile,
+        status: "success",
+        durationMs: inferenceDurationMs
       )
       HostBoardModelDecisionTrace.recordModelDuration(inferenceDurationMs)
       let normalizedResult = normalizeModelOutput(generated)
@@ -159,7 +177,7 @@ struct ManagerNarrativeWriter {
       parsed = ManagerNarrative(
         headline: parsed.headline,
         whyItMatters: parsed.whyItMatters,
-        checkNext: nil,
+        checkNext: parsed.checkNext,
         source: usedRepair ? .repairedLocalModel : .localModel,
         failedReason: nil
       )
@@ -197,6 +215,19 @@ struct ManagerNarrativeWriter {
           durationMs: inferenceDurationMs + validationDurationMs
         )
         HostBoardModelDecisionTrace.recordRejectionReason(nil)
+        HostProductionTrace.hostManagerSummary(
+          source: resolvedWordingProfile.traceName,
+          clusterCount: narrativePacket.availableActions.count,
+          headlineLength: parsed.headline.count,
+          whyLength: parsed.whyItMatters?.count ?? 0,
+          checkLength: parsed.checkNext?.count ?? 0,
+          sentenceCount: ManagerNarrativeValidator.sentenceCount(in: parsed),
+          richContext: narrativePacket.headlineFacts.count >= 2
+            || (narrativePacket.arrivalPressureFacts?.peakGuestCount ?? 0) > 0,
+          pressureLevel: narrativePacket.arrivalPressureFacts?.pressureLevel,
+          peakWindow: narrativePacket.arrivalPressureFacts?.peakWindow,
+          blocked: nil
+        )
         return parsed
       }
 
@@ -210,11 +241,47 @@ struct ManagerNarrativeWriter {
         raw: generated,
         reason: validation.reason
       )
+      HostProductionTrace.localModelGeneration(
+        surface: narrativePacket.surface.rawValue,
+        profile: resolvedWordingProfile,
+        status: "blocked",
+        durationMs: inferenceDurationMs
+      )
+      HostProductionTrace.hostManagerSummary(
+        source: "template",
+        clusterCount: narrativePacket.availableActions.count,
+        headlineLength: fallback.headline.count,
+        whyLength: fallback.whyItMatters?.count ?? 0,
+        checkLength: fallback.checkNext?.count ?? 0,
+        sentenceCount: ManagerNarrativeValidator.sentenceCount(in: fallback),
+        richContext: false,
+        pressureLevel: narrativePacket.arrivalPressureFacts?.pressureLevel,
+        peakWindow: narrativePacket.arrivalPressureFacts?.peakWindow,
+        blocked: rejectionReason
+      )
       return fallbackWithReason(fallback, reason: validation.reason)
     } catch {
       ManagerNarrativeWriterDiagnostics.recordFailure(
         raw: nil,
         reason: error.localizedDescription
+      )
+      HostProductionTrace.localModelGeneration(
+        surface: narrativePacket.surface.rawValue,
+        profile: resolvedWordingProfile,
+        status: "fallback",
+        durationMs: 0
+      )
+      HostProductionTrace.hostManagerSummary(
+        source: "template",
+        clusterCount: narrativePacket.availableActions.count,
+        headlineLength: fallback.headline.count,
+        whyLength: fallback.whyItMatters?.count ?? 0,
+        checkLength: fallback.checkNext?.count ?? 0,
+        sentenceCount: ManagerNarrativeValidator.sentenceCount(in: fallback),
+        richContext: false,
+        pressureLevel: narrativePacket.arrivalPressureFacts?.pressureLevel,
+        peakWindow: narrativePacket.arrivalPressureFacts?.peakWindow,
+        blocked: error.localizedDescription
       )
       return fallbackWithReason(fallback, reason: error.localizedDescription)
     }

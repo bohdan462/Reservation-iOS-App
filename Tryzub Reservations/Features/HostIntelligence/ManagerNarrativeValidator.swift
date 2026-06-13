@@ -59,11 +59,19 @@ enum ManagerNarrativeOutputParser {
         source: .localModel,
         failedReason: nil
       )
-    default:
+    case 2:
       return ManagerNarrative(
         headline: sentences[0],
         whyItMatters: sentences[1],
         checkNext: nil,
+        source: .localModel,
+        failedReason: nil
+      )
+    default:
+      return ManagerNarrative(
+        headline: sentences[0],
+        whyItMatters: sentences[1],
+        checkNext: sentences[2],
         source: .localModel,
         failedReason: nil
       )
@@ -76,7 +84,7 @@ enum ManagerNarrativeOutputParser {
       .split(whereSeparator: { ".!?".contains($0) })
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
       .filter { !$0.isEmpty }
-      .prefix(2)
+      .prefix(3)
       .map { value in
         value.hasSuffix(".") || value.hasSuffix("!") || value.hasSuffix("?")
           ? value
@@ -295,6 +303,25 @@ enum ManagerNarrativeValidator {
     return false
   }
 
+  private static let hospitalityFluffPhrases = [
+    "excellent hospitality", "provide excellent", "valued vip", "valued guest",
+    "warm welcome", "exceptional service", "delight the guest", "make them feel special",
+    "go above and beyond", "white glove", "five-star"
+  ]
+
+  private static let unsafePromisePhrases = [
+    "offer cake", "provide cake", "free dessert", "complimentary",
+    "discount", "decoration", "special treatment", "vip treatment",
+    "surprise them", "make it special", "promise"
+  ]
+
+  static func sentenceCount(in narrative: ManagerNarrative) -> Int {
+    [narrative.headline, narrative.whyItMatters, narrative.checkNext]
+      .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+      .count
+  }
+
   static func validationResult(
     _ narrative: ManagerNarrative,
     packet: ManagerNarrativePacket,
@@ -306,6 +333,14 @@ enum ManagerNarrativeValidator {
       return ManagerNarrativeValidationResult(isValid: false, reason: "Headline is empty.")
     }
 
+    let totalSentences = sentenceCount(in: narrative)
+    if totalSentences > 3 {
+      return ManagerNarrativeValidationResult(
+        isValid: false,
+        reason: "Narrative exceeds 3 sentences."
+      )
+    }
+
     if containsLeakedModelLabels(in: narrative) {
       return ManagerNarrativeValidationResult(
         isValid: false,
@@ -315,6 +350,12 @@ enum ManagerNarrativeValidator {
 
     for field in [headline, narrative.whyItMatters, narrative.checkNext].compactMap({ $0 }) {
       if let failure = validateOperationalClaims(field, hostPacket: hostPacket) {
+        return failure
+      }
+      if let failure = validateHospitalityAndPromises(field) {
+        return failure
+      }
+      if let failure = validatePressureClaims(field, packet: packet) {
         return failure
       }
       if let failure = validateField(field, packet: packet, hostPacket: hostPacket) {
@@ -450,6 +491,72 @@ enum ManagerNarrativeValidator {
     case "reservation": return ["reservation", "details"]
     default: return []
     }
+  }
+
+  private static func validateHospitalityAndPromises(
+    _ text: String
+  ) -> ManagerNarrativeValidationResult? {
+    let lower = text.lowercased()
+    if hospitalityFluffPhrases.contains(where: { lower.contains($0) }) {
+      return ManagerNarrativeValidationResult(
+        isValid: false,
+        reason: "Narrative contains generic hospitality fluff."
+      )
+    }
+    if unsafePromisePhrases.contains(where: { lower.contains($0) }) {
+      return ManagerNarrativeValidationResult(
+        isValid: false,
+        reason: "Narrative contains an unsafe promise."
+      )
+    }
+    if lower.contains("vip") && !lower.contains("returning") {
+      return ManagerNarrativeValidationResult(
+        isValid: false,
+        reason: "Narrative uses VIP language without support."
+      )
+    }
+    return nil
+  }
+
+  private static func validatePressureClaims(
+    _ text: String,
+    packet: ManagerNarrativePacket
+  ) -> ManagerNarrativeValidationResult? {
+    guard let facts = packet.arrivalPressureFacts else { return nil }
+    let lower = text.lowercased()
+
+    // Reject invented peak guest counts not in packet
+    if let peakGuests = extractFirstInteger(after: ["guests", "guest"], in: lower),
+       facts.peakGuestCount > 0,
+       peakGuests != facts.peakGuestCount,
+       lower.contains("peak") || lower.contains("wave") || lower.contains("pressure") {
+      return ManagerNarrativeValidationResult(
+        isValid: false,
+        reason: "Narrative invents a peak guest count not in pressure facts."
+      )
+    }
+
+    if let peakRes = extractFirstInteger(after: ["reservations", "reservation"], in: lower),
+       facts.peakReservationCount > 0,
+       peakRes != facts.peakReservationCount,
+       lower.contains("peak") || lower.contains("wave") {
+      return ManagerNarrativeValidationResult(
+        isValid: false,
+        reason: "Narrative invents a peak reservation count not in pressure facts."
+      )
+    }
+
+    return nil
+  }
+
+  private static func extractFirstInteger(after keywords: [String], in lower: String) -> Int? {
+    for keyword in keywords {
+      guard let range = lower.range(of: keyword) else { continue }
+      let prefix = String(lower[..<range.lowerBound])
+      let digits = prefix.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+      if let last = digits.last { return last }
+    }
+    return nil
   }
 
   private static func validateField(

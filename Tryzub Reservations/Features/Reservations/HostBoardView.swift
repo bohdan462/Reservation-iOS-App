@@ -37,8 +37,12 @@ struct HostBoardView: View {
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
     @State private var boardSnapshot: HostBoardSnapshot?
+    /// Last known non-zero reservation count per date key, used to suppress
+    /// transient 0-reservation snapshots during tab/visibility transitions.
+    @State private var stableCountByDate: [String: Int] = [:]
     @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var isShowingHostIntelligenceReview = false
+    @State private var showServiceTimeline = false
     /// Phase 2: cached deterministic Service Briefing, rebuilt only when inputs change
     /// (selected date, reservations, snapshot, clock minute) — never from a fetch.
     @State private var serviceBriefingState: HostServiceBriefingViewState?
@@ -334,7 +338,39 @@ struct HostBoardView: View {
                 serviceClose: densityBounds.close,
                 largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
             )
+            let incomingCount = reservations.count
+            let lastStableCount = stableCountByDate[selectedDateKey] ?? 0
+
+            // Snapshot preservation: if the incoming count is 0 but this date previously
+            // had reservations, do not overwrite the stable snapshot. This guards against
+            // stale transient-empty snapshots that can slip through if the parent's
+            // selectedDateReservations momentarily returns [] (e.g. during view init or
+            // edge-case timing before the @Query observer fires on tab return).
+            if incomingCount == 0, lastStableCount > 0 {
+                MultiDeviceSyncTrace.hostSnapshotPreserve(
+                    date: selectedDateKey,
+                    incomingCount: incomingCount,
+                    lastStableCount: lastStableCount,
+                    preserve: true,
+                    reason: "untrusted_empty"
+                )
+                // Preserve: keep the existing snapshot, do not publish empty.
+                return
+            }
+
+            // Commit the snapshot and update stable count.
+            if incomingCount > 0 {
+                stableCountByDate[selectedDateKey] = incomingCount
+            }
             boardSnapshot = built
+            let preserveReason = incomingCount > 0 ? "has_data" : "trusted_empty"
+            MultiDeviceSyncTrace.hostSnapshotPreserve(
+                date: selectedDateKey,
+                incomingCount: incomingCount,
+                lastStableCount: lastStableCount,
+                preserve: false,
+                reason: preserveReason
+            )
             UIPressureTrace.phase(
                 "host_snapshot_build",
                 duration: started.duration(to: .now).pressureTraceTimeInterval,
@@ -425,6 +461,16 @@ struct HostBoardView: View {
                 await Task.yield()
                 controller.refreshHomeServicePresentation(hostOperationalLoading: isLoading)
             }
+        }
+        // Service Timeline full-screen cover (iPhone: sole entry; iPad: also via Open button).
+        .fullScreenCover(isPresented: $showServiceTimeline) {
+            ServiceTimelineView(
+                reservations: reservations,
+                selectedDate: selectedDate,
+                serviceOpen: serviceDensityBounds.open,
+                serviceClose: serviceDensityBounds.close,
+                environment: environment
+            )
         }
     }
 
@@ -557,7 +603,8 @@ struct HostBoardView: View {
             failedImportCount: failedImportCount,
             onAddReservation: onAddReservation,
             onManualRefresh: onManualRefresh,
-            onShowFormProblems: onShowFormProblems
+            onShowFormProblems: onShowFormProblems,
+            onOpenTimeline: { showServiceTimeline = true }
         )
     }
 
@@ -606,6 +653,16 @@ struct HostBoardView: View {
 
         case .open:
             homeOperationalHeader(snapshot: snapshot)
+
+            if isWideLayout {
+                ServiceTimelinePreviewCard(
+                    reservations: reservations,
+                    selectedDate: selectedDate,
+                    serviceOpen: serviceDensityBounds.open,
+                    serviceClose: serviceDensityBounds.close,
+                    onOpenTimeline: { showServiceTimeline = true }
+                )
+            }
 
             if isWideLayout {
                 wideBoard(snapshot: snapshot)
@@ -664,15 +721,19 @@ struct HostBoardView: View {
                 reviewCount: snapshot.needsReview.count,
                 failedImportCount: controller.capabilities.canViewDeveloperDiagnostics ? failedImportCount : 0,
                 noTableCount: snapshot.noTableCount,
-                peakTimeText: snapshot.peakTimeText,
-                nextReservationText: snapshot.nextReservationText,
-                arrivalBuckets: snapshot.arrivalBuckets,
+                arrivalPressure: snapshot.arrivalPressure,
                 isSelectedDateToday: snapshot.selectedDate.reservationDateString() == Date.reservationDateString(),
+                referenceNow: snapshot.now,
                 availabilitySummary: availabilitySummaryLine,
                 isAvailabilityLoading: isLoadingAvailabilitySummary,
                 onRefreshAvailability: selectedDate.reservationDateString() == Date.reservationDateString()
                     ? { controller.ensureAvailabilitySummary(date: selectedDateKey, force: true) }
-                    : nil
+                    : nil,
+                onOpenReservationByID: { remoteID in
+                    if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
+                        onOpenReservation(reservation)
+                    }
+                }
             )
 
             hostIntelligenceSection
@@ -1010,7 +1071,7 @@ private struct HostBoardSnapshot {
     let expectedGuestCount: Int
     let peakTimeText: String
     let nextReservationText: String?
-    let arrivalBuckets: [ArrivalFlowBucket]
+    let arrivalPressure: ArrivalPressureSummary
 
     // Active same-day reservations remain visible until staff changes status.
     // Time only chooses the "next" highlight; it does not auto-complete or hide rows.
@@ -1044,32 +1105,22 @@ private struct HostBoardSnapshot {
             selectedDate: selectedDate,
             now: now
         )
-        nextReservationText = Self.nextReservationText(
-            for: nextReservation,
-            isToday: isToday,
-            now: now
-        )
         let pressureReservations = upcoming + seated
-        let nextArrivalBucketStart = nextReservation.flatMap {
-            ArrivalFlowBucketBuilder.bucketStart(for: $0)
-        }
-        arrivalBuckets = ArrivalFlowBucketBuilder.build(
+        arrivalPressure = ArrivalPressureEngine.build(
             from: pressureReservations,
             selectedDate: selectedDate,
             serviceOpen: serviceOpen,
             serviceClose: serviceClose,
-            nextArrivalBucketStart: nextArrivalBucketStart,
+            now: now,
             largePartyThreshold: largePartyThreshold
         )
-        peakTimeText = Self.peakTimeText(from: arrivalBuckets)
-    }
-
-    private static func peakTimeText(from buckets: [ArrivalFlowBucket]) -> String {
-        guard let peak = ArrivalFlowBucketBuilder.peakBucket(in: buckets) else {
-            return "—"
-        }
-        let guestLabel = peak.guestCount == 1 ? "1 guest" : "\(peak.guestCount) guests"
-        return "\(peak.displayTime) · \(guestLabel)"
+        peakTimeText = arrivalPressure.peakLegendText
+        nextReservationText = arrivalPressure.nextLegendText
+            ?? Self.nextReservationText(
+                for: nextReservation,
+                isToday: isToday,
+                now: now
+            )
     }
 
     private static func nextReservationText(
@@ -1131,13 +1182,13 @@ private struct HostBoardSummaryCard: View {
     let reviewCount: Int
     let failedImportCount: Int
     let noTableCount: Int
-    let peakTimeText: String
-    let nextReservationText: String?
-    let arrivalBuckets: [ArrivalFlowBucket]
+    let arrivalPressure: ArrivalPressureSummary
     var isSelectedDateToday = true
+    var referenceNow: Date = Date()
     var availabilitySummary: String?
     var isAvailabilityLoading = false
     var onRefreshAvailability: (() -> Void)?
+    var onOpenReservationByID: ((Int) -> Void)?
 
     private var stats: [HostBoardStat] {
         var items = [
@@ -1208,29 +1259,32 @@ private struct HostBoardSummaryCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Arrival flow")
+                        Text("Service pressure")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(TryzubColors.primaryText)
-                        Text(isSelectedDateToday
-                            ? "Today's arrivals by 15-minute window"
-                            : "Arrivals by 15-minute window")
+                        Text(arrivalPressure.chartSubtitle)
                             .font(.caption2)
                             .foregroundStyle(TryzubColors.mutedText)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     Spacer(minLength: 8)
 
                     VStack(alignment: .trailing, spacing: 4) {
-                        timelineLegend(label: "Peak", value: peakTimeText)
-                        if let nextReservationText {
-                            timelineLegend(label: "Next", value: nextReservationText)
+                        timelineLegend(label: "Peak", value: arrivalPressure.peakLegendText)
+                        if let next = arrivalPressure.nextLegendText {
+                            timelineLegend(label: "Next", value: next)
                         }
                     }
                 }
 
-                ReservationDensityWaveChart(
-                    buckets: arrivalBuckets,
-                    height: 96
+                ArrivalPressureWaveChart(
+                    summary: arrivalPressure,
+                    height: 108,
+                    isToday: isSelectedDateToday,
+                    now: referenceNow,
+                    onOpenReservation: onOpenReservationByID
                 )
             }
         }
@@ -1407,6 +1461,7 @@ private struct HomeServiceHeader: View {
     let onAddReservation: () -> Void
     let onManualRefresh: () -> Void
     let onShowFormProblems: () -> Void
+    var onOpenTimeline: (() -> Void)? = nil
 
     private var serviceDateText: String {
         selectedDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
@@ -1560,7 +1615,20 @@ private struct HomeServiceHeader: View {
                     .frame(width: 42, height: 40)
             }
             .buttonStyle(ReservationHeaderIconButtonStyle())
-            
+
+            if let onOpenTimeline {
+                Button {
+                    ReservationHaptics.selection()
+                    onOpenTimeline()
+                } label: {
+                    Image(systemName: "chart.bar.xaxis.ascending")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 42, height: 40)
+                }
+                .buttonStyle(ReservationHeaderIconButtonStyle())
+                .accessibilityLabel("Service Timeline")
+            }
+
             if canCreateReservation {
                 Button {
                     ReservationHaptics.selection()

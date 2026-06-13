@@ -61,6 +61,13 @@ enum GuestMessageLanguage: String, Codable, Equatable {
     case english
 }
 
+enum GuestMessageOccasionFlag: String, Codable, Equatable {
+    case none
+    case birthday
+    case anniversary
+    case celebration
+}
+
 // MARK: - Restaurant profile
 
 struct ReservationEmailRestaurantProfile: Equatable {
@@ -97,6 +104,12 @@ struct GuestMessageDraftPacket: Codable, Equatable {
 
     let isLargeParty: Bool
     let hasSpecialOccasionFlag: Bool
+    let occasion: GuestMessageOccasionFlag
+    let hasBirthdayFlag: Bool
+    let hasAnniversaryFlag: Bool
+    let hasCelebrationFlag: Bool
+    let hasDietaryFlag: Bool
+    let hasAccessibilityFlag: Bool
     let hasSeatingPreferenceFlag: Bool
     let hasAllergyOrAccessibilityFlag: Bool
     let needsReview: Bool

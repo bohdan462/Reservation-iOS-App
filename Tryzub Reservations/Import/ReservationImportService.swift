@@ -156,6 +156,7 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             updatedSince: nil,
             reason: reason
         )
+        emitActiveWindowTraces(reservations: syncResponse.reservations, reason: "active_window_full")
         ReservationSyncDiagnostics.cacheUpsertStarted(
             scope: "window=\(from)...\(to)",
             rowCount: syncResponse.reservations.count
@@ -240,6 +241,8 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
             duration: 0,
             extra: "total=\(syncResponse.reservations.count) decoded=\(syncResponse.reservations.count)"
         )
+
+        emitActiveWindowTraces(reservations: syncResponse.reservations, reason: "active_window_delta")
 
         // Delta responses are partial.
         // Upsert returned rows only.
@@ -336,6 +339,61 @@ final class ReservationSyncService: ReservationSyncServiceProtocol {
     // Network: None; this is cache-only.
     func saveReservation(_ reservation: ReservationDTO) throws {
         try repository.upsert(reservation)
+    }
+
+    // MARK: - Active-window trace helpers
+
+    /// Emits date-breakdown and per-row traces for an active-window API response.
+    /// Also emits MANUAL_DUPLICATE_POLICY_TRACE for manual-source rows so that
+    /// their visibility (or lack thereof) can be traced without host-side filtering.
+    private func emitActiveWindowTraces(reservations: [ReservationDTO], reason: String) {
+        #if DEBUG
+        let breakdown = Dictionary(grouping: reservations, by: \.reservationDate)
+            .mapValues(\.count)
+        MultiDeviceSyncTrace.activeWindowDateBreakdown(
+            reason: reason,
+            total: reservations.count,
+            dates: breakdown
+        )
+        for row in reservations {
+            MultiDeviceSyncTrace.activeWindowRow(
+                id: row.id,
+                date: row.reservationDate,
+                time: row.reservationTime,
+                status: row.status.rawValue,
+                hidden: row.isHidden ?? false,
+                supersededBy: row.supersededById,
+                sourceType: row.sourceType?.rawValue,
+                createdAt: row.createdAt,
+                apiUpdatedAt: row.updatedAt
+            )
+            // Emit manual-duplicate policy trace for staff-created rows only.
+            // Identity matching against local records is not evaluated here;
+            // only backend-provided fields are used. The host filter trace
+            // (from selectedDateReservations) will confirm whether it reaches the UI.
+            if row.sourceType?.isManualSource == true {
+                let isHidden = row.isHidden ?? false
+                let isSuperseded = row.supersededById != nil
+                let reason: String
+                if isHidden {
+                    reason = "backend_hidden"
+                } else if isSuperseded {
+                    reason = "backend_superseded"
+                } else {
+                    reason = "allowed"
+                }
+                MultiDeviceSyncTrace.manualDuplicatePolicy(
+                    id: row.id,
+                    sourceType: row.sourceType?.rawValue ?? "nil",
+                    identityMatchedExisting: false,
+                    sameDateTimeParty: false,
+                    superseded: isSuperseded,
+                    hiddenByPolicy: isHidden,
+                    reason: reason
+                )
+            }
+        }
+        #endif
     }
 
     private func fetchAllReservationPages(

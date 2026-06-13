@@ -287,6 +287,9 @@ struct LocalModelHostBriefingWriter: HostBriefingWriter {
     HostLocalModelInferenceTracker.begin()
     defer { HostLocalModelInferenceTracker.end() }
 
+    // Use the best available profile so the 3B model is preferred over the 0.5B
+    // when it is bundled (iPad/demo build), without breaking debug builds that
+    // only have the 0.5B model available.
     let readiness = HostLocalModelReadinessProvider.currentReadiness()
 
     switch readiness.status {
@@ -1092,6 +1095,8 @@ enum HostBriefingHostBoardGate {
     guard settings.useLocalModelOnHostBoard else { return .host_board_gate_off }
     guard packet.hasMeaningfulBriefingFacts else { return .no_meaningful_facts }
     if shouldUseTemplateOnlyOnHostBoard(packet: packet) { return .host_board_template_only }
+    // Use the best available profile so the 3B model is recognized as ready when
+    // it is bundled (iPad/demo build), even when the 0.5B file is absent.
     if HostLocalModelReadinessProvider.currentReadiness().status != .ready {
       return .model_not_ready
     }

@@ -28,9 +28,11 @@ final class GuestMessageDraftService: ObservableObject {
     @Published private(set) var lastErrorMessage: String?
 
     private let writer: GuestMessageDraftWriterHandle
+    private let wordingProfile: LocalWordingModelProfile
 
-    init(writer: GuestMessageDraftWriterHandle) {
+    init(writer: GuestMessageDraftWriterHandle, wordingProfile: LocalWordingModelProfile) {
         self.writer = writer
+        self.wordingProfile = wordingProfile
     }
 
     func draft(
@@ -57,8 +59,20 @@ final class GuestMessageDraftService: ObservableObject {
 
         switch GuestMessageDraftValidator.validate(draft, packet: packet) {
         case .valid:
+            HostProductionTrace.guestDraftContext(
+                remoteID: reservation.remoteID,
+                kind: kind,
+                occasion: packet.occasion,
+                source: draft.source == .localModel ? wordingProfile.traceName : draft.source.rawValue
+            )
             return draft
         case .blocked(let reason):
+            HostProductionTrace.guestDraftContext(
+                remoteID: reservation.remoteID,
+                kind: kind,
+                occasion: packet.occasion,
+                source: "blocked"
+            )
             return GuestMessageDraft(
                 emailSubject: templateFallback.emailSubject,
                 emailBody: templateFallback.emailBody,
@@ -74,8 +88,14 @@ final class GuestMessageDraftService: ObservableObject {
 enum GuestMessageDraftServiceFactory {
     @MainActor
     static func make(useLocalModel: Bool) -> GuestMessageDraftService {
+        make(profile: useLocalModel ? .smallFastLocal : .template)
+    }
+
+    @MainActor
+    static func make(profile: LocalWordingModelProfile) -> GuestMessageDraftService {
         GuestMessageDraftService(
-            writer: useLocalModel ? .localModel : .template
+            writer: profile == .template ? .template : .localModel,
+            wordingProfile: profile
         )
     }
 }

@@ -78,11 +78,20 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
 
   private var session: LlamaLoadedSession?
   private var sessionModelPath: String?
+  /// Paths of models that failed to load this session. Excluded from future best-available
+  /// resolution so a broken 3B install never blocks every inference request.
+  private var sessionFailedPaths = Set<String>()
 
   var runtimeName: String { Self.runtimeDisplayName }
 
   var modelName: String? {
-    HostLocalModelFileLocator.inferenceModelURL()?.lastPathComponent
+    HostLocalModelFileLocator.bestAvailableInferenceModelURL(excluding: sessionFailedPaths)?
+      .lastPathComponent
+  }
+
+  /// Resolved wording profile for the current model file. For diagnostics only.
+  var resolvedWordingProfile: LocalWordingModelProfile {
+    HostLocalModelFileLocator.bestAvailableProfile(excluding: sessionFailedPaths)
   }
 
   private init() {}
@@ -94,8 +103,12 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
 
   /// Task-aware generation. The profile supplies system prompt, token budget, stop
   /// markers, artifact prefixes, and a hard wall-clock deadline.
+  /// Selects the best available model file (betterLocal3B → smallFastLocal), excluding
+  /// any paths that failed to load this session.
   func generate(prompt: String, profile: HostLocalModelTaskProfile) async throws -> String {
-    guard let modelURL = HostLocalModelFileLocator.inferenceModelURL() else {
+    guard let modelURL = HostLocalModelFileLocator.bestAvailableInferenceModelURL(
+      excluding: sessionFailedPaths
+    ) else {
       throw HostLocalModelRuntimeError.modelMissing
     }
 
@@ -107,15 +120,30 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
 
     if session == nil {
       HostLocalModelProgressReporter.reportLoadingRuntimeIfManual()
+      let loadStart = ContinuousClock.now
+      let resolvedProfile = HostLocalModelFileLocator.bestAvailableProfile(excluding: sessionFailedPaths)
+      HostProductionTrace.localModelLoad(profile: resolvedProfile, status: "start", durationMs: 0)
       do {
         session = try LlamaLoadedSession(
           modelPath: modelPath,
           contextWindow: Self.contextWindow,
           temperature: Float(Self.samplingTemperature)
         )
+        let durationMs = Int(loadStart.duration(to: .now).pressureTraceTimeInterval * 1000)
+        HostProductionTrace.localModelLoad(profile: resolvedProfile, status: "success", durationMs: durationMs)
       } catch let error as HostLocalModelRuntimeError {
+        let durationMs = Int(loadStart.duration(to: .now).pressureTraceTimeInterval * 1000)
+        HostProductionTrace.localModelLoad(profile: resolvedProfile, status: "failed", durationMs: durationMs)
+        sessionFailedPaths.insert(modelPath)
+        session = nil
+        sessionModelPath = nil
         throw error
       } catch {
+        let durationMs = Int(loadStart.duration(to: .now).pressureTraceTimeInterval * 1000)
+        HostProductionTrace.localModelLoad(profile: resolvedProfile, status: "failed", durationMs: durationMs)
+        sessionFailedPaths.insert(modelPath)
+        session = nil
+        sessionModelPath = nil
         throw HostLocalModelRuntimeError.modelLoadFailed(error.localizedDescription)
       }
     }
@@ -125,9 +153,10 @@ final actor HostLlamaBriefingRuntime: HostLocalModelRuntime {
     }
 
     let inferencePrompt = Self.wrapPromptForQwenInstruct(prompt, systemPrompt: profile.systemPrompt)
+    let resolvedProfile = HostLocalModelFileLocator.bestAvailableProfile(excluding: sessionFailedPaths)
     var diagnostics = HostLlamaRunDiagnostics(
       modelPath: modelPath,
-      modelSource: HostLocalModelFileLocator.resolvedModelSourceKind().rawValue,
+      modelSource: HostLocalModelFileLocator.resolvedModelSourceKind(profile: resolvedProfile).rawValue,
       promptCharacterCount: inferencePrompt.count,
       contextWindow: Self.contextWindow,
       maxOutputTokens: profile.maxOutputTokens

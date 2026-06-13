@@ -127,7 +127,6 @@
 /* Begin PBXShellScriptBuildPhase section */
 		CA1101C22FB51DE800C6335D /* Copy Host Briefing Model */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
@@ -290,6 +289,7 @@
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = M54A7BX79B;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = TryzubHost;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Staff can take photos to attach reservation-related details, such as setup notes, preorder information, or receipts.";
@@ -321,6 +321,7 @@
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = M54A7BX79B;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = TryzubHost;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Staff can take photos to attach reservation-related details, such as setup notes, preorder information, or receipts.";

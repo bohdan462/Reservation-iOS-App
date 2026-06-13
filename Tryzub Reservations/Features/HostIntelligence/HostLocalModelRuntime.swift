@@ -107,6 +107,41 @@ struct HostLocalModelTaskProfile: Sendable, Equatable {
     ],
     maxInferenceSeconds: 15
   )
+
+  /// Host-board manager narrative for the 3B wording model.
+  /// Two focused staff-facing sentences: the key operational issue and the key supporting
+  /// detail. Larger token budget and longer timeout than hostBriefing to accommodate the
+  /// 3B model's slower but richer output.
+  static let managerNarrative = HostLocalModelTaskProfile(
+    taskName: "managerNarrative",
+    systemPrompt: """
+    You write a concise operational note for restaurant staff (not guests).
+    Use up to 3 short sentences when rich context exists; otherwise 1–2.
+    Lead with service pressure or the most urgent issue.
+    Explain the arrival pressure wave using only provided pressure facts.
+    Use direct staff language. Never use labels, bullets, announcement tone, or guest-facing wording.
+    Never promise cake, discounts, decorations, VIP treatment, or special surprises.
+    """,
+    maxOutputTokens: 160,
+    echoStopMarkers: [
+      "Write the manager narrative now:",
+      "Approved facts:",
+      "Service state:",
+      "Available staff checks:",
+      "Writing rules:",
+      "Surface:"
+    ],
+    artifactPrefixes: [
+      "Manager:",
+      "Host:",
+      "Briefing:",
+      "Manager briefing:",
+      "Here is the briefing:",
+      "Here is the narrative:",
+      "Output:"
+    ],
+    maxInferenceSeconds: 25
+  )
 }
 
 enum HostLocalModelRuntimeError: LocalizedError, Equatable {

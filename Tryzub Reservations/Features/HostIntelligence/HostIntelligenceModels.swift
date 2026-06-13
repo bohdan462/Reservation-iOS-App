@@ -333,6 +333,7 @@ struct HostDecisionSnapshot: Codable, Equatable {
     let bookingDecisions: [HostBookingDecisionResult]
     let templateBriefingText: String
     let llmPacket: HostLLMPacket
+    let arrivalPressureFacts: ArrivalPressureManagerFacts?
 
     static var empty: HostDecisionSnapshot {
         HostDecisionSnapshot(
@@ -347,7 +348,8 @@ struct HostDecisionSnapshot: Codable, Equatable {
             seatedTimingSignals: [],
             bookingDecisions: [],
             templateBriefingText: "Nothing needs attention right now.",
-            llmPacket: .empty
+            llmPacket: .empty,
+            arrivalPressureFacts: nil
         )
     }
 
@@ -439,9 +441,12 @@ struct HostIntelligenceSettings: Codable, Equatable {
         autoConfirmWeekdaysOnly: Bool = true,
         minimumConfidenceForAutoConfirm: Double = 0.8,
         maxPartySizeForAutoConfirm: Int = 6,
-        useEnhancedBriefing: Bool = false,
-        enhancedBriefingProvider: HostBriefingProviderKind = .template,
-        useLocalModelOnHostBoard: Bool = false,
+        // iPad / demo build defaults: 3B model on by default when present.
+        // Enhanced briefing is enabled and the local model runs on the Host board.
+        // Existing persisted user settings still override these via the decoder below.
+        useEnhancedBriefing: Bool = true,
+        enhancedBriefingProvider: HostBriefingProviderKind = .localModel,
+        useLocalModelOnHostBoard: Bool = true,
         useLocalModelForGuestMessageDrafts: Bool = true,
         useLocalModelForNoteAnalysis: Bool = true,
         useSeparatedBriefingPrompts: Bool = false
@@ -501,9 +506,9 @@ struct HostIntelligenceSettings: Codable, Equatable {
             autoConfirmWeekdaysOnly: try container.decodeIfPresent(Bool.self, forKey: .autoConfirmWeekdaysOnly) ?? true,
             minimumConfidenceForAutoConfirm: try container.decodeIfPresent(Double.self, forKey: .minimumConfidenceForAutoConfirm) ?? 0.8,
             maxPartySizeForAutoConfirm: try container.decodeIfPresent(Int.self, forKey: .maxPartySizeForAutoConfirm) ?? 6,
-            useEnhancedBriefing: try container.decodeIfPresent(Bool.self, forKey: .useEnhancedBriefing) ?? false,
-            enhancedBriefingProvider: try container.decodeIfPresent(HostBriefingProviderKind.self, forKey: .enhancedBriefingProvider) ?? .template,
-            useLocalModelOnHostBoard: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelOnHostBoard) ?? false,
+            useEnhancedBriefing: try container.decodeIfPresent(Bool.self, forKey: .useEnhancedBriefing) ?? true,
+            enhancedBriefingProvider: try container.decodeIfPresent(HostBriefingProviderKind.self, forKey: .enhancedBriefingProvider) ?? .localModel,
+            useLocalModelOnHostBoard: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelOnHostBoard) ?? true,
             useLocalModelForGuestMessageDrafts: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelForGuestMessageDrafts) ?? true,
             useLocalModelForNoteAnalysis: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelForNoteAnalysis) ?? true,
             useSeparatedBriefingPrompts: try container.decodeIfPresent(Bool.self, forKey: .useSeparatedBriefingPrompts) ?? false
