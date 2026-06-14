@@ -798,8 +798,7 @@ private struct ReservationFormContent: View {
             guestName: draft.guestName,
             reservationDate: draft.reservationDate,
             reservationTime: draft.reservationTime,
-            partySize: draft.partySize,
-            tableName: draft.tableName.nilIfBlank
+            partySize: draft.partySize
         )
     }
 

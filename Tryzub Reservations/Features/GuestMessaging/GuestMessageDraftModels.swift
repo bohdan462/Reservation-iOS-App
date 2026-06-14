@@ -139,6 +139,23 @@ enum GuestMessageDraftSource: String, Codable, Equatable {
 
 // MARK: - Display helpers
 
+extension GuestMessageDraftKind {
+    var emailTemplateKind: GuestEmailTemplateKind {
+        switch self {
+        case .confirmation:
+            return .confirmation
+        case .reminder:
+            return .reminder
+        case .clarificationRequest, .largePartyConfirmation, .tableReady:
+            return .manualQuestion
+        }
+    }
+
+    var supportsBackendManualEmailLog: Bool {
+        emailTemplateKind.backendLogEmailType != nil
+    }
+}
+
 extension GuestMessageDraft {
     var hasSafetyNote: Bool {
         let trimmed = safetyNote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

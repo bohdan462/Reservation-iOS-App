@@ -81,26 +81,43 @@ final class GuestCommunicationCoordinator: ObservableObject {
 
     func makeEmailComposerDraft(
         reservation: ReservationRecord,
-        draft: GuestMessageDraft
+        approved: ApprovedGuestMessageDraft,
+        manageURL: String?
     ) -> GuestConfirmationMailPresenter.Draft? {
-        guard let mailDraft = GuestConfirmationMailPresenter.manualDraft(
-            reservation: reservation,
-            subject: draft.emailSubject,
-            body: draft.emailBody
-        ) else {
+        let email = reservation.email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !email.isEmpty else {
             lastErrorMessage = StaffMessage.noGuestEmail
             return nil
         }
-        return mailDraft
+
+        let input = GuestEmailRenderInput(
+            kind: approved.kind.emailTemplateKind,
+            reservationID: reservation.remoteID,
+            guestFirstName: GuestEmailTemplateRenderer.guestFirstName(from: reservation.guestName),
+            dateLine: ManualEmailDraftService.emailDateLine(for: reservation),
+            timeLine: ManualEmailDraftService.emailTimeLine(for: reservation),
+            partySize: reservation.partySize,
+            manageLinkURL: manageURL,
+            linkExpiresAt: nil,
+            customPlainMessage: approved.wasEdited || approved.kind.emailTemplateKind == .manualQuestion
+                ? approved.emailBody
+                : nil,
+            subjectOverride: approved.emailSubject
+        )
+
+        return GuestConfirmationMailPresenter.styledDraft(
+            reservation: reservation,
+            input: input
+        )
     }
 
     func makeTextComposerDraft(
         reservation: ReservationRecord,
-        draft: GuestMessageDraft
+        approved: ApprovedGuestMessageDraft
     ) -> GuestTextMessageDraft? {
         guard let textDraft = GuestTextMessagePresenter.draft(
             phone: reservation.phone,
-            body: draft.shortMessageBody
+            body: approved.shortMessageBody
         ) else {
             lastErrorMessage = StaffMessage.noDialablePhone
             return nil
@@ -108,19 +125,19 @@ final class GuestCommunicationCoordinator: ObservableObject {
         return textDraft
     }
 
-    func emailPasteboardText(from draft: GuestMessageDraft) -> String {
-        "Subject: \(draft.emailSubject)\n\n\(draft.emailBody)"
+    func emailPasteboardText(from approved: ApprovedGuestMessageDraft) -> String {
+        "Subject: \(approved.emailSubject)\n\n\(approved.emailBody)"
     }
 
-    func textPasteboardText(from draft: GuestMessageDraft) -> String {
-        draft.shortMessageBody
+    func textPasteboardText(from approved: ApprovedGuestMessageDraft) -> String {
+        approved.shortMessageBody
     }
 
-    func copyEmailDraft(_ draft: GuestMessageDraft) {
-        UIPasteboard.general.string = emailPasteboardText(from: draft)
+    func copyEmailDraft(_ approved: ApprovedGuestMessageDraft) {
+        UIPasteboard.general.string = emailPasteboardText(from: approved)
     }
 
-    func copyTextDraft(_ draft: GuestMessageDraft) {
-        UIPasteboard.general.string = textPasteboardText(from: draft)
+    func copyTextDraft(_ approved: ApprovedGuestMessageDraft) {
+        UIPasteboard.general.string = textPasteboardText(from: approved)
     }
 }

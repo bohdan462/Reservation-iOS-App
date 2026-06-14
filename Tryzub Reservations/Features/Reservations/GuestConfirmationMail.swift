@@ -51,6 +51,23 @@ enum GuestConfirmationMailPresenter {
         )
     }
 
+    static func styledDraft(
+        reservation: ReservationRecord,
+        input: GuestEmailRenderInput
+    ) -> Draft? {
+        let email = reservation.email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !email.isEmpty else { return nil }
+
+        return Draft(
+            reservationID: reservation.remoteID,
+            recipients: [email],
+            subject: GuestEmailTemplateRenderer.subject(for: input),
+            htmlBody: GuestEmailTemplateRenderer.renderHTML(input),
+            plainBody: GuestEmailTemplateRenderer.renderPlain(input),
+            logBodySnapshot: GuestEmailTemplateRenderer.logSnapshot(input)
+        )
+    }
+
     static func draft(
         reservation: ReservationRecord,
         manageLink: ReservationGuestManageLinkDTO
@@ -61,7 +78,9 @@ enum GuestConfirmationMailPresenter {
         return Draft(
             reservationID: reservation.remoteID,
             recipients: [email],
-            subject: ManualEmailDraftService.confirmationSubject(reservation: reservation),
+            subject: GuestEmailTemplateRenderer.subject(
+                for: .confirmation(reservation: reservation, manageLink: manageLink)
+            ),
             htmlBody: ManualEmailDraftService.confirmationHTMLBody(
                 reservation: reservation,
                 manageLink: manageLink

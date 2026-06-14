@@ -33,6 +33,7 @@ struct HostBoardView: View {
     @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @EnvironmentObject private var hostIntelligenceController: HostIntelligenceController
+    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
 
     @State private var pendingAction: ReservationPendingAction?
@@ -44,6 +45,7 @@ struct HostBoardView: View {
     @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var isShowingHostIntelligenceReview = false
     @State private var showServiceTimeline = false
+    @State private var showShiftReminders = false
     /// Phase 2: cached deterministic Service Briefing, rebuilt only when inputs change
     /// (selected date, reservations, snapshot, clock minute) — never from a fetch.
     @State private var serviceBriefingState: HostServiceBriefingViewState?
@@ -59,6 +61,15 @@ struct HostBoardView: View {
     private var hasOpenInteraction: Bool {
         externalInteractionActive
             || pendingAction != nil
+            || showShiftReminders
+    }
+
+    private var shiftReminderEligibleReservations: [ReservationRecord] {
+        ShiftReminderEligibility.eligibleReservations(
+            from: allKnownReservations,
+            dateKey: selectedDateKey,
+            isHidden: { hiddenReservations.isHidden($0) }
+        )
     }
 
     private var shouldDeferStartupOptionalLoads: Bool {
@@ -512,6 +523,13 @@ struct HostBoardView: View {
                 environment: environment
             )
         }
+        .sheet(isPresented: $showShiftReminders) {
+            ShiftReminderReviewSheet(
+                dateKey: selectedDateKey,
+                reservations: shiftReminderEligibleReservations
+            )
+            .environmentObject(controller)
+        }
     }
 
     private var pendingActionTitle: String {
@@ -644,7 +662,8 @@ struct HostBoardView: View {
             onAddReservation: onAddReservation,
             onManualRefresh: onManualRefresh,
             onShowFormProblems: onShowFormProblems,
-            onOpenTimeline: { showServiceTimeline = true }
+            onOpenTimeline: { showServiceTimeline = true },
+            onOpenShiftReminders: { showShiftReminders = true }
         )
     }
 
@@ -1566,6 +1585,7 @@ private struct HomeServiceHeader: View {
     let onManualRefresh: () -> Void
     let onShowFormProblems: () -> Void
     var onOpenTimeline: (() -> Void)? = nil
+    var onOpenShiftReminders: (() -> Void)? = nil
 
     private var compactServiceDateText: String {
         if Calendar.current.isDateInToday(selectedDate) {
@@ -1693,6 +1713,15 @@ private struct HomeServiceHeader: View {
     private var actionBar: some View {
         HStack(spacing: 6) {
             Menu {
+                if let onOpenShiftReminders {
+                    Button {
+                        ReservationHaptics.selection()
+                        onOpenShiftReminders()
+                    } label: {
+                        Label("Shift reminders", systemImage: "bell.badge")
+                    }
+                }
+
                 Button {
                     ReservationHaptics.selection()
                     onManualRefresh()

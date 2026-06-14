@@ -5,6 +5,35 @@
 
 import SwiftUI
 
+// MARK: - Approved draft
+
+struct ApprovedGuestMessageDraft: Equatable {
+    let kind: GuestMessageDraftKind
+    let emailSubject: String
+    let emailBody: String
+    let shortMessageBody: String
+    let source: GuestMessageDraftSource
+    let wasEdited: Bool
+    let aiGenerated: Bool
+
+    init(
+        kind: GuestMessageDraftKind,
+        draft: GuestMessageDraft,
+        emailSubject: String,
+        emailBody: String,
+        shortMessageBody: String,
+        wasEdited: Bool
+    ) {
+        self.kind = kind
+        self.emailSubject = emailSubject
+        self.emailBody = emailBody
+        self.shortMessageBody = shortMessageBody
+        self.source = draft.source
+        self.wasEdited = wasEdited
+        self.aiGenerated = draft.source == .localModel
+    }
+}
+
 // MARK: - Detail actions
 
 struct GuestMessageDraftActionsSection: View {
@@ -77,18 +106,28 @@ struct GuestMessageDraftActionsSection: View {
 // MARK: - Review sheet
 
 struct GuestMessageDraftReviewView: View {
+    let reservationID: Int
     let kind: GuestMessageDraftKind
     let draft: GuestMessageDraft
     let canSendEmail: Bool
     let canSendText: Bool
-    let onSendEmail: () -> Void
-    let onSendText: () -> Void
-    let onCopyEmail: () -> Void
-    let onCopyText: () -> Void
+    let onSendEmail: (ApprovedGuestMessageDraft) -> Void
+    let onSendText: (ApprovedGuestMessageDraft) -> Void
+    let onCopyEmail: (ApprovedGuestMessageDraft) -> Void
+    let onCopyText: (ApprovedGuestMessageDraft) -> Void
     let onDismiss: () -> Void
+
+    @State private var editedSubject: String = ""
+    @State private var editedEmailBody: String = ""
+    @State private var editedTextBody: String = ""
+    @State private var didEdit = false
 
     private var sendDisabled: Bool {
         draft.isBlocked
+    }
+
+    private var showsBetaWarning: Bool {
+        draft.source == .localModel
     }
 
     var body: some View {
@@ -97,18 +136,23 @@ struct GuestMessageDraftReviewView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     headerSection
 
+                    if showsBetaWarning {
+                        reviewBanner(
+                            title: "AI draft is beta",
+                            message: "AI draft is beta. Review and edit before sending.",
+                            tint: TryzubColors.info
+                        )
+                    }
+
                     if draft.isBlocked, let reason = draft.blockedReason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
                         reviewBanner(title: "Draft blocked", message: reason, tint: .orange)
                     } else if draft.hasSafetyNote, let note = draft.safetyNote, draft.source == .localModel {
-                        // Only surface a review note when the model actually produced output that
-                        // needs extra scrutiny. Template drafts are always safe — suppress the
-                        // "could not parse model output" message staff don't need to act on.
                         reviewBanner(title: "Review note", message: note, tint: TryzubColors.info)
                     }
 
-                    reviewField(title: "Email subject", value: draft.emailSubject)
-                    reviewField(title: "Email body", value: draft.emailBody, allowsWrap: true)
-                    reviewField(title: "Text message", value: draft.shortMessageBody, allowsWrap: true)
+                    editableField(title: "Email subject", text: $editedSubject, axis: false)
+                    editableField(title: "Email body", text: $editedEmailBody, axis: true)
+                    editableField(title: "Text reminder", text: $editedTextBody, axis: true)
 
                     actionButtons
                 }
@@ -122,6 +166,26 @@ struct GuestMessageDraftReviewView: View {
                     Button("Close", action: onDismiss)
                 }
             }
+            .onAppear {
+                editedSubject = draft.emailSubject
+                editedEmailBody = draft.emailBody
+                editedTextBody = draft.shortMessageBody
+                GuestCommunicationTrace.messageReview(
+                    reservationID: reservationID,
+                    type: reviewTraceType,
+                    phase: "presented",
+                    aiDraft: draft.source == .localModel,
+                    edited: false
+                )
+            }
+        }
+    }
+
+    private var reviewTraceType: String {
+        switch kind {
+        case .confirmation: return "confirmation"
+        case .reminder: return "reminder"
+        case .clarificationRequest, .largePartyConfirmation, .tableReady: return "manualQuestion"
         }
     }
 
@@ -141,14 +205,18 @@ struct GuestMessageDraftReviewView: View {
 
     private var actionButtons: some View {
         VStack(spacing: 10) {
-            Button(action: onSendEmail) {
+            Button {
+                onSendEmail(approvedDraft())
+            } label: {
                 Label("Send Email", systemImage: "envelope.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .disabled(sendDisabled || !canSendEmail)
 
-            Button(action: onSendText) {
+            Button {
+                onSendText(approvedDraft())
+            } label: {
                 Label("Send Text", systemImage: "message.fill")
                     .frame(maxWidth: .infinity)
             }
@@ -156,14 +224,18 @@ struct GuestMessageDraftReviewView: View {
             .disabled(sendDisabled || !canSendText)
 
             HStack(spacing: 10) {
-                Button(action: onCopyEmail) {
+                Button {
+                    onCopyEmail(approvedDraft())
+                } label: {
                     Label("Copy Email", systemImage: "doc.on.doc")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
                 .disabled(sendDisabled)
 
-                Button(action: onCopyText) {
+                Button {
+                    onCopyText(approvedDraft())
+                } label: {
                     Label("Copy Text", systemImage: "doc.on.doc")
                         .frame(maxWidth: .infinity)
                 }
@@ -174,19 +246,51 @@ struct GuestMessageDraftReviewView: View {
     }
 
     @ViewBuilder
-    private func reviewField(title: String, value: String, allowsWrap: Bool = false) -> some View {
+    private func editableField(title: String, text: Binding<String>, axis: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
-            Text(value)
-                .font(.body)
-                .foregroundStyle(.primary)
-                .multilineTextAlignment(.leading)
-                .lineLimit(allowsWrap ? nil : 2)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if axis {
+                TextEditor(text: text)
+                    .frame(minHeight: 120)
+                    .padding(8)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+                    .onChange(of: text.wrappedValue) { _, _ in markEdited() }
+            } else {
+                TextField(title, text: text)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: text.wrappedValue) { _, _ in markEdited() }
+            }
         }
-        .padding(14)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+    }
+
+    private func approvedDraft() -> ApprovedGuestMessageDraft {
+        GuestCommunicationTrace.messageReview(
+            reservationID: reservationID,
+            type: reviewTraceType,
+            phase: "approved_for_composer",
+            aiDraft: draft.source == .localModel,
+            edited: didEdit
+        )
+        return ApprovedGuestMessageDraft(
+            kind: kind,
+            draft: draft,
+            emailSubject: editedSubject,
+            emailBody: editedEmailBody,
+            shortMessageBody: editedTextBody,
+            wasEdited: didEdit
+        )
+    }
+
+    private func markEdited() {
+        didEdit = true
+        GuestCommunicationTrace.messageReview(
+            reservationID: reservationID,
+            type: reviewTraceType,
+            phase: "edited",
+            aiDraft: draft.source == .localModel,
+            edited: true
+        )
     }
 
     private func reviewBanner(title: String, message: String, tint: Color) -> some View {

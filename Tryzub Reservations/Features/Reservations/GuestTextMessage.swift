@@ -28,31 +28,23 @@ enum ManualTextMessageService {
         guestName: String,
         dateLine: String,
         timeLine: String,
-        partySize: Int,
-        tableName: String? = nil
+        partySize: Int
     ) -> String {
         let firstName = guestFirstName(from: guestName)
-        var message = "Hi \(firstName), your reservation at \(ReservationEmailWorkflow.restaurantName) is confirmed for \(dateLine) at \(timeLine) for party of \(partySize)."
-        if let tableName = tableName?.trimmedNonEmpty {
-            message += " Table \(tableName)."
-        }
-        message += " To cancel or change, contact us at \(ReservationEmailWorkflow.restaurantPhone)."
-        return message
+        return "Hi \(firstName), your reservation at \(ReservationEmailWorkflow.restaurantName) is confirmed for \(dateLine) at \(timeLine) for party of \(partySize). To cancel or change, contact us at \(ReservationEmailWorkflow.restaurantPhone)."
     }
 
     static func confirmationBody(
         guestName: String,
         reservationDate: Date,
         reservationTime: Date,
-        partySize: Int,
-        tableName: String? = nil
+        partySize: Int
     ) -> String {
         confirmationBody(
             guestName: guestName,
             dateLine: longDateLine(reservationDate),
             timeLine: longTimeLine(reservationTime),
-            partySize: partySize,
-            tableName: tableName
+            partySize: partySize
         )
     }
 
@@ -61,9 +53,13 @@ enum ManualTextMessageService {
             guestName: reservation.guestName,
             dateLine: ManualEmailDraftService.emailDateLine(for: reservation),
             timeLine: ManualEmailDraftService.emailTimeLine(for: reservation),
-            partySize: reservation.partySize,
-            tableName: reservation.tableName
+            partySize: reservation.partySize
         )
+    }
+
+    static func reminderBody(reservation: ReservationRecord) -> String {
+        let timeLine = ManualEmailDraftService.emailTimeLine(for: reservation)
+        return "Tryzub reminder: your reservation is today at \(timeLine) for \(reservation.partySize) guest\(reservation.partySize == 1 ? "" : "s"). Plans change — no problem. For changes, call during business hours or request another time: \(ReservationEmailWorkflow.bookTableURL.absoluteString)"
     }
 
     static func tableDueBody(

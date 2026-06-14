@@ -14,6 +14,8 @@ enum ReservationEmailWorkflow {
     static let restaurantPhone = "(773) 698-8624"
     static let websiteURL = URL(string: "https://tryzubchicago.com")!
     static let reservationPoliciesURL = URL(string: "https://tryzubchicago.com/home-page/privacy-policy-terms-and-conditions/")!
+    static let bookTableURL = URL(string: "https://tryzubchicago.com/book-table/")!
+    static let guestContactEmail = "info@tryzubchicago.com"
 
     static let manualConfirmationStaffNoteMarker = "[iOS] confirmation email sent"
 }

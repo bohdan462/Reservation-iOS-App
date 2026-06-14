@@ -29,11 +29,11 @@ enum GuestMessageDraftTemplateWriter {
         let restaurant = packet.restaurantName
         let manage = manageURLLine(for: packet)
 
-        let subject = "Reservation confirmation - \(restaurant)"
+        let subject = "Your Tryzub reservation is confirmed"
         let body = """
         \(greeting)
 
-        Your reservation for party of \(packet.partySize) on \(packet.reservationDateDisplay) at \(packet.reservationTimeDisplay) is confirmed.\(tableLine(for: packet))
+        Your reservation for party of \(packet.partySize) on \(packet.reservationDateDisplay) at \(packet.reservationTimeDisplay) is confirmed.
         \(manage)
 
         We look forward to welcoming you to \(restaurant).
@@ -57,22 +57,18 @@ enum GuestMessageDraftTemplateWriter {
 
     private static func reminderDraft(from packet: GuestMessageDraftPacket) -> GuestMessageDraft {
         let greeting = greetingLine(for: packet)
-        let restaurant = packet.restaurantName
-        let subject = "Reminder - your reservation at \(restaurant)"
+        let subject = "Reminder: your Tryzub reservation today"
         let body = """
         \(greeting)
 
-        This is a friendly reminder about your reservation for party of \(packet.partySize) on \(packet.reservationDateDisplay) at \(packet.reservationTimeDisplay).\(tableLine(for: packet))
+        This is a reminder for your reservation for party of \(packet.partySize) on \(packet.reservationDateDisplay) at \(packet.reservationTimeDisplay).
         \(manageURLLine(for: packet))
 
         If your plans have changed, please contact us as soon as you can.
         \(contactFooter(for: packet))
         """.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let sms = compactSMS(
-            for: packet,
-            core: "friendly reminder: your \(restaurant) reservation is \(packet.reservationDateDisplay) at \(packet.reservationTimeDisplay) for party of \(packet.partySize)."
-        )
+        let sms = "Tryzub reminder: your reservation is today at \(packet.reservationTimeDisplay) for \(packet.partySize) guest\(packet.partySize == 1 ? "" : "s"). Plans change — no problem. For changes, call during business hours or request another time: \(ReservationEmailWorkflow.bookTableURL.absoluteString)"
 
         return GuestMessageDraft(
             emailSubject: subject,
@@ -143,16 +139,16 @@ enum GuestMessageDraftTemplateWriter {
     private static func tableReadyDraft(from packet: GuestMessageDraftPacket) -> GuestMessageDraft {
         let greeting = greetingLine(for: packet)
         let restaurant = packet.restaurantName
-        let tablePart = packet.tableName.map { " Table \($0) is ready." } ?? " Your table is ready."
+        let tablePart = "Your table is ready."
         let subject = "Your table is ready — \(restaurant)"
         let body = """
         \(greeting)
 
-        \(tablePart.trimmingCharacters(in: .whitespacesAndNewlines)) Please check in with the host when you arrive.
+        \(tablePart) Please check in with the host when you arrive.
         \(contactFooter(for: packet))
         """.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let tableSMS = packet.tableName.map { "table \($0) is ready" } ?? "your table is ready"
+        let tableSMS = "your table is ready"
         let sms = compactSMS(
             for: packet,
             core: "\(tableSMS) at \(restaurant). Please check in with the host."
