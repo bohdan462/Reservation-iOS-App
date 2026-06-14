@@ -78,13 +78,20 @@ enum ServiceIntelligenceEngine {
             briefing = planningBriefing(input)
         }
 
-        ServiceIntelligenceTrace.serviceMode(mode: input.mode, cleanupNeeded: input.status.cleanupCount)
+        let cleanupNeeded = input.status.cleanupCount(for: input.mode)
+        ServiceIntelligenceTrace.serviceMode(
+            mode: input.mode,
+            pendingArrivals: input.status.pendingArrivals,
+            activeService: input.status.activeService,
+            cleanupNeeded: cleanupNeeded
+        )
         ServiceIntelligenceTrace.briefing(
             mode: input.mode,
             reservations: input.status.totalReservations,
-            active: input.status.activeOpenWork,
+            pendingArrivals: input.status.pendingArrivals,
+            activeService: input.status.activeService,
             seated: input.status.seatedCount,
-            incomplete: input.status.cleanupCount,
+            cleanupNeeded: cleanupNeeded,
             actions: briefing.totalActionCount
         )
         return briefing
@@ -165,14 +172,14 @@ enum ServiceIntelligenceEngine {
 
         return ServiceBriefing(
             mode: input.mode,
-            headline: "Service is over, but \(input.status.cleanupCount) \(reservationWord(input.status.cleanupCount)) need a status update.",
+            headline: "Service is over, but \(input.status.afterCloseCleanupCount) \(reservationWord(input.status.afterCloseCleanupCount)) need a status update.",
             summary: "Check if they were seated or should be marked complete.",
             checkNow: [],
             comingUp: [],
             reviewLater: [],
             afterClose: afterClose,
             todaySummary: recapLines(input, finished: false),
-            unresolvedCount: input.status.cleanupCount,
+            unresolvedCount: input.status.afterCloseCleanupCount,
             source: input.resolvedSource
         )
     }

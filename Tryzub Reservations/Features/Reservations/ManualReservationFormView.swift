@@ -12,6 +12,8 @@ import UIKit
 struct ManualReservationFormView: View {
     let failure: ImportFailureDTO?
     let prefill: ManualReservationPrefill?
+    let source: String
+    let draftID: String
     let onCreateReservation: (ReservationCreateRequest) async throws -> ReservationDTO
 
     @Environment(\.dismiss) private var dismiss
@@ -20,14 +22,20 @@ struct ManualReservationFormView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showCreateConfirmation = false
+    @State private var intentionalConfirmationDismissalReason: String?
+    @State private var didFinishIntentionally = false
 
     init(
         failure: ImportFailureDTO? = nil,
         prefill: ManualReservationPrefill? = nil,
+        source: String = "manual",
+        draftID: String = UUID().uuidString,
         onCreateReservation: @escaping (ReservationCreateRequest) async throws -> ReservationDTO
     ) {
         self.failure = failure
         self.prefill = prefill
+        self.source = source
+        self.draftID = draftID
         self.onCreateReservation = onCreateReservation
         _draft = State(initialValue: ReservationFormDraft(failure: failure, prefill: prefill))
     }
@@ -43,7 +51,13 @@ struct ManualReservationFormView: View {
                 failure: failure,
                 reservation: nil,
                 showsGuestLookupDetailReminder: prefill?.source == .callInGuestLookup,
-                onCancel: { dismiss() },
+                onCancel: {
+                    didFinishIntentionally = true
+                    if showCreateConfirmation {
+                        logManualAdd(event: "confirm_dismissed", fields: ["reason": "user_cancelled"])
+                    }
+                    dismiss()
+                },
                 onSubmit: { prepareCreateConfirmation() }
             )
         }
@@ -58,22 +72,59 @@ struct ManualReservationFormView: View {
                     Task { await createReservation() }
                 },
                 onCancel: {
+                    intentionalConfirmationDismissalReason = "user_cancelled"
+                    logManualAdd(event: "confirm_dismissed", fields: ["reason": "user_cancelled"])
                     showCreateConfirmation = false
                 }
             ) {
                 ReservationFormChangeReview(createSummary: draft.createSummaryRows())
             }
             .interactiveDismissDisabled(isSaving)
+            .onAppear {
+                logManualAdd(event: "confirm_presented")
+            }
         }
         .task {
             // Lazy form support load: setup provides manual-create defaults only.
             _ = try? await controller.loadRestaurantSetup()
+        }
+        .onChange(of: draft.traceKey) { _, _ in
+            logManualAdd(
+                event: "draft_changed",
+                fields: [
+                    "hasName": "\(ReservationInputNormalizer.collapsedWhitespace(draft.guestName).isEmpty == false)",
+                    "hasDate": "true",
+                    "hasTime": "true",
+                    "party": "\(draft.partySize)"
+                ]
+            )
+        }
+        .onChange(of: showCreateConfirmation) { oldValue, newValue in
+            guard oldValue, !newValue else { return }
+            if let reason = intentionalConfirmationDismissalReason {
+                intentionalConfirmationDismissalReason = nil
+                if reason == "create_success" {
+                    return
+                }
+                return
+            }
+            logManualAdd(event: "parent_reload_ignored", fields: ["reason": "confirmation_presented"])
+            Task { @MainActor in
+                await Task.yield()
+                guard !didFinishIntentionally, !isSaving else { return }
+                showCreateConfirmation = true
+            }
+        }
+        .onDisappear {
+            guard !didFinishIntentionally, showCreateConfirmation else { return }
+            logManualAdd(event: "parent_reload_ignored", fields: ["reason": "confirmation_presented"])
         }
     }
 
     private func prepareCreateConfirmation() {
         guard validateRequiredFields() else { return }
         dismissKeyboard()
+        logManualAdd(event: "show_confirm")
         // Defer one run loop so keyboard teardown finishes before the sheet presents.
         Task { @MainActor in
             await Task.yield()
@@ -92,6 +143,7 @@ struct ManualReservationFormView: View {
         guard validateRequiredFields() else { return }
 
         FormTrace.event(surface: "manual_add", name: "submit_started")
+        logManualAdd(event: "create_started")
         isSaving = true
         errorMessage = nil
         let saveStarted = ContinuousClock.now
@@ -107,7 +159,7 @@ struct ManualReservationFormView: View {
         }
 
         do {
-            _ = try await onCreateReservation(
+            let createdReservation = try await onCreateReservation(
                 draft.createRequest(
                     sourceSubmissionId: failure?.sourceSubmissionId,
                     sourceType: failure == nil ? .manualCallIn : .importRepair,
@@ -115,14 +167,33 @@ struct ManualReservationFormView: View {
                 )
             )
             ReservationHaptics.success()
+            intentionalConfirmationDismissalReason = "create_success"
+            didFinishIntentionally = true
+            logManualAdd(event: "create_success", fields: ["reservationID": "\(createdReservation.id)"])
             showCreateConfirmation = false
+            logManualAdd(event: "confirm_dismissed", fields: ["reason": "create_success"])
             dismiss()
         } catch {
             ReservationHaptics.warning()
             errorMessage = error.isOfflineLike
                 ? "Could not save. Check the connection and try again."
                 : "Could not save. Check the details and try again."
+            logManualAdd(
+                event: "create_failed",
+                fields: [
+                    "preservingDraft": "true",
+                    "error": "redacted"
+                ]
+            )
         }
+    }
+
+    private func logManualAdd(event: String, fields: [String: String] = [:]) {
+        var output = fields
+        output["source"] = source
+        output["event"] = event
+        output["draftID"] = draftID
+        WorkflowCleanupTrace.log("MANUAL_ADD_TRACE", fields: output)
     }
 
     private func validateRequiredFields() -> Bool {
@@ -1804,6 +1875,19 @@ private struct ReservationFormDraft {
     var tableName: String
     var status: ReservationStatus
     var supersededById: String
+
+    var traceKey: String {
+        [
+            ReservationInputNormalizer.collapsedWhitespace(guestName),
+            ReservationInputNormalizer.phoneDigits(phone),
+            ReservationInputNormalizer.normalizedEmail(email),
+            reservationDate.reservationDateString(),
+            ReservationFormatters.apiTime.string(from: reservationTime),
+            "\(partySize)",
+            "\(guestNotes.count)",
+            "\(staffNotes.count)"
+        ].joined(separator: "|")
+    }
 
     init(failure: ImportFailureDTO?, prefill: ManualReservationPrefill? = nil) {
         let snapshot = failure?.reservation

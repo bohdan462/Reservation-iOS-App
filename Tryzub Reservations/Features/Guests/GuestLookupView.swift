@@ -100,7 +100,7 @@ struct GuestLookupView: View {
             .listStyle(.plain)
             .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
             .fullScreenCover(item: $activeSheet) { sheet in
-                ManualReservationFormView(prefill: sheet.prefill) { request in
+                ManualReservationFormView(prefill: sheet.prefill, source: "guests") { request in
                     try await controller.createAcceptedManualReservation(request, context: modelContext)
                 }
             }

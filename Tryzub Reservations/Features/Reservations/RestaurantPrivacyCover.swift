@@ -155,6 +155,32 @@ struct RestaurantPrivacyCoverWarning: Identifiable, Equatable {
 enum RestaurantPrivacyCoverDataController {
     static let snapshotRefreshInterval: TimeInterval = 30
 
+    static func conciseServiceSummary(from text: String) -> String {
+        var output = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        output = output.replacingOccurrences(of: "Guest notes to check.", with: "Guest notes:")
+        output = output.replacingOccurrences(of: "Guest notes to check", with: "Guest notes")
+        output = output.replacingOccurrences(of: "Check reservation.", with: "Check reservation")
+        output = output.replacingOccurrences(of: "  ", with: " ")
+
+        let sentences = output
+            .split(separator: ".")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if sentences.count > 2 {
+            output = sentences.prefix(2).joined(separator: ". ") + "."
+        }
+
+        let maxLength = 96
+        if output.count > maxLength {
+            output = String(output.prefix(maxLength))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: ".,;:"))
+            output += "."
+        }
+
+        return output
+    }
+
     static func snapshot(from reservations: [ReservationRecord], now: Date = Date()) -> RestaurantPrivacyCoverSnapshot {
         let todayKey = now.reservationDateString()
         let localSeatedTimestamps = TryzubSeatedDurationResolver.loadLocalSeatedTimestamps()
@@ -611,24 +637,30 @@ private struct RestaurantPrivacyCoverView: View {
     }
 
     var body: some View {
-        ZStack {
-            PrivacyGlassBackdrop()
+        GeometryReader { proxy in
+            let panelWidth = min(max(proxy.size.width - 64, 260), 460)
 
-            VStack(spacing: 20) {
-                PrivacyClockLabel()
+            ZStack {
+                PrivacyGlassBackdrop()
 
-                PrivacyWarningsPanel(
-                    warnings: warnings,
-                    isAllClear: !snapshot.hasAttentionItems,
-                    serviceSummary: snapshot.serviceSummary
-                )
-                .frame(maxWidth: 300)
+                VStack(spacing: 18) {
+                    PrivacyClockLabel()
 
-                Text("Touch anywhere to continue")
-                    .font(.caption)
-                    .foregroundStyle(PrivacyCoverPalette.hint)
+                    PrivacyWarningsPanel(
+                        warnings: warnings,
+                        isAllClear: !snapshot.hasAttentionItems,
+                        serviceSummary: snapshot.serviceSummary
+                    )
+                    .frame(width: panelWidth)
+
+                    Text("Touch anywhere to continue")
+                        .font(.caption)
+                        .foregroundStyle(PrivacyCoverPalette.hint)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+                .padding(.horizontal, 32)
             }
-            .padding(.horizontal, 32)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea()
@@ -708,6 +740,8 @@ private struct PrivacyWarningsPanel: View {
     var serviceSummary: String?
 
     var body: some View {
+        let fittedSummary = serviceSummary.map(RestaurantPrivacyCoverDataController.conciseServiceSummary(from:))
+
         VStack(alignment: .leading, spacing: 10) {
             Text("Status")
                 .font(.caption2.weight(.medium))
@@ -726,11 +760,12 @@ private struct PrivacyWarningsPanel: View {
                         PrivacyWarningRow(warning: warning)
                     }
 
-                    if let summary = serviceSummary, !summary.isEmpty {
+                    if let summary = fittedSummary, !summary.isEmpty {
                         Text(summary)
                             .font(.caption)
                             .foregroundStyle(PrivacyCoverPalette.ink)
-                            .lineLimit(2)
+                            .lineLimit(3)
+                            .minimumScaleFactor(0.85)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, 2)
@@ -739,6 +774,34 @@ private struct PrivacyWarningsPanel: View {
             }
         }
         .privacyGlassPanel(cornerRadius: 16)
+        .task(id: privacyTraceKey(summary: fittedSummary)) {
+            tracePrivacyFit(summary: fittedSummary)
+        }
+    }
+
+    private func privacyTraceKey(summary: String?) -> String {
+        "\(warnings.count)|\(summary ?? "")|\(isAllClear)"
+    }
+
+    private func tracePrivacyFit(summary: String?) {
+        #if DEBUG
+        let length = summary?.count ?? 0
+        let lines = max(1, Int(ceil(Double(max(length, 1)) / 34.0)))
+        let strategy: String = {
+            guard let summary else { return "normal" }
+            if summary.count < (serviceSummary?.count ?? 0) { return "shortened" }
+            return lines > 1 ? "wrapped" : "normal"
+        }()
+        WorkflowCleanupTrace.log(
+            "PRIVACY_SCREEN_TRACE",
+            fields: [
+                "contentLength": "\(length)",
+                "lines": "\(min(lines, 3))",
+                "fitted": "true",
+                "strategy": strategy
+            ]
+        )
+        #endif
     }
 }
 
@@ -755,6 +818,8 @@ private struct PrivacyWarningRow: View {
             Text(warning.title)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(PrivacyCoverPalette.ink)
+                .lineLimit(2)
+                .minimumScaleFactor(0.82)
 
             Spacer(minLength: 6)
 
@@ -763,11 +828,15 @@ private struct PrivacyWarningRow: View {
                     .font(.caption.weight(.semibold))
                     .monospacedDigit()
                     .foregroundStyle(PrivacyCoverPalette.inkEmphasis)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
 
                 if let subtitle = warning.subtitle {
                     Text(subtitle)
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(PrivacyCoverPalette.inkMuted)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
                 }
             }
         }

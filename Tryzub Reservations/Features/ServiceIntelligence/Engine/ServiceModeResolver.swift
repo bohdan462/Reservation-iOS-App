@@ -27,9 +27,34 @@ struct ServiceDayStatusSummary: Equatable {
         activeOpenWork + seatedCount + completedCount + cancelledCount + noShowCount
     }
 
+    /// Operational reservations that have not arrived or been finalized yet.
+    var pendingArrivals: Int {
+        activeOpenWork
+    }
+
+    /// Reservations currently in service.
+    var activeService: Int {
+        seatedCount
+    }
+
     /// Items that, after close, still need a staff status update.
-    var cleanupCount: Int {
+    var afterCloseCleanupCount: Int {
         activeOpenWork + seatedCount
+    }
+
+    func cleanupCount(for mode: ServiceMode) -> Int {
+        switch mode {
+        case .beforeService:
+            // Before service, open reservations are pending arrivals, not cleanup.
+            return activeService
+        case .duringService:
+            // Seated reservations are active service; overdue cleanup is handled by explicit actions.
+            return 0
+        case .afterCloseNeedsCleanup:
+            return afterCloseCleanupCount
+        case .afterCloseFinished, .futurePlanning, .pastRecap:
+            return 0
+        }
     }
 
     static let zero = ServiceDayStatusSummary(
@@ -66,25 +91,22 @@ enum ServiceModeResolver {
             return Result(mode: .pastRecap, cleanupItemCount: 0)
         }
 
-        // Selected day is today.
-        let cleanup = input.status.cleanupCount
-
         let afterCloseRegion = input.closeTime.map { input.now > $0 } ?? false
         if afterCloseRegion {
+            let cleanup = input.status.afterCloseCleanupCount
             return Result(
                 mode: cleanup > 0 ? .afterCloseNeedsCleanup : .afterCloseFinished,
                 cleanupItemCount: cleanup
             )
         }
 
-        // Before open AND no service activity yet → before service.
+        // Before open: pending arrivals are not cleanup. Only leftover seated/in-service work counts.
         let beforeOpen = input.openTime.map { input.now < $0 } ?? false
-        let noActivityYet = input.status.seatedCount == 0 && input.status.completedCount == 0
-        if beforeOpen && noActivityYet {
-            return Result(mode: .beforeService, cleanupItemCount: 0)
+        if beforeOpen {
+            return Result(mode: .beforeService, cleanupItemCount: input.status.cleanupCount(for: .beforeService))
         }
 
-        return Result(mode: .duringService, cleanupItemCount: cleanup)
+        return Result(mode: .duringService, cleanupItemCount: input.status.cleanupCount(for: .duringService))
     }
 
     /// Builds a status histogram from raw `ReservationStatus` values for the day.

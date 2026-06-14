@@ -5,6 +5,7 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 
 // MARK: - Host Board
 
@@ -35,6 +36,7 @@ struct HostBoardView: View {
     @EnvironmentObject private var hostIntelligenceController: HostIntelligenceController
     @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var pendingAction: ReservationPendingAction?
     @State private var clockTick = Date()
@@ -44,7 +46,6 @@ struct HostBoardView: View {
     @State private var stableCountByDate: [String: Int] = [:]
     @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var isShowingHostIntelligenceReview = false
-    @State private var showServiceTimeline = false
     @State private var showShiftReminders = false
     /// Phase 2: cached deterministic Service Briefing, rebuilt only when inputs change
     /// (selected date, reservations, snapshot, clock minute) — never from a fetch.
@@ -274,6 +275,8 @@ struct HostBoardView: View {
         GeometryReader { proxy in
             let safeWidth = proxy.size.width.tryzubFiniteNonNegativeLayoutValue
             let safeHeight = proxy.size.height.tryzubFiniteNonNegativeLayoutValue
+            let isTablet = UIDevice.current.userInterfaceIdiom == .pad
+            let isWideLayout = isTablet || safeWidth >= 1100
             let snapshot = boardSnapshot ?? HostBoardSnapshot(
                 reservations: reservations,
                 selectedDate: selectedDate,
@@ -296,18 +299,21 @@ struct HostBoardView: View {
                         closedOrOperationalBody(
                             snapshot: snapshot,
                             closedPresentation: closedPresentation,
-                            isWideLayout: safeWidth >= 1100
+                            isWideLayout: isWideLayout
                         )
                     }
                     .padding(.bottom, 12)
                 }
             }
-            .padding(.horizontal, safeWidth >= 1100 ? 16 : 12)
-            .padding(.top, safeWidth >= 1100 ? 8 : 6)
+            .padding(.horizontal, isWideLayout ? 16 : 12)
+            .padding(.top, isWideLayout ? 8 : 6)
             .padding(.bottom, ReservationLayout.scrollBottomInset)
             .frame(maxWidth: 1100)
             .frame(width: safeWidth, height: safeHeight, alignment: .top)
             .background(TryzubColors.screenBackground)
+            .task(id: hostLayoutTraceID(width: safeWidth, isWideLayout: isWideLayout)) {
+                traceHostLayout(width: safeWidth, isWideLayout: isWideLayout)
+            }
         }
         .alert(
             pendingActionTitle,
@@ -513,16 +519,6 @@ struct HostBoardView: View {
                 controller.refreshHomeServicePresentation(hostOperationalLoading: isLoading)
             }
         }
-        // Service Timeline full-screen cover (iPhone: sole entry; iPad: also via Open button).
-        .fullScreenCover(isPresented: $showServiceTimeline) {
-            ServiceTimelineView(
-                reservations: reservations,
-                selectedDate: selectedDate,
-                serviceOpen: serviceDensityBounds.open,
-                serviceClose: serviceDensityBounds.close,
-                environment: environment
-            )
-        }
         .sheet(isPresented: $showShiftReminders) {
             ShiftReminderReviewSheet(
                 dateKey: selectedDateKey,
@@ -662,7 +658,7 @@ struct HostBoardView: View {
             onAddReservation: onAddReservation,
             onManualRefresh: onManualRefresh,
             onShowFormProblems: onShowFormProblems,
-            onOpenTimeline: { showServiceTimeline = true },
+            onOpenTimeline: nil,
             onOpenShiftReminders: { showShiftReminders = true }
         )
     }
@@ -712,16 +708,6 @@ struct HostBoardView: View {
 
         case .open:
             homeOperationalHeader(snapshot: snapshot)
-
-            if isWideLayout {
-                ServiceTimelinePreviewCard(
-                    reservations: reservations,
-                    selectedDate: selectedDate,
-                    serviceOpen: serviceDensityBounds.open,
-                    serviceClose: serviceDensityBounds.close,
-                    onOpenTimeline: { showServiceTimeline = true }
-                )
-            }
 
             if isWideLayout {
                 wideBoard(snapshot: snapshot)
@@ -1073,6 +1059,37 @@ struct HostBoardView: View {
                 onOpenReservation: onOpenReservation
             )
         }
+    }
+
+    private func hostLayoutTraceID(width: CGFloat, isWideLayout: Bool) -> String {
+        "\(UIDevice.current.userInterfaceIdiom.rawValue)|\(Int(width))|\(horizontalSizeClass.debugDescription)|\(isWideLayout)"
+    }
+
+    private func traceHostLayout(width: CGFloat, isWideLayout: Bool) {
+        #if DEBUG
+        let device = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        let reason = UIDevice.current.userInterfaceIdiom == .pad ? "tablet" : "phone"
+        let layout = isWideLayout ? "split" : "stacked"
+        let contentWidth = min(width, 1100) - (isWideLayout ? 32 : 24)
+        let columnWidth = isWideLayout ? max(0, (contentWidth - 16) / 2) : contentWidth
+        WorkflowCleanupTrace.log(
+            "HOST_LAYOUT_TRACE",
+            fields: [
+                "device": device,
+                "width": "\(Int(width))",
+                "horizontalSizeClass": horizontalSizeClass.debugDescription,
+                "layout": layout,
+                "reason": reason
+            ]
+        )
+        WorkflowCleanupTrace.log(
+            "HOST_LAYOUT_TRACE",
+            fields: [
+                "seatedColumnWidth": "\(Int(columnWidth))",
+                "reservationsColumnWidth": "\(Int(columnWidth))"
+            ]
+        )
+        #endif
     }
 
     // MARK: - Staff Action Routing

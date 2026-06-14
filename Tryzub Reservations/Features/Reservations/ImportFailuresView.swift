@@ -172,6 +172,7 @@ private struct ImportFailureDetailView: View {
                 NavigationLink {
                     ManualReservationFormView(
                         failure: failure,
+                        source: "import_repair",
                         onCreateReservation: { request in
                             let reservation = try await onCreateReservation(request)
                             onCreated(reservation)

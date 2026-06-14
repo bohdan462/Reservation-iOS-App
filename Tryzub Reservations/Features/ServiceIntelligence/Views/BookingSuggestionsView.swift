@@ -14,27 +14,36 @@ import SwiftUI
 /// Simple staff-language text block describing one busy window.
 struct BookingSuggestionContent: View {
     let item: BookingSuggestionViewItem
+    var compact = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "clock.badge.exclamationmark")
-                    .font(.subheadline.weight(.semibold))
+                    .font((compact ? Font.caption : Font.subheadline).weight(.semibold))
                     .foregroundStyle(tint)
                 Text(item.headline)
-                    .font(.headline)
+                    .font(compact ? .subheadline.weight(.semibold) : .headline)
                     .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
                 Spacer(minLength: 0)
             }
             Text(item.loadLine)
-                .font(.subheadline)
+                .font(compact ? .caption : .subheadline)
                 .foregroundStyle(.secondary)
+                .lineLimit(compact ? 1 : 2)
+                .minimumScaleFactor(0.85)
             Text(item.closeLine)
-                .font(.subheadline)
+                .font(compact ? .caption.weight(.medium) : .subheadline)
                 .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
             Text(item.alternateLine)
-                .font(.subheadline)
+                .font(compact ? .caption : .subheadline)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -51,10 +60,12 @@ struct BookingLoadHostCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            BookingSuggestionContent(item: item)
+            BookingSuggestionContent(item: item, compact: true)
             Text(knownOnlyNote)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

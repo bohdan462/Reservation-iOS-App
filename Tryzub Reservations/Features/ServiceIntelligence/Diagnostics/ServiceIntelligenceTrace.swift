@@ -26,21 +26,27 @@ enum ServiceIntelligenceTrace {
     static func briefing(
         mode: ServiceMode,
         reservations: Int,
-        active: Int,
+        pendingArrivals: Int,
+        activeService: Int,
         seated: Int,
-        incomplete: Int,
+        cleanupNeeded: Int,
         actions: Int
     ) {
         guard isEnabled else { return }
         logger.debug(
-            "[SERVICE_INTELLIGENCE_TRACE] mode=\(mode.traceLabel, privacy: .public) reservations=\(reservations, privacy: .public) active=\(active, privacy: .public) seated=\(seated, privacy: .public) incomplete=\(incomplete, privacy: .public) actions=\(actions, privacy: .public)"
+            "[SERVICE_INTELLIGENCE_TRACE] mode=\(mode.traceLabel, privacy: .public) reservations=\(reservations, privacy: .public) pendingArrivals=\(pendingArrivals, privacy: .public) activeService=\(activeService, privacy: .public) seated=\(seated, privacy: .public) cleanupNeeded=\(cleanupNeeded, privacy: .public) actions=\(actions, privacy: .public)"
         )
     }
 
-    static func serviceMode(mode: ServiceMode, cleanupNeeded: Int) {
+    static func serviceMode(
+        mode: ServiceMode,
+        pendingArrivals: Int,
+        activeService: Int,
+        cleanupNeeded: Int
+    ) {
         guard isEnabled else { return }
         logger.debug(
-            "[HOST_SERVICE_MODE_TRACE] mode=\(mode.traceLabel, privacy: .public) afterClose=\(mode.isAfterClose ? "true" : "false", privacy: .public) cleanupNeeded=\(cleanupNeeded, privacy: .public)"
+            "[HOST_SERVICE_MODE_TRACE] mode=\(mode.traceLabel, privacy: .public) afterClose=\(mode.isAfterClose ? "true" : "false", privacy: .public) pendingArrivals=\(pendingArrivals, privacy: .public) activeService=\(activeService, privacy: .public) cleanupNeeded=\(cleanupNeeded, privacy: .public)"
         )
     }
 

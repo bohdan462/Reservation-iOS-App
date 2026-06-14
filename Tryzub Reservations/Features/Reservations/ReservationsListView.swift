@@ -159,6 +159,7 @@ private struct StartupRootView: View {
 }
 
 private struct ReservationsTabShell: View {
+    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @Query
     private var pendingReviewRows: [ReservationRecord]
@@ -175,6 +176,7 @@ private struct ReservationsTabShell: View {
     @StateObject private var floorPlanStore: FloorPlanStore
     @StateObject private var activityStore: ReservationActivityStore
     @State private var selectedTab: ReservationsAppTab = .host
+    @State private var bookingsManualAddSession: ManualReservationSession?
 
     let environment: AppEnvironment
     let onLogout: () -> Void
@@ -256,7 +258,23 @@ private struct ReservationsTabShell: View {
             .accessibilityLabel(ReservationsAppTab.floorPlan.accessibilityTitle)
             .tag(ReservationsAppTab.floorPlan)
 
-            ReservationScheduleView(environment: environment, isActive: selectedTab == .bookings)
+            ReservationScheduleView(
+                environment: environment,
+                isActive: selectedTab == .bookings,
+                isManualCreatePresented: bookingsManualAddSession != nil,
+                onCreateManualReservation: {
+                    let session = ManualReservationSession(source: "bookings")
+                    WorkflowCleanupTrace.log(
+                        "MANUAL_ADD_TRACE",
+                        fields: [
+                            "source": session.source,
+                            "event": "open",
+                            "draftID": session.id
+                        ]
+                    )
+                    bookingsManualAddSession = session
+                }
+            )
                 .tabItem {
                     Label(ReservationsAppTab.bookings.title, systemImage: ReservationsAppTab.bookings.systemImage)
                 }
@@ -276,6 +294,12 @@ private struct ReservationsTabShell: View {
                 .tag(ReservationsAppTab.more)
         }
         .fontDesign(.rounded)
+        .fullScreenCover(item: $bookingsManualAddSession) { session in
+            ManualReservationFormView(source: session.source, draftID: session.id) { request in
+                try await controller.createAcceptedManualReservation(request, context: modelContext)
+            }
+            .environmentObject(controller)
+        }
         .overlay(alignment: .topTrailing) {
             AppNoticeOverlay(
                 notices: visibleNotices,
@@ -295,7 +319,7 @@ private struct ReservationsTabShell: View {
             var snap = RestaurantPrivacyCoverDataController.snapshot(from: serviceWindowReservations)
             let briefing = hostIntelligenceController.displayBriefingText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !briefing.isEmpty, briefing != "Nothing needs attention right now." {
-                snap.serviceSummary = briefing
+                snap.serviceSummary = RestaurantPrivacyCoverDataController.conciseServiceSummary(from: briefing)
             }
             return snap
         }
@@ -515,7 +539,7 @@ private struct HomeDashboardView: View {
             }
         }
         .fullScreenCover(isPresented: $showManualCreate) {
-            ManualReservationFormView { request in
+            ManualReservationFormView(source: "host") { request in
                 // Manual call-in create is accepted immediately; no email is sent.
                 try await controller.createAcceptedManualReservation(request, context: modelContext)
             }
@@ -544,6 +568,16 @@ private struct HomeDashboardView: View {
         )
     }
 
+}
+
+private struct ManualReservationSession: Identifiable, Equatable {
+    let id: String
+    let source: String
+
+    init(source: String) {
+        self.id = UUID().uuidString
+        self.source = source
+    }
 }
 
 // MARK: - Schedule View
@@ -577,16 +611,24 @@ private struct ReservationScheduleView: View {
     @State private var allModeTotal: Int?
     @State private var allModeTotalPages = 0
     @State private var allModeErrorMessage: String?
-    @State private var showManualCreate = false
     @State private var showShiftReminders = false
     @State private var navigationPath: [Int] = []
 
     let environment: AppEnvironment
     let isActive: Bool
+    let isManualCreatePresented: Bool
+    let onCreateManualReservation: () -> Void
 
-    init(environment: AppEnvironment, isActive: Bool) {
+    init(
+        environment: AppEnvironment,
+        isActive: Bool,
+        isManualCreatePresented: Bool = false,
+        onCreateManualReservation: @escaping () -> Void = {}
+    ) {
         self.environment = environment
         self.isActive = isActive
+        self.isManualCreatePresented = isManualCreatePresented
+        self.onCreateManualReservation = onCreateManualReservation
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
         let toDate = bounds.to
@@ -652,8 +694,7 @@ private struct ReservationScheduleView: View {
             }
         case .needsReview:
             rows = rows.filter {
-                $0.reservationDate == selectedDateKey
-                    && ($0.statusValue == .new || $0.statusValue == .needsReview)
+                $0.statusValue == .new || $0.statusValue == .needsReview
             }
         case .noShow:
             rows = rows.filter {
@@ -707,6 +748,9 @@ private struct ReservationScheduleView: View {
     private var bookingsSelectedDateKey: String {
         if scope == .all, let scheduleDateFilter {
             return scheduleDateFilter.reservationDateString()
+        }
+        if scope == .noShow {
+            return Date.reservationDateString()
         }
         return selectedDate.reservationDateString()
     }
@@ -805,9 +849,9 @@ private struct ReservationScheduleView: View {
                 } else if sections.isEmpty {
                     Section {
                         ContentUnavailableView(
-                            "No Reservations",
+                            emptyStateTitle,
                             systemImage: "calendar",
-                            description: Text("Try a different search or pull to refresh.")
+                            description: Text(emptyStateDescription)
                         )
                     }
                 } else {
@@ -896,7 +940,7 @@ private struct ReservationScheduleView: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if controller.capabilities.canCreateManualReservations {
                         Button {
-                            showManualCreate = true
+                            onCreateManualReservation()
                         } label: {
                             Image(systemName: "plus")
                         }
@@ -936,12 +980,6 @@ private struct ReservationScheduleView: View {
                     .accessibilityLabel("Refresh")
                 }
             }
-            .fullScreenCover(isPresented: $showManualCreate) {
-                ManualReservationFormView { request in
-                    // Manual call-in create is accepted immediately; no email is sent.
-                    try await controller.createAcceptedManualReservation(request, context: modelContext)
-                }
-            }
             .sheet(isPresented: $showShiftReminders) {
                 ShiftReminderReviewSheet(
                     dateKey: reminderDateKey,
@@ -954,8 +992,6 @@ private struct ReservationScheduleView: View {
                 // otherwise stay on / return to Upcoming.
                 if reviewAttentionCount > 0 {
                     scope = .needsReview
-                } else if scope == .needsReview {
-                    scope = .upcoming
                 }
             }
             .task(id: isActive) {
@@ -1078,7 +1114,7 @@ private struct ReservationScheduleView: View {
             #endif
             await controller.autoRefreshDashboardIfAllowed(
                 context: modelContext,
-                isInteractionActive: showManualCreate,
+                isInteractionActive: isManualCreatePresented,
                 isAppActive: scenePhase == .active,
                 source: .bookings
             )
@@ -1099,10 +1135,8 @@ private struct ReservationScheduleView: View {
     }
 
     private var reviewAttentionCount: Int {
-        let selectedDateKey = selectedDate.reservationDateString()
         return reservations.filter { reservation in
             !hiddenReservations.isHidden(reservation)
-                && reservation.reservationDate == selectedDateKey
                 && (reservation.statusValue == .new || reservation.statusValue == .needsReview)
         }.count
     }
@@ -1127,9 +1161,38 @@ private struct ReservationScheduleView: View {
                     filterDate: $scheduleDateFilter,
                     calendarAnchor: $scheduleCalendarAnchor
                 )
-            } else {
+            } else if showsServiceDateSelector {
                 ReservationServiceDateSelector(selectedDate: $selectedDate)
             }
+        }
+    }
+
+    private var showsServiceDateSelector: Bool {
+        switch scope {
+        case .upcoming, .cancelled:
+            return true
+        case .needsReview, .noShow, .all:
+            return false
+        }
+    }
+
+    private var emptyStateTitle: String {
+        switch scope {
+        case .needsReview:
+            return "No reservations need review."
+        default:
+            return "No Reservations"
+        }
+    }
+
+    private var emptyStateDescription: String {
+        switch scope {
+        case .needsReview:
+            return "New website reservations will appear here."
+        case .noShow:
+            return "No no-shows for today."
+        default:
+            return "Try a different search or pull to refresh."
         }
     }
 
@@ -1605,7 +1668,7 @@ private struct ReservationMoreView: View {
                 Text("You’ll need your WordPress app password to sign in again.")
             }
             .fullScreenCover(isPresented: $showManualCreate) {
-                ManualReservationFormView { request in
+                ManualReservationFormView(source: "more") { request in
                     // Manual call-in create is accepted immediately; no email is sent.
                     try await controller.createAcceptedManualReservation(request, context: modelContext)
                 }
