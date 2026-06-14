@@ -207,7 +207,7 @@ enum GuestEmailTemplateRenderer {
 
         if let url = input.manageLinkURL?.nilIfBlank {
             lines.append("")
-            lines.append("View Reservation:")
+            lines.append("Review Reservation:")
             lines.append(url)
         }
 
@@ -249,7 +249,7 @@ enum GuestEmailTemplateRenderer {
             let linkURL = htmlAttributeEscape(url)
             manageButton = """
             <td align="center" style="padding:0 4px 8px;">
-            <a href="\(linkURL)" style="display:inline-block;min-width:150px;padding:12px 18px;background-color:#1f6b3a;color:#ffffff;text-decoration:none;border-radius:999px;font-size:14px;font-weight:700;">View Reservation</a>
+            <a href="\(linkURL)" style="display:inline-block;min-width:150px;padding:12px 18px;background-color:#1f6b3a;color:#ffffff;text-decoration:none;border-radius:999px;font-size:14px;font-weight:700;">Review Reservation</a>
             </td>
             """
         } else {
@@ -288,13 +288,7 @@ enum GuestEmailTemplateRenderer {
         <p style="margin:0 0 8px;font-size:11px;color:#7a7368;letter-spacing:0.1em;text-transform:uppercase;">Your reservation</p>
         <p style="margin:0;font-size:18px;line-height:1.25;font-weight:700;color:#1f1f1f;">\(dateLine)</p>
         <p style="margin:5px 0 0;font-size:18px;line-height:1.25;font-weight:700;color:#1f1f1f;">\(timeLine)</p>
-        </td>
-        </tr>
-        <tr>
-        <td style="padding:0 16px 14px;">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-        <tr><td style="padding:5px 0;color:#5c574f;font-size:13px;">Party size</td><td style="padding:5px 0;color:#1f1f1f;font-size:14px;font-weight:650;text-align:right;">Party of \(partySize)</td></tr>
-        </table>
+        <p style="margin:6px 0 0;font-size:14px;line-height:1.25;font-weight:650;color:#1f1f1f;">Party of \(partySize)</p>
         </td>
         </tr>
         </table>

@@ -36,6 +36,7 @@ final class ManualReservationFacade: ObservableObject {
     @Published private(set) var publicSlotsError: String?
 
     private var preparedDateKey: String?
+    private var loadingDateKey: String?
     private var lastViewStateKey: String?
     private var loadTask: Task<Void, Never>?
 
@@ -87,6 +88,8 @@ final class ManualReservationFacade: ObservableObject {
         }
 
         if !force, availabilityState.hasFreshAvailabilityBundle {
+            loadingDateKey = nil
+            traceLoadedState(availabilityState)
             if let checkedAt = availabilityState.slotsFreshness.lastCheckedAt {
                 FreshnessTrace.log(
                     key: "reservation_slots",
@@ -108,6 +111,7 @@ final class ManualReservationFacade: ObservableObject {
         }
 
         if controller.isAvailabilitySummaryLoading(date: dateKey) {
+            beginVisibleLoad(dateKey: dateKey)
             FreshnessTrace.log(
                 key: "reservation_slots",
                 date: dateKey,
@@ -123,6 +127,7 @@ final class ManualReservationFacade: ObservableObject {
         guard force || preparedDateKey != dateKey else { return }
 
         preparedDateKey = dateKey
+        beginVisibleLoad(dateKey: dateKey)
         ReservationAvailabilityFacade.prepare(
             controller: controller,
             date: dateKey,
@@ -160,25 +165,115 @@ final class ManualReservationFacade: ObservableObject {
         dayAvailability = state.availability
         suggestedSlots = state.slots
         blockedSlotValues = state.blockedSlotValues
-        isLoadingPublicSlots = state.isLoading && !state.hasUsableSlots
+        isLoadingPublicSlots = (state.isLoading || loadingDateKey == state.date)
+            && state.slots == nil
+            && state.availability?.isOpen != false
     }
 
     private func observeLoadCompletion(dateKey: String, controller: ReservationsController) {
         loadTask?.cancel()
         loadTask = Task {
+            var attempts = 0
             while !Task.isCancelled {
+                guard preparedDateKey == dateKey else {
+                    WorkflowCleanupTrace.log(
+                        "MANUAL_TIME_SLOT_TRACE",
+                        fields: [
+                            "date": dateKey,
+                            "state": "ignored",
+                            "reason": "selected_date_changed"
+                        ]
+                    )
+                    break
+                }
+
                 let state = ReservationAvailabilityFacade.dayState(
                     controller: controller,
                     date: dateKey
                 )
                 applyAvailabilityState(state)
-                if !state.isLoading {
+
+                if hasConfirmedSlotResult(state) {
                     publicSlotsError = state.errorMessage
+                    loadingDateKey = nil
+                    applyAvailabilityState(state)
+                    traceLoadedState(state)
                     break
                 }
+
+                if !state.isLoading, attempts >= 60 {
+                    publicSlotsError = "Could not verify open times for this date."
+                    loadingDateKey = nil
+                    isLoadingPublicSlots = false
+                    break
+                }
+
+                attempts += 1
                 try? await Task.sleep(for: .milliseconds(200))
             }
             loadTask = nil
+        }
+    }
+
+    private func beginVisibleLoad(dateKey: String) {
+        if let loadingDateKey, loadingDateKey != dateKey {
+            WorkflowCleanupTrace.log(
+                "MANUAL_TIME_SLOT_TRACE",
+                fields: [
+                    "date": loadingDateKey,
+                    "state": "ignored",
+                    "reason": "selected_date_changed"
+                ]
+            )
+        }
+        loadingDateKey = dateKey
+        publicSlotsError = nil
+        isLoadingPublicSlots = true
+        WorkflowCleanupTrace.log(
+            "MANUAL_TIME_SLOT_TRACE",
+            fields: [
+                "date": dateKey,
+                "state": "loading",
+                "source": "cache_or_network"
+            ]
+        )
+    }
+
+    private func hasConfirmedSlotResult(_ state: AvailabilityDayState) -> Bool {
+        state.slots != nil || state.availability?.isOpen == false || state.errorMessage != nil
+    }
+
+    private func traceLoadedState(_ state: AvailabilityDayState) {
+        if let slots = state.slots {
+            if slots.slots.isEmpty {
+                WorkflowCleanupTrace.log(
+                    "MANUAL_TIME_SLOT_TRACE",
+                    fields: [
+                        "date": state.date,
+                        "state": "empty",
+                        "reason": "backend_confirmed_empty"
+                    ]
+                )
+            } else {
+                WorkflowCleanupTrace.log(
+                    "MANUAL_TIME_SLOT_TRACE",
+                    fields: [
+                        "date": state.date,
+                        "state": "loaded",
+                        "slots": "\(slots.slots.count)",
+                        "source": "restaurant_setup"
+                    ]
+                )
+            }
+        } else if state.availability?.isOpen == false {
+            WorkflowCleanupTrace.log(
+                "MANUAL_TIME_SLOT_TRACE",
+                fields: [
+                    "date": state.date,
+                    "state": "empty",
+                    "reason": "backend_confirmed_empty"
+                ]
+            )
         }
     }
 

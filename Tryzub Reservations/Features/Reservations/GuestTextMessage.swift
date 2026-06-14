@@ -212,6 +212,7 @@ struct GuestTextMessageActionButtons: View {
     let confirmationBody: String
     let tableDueBody: String
     var isCompact = false
+    var includesConfirmation = true
     var includesTableReady = true
 
     @State private var activeDraft: GuestTextMessageDraft?
@@ -220,11 +221,13 @@ struct GuestTextMessageActionButtons: View {
         if GuestTextMessagePresenter.hasDialablePhone(phone) {
             ViewThatFits {
                 HStack(spacing: 10) {
-                    messageButton(
-                        title: "Confirmation",
-                        systemImage: "message.fill",
-                        body: confirmationBody
-                    )
+                    if includesConfirmation {
+                        messageButton(
+                            title: "Confirmation",
+                            systemImage: "message.fill",
+                            body: confirmationBody
+                        )
+                    }
                     if includesTableReady {
                         messageButton(
                             title: "Table ready",
@@ -235,12 +238,14 @@ struct GuestTextMessageActionButtons: View {
                 }
 
                 VStack(spacing: 8) {
-                    messageButton(
-                        title: "Confirmation",
-                        systemImage: "message.fill",
-                        body: confirmationBody,
-                        fillsWidth: true
-                    )
+                    if includesConfirmation {
+                        messageButton(
+                            title: "Confirmation",
+                            systemImage: "message.fill",
+                            body: confirmationBody,
+                            fillsWidth: true
+                        )
+                    }
                     if includesTableReady {
                         messageButton(
                             title: "Table ready",

@@ -626,19 +626,19 @@ struct ReservationDetailView: View {
             onAction: handleAction,
             onSeatRequiresTableChoice: { seatPromptReservation = reservation },
             onEdit: { showEditScreen = true },
-            onSendGuestConfirmationEmail: controller.capabilities.canGenerateGuestManageLinks
+            onSendGuestConfirmationEmail: showsDeveloperGuestTools && controller.capabilities.canGenerateGuestManageLinks
                 ? { Task { await sendGuestConfirmationEmail() } }
                 : nil,
-            onRecordManualConfirmationSent: guestManageLink != nil && reservation.hasUsableConfirmationEmail
+            onRecordManualConfirmationSent: showsDeveloperGuestTools && guestManageLink != nil && reservation.hasUsableConfirmationEmail
                 ? { Task { await recordManualConfirmationSentFromCurrentDraft() } }
                 : nil,
-            onGenerateGuestManageLink: controller.capabilities.canGenerateGuestManageLinks
+            onGenerateGuestManageLink: showsDeveloperGuestTools && controller.capabilities.canGenerateGuestManageLinks
                 ? { Task { await generateGuestManageLink() } }
                 : nil,
-            onCopyGuestManageLink: guestManageLink != nil
+            onCopyGuestManageLink: showsDeveloperGuestTools && guestManageLink != nil
                 ? { copyGuestManageLink() }
                 : nil,
-            onCopyConfirmationDraft: guestManageLink != nil
+            onCopyConfirmationDraft: showsDeveloperGuestTools && guestManageLink != nil
                 ? { copyGuestConfirmationDraft() }
                 : nil,
             onHideWrongEntry: reservation.canSoftHideAsWrongEntry && !reservation.isHidden
@@ -648,6 +648,10 @@ struct ReservationDetailView: View {
                 ? { Task { await restoreHiddenReservation() } }
                 : nil
         )
+    }
+
+    private var showsDeveloperGuestTools: Bool {
+        environment.role == .developer
     }
 
     private var draftMessageCard: some View {
@@ -679,10 +683,21 @@ struct ReservationDetailView: View {
                         phone: reservation.phone,
                         confirmationBody: ManualTextMessageService.confirmationBody(reservation: reservation),
                         tableDueBody: ManualTextMessageService.tableDueBody(reservation: reservation),
+                        includesConfirmation: showsConfirmationTextAction,
                         includesTableReady: showsTableReadyTextAction
                     )
                 }
             }
+        }
+    }
+
+    private var showsConfirmationTextAction: Bool {
+        guard !reservation.isHidden else { return false }
+        switch reservation.statusValue {
+        case .new, .needsReview:
+            return true
+        default:
+            return false
         }
     }
 

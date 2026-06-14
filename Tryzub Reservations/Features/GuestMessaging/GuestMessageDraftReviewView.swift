@@ -41,10 +41,6 @@ struct GuestMessageDraftActionsSection: View {
     let isDrafting: Bool
     let onDraft: (GuestMessageDraftKind) -> Void
 
-    private var isLargeParty: Bool {
-        reservation.partySize >= GuestMessageDraftPacketBuilder.largePartyMinimumPartySize
-    }
-
     private var showsTableReadyDraft: Bool {
         guard !reservation.isHidden else { return false }
         switch reservation.statusValue {
@@ -69,13 +65,7 @@ struct GuestMessageDraftActionsSection: View {
                     TryzubLoadingRow(title: "Preparing draft...")
                 }
 
-                draftButton(.confirmation, systemImage: "checkmark.circle")
                 draftButton(.reminder, systemImage: "bell")
-                draftButton(.clarificationRequest, systemImage: "questionmark.circle")
-
-                if isLargeParty {
-                    draftButton(.largePartyConfirmation, systemImage: "person.3.fill", emphasized: true)
-                }
 
                 if showsTableReadyDraft {
                     draftButton(.tableReady, systemImage: "table.furniture", emphasized: true)

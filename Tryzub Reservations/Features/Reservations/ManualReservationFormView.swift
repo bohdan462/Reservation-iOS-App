@@ -1328,11 +1328,9 @@ private struct ReservationFormContent: View {
     }
 
     private var availabilityValidationMessage: String? {
-        let dateKey = draft.reservationDate.reservationDateString()
         if isLoadingPublicSlots
-            && loadedSlotsDateKey != dateKey
-            && loadedAvailabilityDateKey != dateKey
-            && activeSuggestedSlots == nil {
+            && activeSuggestedSlots == nil
+            && activeDayAvailability == nil {
             return "Loading open times for this date."
         }
 
