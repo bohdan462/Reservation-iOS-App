@@ -27,17 +27,12 @@ enum GuestMessageDraftTemplateWriter {
     private static func confirmationDraft(from packet: GuestMessageDraftPacket) -> GuestMessageDraft {
         let greeting = greetingLine(for: packet)
         let restaurant = packet.restaurantName
-        let manage = manageURLLine(for: packet)
 
         let subject = "Your Tryzub reservation is confirmed"
         let body = """
         \(greeting)
 
-        Your reservation for party of \(packet.partySize) on \(packet.reservationDateDisplay) at \(packet.reservationTimeDisplay) is confirmed.
-        \(manage)
-
-        We look forward to welcoming you to \(restaurant).
-        \(contactFooter(for: packet))
+        Your reservation at \(restaurant) is confirmed. We look forward to welcoming you.
         """.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let sms = compactSMS(
@@ -61,11 +56,7 @@ enum GuestMessageDraftTemplateWriter {
         let body = """
         \(greeting)
 
-        This is a reminder for your reservation for party of \(packet.partySize) on \(packet.reservationDateDisplay) at \(packet.reservationTimeDisplay).
-        \(manageURLLine(for: packet))
-
-        If your plans have changed, please contact us as soon as you can.
-        \(contactFooter(for: packet))
+        This is a reminder for your reservation at \(ReservationEmailWorkflow.restaurantName) today.
         """.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let sms = "Tryzub reminder: your reservation is today at \(packet.reservationTimeDisplay) for \(packet.partySize) guest\(packet.partySize == 1 ? "" : "s"). Plans change — no problem. For changes, call during business hours or request another time: \(ReservationEmailWorkflow.bookTableURL.absoluteString)"

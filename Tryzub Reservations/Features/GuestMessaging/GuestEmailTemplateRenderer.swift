@@ -87,7 +87,7 @@ struct GuestEmailRenderInput: Equatable {
         manageLinkURL: String? = nil,
         subjectOverride: String? = nil
     ) -> GuestEmailRenderInput {
-        var input = base(
+        let input = base(
             reservation: reservation,
             kind: .manualQuestion,
             manageLinkURL: manageLinkURL,
@@ -144,12 +144,9 @@ enum GuestEmailTemplateRenderer {
         let timeLine = htmlEscape(input.timeLine)
         let intro = introHTML(for: input)
         let reservationCard = reservationCardHTML(dateLine: dateLine, timeLine: timeLine, partySize: input.partySize)
-        let primaryButton = primaryButtonHTML(manageURL: input.manageLinkURL)
-        let primaryHelper = primaryHelperHTML
-        let rescheduleSection = rescheduleSectionHTML
-        let noReplySection = noReplySectionHTML
-        let addressSection = addressSectionHTML
-        let expiresHTML = formattedExpiresHTML(input.linkExpiresAt)
+        let actionPrompt = actionPromptHTML(for: input.kind)
+        let actionButtons = actionButtonsHTML(manageURL: input.manageLinkURL)
+        let footer = footerHTML
         let policiesURL = htmlAttributeEscape(ReservationEmailWorkflow.reservationPoliciesURL.absoluteString)
         let headerTitle = htmlEscape(input.kind.headerTitle)
         let restaurantName = htmlEscape(ReservationEmailWorkflow.restaurantName)
@@ -162,32 +159,29 @@ enum GuestEmailTemplateRenderer {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         </head>
         <body style="margin:0;padding:0;background-color:#f3efe6;font-family:Georgia,'Times New Roman',serif;">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f3efe6;padding:28px 14px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f3efe6;padding:18px 12px;">
         <tr>
         <td align="center">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:580px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e4ddd1;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e4ddd1;">
         <tr>
-        <td style="background:#1f3d2b;padding:30px 34px;text-align:center;">
-        <p style="margin:0;color:#d8c9a8;font-size:12px;letter-spacing:0.16em;text-transform:uppercase;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">\(restaurantName)</p>
-        <h1 style="margin:14px 0 0;color:#ffffff;font-size:26px;line-height:1.25;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">\(headerTitle)</h1>
+        <td style="background:#1f3d2b;padding:22px 26px;text-align:center;">
+        <p style="margin:0;color:#d8c9a8;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">\(restaurantName)</p>
+        <h1 style="margin:9px 0 0;color:#ffffff;font-size:23px;line-height:1.2;font-weight:650;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">\(headerTitle)</h1>
         </td>
         </tr>
         <tr>
-        <td style="padding:34px 34px 10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222222;font-size:16px;line-height:1.65;">
-        <p style="margin:0 0 18px;">Dear \(firstName),</p>
+        <td style="padding:24px 26px 20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222222;font-size:15px;line-height:1.5;">
+        <p style="margin:0 0 12px;">Dear \(firstName),</p>
         \(intro)
         \(reservationCard)
-        \(primaryButton)
-        \(primaryHelper)
-        \(rescheduleSection)
-        \(expiresHTML)
-        \(addressSection)
-        \(noReplySection)
+        \(actionPrompt)
+        \(actionButtons)
+        \(footer)
         </td>
         </tr>
         <tr>
-        <td style="padding:18px 34px 30px;border-top:1px solid #ece8e1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;line-height:1.6;color:#8a8378;text-align:center;">
-        <p style="margin:0;">By dining with us you agree to our <a href="\(policiesURL)" style="color:#1f6b3a;text-decoration:underline;">reservation policies</a>.</p>
+        <td style="padding:14px 26px 22px;border-top:1px solid #ece8e1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:11px;line-height:1.45;color:#8a8378;text-align:center;">
+        <p style="margin:0;"><a href="\(policiesURL)" style="color:#1f6b3a;text-decoration:underline;">Reservation policies</a></p>
         </td>
         </tr>
         </table>
@@ -215,9 +209,6 @@ enum GuestEmailTemplateRenderer {
             lines.append("")
             lines.append("View Reservation:")
             lines.append(url)
-            if let expires = formattedExpiresLine(input.linkExpiresAt) {
-                lines.append(expires)
-            }
         }
 
         lines.append("")
@@ -244,65 +235,65 @@ enum GuestEmailTemplateRenderer {
 
     // MARK: - Private HTML blocks
 
-    private static var primaryHelperHTML: String {
-        """
-        <p style="margin:0 0 28px;font-size:14px;line-height:1.6;color:#666666;text-align:center;">Use your private link to view reservation details or cancel.</p>
+    private static func actionPromptHTML(for kind: GuestEmailTemplateKind) -> String {
+        guard kind == .reminder else { return "" }
+        return """
+        <p style="margin:0 0 10px;font-size:14px;line-height:1.45;color:#5c574f;text-align:center;">Plans change — no problem.</p>
         """
     }
 
-    private static var rescheduleSectionHTML: String {
+    private static func actionButtonsHTML(manageURL: String?) -> String {
         let bookURL = htmlAttributeEscape(ReservationEmailWorkflow.bookTableURL.absoluteString)
+        let manageButton: String
+        if let url = manageURL?.nilIfBlank {
+            let linkURL = htmlAttributeEscape(url)
+            manageButton = """
+            <td align="center" style="padding:0 4px 8px;">
+            <a href="\(linkURL)" style="display:inline-block;min-width:150px;padding:12px 18px;background-color:#1f6b3a;color:#ffffff;text-decoration:none;border-radius:999px;font-size:14px;font-weight:700;">View Reservation</a>
+            </td>
+            """
+        } else {
+            manageButton = ""
+        }
+
         return """
-        <p style="margin:0 0 12px;font-size:15px;line-height:1.65;color:#444444;text-align:center;">Plans change — no problem.</p>
-        <p style="margin:0 0 10px;text-align:center;">
-        <a href="\(bookURL)" style="display:inline-block;padding:10px 18px;border:1px solid #1f6b3a;color:#1f6b3a;text-decoration:none;border-radius:999px;font-size:14px;font-weight:600;">Request Different Time</a>
-        </p>
-        <p style="margin:0 0 28px;font-size:13px;line-height:1.55;color:#777777;text-align:center;">If you request a new time online, please mention your existing reservation in the notes.</p>
+        <table role="presentation" cellspacing="0" cellpadding="0" align="center" style="margin:0 auto 18px;">
+        <tr>
+        \(manageButton)
+        <td align="center" style="padding:0 4px 8px;">
+        <a href="\(bookURL)" style="display:inline-block;min-width:150px;padding:11px 16px;border:1px solid #1f6b3a;color:#1f6b3a;text-decoration:none;border-radius:999px;font-size:13px;font-weight:700;">Request Different Time</a>
+        </td>
+        </tr>
+        </table>
         """
     }
 
-    private static var noReplySectionHTML: String {
+    private static var footerHTML: String {
         let contactEmail = htmlEscape(ReservationEmailWorkflow.guestContactEmail)
-        return """
-        <p style="margin:28px 0 0;font-size:12px;line-height:1.6;color:#8a8378;text-align:center;">This is an automated reservation message. Please do not reply to this email.</p>
-        <p style="margin:8px 0 0;font-size:13px;line-height:1.6;color:#666666;text-align:center;">For questions, email <a href="mailto:\(contactEmail)" style="color:#1f6b3a;text-decoration:none;">\(contactEmail)</a>. For same-day changes during business hours, please call us.</p>
-        """
-    }
-
-    private static var addressSectionHTML: String {
         let websiteURL = htmlAttributeEscape(ReservationEmailWorkflow.websiteURL.absoluteString)
         return """
-        <p style="margin:0 0 24px;font-size:14px;line-height:1.7;color:#5c574f;text-align:center;">
-        \(htmlEscape(ReservationEmailWorkflow.restaurantAddressLine))<br>
-        \(htmlEscape(ReservationEmailWorkflow.restaurantPhone)) · <a href="\(websiteURL)" style="color:#1f6b3a;text-decoration:none;">tryzubchicago.com</a>
-        </p>
-        """
-    }
-
-    private static func primaryButtonHTML(manageURL: String?) -> String {
-        guard let url = manageURL?.nilIfBlank else { return "" }
-        let linkURL = htmlAttributeEscape(url)
-        return """
-        <p style="margin:0 0 18px;text-align:center;">
-        <a href="\(linkURL)" style="display:inline-block;padding:15px 28px;background-color:#1f6b3a;color:#ffffff;text-decoration:none;border-radius:999px;font-size:16px;font-weight:700;letter-spacing:0.01em;">View Reservation</a>
+        <p style="margin:4px 0 0;font-size:11px;line-height:1.45;color:#8a8378;text-align:center;">This is an automated reservation message. Please do not reply to this email.</p>
+        <p style="margin:6px 0 0;font-size:11px;line-height:1.45;color:#766f65;text-align:center;">For questions, email <a href="mailto:\(contactEmail)" style="color:#1f6b3a;text-decoration:none;">\(contactEmail)</a>. For same-day changes during business hours, please call us.</p>
+        <p style="margin:6px 0 0;font-size:11px;line-height:1.45;color:#8a8378;text-align:center;">
+        \(htmlEscape(ReservationEmailWorkflow.restaurantAddressLine)) · \(htmlEscape(ReservationEmailWorkflow.restaurantPhone)) · <a href="\(websiteURL)" style="color:#1f6b3a;text-decoration:none;">tryzubchicago.com</a>
         </p>
         """
     }
 
     private static func reservationCardHTML(dateLine: String, timeLine: String, partySize: Int) -> String {
         """
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8f5ef;border:1px solid #ece4d7;border-radius:12px;margin:0 0 28px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8f5ef;border:1px solid #ece4d7;border-radius:10px;margin:0 0 18px;">
         <tr>
-        <td style="padding:22px 22px 8px;">
-        <p style="margin:0 0 14px;font-size:12px;color:#7a7368;letter-spacing:0.12em;text-transform:uppercase;">Your reservation</p>
-        <p style="margin:0;font-size:20px;line-height:1.35;font-weight:700;color:#1f1f1f;">\(dateLine)</p>
-        <p style="margin:8px 0 0;font-size:20px;line-height:1.35;font-weight:700;color:#1f1f1f;">\(timeLine)</p>
+        <td style="padding:15px 16px 6px;">
+        <p style="margin:0 0 8px;font-size:11px;color:#7a7368;letter-spacing:0.1em;text-transform:uppercase;">Your reservation</p>
+        <p style="margin:0;font-size:18px;line-height:1.25;font-weight:700;color:#1f1f1f;">\(dateLine)</p>
+        <p style="margin:5px 0 0;font-size:18px;line-height:1.25;font-weight:700;color:#1f1f1f;">\(timeLine)</p>
         </td>
         </tr>
         <tr>
-        <td style="padding:0 22px 20px;">
+        <td style="padding:0 16px 14px;">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-        <tr><td style="padding:6px 0;color:#5c574f;font-size:14px;">Party size</td><td style="padding:6px 0;color:#1f1f1f;font-size:15px;font-weight:600;text-align:right;">\(partySize)</td></tr>
+        <tr><td style="padding:5px 0;color:#5c574f;font-size:13px;">Party size</td><td style="padding:5px 0;color:#1f1f1f;font-size:14px;font-weight:650;text-align:right;">Party of \(partySize)</td></tr>
         </table>
         </td>
         </tr>
@@ -312,33 +303,33 @@ enum GuestEmailTemplateRenderer {
 
     private static func introHTML(for input: GuestEmailRenderInput) -> String {
         if let custom = input.customPlainMessage?.nilIfBlank {
-            return plainParagraphsHTML(custom)
+            return plainParagraphsHTML(sanitizedCustomMessage(custom))
         }
         switch input.kind {
         case .confirmation:
             return """
-            <p style="margin:0 0 26px;">Thank you for choosing <strong>\(htmlEscape(ReservationEmailWorkflow.restaurantName))</strong>. We look forward to welcoming you to Ukrainian Village.</p>
+            <p style="margin:0 0 16px;">Your reservation at <strong>\(htmlEscape(ReservationEmailWorkflow.restaurantName))</strong> is confirmed. We look forward to welcoming you.</p>
             """
         case .reminder:
             return """
-            <p style="margin:0 0 26px;">This is a reminder for your reservation at <strong>\(htmlEscape(ReservationEmailWorkflow.restaurantName))</strong> today at \(htmlEscape(input.timeLine)) for \(input.partySize) guest\(input.partySize == 1 ? "" : "s").</p>
+            <p style="margin:0 0 16px;">This is a reminder for your reservation at <strong>\(htmlEscape(ReservationEmailWorkflow.restaurantName))</strong> today.</p>
             """
         case .manualQuestion, .custom:
             return """
-            <p style="margin:0 0 26px;">We wanted to follow up about your reservation at <strong>\(htmlEscape(ReservationEmailWorkflow.restaurantName))</strong>.</p>
+            <p style="margin:0 0 16px;">We wanted to follow up about your reservation at <strong>\(htmlEscape(ReservationEmailWorkflow.restaurantName))</strong>.</p>
             """
         }
     }
 
     private static func introPlain(for input: GuestEmailRenderInput) -> String {
         if let custom = input.customPlainMessage?.nilIfBlank {
-            return custom
+            return sanitizedCustomMessage(custom)
         }
         switch input.kind {
         case .confirmation:
-            return "Thank you for choosing \(ReservationEmailWorkflow.restaurantName). We look forward to welcoming you to Ukrainian Village."
+            return "Your reservation at \(ReservationEmailWorkflow.restaurantName) is confirmed. We look forward to welcoming you."
         case .reminder:
-            return "This is a reminder for your reservation at \(ReservationEmailWorkflow.restaurantName) today at \(input.timeLine) for \(input.partySize) guest\(input.partySize == 1 ? "" : "s")."
+            return "This is a reminder for your reservation at \(ReservationEmailWorkflow.restaurantName) today."
         case .manualQuestion, .custom:
             return "We wanted to follow up about your reservation at \(ReservationEmailWorkflow.restaurantName)."
         }
@@ -350,38 +341,54 @@ enum GuestEmailTemplateRenderer {
             .map { paragraph in
                 let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return "" }
-                return "<p style=\"margin:0 0 18px;\">\(htmlEscape(trimmed))</p>"
+                return "<p style=\"margin:0 0 14px;\">\(htmlEscape(trimmed))</p>"
             }
             .filter { !$0.isEmpty }
             .joined()
     }
 
-    private static func formattedExpiresLine(_ value: String?) -> String? {
-        guard let value = value?.nilIfBlank else { return nil }
-        if let date = ReservationFormatters.serverDateTime.date(from: value) {
-            return "This private link expires \(emailLongDateFormatter.string(from: date)) at \(emailLongTimeFormatter.string(from: date))."
+    private static func sanitizedCustomMessage(_ text: String) -> String {
+        var lines = text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        while let first = lines.first, first.isEmpty {
+            lines.removeFirst()
         }
-        return "This private link expires \(value)."
+
+        if let first = lines.first, isGreetingLine(first) {
+            lines.removeFirst()
+            while let next = lines.first, next.isEmpty {
+                lines.removeFirst()
+            }
+        }
+
+        var cleaned: [String] = []
+        var skipNextURL = false
+        for line in lines {
+            let lower = line.lowercased()
+            if lower == "view or manage your reservation:" {
+                skipNextURL = true
+                continue
+            }
+            if line.hasPrefix("http://") || line.hasPrefix("https://") || skipNextURL {
+                skipNextURL = false
+                continue
+            }
+            if line == ReservationEmailWorkflow.restaurantAddressLine || line == ReservationEmailWorkflow.restaurantPhone {
+                continue
+            }
+            cleaned.append(line)
+        }
+
+        return cleaned.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func formattedExpiresHTML(_ value: String?) -> String {
-        guard let line = formattedExpiresLine(value) else { return "" }
-        return "<p style=\"margin:0 0 24px;font-size:13px;line-height:1.6;color:#8a8378;text-align:center;\">\(htmlEscape(line))</p>"
+    private static func isGreetingLine(_ line: String) -> Bool {
+        let lower = line.lowercased()
+        return (lower.hasPrefix("dear ") || lower.hasPrefix("hi ") || lower == "hi," || lower.hasPrefix("hello "))
+            && (line.hasSuffix(",") || line.hasSuffix("."))
     }
-
-    private static let emailLongDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US")
-        formatter.dateFormat = "EEEE, MMMM d, yyyy"
-        return formatter
-    }()
-
-    private static let emailLongTimeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US")
-        formatter.dateFormat = "h:mm a"
-        return formatter
-    }()
 
     static func guestFirstName(from guestName: String) -> String {
         guestName.split(separator: " ").first.map(String.init) ?? guestName
@@ -410,6 +417,12 @@ enum GuestEmailTemplateRenderer {
             reservationID: input.reservationID,
             type: input.kind,
             leakedInternalFields: false
+        )
+        GuestCommunicationTrace.emailRenderPolish(
+            reservationID: input.reservationID,
+            type: input.kind,
+            duplicatedGreeting: false,
+            rawRescheduleURL: false
         )
     }
 }

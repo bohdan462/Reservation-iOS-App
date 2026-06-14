@@ -23,7 +23,7 @@ enum GuestMessageDraftKind: String, Codable, CaseIterable, Equatable {
         case .reminder:
             return "Reminder"
         case .clarificationRequest:
-            return "Clarification"
+            return "Question"
         case .largePartyConfirmation:
             return "Large party"
         case .tableReady:
@@ -32,7 +32,7 @@ enum GuestMessageDraftKind: String, Codable, CaseIterable, Equatable {
     }
 
     var draftActionTitle: String {
-        "Draft \(staffLabel.lowercased())"
+        staffLabel
     }
 }
 
@@ -42,7 +42,7 @@ extension GuestMessageDraftSource {
         case .template:
             return "Template draft"
         case .localModel:
-            return "Enhanced draft"
+            return "AI draft"
         case .blocked:
             return "Blocked"
         }

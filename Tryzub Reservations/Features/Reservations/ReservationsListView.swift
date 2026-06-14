@@ -85,6 +85,18 @@ private struct StartupRootView: View {
             }
         }
         .onAppear {
+            #if DEBUG
+            let startupDate = Date().reservationDateString()
+            DateBoundaryTrace.boundary(
+                source: "startup",
+                selectedDate: startupDate,
+                serviceDate: startupDate,
+                afterClose: DateBoundaryTrace.isLikelyAfterClose(selectedDate: Date()),
+                autoAdvanced: false,
+                decision: "keep_selected_date",
+                reason: "startup_uses_calendar_today"
+            )
+            #endif
             _ = controller.releaseStartupUIFromLocalCacheIfAvailable(context: modelContext)
             controller.noteStartupWindowQueryDelivered(rowCount: startupWindowRows.count)
             if !showsStartupLoading {
@@ -412,15 +424,42 @@ private struct HomeDashboardView: View {
         }
         #if DEBUG
         if isActive {
-            for record in allForDate {
+            let afterClose = DateBoundaryTrace.isLikelyAfterClose(selectedDate: selectedDate)
+            let tomorrowKey = Calendar.current.date(byAdding: .day, value: 1, to: Date())?.reservationDateString() ?? ""
+            let tomorrowRowsFilteredOut = reservations.filter { $0.reservationDate == tomorrowKey && $0.reservationDate != selectedDateKey }.count
+            DateBoundaryTrace.boundary(
+                source: "host",
+                selectedDate: selectedDateKey,
+                serviceDate: selectedDateKey,
+                afterClose: afterClose,
+                autoAdvanced: false,
+                decision: "keep_selected_date",
+                reason: "host_board_selected_date_binding"
+            )
+            DateBoundaryTrace.afterClose(
+                selectedDate: selectedDateKey,
+                afterClose: afterClose,
+                todayRows: filtered.count,
+                tomorrowRowsFilteredOut: tomorrowRowsFilteredOut
+            )
+            for record in reservations {
                 let isHidden = hiddenReservations.isHidden(record)
                 let isOperational = record.isHostBoardOperational
-                let included = !isHidden && isOperational
+                let dateMatches = record.reservationDate == selectedDateKey
+                let included = dateMatches && !isHidden && isOperational
                 let reason: String = {
+                    if !dateMatches { return "date_mismatch" }
                     if isHidden { return "hidden" }
                     if !isOperational { return "terminal_status" }
-                    return "operational"
+                    return "date_match"
                 }()
+                DateBoundaryTrace.selectedDateFilter(
+                    selectedDate: selectedDateKey,
+                    recordDate: record.reservationDate,
+                    reservationID: record.remoteID,
+                    included: included,
+                    reason: reason
+                )
                 MultiDeviceSyncTrace.hostFilterTrace(
                     selectedDate: selectedDateKey,
                     id: record.remoteID,
@@ -527,6 +566,7 @@ private struct ReservationScheduleView: View {
     @State private var scope: ReservationScheduleScope = .upcoming
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
+    @State private var selectedDate = Date()
     @State private var scheduleDateFilter: Date?
     @State private var scheduleCalendarAnchor = Date()
     @State private var isLoadingAllPage = false
@@ -588,7 +628,7 @@ private struct ReservationScheduleView: View {
     // Schedule reads cached rows; sync freshness is handled by ReservationsController.
     private var displayedReservations: [ReservationRecord] {
         guard isActive else { return [] }
-        let today = Date.reservationDateString()
+        let selectedDateKey = bookingsSelectedDateKey
         let trimmedSearchText = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         var rows: [ReservationRecord]
@@ -600,27 +640,30 @@ private struct ReservationScheduleView: View {
             rows = reservations
         }
         rows = rows.filter { !hiddenReservations.isHidden($0) }
+        let candidateRows = rows
 
         switch scope {
         case .upcoming:
             rows = rows.filter {
-                $0.reservationDate >= today
+                $0.reservationDate == selectedDateKey
                     && $0.statusValue != .completed
                     && $0.statusValue != .cancelled
                     && $0.statusValue != .noShow
             }
         case .needsReview:
             rows = rows.filter {
-                $0.reservationDate >= today
+                $0.reservationDate == selectedDateKey
                     && ($0.statusValue == .new || $0.statusValue == .needsReview)
             }
         case .noShow:
             rows = rows.filter {
-                $0.statusValue == .noShow
+                $0.reservationDate == selectedDateKey
+                    && $0.statusValue == .noShow
             }
         case .cancelled:
             rows = rows.filter {
-                $0.statusValue == .cancelled
+                $0.reservationDate == selectedDateKey
+                    && $0.statusValue == .cancelled
             }
         case .all:
             break
@@ -633,6 +676,8 @@ private struct ReservationScheduleView: View {
             rows.append(contentsOf: cachedForDate.filter { !existingIDs.contains($0.remoteID) })
             rows = rows.filter { $0.reservationDate == filterKey }
         }
+
+        traceBookingsDateBoundary(candidateRows: candidateRows, includedRows: rows)
 
         if !trimmedSearchText.isEmpty {
             rows = rows.filter { $0.matchesSearch(trimmedSearchText) }
@@ -656,7 +701,68 @@ private struct ReservationScheduleView: View {
     }
 
     private var reminderDateKey: String {
-        (scheduleDateFilter ?? Date()).reservationDateString()
+        bookingsSelectedDateKey
+    }
+
+    private var bookingsSelectedDateKey: String {
+        if scope == .all, let scheduleDateFilter {
+            return scheduleDateFilter.reservationDateString()
+        }
+        return selectedDate.reservationDateString()
+    }
+
+    private func traceBookingsDateBoundary(
+        candidateRows: [ReservationRecord],
+        includedRows: [ReservationRecord]
+    ) {
+        #if DEBUG
+        guard isActive else { return }
+        guard scope != .all || scheduleDateFilter != nil else { return }
+
+        let selectedKey = bookingsSelectedDateKey
+        let includedIDs = Set(includedRows.map(\.remoteID))
+        let afterClose = DateBoundaryTrace.isLikelyAfterClose(selectedDate: selectedDate)
+        let tomorrowKey = Calendar.current.date(byAdding: .day, value: 1, to: Date())?.reservationDateString() ?? ""
+        let tomorrowRowsFilteredOut = candidateRows.filter {
+            $0.reservationDate == tomorrowKey
+                && $0.reservationDate != selectedKey
+                && !includedIDs.contains($0.remoteID)
+        }.count
+
+        DateBoundaryTrace.boundary(
+            source: "bookings",
+            selectedDate: selectedKey,
+            serviceDate: selectedKey,
+            afterClose: afterClose,
+            autoAdvanced: false,
+            decision: "keep_selected_date",
+            reason: "bookings_tab_selected_date_filter"
+        )
+        DateBoundaryTrace.afterClose(
+            selectedDate: selectedKey,
+            afterClose: afterClose,
+            todayRows: includedRows.count,
+            tomorrowRowsFilteredOut: tomorrowRowsFilteredOut
+        )
+
+        for record in candidateRows {
+            let included = includedIDs.contains(record.remoteID)
+            let reason: String = {
+                if record.reservationDate != selectedKey { return "date_mismatch" }
+                if record.statusValue == .completed || record.statusValue == .cancelled || record.statusValue == .noShow {
+                    return scope == .all ? "date_match" : "terminal_status"
+                }
+                return "date_match"
+            }()
+            DateBoundaryTrace.selectedDateFilter(
+                selectedDate: selectedKey,
+                recordDate: record.reservationDate,
+                reservationID: record.remoteID,
+                included: included,
+                reason: reason
+            )
+        }
+        #endif
     }
 
     var body: some View {
@@ -958,6 +1064,18 @@ private struct ReservationScheduleView: View {
             }
             guard isActive else { return }
             guard scenePhase == .active else { continue }
+            #if DEBUG
+            let selectedKey = selectedDate.reservationDateString()
+            DateBoundaryTrace.boundary(
+                source: "autoRefresh",
+                selectedDate: selectedKey,
+                serviceDate: selectedKey,
+                afterClose: DateBoundaryTrace.isLikelyAfterClose(selectedDate: selectedDate),
+                autoAdvanced: false,
+                decision: "keep_selected_date",
+                reason: "bookings_auto_refresh_never_advances_date"
+            )
+            #endif
             await controller.autoRefreshDashboardIfAllowed(
                 context: modelContext,
                 isInteractionActive: showManualCreate,
@@ -981,10 +1099,10 @@ private struct ReservationScheduleView: View {
     }
 
     private var reviewAttentionCount: Int {
-        let today = Date.reservationDateString()
+        let selectedDateKey = selectedDate.reservationDateString()
         return reservations.filter { reservation in
             !hiddenReservations.isHidden(reservation)
-                && reservation.reservationDate >= today
+                && reservation.reservationDate == selectedDateKey
                 && (reservation.statusValue == .new || reservation.statusValue == .needsReview)
         }.count
     }
@@ -1009,6 +1127,8 @@ private struct ReservationScheduleView: View {
                     filterDate: $scheduleDateFilter,
                     calendarAnchor: $scheduleCalendarAnchor
                 )
+            } else {
+                ReservationServiceDateSelector(selectedDate: $selectedDate)
             }
         }
     }

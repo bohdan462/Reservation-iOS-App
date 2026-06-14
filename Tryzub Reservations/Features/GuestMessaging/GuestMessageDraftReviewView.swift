@@ -58,7 +58,7 @@ struct GuestMessageDraftActionsSection: View {
     }
 
     var body: some View {
-        DetailSectionCard(title: "Draft guest message", systemImage: "text.bubble") {
+        DetailSectionCard(title: "Guest message", systemImage: "text.bubble") {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Review before sending. Nothing is sent automatically.")
                     .font(.caption)
@@ -130,36 +130,34 @@ struct GuestMessageDraftReviewView: View {
         draft.source == .localModel
     }
 
+    private var screenTitle: String {
+        kind == .reminder ? "Review reminder" : "Review message"
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 14) {
                     headerSection
 
                     if showsBetaWarning {
-                        reviewBanner(
-                            title: "AI draft is beta",
-                            message: "AI draft is beta. Review and edit before sending.",
-                            tint: TryzubColors.info
-                        )
+                        inlineAINote
                     }
 
                     if draft.isBlocked, let reason = draft.blockedReason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
                         reviewBanner(title: "Draft blocked", message: reason, tint: .orange)
-                    } else if draft.hasSafetyNote, let note = draft.safetyNote, draft.source == .localModel {
-                        reviewBanner(title: "Review note", message: note, tint: TryzubColors.info)
                     }
 
-                    editableField(title: "Email subject", text: $editedSubject, axis: false)
-                    editableField(title: "Email body", text: $editedEmailBody, axis: true)
-                    editableField(title: "Text reminder", text: $editedTextBody, axis: true)
+                    editableField(title: "Subject", text: $editedSubject, axis: false)
+                    editableField(title: "Email message", text: $editedEmailBody, axis: true)
+                    editableField(title: "Text message", text: $editedTextBody, axis: true)
 
                     actionButtons
                 }
                 .padding(16)
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(kind.staffLabel)
+            .navigationTitle(screenTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -177,6 +175,10 @@ struct GuestMessageDraftReviewView: View {
                     aiDraft: draft.source == .localModel,
                     edited: false
                 )
+                GuestCommunicationTrace.messageReviewPolish(
+                    reservationID: reservationID,
+                    type: reviewTraceType
+                )
             }
         }
     }
@@ -191,16 +193,22 @@ struct GuestMessageDraftReviewView: View {
 
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(kind.staffLabel)
+            Text(screenTitle)
                 .font(.title3.weight(.semibold))
-            Text(draft.source.staffLabel)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
-            Text("Review before sending. Staff sends manually.")
+            Text("Nothing is sent automatically.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var inlineAINote: some View {
+        Label("AI draft — review before sending.", systemImage: "sparkles")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var actionButtons: some View {
@@ -208,7 +216,7 @@ struct GuestMessageDraftReviewView: View {
             Button {
                 onSendEmail(approvedDraft())
             } label: {
-                Label("Send Email", systemImage: "envelope.fill")
+                Label("Open Email", systemImage: "envelope.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
@@ -217,7 +225,7 @@ struct GuestMessageDraftReviewView: View {
             Button {
                 onSendText(approvedDraft())
             } label: {
-                Label("Send Text", systemImage: "message.fill")
+                Label("Open Text", systemImage: "message.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
@@ -252,13 +260,24 @@ struct GuestMessageDraftReviewView: View {
                 .font(.subheadline.weight(.semibold))
             if axis {
                 TextEditor(text: text)
-                    .frame(minHeight: 120)
-                    .padding(8)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: title == "Text message" ? 86 : 108)
+                    .padding(10)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    }
                     .onChange(of: text.wrappedValue) { _, _ in markEdited() }
             } else {
                 TextField(title, text: text)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
+                    .padding(10)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    }
                     .onChange(of: text.wrappedValue) { _, _ in markEdited() }
             }
         }

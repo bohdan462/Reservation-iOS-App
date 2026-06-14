@@ -221,13 +221,13 @@ struct GuestTextMessageActionButtons: View {
             ViewThatFits {
                 HStack(spacing: 10) {
                     messageButton(
-                        title: "Text Confirmation",
+                        title: "Confirmation",
                         systemImage: "message.fill",
                         body: confirmationBody
                     )
                     if includesTableReady {
                         messageButton(
-                            title: "Text Table Ready",
+                            title: "Table ready",
                             systemImage: "bell.badge.fill",
                             body: tableDueBody
                         )
@@ -236,14 +236,14 @@ struct GuestTextMessageActionButtons: View {
 
                 VStack(spacing: 8) {
                     messageButton(
-                        title: "Text Confirmation",
+                        title: "Confirmation",
                         systemImage: "message.fill",
                         body: confirmationBody,
                         fillsWidth: true
                     )
                     if includesTableReady {
                         messageButton(
-                            title: "Text Table Ready",
+                            title: "Table ready",
                             systemImage: "bell.badge.fill",
                             body: tableDueBody,
                             fillsWidth: true

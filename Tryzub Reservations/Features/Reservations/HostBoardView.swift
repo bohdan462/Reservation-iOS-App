@@ -1153,6 +1153,18 @@ struct HostBoardView: View {
 
             guard isVisible, isAppActive else { return }
 
+            #if DEBUG
+            let selectedKey = selectedDate.reservationDateString()
+            DateBoundaryTrace.boundary(
+                source: "autoRefresh",
+                selectedDate: selectedKey,
+                serviceDate: selectedKey,
+                afterClose: DateBoundaryTrace.isLikelyAfterClose(selectedDate: selectedDate),
+                autoAdvanced: false,
+                decision: "keep_selected_date",
+                reason: "host_auto_refresh_never_advances_date"
+            )
+            #endif
             await controller.autoRefreshDashboardIfAllowed(
                 context: modelContext,
                 isInteractionActive: hasOpenInteraction,

@@ -678,10 +678,23 @@ struct ReservationDetailView: View {
                     GuestTextMessageActionButtons(
                         phone: reservation.phone,
                         confirmationBody: ManualTextMessageService.confirmationBody(reservation: reservation),
-                        tableDueBody: ManualTextMessageService.tableDueBody(reservation: reservation)
+                        tableDueBody: ManualTextMessageService.tableDueBody(reservation: reservation),
+                        includesTableReady: showsTableReadyTextAction
                     )
                 }
             }
+        }
+    }
+
+    private var showsTableReadyTextAction: Bool {
+        guard !reservation.isHidden else { return false }
+        switch reservation.statusValue {
+        case .confirmed, .seated:
+            return true
+        case .cancelled, .completed, .noShow:
+            return false
+        default:
+            return false
         }
     }
 

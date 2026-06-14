@@ -35,6 +35,33 @@ enum GuestCommunicationTrace {
         #endif
     }
 
+    static func emailRenderPolish(
+        reservationID: Int,
+        type: GuestEmailTemplateKind,
+        compact: Bool = true,
+        duplicatedGreeting: Bool = false,
+        rawRescheduleURL: Bool = false
+    ) {
+        #if DEBUG
+        print(
+            "[EMAIL_RENDER_POLISH_TRACE] type=\(type.rawValue) reservation=\(reservationID) compact=\(compact) duplicatedGreeting=\(duplicatedGreeting) rawRescheduleURL=\(rawRescheduleURL)"
+        )
+        #endif
+    }
+
+    static func messageReviewPolish(
+        reservationID: Int,
+        type: String,
+        aiNotice: String = "compact",
+        fields: String = "subject,email,text"
+    ) {
+        #if DEBUG
+        print(
+            "[MESSAGE_REVIEW_POLISH_TRACE] type=\(type) reservation=\(reservationID) aiNotice=\(aiNotice) fields=\(fields)"
+        )
+        #endif
+    }
+
     static func messageReview(
         reservationID: Int,
         type: String,

@@ -27,7 +27,7 @@ enum GuestConfirmationMailPresenter {
         MFMailComposeViewController.canSendMail()
     }
 
-    /// Staff-reviewed plain-text draft. Does not call POST /confirm or record sent status.
+    /// Staff-reviewed styled draft. Does not call POST /confirm or record sent status.
     static func manualDraft(
         reservation: ReservationRecord,
         subject: String,
@@ -40,14 +40,19 @@ enum GuestConfirmationMailPresenter {
         let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSubject.isEmpty, !trimmedBody.isEmpty else { return nil }
 
+        let input = GuestEmailRenderInput.manual(
+            reservation: reservation,
+            customPlainMessage: trimmedBody,
+            subjectOverride: trimmedSubject
+        )
+
         return Draft(
             reservationID: reservation.remoteID,
             recipients: [email],
             subject: trimmedSubject,
-            htmlBody: trimmedBody,
-            plainBody: trimmedBody,
-            logBodySnapshot: trimmedBody,
-            prefersPlainText: true
+            htmlBody: GuestEmailTemplateRenderer.renderHTML(input),
+            plainBody: GuestEmailTemplateRenderer.renderPlain(input),
+            logBodySnapshot: GuestEmailTemplateRenderer.logSnapshot(input)
         )
     }
 

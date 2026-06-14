@@ -1236,6 +1236,18 @@ private struct ReservationServiceDateStrip: View {
             withAnimation(.snappy(duration: 0.34)) {
                 selectedDate = date
             }
+            #if DEBUG
+            let selectedKey = date.reservationDateString()
+            DateBoundaryTrace.boundary(
+                source: "date_selector",
+                selectedDate: selectedKey,
+                serviceDate: selectedKey,
+                afterClose: DateBoundaryTrace.isLikelyAfterClose(selectedDate: date),
+                autoAdvanced: false,
+                decision: "user_selected_next_day",
+                reason: "staff_tapped_date"
+            )
+            #endif
             ReservationHaptics.selection()
         } label: {
             ReservationChoiceChip(

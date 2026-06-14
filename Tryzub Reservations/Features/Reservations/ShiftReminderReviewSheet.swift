@@ -101,21 +101,22 @@ struct ShiftReminderReviewSheet: View {
                     )
                 } else {
                     Section {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Replies are not tracked in this app. Guests are directed to call during business hours or email \(ReservationEmailWorkflow.guestContactEmail).")
+                        VStack(alignment: .leading, spacing: 6) {
+                            summaryLine
+                            Text("Review before sending. Nothing is sent automatically.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            summaryLine
+                            Text("Replies are not tracked here. Guests are directed to call or email \(ReservationEmailWorkflow.guestContactEmail).")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        .padding(.vertical, 4)
+                        .padding(.vertical, 2)
                     }
 
                     Section {
                         ForEach(reservations) { reservation in
                             row(for: reservation)
                         }
-                    } header: {
-                        Text("Review before sending")
                     }
                 }
             }
@@ -173,24 +174,33 @@ struct ShiftReminderReviewSheet: View {
     }
 
     private var summaryLine: Text {
-        Text("Eligible \(summary.eligible) · Email \(summary.emailReady) · Text \(summary.smsReady) · No contact \(summary.noContact) · Already reminded \(summary.alreadyReminded)")
-            .font(.caption.weight(.medium))
+        Text("\(daySummaryLabel) · \(summary.eligible) eligible · \(summary.emailReady) email · \(summary.smsReady) text")
+            .font(.subheadline.weight(.semibold))
             .foregroundStyle(.secondary)
+    }
+
+    private var daySummaryLabel: String {
+        let calendar = Calendar.current
+        if let date = ReservationFormatters.reservationDateKey.date(from: dateKey) {
+            if calendar.isDateInToday(date) {
+                return "Today"
+            }
+            return Self.shortDateFormatter.string(from: date)
+        }
+        return dateKey
     }
 
     @ViewBuilder
     private func row(for reservation: ReservationRecord) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(reservation.guestName)
-                        .font(.headline.weight(.semibold))
+                        .font(.subheadline.weight(.semibold))
                     Text("\(reservation.displayTime) · \(reservation.partySize) guest\(reservation.partySize == 1 ? "" : "s")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(contactLabel(for: reservation))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    contactChips(for: reservation)
                 }
                 Spacer()
                 if let result = results[reservation.remoteID] {
@@ -198,24 +208,26 @@ struct ShiftReminderReviewSheet: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 } else if reservation.reminderEmailSentAt?.nilIfBlank != nil {
-                    Text("reminded")
+                    Text("sent")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
             }
 
-            HStack {
+            HStack(spacing: 8) {
                 if reservation.hasUsableConfirmationEmail {
                     Button("Email") {
                         presentReview(for: reservation, channel: .email)
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
                 if GuestTextMessagePresenter.hasDialablePhone(reservation.phone) {
-                    Button("Text reminder") {
+                    Button("Text") {
                         presentReview(for: reservation, channel: .sms)
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
                 Button("Skip") {
                     results[reservation.remoteID] = "skipped"
@@ -223,25 +235,35 @@ struct ShiftReminderReviewSheet: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .controlSize(.small)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
     }
 
-    private func contactLabel(for reservation: ReservationRecord) -> String {
-        var parts: [String] = []
-        if reservation.hasUsableConfirmationEmail { parts.append("Email") }
-        if GuestTextMessagePresenter.hasDialablePhone(reservation.phone) { parts.append("Text") }
-        if parts.isEmpty { return "No contact" }
-        return parts.joined(separator: " · ")
+    private func contactChips(for reservation: ReservationRecord) -> some View {
+        HStack(spacing: 5) {
+            if reservation.hasUsableConfirmationEmail {
+                chip("Email")
+            }
+            if GuestTextMessagePresenter.hasDialablePhone(reservation.phone) {
+                chip("Text")
+            }
+        }
+    }
+
+    private func chip(_ label: String) -> some View {
+        Text(label)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color(.tertiarySystemGroupedBackground), in: Capsule())
     }
 
     private func presentReview(for reservation: ReservationRecord, channel: ShiftReminderChannel) {
         let textBody = ManualTextMessageService.reminderBody(reservation: reservation)
-        let emailPreview = ManualEmailDraftService.reminderPlainBody(
-            reservation: reservation,
-            manageLinkURL: manageLinks[reservation.remoteID]?.url
-        )
+        let emailPreview = "This is a reminder for your reservation at \(ReservationEmailWorkflow.restaurantName) today."
         let subject = GuestEmailTemplateKind.reminder.defaultSubject
 
         GuestCommunicationTrace.messageReview(
@@ -313,7 +335,7 @@ struct ShiftReminderReviewSheet: View {
             timeLine: ManualEmailDraftService.emailTimeLine(for: reservation),
             partySize: reservation.partySize,
             manageLinkURL: manageLink?.url,
-            linkExpiresAt: manageLink?.expiresAt,
+            linkExpiresAt: nil,
             customPlainMessage: approved.wasEdited ? approved.body : nil,
             subjectOverride: approved.subject
         )
@@ -463,6 +485,13 @@ struct ShiftReminderReviewSheet: View {
             ]
         )
     }
+
+    private static let shortDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.dateFormat = "MMM d"
+        return formatter
+    }()
 }
 
 // MARK: - Review sub-sheet
@@ -510,40 +539,56 @@ private struct ShiftReminderMessageReviewSheet: View {
             Form {
                 if showsBetaWarning {
                     Section {
-                        Text("AI draft is beta. Review and edit before sending.")
+                        Label("AI draft — review before sending.", systemImage: "sparkles")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 Section {
-                    Text(reservation.guestName)
-                    Text("\(reservation.displayTime) · party of \(reservation.partySize)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(reservation.guestName)
+                            .font(.subheadline.weight(.semibold))
+                        Text("\(reservation.displayTime) · party of \(reservation.partySize)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("Nothing is sent automatically.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
                 }
 
                 if channel == .email {
-                    Section("Email subject") {
+                    Section("Subject") {
                         TextField("Subject", text: $editedSubject)
                             .onChange(of: editedSubject) { _, _ in markEdited() }
                     }
                 }
 
-                Section(channel == .email ? "Email preview" : "Text reminder") {
+                Section {
                     TextEditor(text: $editedBody)
-                        .frame(minHeight: 160)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: channel == .email ? 108 : 88)
                         .onChange(of: editedBody) { _, _ in markEdited() }
+                } header: {
+                    Text(channel == .email ? "Email message" : "Text message")
+                } footer: {
+                    if channel == .email {
+                        Text("Composer uses the styled Tryzub email.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
-            .navigationTitle(channel == .email ? "Review email" : "Review text")
+            .navigationTitle("Review reminder")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", action: onDismiss)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Open composer") {
+                    Button(channel == .email ? "Open Email" : "Open Text") {
                         onApprove(
                             ShiftReminderApprovedMessage(
                                 subject: editedSubject,
@@ -558,6 +603,11 @@ private struct ShiftReminderMessageReviewSheet: View {
             .onAppear {
                 editedSubject = subject
                 editedBody = channel == .email ? emailBodyPreview : textBody
+                GuestCommunicationTrace.messageReviewPolish(
+                    reservationID: reservation.remoteID,
+                    type: channel == .email ? "reminder" : "textReminder",
+                    fields: channel == .email ? "subject,email" : "text"
+                )
             }
         }
     }
