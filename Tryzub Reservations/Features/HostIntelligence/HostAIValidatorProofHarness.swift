@@ -129,6 +129,97 @@ enum HostAIValidatorProofHarness {
             hostPacket: calmPacket,
             fallback: calmFallback
         )
+
+        let guestNamePacket = ManagerNarrativePacket(
+            surface: .hostHome,
+            generatedAtDescription: "Validator proof — guest names",
+            serviceState: "active",
+            headlineFacts: [
+                ManagerNarrativeFact(
+                    priority: "high",
+                    title: "Mark's seating note needs review",
+                    detail: "Deborah, Gabriella, and Jacob are in the approved packet."
+                )
+            ],
+            availableActions: [
+                ManagerNarrativeAction(
+                    id: "check-mark-note",
+                    title: "Check Mark's note",
+                    destinationHint: "guest note"
+                )
+            ],
+            writingRules: []
+        )
+        let guestNameFallback = ManagerNarrative(
+            headline: "Review the approved guest notes.",
+            whyItMatters: nil,
+            checkNext: nil,
+            source: .template,
+            failedReason: nil
+        )
+
+        expect(
+            scenario: "name_ops_current_pressure",
+            shouldPass: true,
+            candidate: oneLine("Current service pressure is building around 7:00 PM."),
+            packet: guestNamePacket,
+            hostPacket: calmPacket,
+            fallback: guestNameFallback
+        )
+
+        expect(
+            scenario: "name_ops_todays_service",
+            shouldPass: true,
+            candidate: oneLine("Today's main issue is the unassigned 2:30 PM table."),
+            packet: guestNamePacket,
+            hostPacket: calmPacket,
+            fallback: guestNameFallback
+        )
+
+        expect(
+            scenario: "name_ops_peak_booking",
+            shouldPass: true,
+            candidate: oneLine("Peak booking pressure is around 7:00-7:30."),
+            packet: guestNamePacket,
+            hostPacket: calmPacket,
+            fallback: guestNameFallback
+        )
+
+        expect(
+            scenario: "name_allowed_jacob",
+            shouldPass: true,
+            candidate: oneLine("Jacob still needs a table assignment."),
+            packet: guestNamePacket,
+            hostPacket: calmPacket,
+            fallback: guestNameFallback
+        )
+
+        expect(
+            scenario: "name_allowed_mark_possessive",
+            shouldPass: true,
+            candidate: oneLine("Mark's note needs review before seating."),
+            packet: guestNamePacket,
+            hostPacket: calmPacket,
+            fallback: guestNameFallback
+        )
+
+        expect(
+            scenario: "name_reject_unknown_sarah",
+            shouldPass: false,
+            candidate: oneLine("Sarah needs a table."),
+            packet: guestNamePacket,
+            hostPacket: calmPacket,
+            fallback: guestNameFallback
+        )
+
+        expect(
+            scenario: "name_reject_unknown_michael",
+            shouldPass: false,
+            candidate: oneLine("Tell Michael to prepare a VIP table."),
+            packet: guestNamePacket,
+            hostPacket: calmPacket,
+            fallback: guestNameFallback
+        )
     }
 
     // MARK: - Helpers

@@ -3,8 +3,9 @@
 //  Tryzub Reservations
 //
 
-import SwiftUI
 import SwiftData
+import SwiftUI
+import MessageUI
 
 // MARK: - Root Reservation Shell
 
@@ -496,15 +497,12 @@ private struct HomeDashboardView: View {
 
     @ViewBuilder
     private func reservationDestination(remoteID: Int) -> some View {
-        if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
-            ReservationDetailView(reservation: reservation, environment: environment)
-        } else {
-            ContentUnavailableView(
-                "Reservation Not Found",
-                systemImage: "calendar.badge.exclamationmark",
-                description: Text("Refresh and try again.")
-            )
-        }
+        ReservationDetailDestinationView(
+            remoteID: remoteID,
+            environment: environment,
+            source: "host_board",
+            tab: "host"
+        )
     }
 
 }
@@ -540,6 +538,7 @@ private struct ReservationScheduleView: View {
     @State private var allModeTotalPages = 0
     @State private var allModeErrorMessage: String?
     @State private var showManualCreate = false
+    @State private var showShiftReminders = false
     @State private var navigationPath: [Int] = []
 
     let environment: AppEnvironment
@@ -615,6 +614,10 @@ private struct ReservationScheduleView: View {
                 $0.reservationDate >= today
                     && ($0.statusValue == .new || $0.statusValue == .needsReview)
             }
+        case .noShow:
+            rows = rows.filter {
+                $0.statusValue == .noShow
+            }
         case .cancelled:
             rows = rows.filter {
                 $0.statusValue == .cancelled
@@ -645,6 +648,15 @@ private struct ReservationScheduleView: View {
             from: displayedReservations,
             newestFirst: scope == .all
         )
+    }
+
+    private var filterTraceKey: String {
+        let ids = displayedReservations.map(\.remoteID).map(String.init).joined(separator: ",")
+        return "\(reminderDateKey)|\(scope.rawValue)|\(debouncedSearchText)|\(ids)"
+    }
+
+    private var reminderDateKey: String {
+        (scheduleDateFilter ?? Date()).reservationDateString()
     }
 
     var body: some View {
@@ -786,6 +798,13 @@ private struct ReservationScheduleView: View {
                     }
 
                     Button {
+                        showShiftReminders = true
+                    } label: {
+                        Image(systemName: "bell.badge")
+                    }
+                    .accessibilityLabel("Shift reminders")
+
+                    Button {
                         Task {
                             guard isActive else { return }
                             if scope == .all {
@@ -817,6 +836,13 @@ private struct ReservationScheduleView: View {
                     try await controller.createAcceptedManualReservation(request, context: modelContext)
                 }
             }
+            .sheet(isPresented: $showShiftReminders) {
+                ShiftReminderReviewSheet(
+                    dateKey: reminderDateKey,
+                    reservations: shiftReminderEligibleReservations
+                )
+                .environmentObject(controller)
+            }
             .onAppear {
                 // Every time the Bookings tab activates: if there are items to review → Review,
                 // otherwise stay on / return to Upcoming.
@@ -843,6 +869,36 @@ private struct ReservationScheduleView: View {
                 try? await Task.sleep(for: .milliseconds(250))
                 if !Task.isCancelled {
                     debouncedSearchText = value
+                }
+            }
+            .task(id: filterTraceKey) {
+                guard isActive else { return }
+                let ids = displayedReservations.map(\.remoteID).map(String.init).joined(separator: ",")
+                WorkflowCleanupTrace.log(
+                    "BOOKINGS_TAB_TRACE",
+                    fields: [
+                        "date": reminderDateKey,
+                        "tab": scope.rawValue,
+                        "count": "\(displayedReservations.count)"
+                    ]
+                )
+                WorkflowCleanupTrace.log(
+                    "BOOKINGS_FILTER_TRACE",
+                    fields: [
+                        "date": reminderDateKey,
+                        "tab": scope.rawValue,
+                        "includedIDs": ids
+                    ]
+                )
+                if !debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    WorkflowCleanupTrace.log(
+                        "SEARCH_RESULT_TRACE",
+                        fields: [
+                            "query": "redacted",
+                            "results": "\(displayedReservations.count)",
+                            "ids": ids
+                        ]
+                    )
                 }
             }
             .onChange(of: scope) { _, newScope in
@@ -877,6 +933,23 @@ private struct ReservationScheduleView: View {
                 reservationDestination(remoteID: remoteID)
             }
         }
+    }
+
+    private var shiftReminderEligibleReservations: [ReservationRecord] {
+        reservations
+            .filter { reservation in
+                reservation.reservationDate == reminderDateKey
+                    && !hiddenReservations.isHidden(reservation)
+                    && reservation.statusValue != .completed
+                    && reservation.statusValue != .cancelled
+                    && reservation.statusValue != .noShow
+                    && (reservation.hasUsableConfirmationEmail || GuestTextMessagePresenter.hasDialablePhone(reservation.phone))
+            }
+            .sorted { lhs, rhs in
+                lhs.reservationTime == rhs.reservationTime
+                    ? lhs.guestName.localizedCaseInsensitiveCompare(rhs.guestName) == .orderedAscending
+                    : lhs.reservationTime < rhs.reservationTime
+            }
     }
 
     // Intent: Keeps Bookings current on other devices without interrupting staff.
@@ -1053,15 +1126,246 @@ private struct ReservationScheduleView: View {
 
     @ViewBuilder
     private func reservationDestination(remoteID: Int) -> some View {
-        if let reservation = reservationLookupRows.first(where: { $0.remoteID == remoteID }) {
-            ReservationDetailView(reservation: reservation, environment: environment)
-        } else {
-            ContentUnavailableView(
-                "Reservation Not Found",
-                systemImage: "calendar.badge.exclamationmark",
-                description: Text("Refresh the schedule and try again.")
-            )
+        ReservationDetailDestinationView(
+            remoteID: remoteID,
+            environment: environment,
+            source: debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "schedule" : "search",
+            tab: scope.rawValue
+        )
+    }
+}
+
+private struct ShiftReminderReviewSheet: View {
+    let dateKey: String
+    let reservations: [ReservationRecord]
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var controller: ReservationsController
+    @State private var mailDraft: GuestConfirmationMailPresenter.Draft?
+    @State private var textDraft: GuestTextMessageDraft?
+    @State private var activeEmailReservation: ReservationRecord?
+    @State private var activeSMSReservation: ReservationRecord?
+    @State private var results: [Int: String] = [:]
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if reservations.isEmpty {
+                    ContentUnavailableView(
+                        "No reminders to review",
+                        systemImage: "bell.slash",
+                        description: Text("No active reservations with email or phone are eligible for this date.")
+                    )
+                } else {
+                    Section {
+                        ForEach(reservations) { reservation in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(reservation.guestName)
+                                            .font(.headline.weight(.semibold))
+                                        Text("\(reservation.displayTime) · \(reservation.partySize) guest\(reservation.partySize == 1 ? "" : "s")")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if let result = results[reservation.remoteID] {
+                                        Text(result)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
+                                HStack {
+                                    if reservation.hasUsableConfirmationEmail {
+                                        Button("Email") {
+                                            openEmail(for: reservation)
+                                        }
+                                        .buttonStyle(.bordered)
+                                    }
+                                    if GuestTextMessagePresenter.hasDialablePhone(reservation.phone) {
+                                        Button("SMS") {
+                                            openSMS(for: reservation)
+                                        }
+                                        .buttonStyle(.bordered)
+                                    }
+                                    Button("Skip") {
+                                        results[reservation.remoteID] = "skipped"
+                                        trace(reservation, channel: "email", result: "skipped")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    } header: {
+                        Text("Review before sending")
+                    }
+                }
+            }
+            .navigationTitle("Shift reminders")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear {
+                WorkflowCleanupTrace.log(
+                    "SHIFT_REMINDER_TRACE",
+                    fields: [
+                        "phase": "open",
+                        "date": dateKey,
+                        "eligible": "\(reservations.count)"
+                    ]
+                )
+            }
+            .sheet(item: $mailDraft) { draft in
+                GuestConfirmationMailComposer(draft: draft) { result in
+                    handleMailResult(result, draft: draft)
+                }
+            }
+            .sheet(item: $textDraft) { draft in
+                GuestTextMessageComposer(draft: draft) { result in
+                    handleSMSResult(result, draft: draft)
+                }
+            }
         }
+    }
+
+    private func openEmail(for reservation: ReservationRecord) {
+        guard let draft = GuestConfirmationMailPresenter.manualDraft(
+            reservation: reservation,
+            subject: "Reminder for your reservation at \(ReservationEmailWorkflow.restaurantName)",
+            body: reminderBody(for: reservation)
+        ) else { return }
+        activeEmailReservation = reservation
+        if GuestConfirmationMailPresenter.canSendMail() {
+            mailDraft = draft
+            trace(reservation, channel: "email", result: "presented")
+        } else if GuestConfirmationMailPresenter.openMailtoFallback(draft: draft) {
+            results[reservation.remoteID] = "presented"
+            trace(reservation, channel: "email", result: "presented")
+        } else {
+            UIPasteboard.general.string = draft.plainBody
+            results[reservation.remoteID] = "failed"
+            trace(reservation, channel: "email", result: "failed")
+        }
+    }
+
+    private func openSMS(for reservation: ReservationRecord) {
+        guard let draft = GuestTextMessagePresenter.draft(
+            phone: reservation.phone,
+            body: "Hi \(firstName(reservation.guestName)), reminder: your reservation at \(ReservationEmailWorkflow.restaurantName) is today at \(reservation.displayTime) for \(reservation.partySize). Questions? \(ReservationEmailWorkflow.restaurantPhone)"
+        ) else { return }
+        if GuestTextMessagePresenter.canSendText() {
+            activeSMSReservation = reservation
+            textDraft = draft
+            results[reservation.remoteID] = "presented"
+            trace(reservation, channel: "sms", result: "presented")
+        } else if GuestTextMessagePresenter.openSMSFallback(draft: draft) {
+            results[reservation.remoteID] = "presented"
+            trace(reservation, channel: "sms", result: "presented")
+        } else {
+            UIPasteboard.general.string = draft.body
+            results[reservation.remoteID] = "failed"
+            trace(reservation, channel: "sms", result: "failed")
+        }
+    }
+
+    private func handleMailResult(_ result: MFMailComposeResult, draft: GuestConfirmationMailPresenter.Draft) {
+        guard let reservation = activeEmailReservation else {
+            mailDraft = nil
+            return
+        }
+        switch result {
+        case .sent:
+            Task {
+                do {
+                    _ = try await controller.recordManualReminderSent(
+                        reservation: reservation,
+                        toEmail: draft.recipients.first,
+                        subject: draft.subject,
+                        bodySnapshot: draft.logBodySnapshot,
+                        context: modelContext
+                    )
+                    results[reservation.remoteID] = "sent"
+                    trace(reservation, channel: "email", result: "sent")
+                } catch {
+                    results[reservation.remoteID] = "failed"
+                    trace(reservation, channel: "email", result: "failed")
+                }
+                mailDraft = nil
+                activeEmailReservation = nil
+            }
+        case .cancelled, .saved:
+            results[reservation.remoteID] = "cancelled"
+            trace(reservation, channel: "email", result: "cancelled")
+            mailDraft = nil
+            activeEmailReservation = nil
+        case .failed:
+            results[reservation.remoteID] = "failed"
+            trace(reservation, channel: "email", result: "failed")
+            mailDraft = nil
+            activeEmailReservation = nil
+        @unknown default:
+            results[reservation.remoteID] = "failed"
+            trace(reservation, channel: "email", result: "failed")
+            mailDraft = nil
+            activeEmailReservation = nil
+        }
+    }
+
+    private func handleSMSResult(_ result: MessageComposeResult, draft: GuestTextMessageDraft) {
+        guard let reservation = activeSMSReservation else {
+            textDraft = nil
+            return
+        }
+        switch result {
+        case .sent:
+            results[reservation.remoteID] = "sent"
+            trace(reservation, channel: "sms", result: "sent")
+        case .cancelled:
+            results[reservation.remoteID] = "cancelled"
+            trace(reservation, channel: "sms", result: "cancelled")
+        case .failed:
+            results[reservation.remoteID] = "failed"
+            trace(reservation, channel: "sms", result: "failed")
+        @unknown default:
+            results[reservation.remoteID] = "failed"
+            trace(reservation, channel: "sms", result: "failed")
+        }
+        textDraft = nil
+        activeSMSReservation = nil
+    }
+
+    private func reminderBody(for reservation: ReservationRecord) -> String {
+        """
+        Hi \(firstName(reservation.guestName)),
+
+        This is a reminder for your reservation at \(ReservationEmailWorkflow.restaurantName) today at \(reservation.displayTime) for \(reservation.partySize).
+
+        If anything changes, please contact us at \(ReservationEmailWorkflow.restaurantPhone).
+        """
+    }
+
+    private func firstName(_ name: String) -> String {
+        name.split(separator: " ").first.map(String.init) ?? "there"
+    }
+
+    private func trace(_ reservation: ReservationRecord, channel: String, result: String) {
+        WorkflowCleanupTrace.log(
+            "SHIFT_REMINDER_TRACE",
+            fields: [
+                "reservation": "\(reservation.remoteID)",
+                "channel": channel,
+                "result": result
+            ]
+        )
     }
 }
 
@@ -1211,15 +1515,12 @@ private struct ReservationReviewQueueView: View {
 
     @ViewBuilder
     private func reservationDestination(remoteID: Int) -> some View {
-        if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
-            ReservationDetailView(reservation: reservation, environment: environment)
-        } else {
-            ContentUnavailableView(
-                "Reservation Not Found",
-                systemImage: "calendar.badge.exclamationmark",
-                description: Text("Refresh review and try again.")
-            )
-        }
+        ReservationDetailDestinationView(
+            remoteID: remoteID,
+            environment: environment,
+            source: debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "review" : "search",
+            tab: scope.rawValue
+        )
     }
 
     private func queuePickerLabel(for scope: ReservationQueueScope) -> String {
@@ -1464,7 +1765,12 @@ private struct ReservationMoreView: View {
                 }
             )
         case .cancelledDetail(let remoteID):
-            ReservationDetailDestinationView(remoteID: remoteID, environment: environment)
+            ReservationDetailDestinationView(
+                remoteID: remoteID,
+                environment: environment,
+                source: "cancelled",
+                tab: "Cancelled"
+            )
         case .hidden:
             HiddenReservationsView(environment: environment)
         case .restaurantSettings:
@@ -1519,14 +1825,24 @@ private enum ReservationMoreDestination: Hashable {
 }
 
 private struct ReservationDetailDestinationView: View {
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     @Query private var reservations: [ReservationRecord]
+    @State private var isFetching = false
+    @State private var fetchAttempted = false
+    @State private var fetchResult: String?
 
     let remoteID: Int
     let environment: AppEnvironment
+    let source: String
+    let tab: String
 
-    init(remoteID: Int, environment: AppEnvironment) {
+    init(remoteID: Int, environment: AppEnvironment, source: String = "route", tab: String = "unknown") {
         self.remoteID = remoteID
         self.environment = environment
+        self.source = source
+        self.tab = tab
         _reservations = Query(
             filter: #Predicate<ReservationRecord> { $0.remoteID == remoteID },
             sort: [
@@ -1538,14 +1854,74 @@ private struct ReservationDetailDestinationView: View {
 
     var body: some View {
         if let reservation = reservations.first {
-            ReservationDetailView(reservation: reservation, environment: environment)
+            if hiddenReservations.isHidden(reservation) {
+                ContentUnavailableView(
+                    "Reservation no longer exists or was hidden.",
+                    systemImage: "eye.slash",
+                    description: Text("This reservation is hidden from normal staff lists.")
+                )
+                .task {
+                    logRoute(localFound: true)
+                    logFetch(result: "hidden")
+                }
+            } else {
+                ReservationDetailView(reservation: reservation, environment: environment)
+                    .task {
+                        logRoute(localFound: true)
+                        logFetch(result: "local")
+                    }
+            }
+        } else if isFetching {
+            ProgressView("Loading reservation...")
         } else {
             ContentUnavailableView(
-                "Reservation Not Found",
+                "Reservation no longer exists or was hidden.",
                 systemImage: "calendar.badge.exclamationmark",
-                description: Text("Refresh reservations and try again.")
+                description: Text(fetchResult == "error" ? "Could not load this reservation. Check the connection and try again." : "It may have been removed from the server or hidden.")
             )
+            .task {
+                await fetchMissingReservationIfNeeded()
+            }
         }
+    }
+
+    @MainActor
+    private func fetchMissingReservationIfNeeded() async {
+        guard !fetchAttempted else { return }
+        fetchAttempted = true
+        logRoute(localFound: false)
+        isFetching = true
+        let dto = await controller.reconcileReservation(id: remoteID, context: modelContext)
+        isFetching = false
+        if dto == nil {
+            fetchResult = "not_found"
+            logFetch(result: "not_found")
+        } else {
+            fetchResult = "server"
+            logFetch(result: "server")
+        }
+    }
+
+    private func logRoute(localFound: Bool) {
+        WorkflowCleanupTrace.log(
+            "DETAIL_ROUTE_TRACE",
+            fields: [
+                "source": source,
+                "tab": tab,
+                "reservationID": "\(remoteID)",
+                "localFound": "\(localFound)"
+            ]
+        )
+    }
+
+    private func logFetch(result: String) {
+        WorkflowCleanupTrace.log(
+            "DETAIL_FETCH_TRACE",
+            fields: [
+                "reservationID": "\(remoteID)",
+                "result": result
+            ]
+        )
     }
 }
 
@@ -2326,7 +2702,25 @@ private struct ReservationNavigationRow: View {
 
         switch action {
         case .confirmOnly:
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "start",
+                fields: [
+                    "source": "bookings_row",
+                    "status": reservation.status,
+                    "emailPresent": "\(reservation.hasUsableConfirmationEmail)"
+                ]
+            )
+            if reservation.hasUsableConfirmationEmail {
+                onOpenDetails(reservation)
+                return
+            }
             await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "patch_confirmed",
+                fields: ["result": "success"]
+            )
             ReservationHaptics.success()
         case .confirmAndSendEmail:
             guard ReservationEmailWorkflow.isBackendConfirmEmailEnabled else { return }
@@ -2334,6 +2728,16 @@ private struct ReservationNavigationRow: View {
             ReservationHaptics.success()
         case .seat:
             await controller.updateStatus(reservation: reservation, status: .seated, context: modelContext)
+            if reservation.statusValue == .noShow {
+                WorkflowCleanupTrace.log(
+                    "NO_SHOW_FLOW_TRACE",
+                    fields: [
+                        "reservation": "\(reservation.remoteID)",
+                        "action": "seat_after_no_show",
+                        "result": "success"
+                    ]
+                )
+            }
             ReservationHaptics.success()
         case .cancel:
             await controller.updateStatus(reservation: reservation, status: .cancelled, context: modelContext)
@@ -2345,6 +2749,14 @@ private struct ReservationNavigationRow: View {
             ReservationHaptics.success()
         case .noShow:
             await controller.updateStatus(reservation: reservation, status: .noShow, context: modelContext)
+            WorkflowCleanupTrace.log(
+                "NO_SHOW_FLOW_TRACE",
+                fields: [
+                    "reservation": "\(reservation.remoteID)",
+                    "action": "mark_no_show",
+                    "result": "success"
+                ]
+            )
             ReservationHaptics.warning()
         }
     }

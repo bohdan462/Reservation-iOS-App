@@ -160,11 +160,17 @@ struct ArrivalPressureWaveChart: View {
     peakPulse = false
     if reduceMotion {
       revealProgress = 1
+      #if DEBUG
+      print("[SERVICE_PRESSURE_ANIMATION_TRACE] mode=reducedMotion duration=0")
+      #endif
       return
     }
     revealProgress = 0
-    withAnimation(.easeOut(duration: 0.7)) { revealProgress = 1 }
-    withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) { peakPulse = true }
+    #if DEBUG
+    print("[SERVICE_PRESSURE_ANIMATION_TRACE] mode=animated duration=1400")
+    #endif
+    withAnimation(.easeOut(duration: 1.4)) { revealProgress = 1 }
+    withAnimation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true)) { peakPulse = true }
   }
 
   private func traceRender() {

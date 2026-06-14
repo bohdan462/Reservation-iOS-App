@@ -2818,6 +2818,28 @@ final class ReservationsController: ObservableObject {
         )
     }
 
+    // Intent: Records staff-reviewed reminder email sent through Mail/Gmail.
+    // Network: POST /managed-reservations/{id}/manual-email-log with email_type=reminder.
+    func recordManualReminderSent(
+        reservation: ReservationRecord,
+        toEmail: String?,
+        subject: String?,
+        bodySnapshot: String?,
+        context: ModelContext
+    ) async throws -> ReservationManualEmailLogDTO {
+        try await logManualConfirmationActivity(
+            reservation: reservation,
+            emailType: .reminder,
+            status: .manualSent,
+            toEmail: toEmail,
+            subject: subject,
+            bodySnapshot: bodySnapshot,
+            errorMessage: nil,
+            context: context,
+            reconcileAfterSuccess: true
+        )
+    }
+
     // Intent: Records a real Mail/Gmail failure when iOS receives one.
     // Network: POST /managed-reservations/{id}/manual-email-log.
     func recordManualConfirmationFailed(
@@ -2841,6 +2863,7 @@ final class ReservationsController: ObservableObject {
 
     private func logManualConfirmationActivity(
         reservation: ReservationRecord,
+        emailType: ReservationManualEmailLogEmailType = .confirmation,
         status: ReservationManualEmailLogStatus,
         toEmail: String?,
         subject: String?,
@@ -2860,6 +2883,7 @@ final class ReservationsController: ObservableObject {
         defer { actionInProgressIDs.remove(id) }
 
         let request = ReservationManualEmailLogRequest(
+            emailType: emailType,
             status: status,
             toEmail: Self.nonBlank(toEmail),
             subject: Self.nonBlank(subject),

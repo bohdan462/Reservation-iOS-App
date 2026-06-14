@@ -13,8 +13,9 @@ struct ManagerNarrativeValidationResult: Equatable {
 }
 
 struct ManagerNarrativeNameValidation: Equatable {
-  let allowedNames: [String]
-  let mentionedNames: [String]
+  let allowedGuestNames: [String]
+  let operationalTermsMatched: [String]
+  let mentionedCandidates: [String]
   let rejectedNames: [String]
 
   var isValid: Bool { rejectedNames.isEmpty }
@@ -24,7 +25,7 @@ enum HostAIValidatorNameTrace {
   static func log(_ validation: ManagerNarrativeNameValidation) {
     #if DEBUG
     print(
-      "[HOST_AI_VALIDATOR_TRACE] allowedNames=\(validation.allowedNames.joined(separator: ",")) mentionedNames=\(validation.mentionedNames.joined(separator: ",")) rejectedNames=\(validation.rejectedNames.joined(separator: ","))"
+      "[HOST_AI_VALIDATOR_TRACE] allowedGuestNames=\(validation.allowedGuestNames.joined(separator: ",")) operationalTermsMatched=\(validation.operationalTermsMatched.joined(separator: ",")) mentionedCandidates=\(validation.mentionedCandidates.joined(separator: ",")) rejectedNames=\(validation.rejectedNames.joined(separator: ","))"
     )
     #endif
   }
@@ -589,10 +590,10 @@ enum ManagerNarrativeValidator {
     packet: ManagerNarrativePacket
   ) -> ManagerNarrativeNameValidation {
     let allowed = allowedGuestNameSet(packet: packet)
-    let mentions = nameMentions(in: text)
+    let scan = scanNameCandidates(in: text, mode: .modelOutput)
     var rejected: [String] = []
 
-    for mention in mentions {
+    for mention in scan.mentions {
       if mention.components.count >= 2 {
         if !allowed.fullNames.contains(mention.normalized) {
           rejected.append(mention.display)
@@ -605,8 +606,9 @@ enum ManagerNarrativeValidator {
     }
 
     return ManagerNarrativeNameValidation(
-      allowedNames: (allowed.fullNames.union(allowed.singleNames)).sorted(),
-      mentionedNames: mentions.map(\.display).stableUnique(),
+      allowedGuestNames: (allowed.fullNames.union(allowed.singleNames)).sorted(),
+      operationalTermsMatched: scan.operationalTermsMatched.stableUnique(),
+      mentionedCandidates: scan.mentions.map(\.display).stableUnique(),
       rejectedNames: rejected.stableUnique()
     )
   }
@@ -646,6 +648,26 @@ enum ManagerNarrativeValidator {
     let components: [String]
   }
 
+  private struct NameScan {
+    let mentions: [NameMention]
+    let operationalTermsMatched: [String]
+  }
+
+  private struct NameScanToken {
+    let display: String
+    let normalized: String
+    let lower: String
+    let isTitleCase: Bool
+    let hadPossessive: Bool
+    let isOperationalTerm: Bool
+    let sentenceStart: Bool
+  }
+
+  private enum NameScanMode {
+    case approvedPacket
+    case modelOutput
+  }
+
   private static func allowedGuestNameSet(
     packet: ManagerNarrativePacket
   ) -> (fullNames: Set<String>, singleNames: Set<String>) {
@@ -654,7 +676,7 @@ enum ManagerNarrativeValidator {
         + packet.availableActions.map(\.title)
         + [packet.groupedHeadline ?? "", packet.groupedSummary ?? ""]
     ).joined(separator: " ")
-    let mentions = nameMentions(in: approvedCorpus)
+    let mentions = scanNameCandidates(in: approvedCorpus, mode: .approvedPacket).mentions
     var fullNames = Set<String>()
     var singleNames = Set<String>()
 
@@ -672,27 +694,46 @@ enum ManagerNarrativeValidator {
     return (fullNames, singleNames)
   }
 
-  private static func nameMentions(in text: String) -> [NameMention] {
-    let rawTokens = text
-      .split(whereSeparator: \.isWhitespace)
-      .map(String.init)
+  private static func scanNameCandidates(
+    in text: String,
+    mode: NameScanMode
+  ) -> NameScan {
+    let tokens = nameScanTokens(in: text)
 
     var mentions: [NameMention] = []
-    var current: [(display: String, normalized: String)] = []
+    let operationalTerms = tokens
+      .filter { $0.isTitleCase && $0.isOperationalTerm }
+      .map(\.display)
 
-    func flush() {
-      guard !current.isEmpty else { return }
-      if current.count >= 2 {
-        let display = current.map(\.display).joined(separator: " ")
-        let normalized = current.map(\.normalized).joined(separator: " ")
+    var index = 0
+    while index < tokens.count {
+      let token = tokens[index]
+      if !token.isTitleCase || token.isOperationalTerm {
+        index += 1
+        continue
+      }
+
+      var sequence = [token]
+      var lookahead = index + 1
+      while lookahead < tokens.count,
+            tokens[lookahead].isTitleCase,
+            !tokens[lookahead].isOperationalTerm {
+        sequence.append(tokens[lookahead])
+        lookahead += 1
+      }
+
+      if sequence.count >= 2 {
+        let display = sequence.map(\.display).joined(separator: " ")
+        let normalized = sequence.map(\.normalized).joined(separator: " ")
         mentions.append(
           NameMention(
             display: display,
             normalized: normalized,
-            components: current.map(\.normalized)
+            components: sequence.map(\.normalized)
           )
         )
-      } else if let token = current.first {
+        index = lookahead
+      } else if isSingleNameCandidate(at: index, in: tokens, mode: mode) {
         mentions.append(
           NameMention(
             display: token.display,
@@ -700,39 +741,117 @@ enum ManagerNarrativeValidator {
             components: [token.normalized]
           )
         )
+        index += 1
+      } else {
+        index += 1
       }
-      current.removeAll()
     }
 
-    for rawToken in rawTokens {
-      guard let token = normalizedNameToken(rawToken) else {
-        flush()
-        continue
-      }
-      current.append(token)
-    }
-    flush()
-    return mentions.stableMentionUnique()
+    return NameScan(
+      mentions: mentions.stableMentionUnique(),
+      operationalTermsMatched: operationalTerms.stableUnique()
+    )
   }
 
-  private static func normalizedNameToken(_ rawToken: String) -> (display: String, normalized: String)? {
+  private static func nameScanTokens(in text: String) -> [NameScanToken] {
+    let rawTokens = text
+      .split(whereSeparator: \.isWhitespace)
+      .map(String.init)
+
+    var result: [NameScanToken] = []
+    var sentenceStart = true
+
+    for rawToken in rawTokens {
+      defer {
+        if rawToken.range(of: #"[.!?]\)?["']*$"#, options: .regularExpression) != nil {
+          sentenceStart = true
+        } else if normalizedNameToken(rawToken) != nil {
+          sentenceStart = false
+        }
+      }
+      guard let token = normalizedNameToken(rawToken, sentenceStart: sentenceStart) else {
+        continue
+      }
+      result.append(token)
+      sentenceStart = false
+    }
+
+    return result
+  }
+
+  private static func normalizedNameToken(
+    _ rawToken: String,
+    sentenceStart: Bool = false
+  ) -> NameScanToken? {
     let trimmed = rawToken
       .trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?()[]{}\""))
       .trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
 
+    let hadPossessive = trimmed.range(
+      of: #"(?i)(?:'s|’s)$"#,
+      options: .regularExpression
+    ) != nil
     let strippedPossessive = trimmed
       .replacingOccurrences(of: #"(?i)(?:'s|’s)$"#, with: "", options: .regularExpression)
       .trimmingCharacters(in: CharacterSet(charactersIn: "'’"))
     guard strippedPossessive.count >= 2 else { return nil }
-    guard let first = strippedPossessive.unicodeScalars.first,
-          CharacterSet.uppercaseLetters.contains(first) else {
-      return nil
-    }
+    let isTitleCase = strippedPossessive.unicodeScalars.first.map {
+      CharacterSet.uppercaseLetters.contains($0)
+    } ?? false
 
     let normalized = normalizeName(strippedPossessive)
-    guard !normalized.isEmpty, !commonNameWords.contains(normalized) else { return nil }
-    return (strippedPossessive, normalized)
+    guard !normalized.isEmpty else { return nil }
+    return NameScanToken(
+      display: strippedPossessive,
+      normalized: normalized,
+      lower: normalized,
+      isTitleCase: isTitleCase,
+      hadPossessive: hadPossessive,
+      isOperationalTerm: operationalStopWords.contains(normalized),
+      sentenceStart: sentenceStart
+    )
+  }
+
+  private static func isSingleNameCandidate(
+    at index: Int,
+    in tokens: [NameScanToken],
+    mode: NameScanMode
+  ) -> Bool {
+    let token = tokens[index]
+    guard token.isTitleCase else { return false }
+    guard !token.isOperationalTerm else { return false }
+    if mode == .approvedPacket {
+      return true
+    }
+    if token.hadPossessive {
+      return true
+    }
+    if let previous = previousLowerToken(before: index, in: tokens),
+       nameContextPreviousWords.contains(previous) {
+      return true
+    }
+    if let next = nextLowerToken(after: index, in: tokens),
+       nameContextNextWords.contains(next) {
+      return true
+    }
+    return false
+  }
+
+  private static func previousLowerToken(
+    before index: Int,
+    in tokens: [NameScanToken]
+  ) -> String? {
+    guard index > 0 else { return nil }
+    return tokens[index - 1].lower
+  }
+
+  private static func nextLowerToken(
+    after index: Int,
+    in tokens: [NameScanToken]
+  ) -> String? {
+    guard index + 1 < tokens.count else { return nil }
+    return tokens[index + 1].lower
   }
 
   private static func normalizeName(_ value: String) -> String {
@@ -760,20 +879,32 @@ enum ManagerNarrativeValidator {
     )
   }
 
-  private static let commonNameWords: Set<String> = {
-    let commonWords: Set<String> = [
-      "allergy", "anniversary", "attention", "birthday", "booking", "bookings",
-      "capacity", "check", "context", "dietary", "floor", "guest", "guests",
-      "host", "kitchen", "manager", "note", "notes", "party", "peak",
-      "preference", "pressure", "reservation", "reservations", "returning",
-      "service", "staff", "table", "tables", "today", "tonight", "tryzub",
-      "ukrainian", "window", "pm", "am", "next", "consider", "new", "open",
-      "times", "heavy", "very", "review", "watch", "steer", "slow", "shift",
-      "move", "use", "confirm", "ask", "seat", "seating", "load",
-      "loads", "arrival", "arrivals", "check-in", "checkins", "check-ins"
-    ]
-    return commonWords
-  }()
+  private static let operationalStopWords: Set<String> = [
+    "action", "actions", "allergy", "anniversary", "assign", "assigning",
+    "assignment", "assignments", "attention", "available",
+    "bar", "birthday", "booking", "bookings", "busy", "capacity", "check",
+    "context", "current", "dietary", "floor", "guest", "guests", "heavy",
+    "host", "kitchen", "manager", "no-table", "note", "notes", "party",
+    "parties", "patio", "peak", "preference", "pressure", "reservation",
+    "reservations", "returning", "review", "seat", "seated", "service",
+    "staff", "table", "tables", "tell", "today", "tonight", "tryzub", "ukrainian",
+    "unassigned", "wave", "window",
+    "pm", "am", "next", "consider", "new", "open", "times", "very",
+    "watch", "steer", "slow", "shift", "move", "use", "confirm", "ask",
+    "seating", "load", "loads", "arrival", "arrivals", "check-in",
+    "checkins", "check-ins"
+  ]
+
+  private static let nameContextPreviousWords: Set<String> = [
+    "for", "check", "review", "tell", "ask", "seat", "seating", "assign",
+    "assigning", "with", "guest", "party", "reservation", "note", "notes"
+  ]
+
+  private static let nameContextNextWords: Set<String> = [
+    "needs", "need", "still", "has", "have", "wants", "want", "asked",
+    "requested", "requests", "prefers", "prefer", "at", "is", "arrives",
+    "arrive", "arriving"
+  ]
 
   private static func extractFirstInteger(after keywords: [String], in lower: String) -> Int? {
     for keyword in keywords {

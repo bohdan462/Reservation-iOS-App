@@ -338,6 +338,7 @@ enum ReservationEmailStatus: String, Codable {
 
 enum ReservationManualEmailLogEmailType: String, Codable {
     case confirmation
+    case reminder
 }
 
 enum ReservationManualEmailLogStatus: String, Codable {

@@ -20,7 +20,32 @@ struct HostBriefingWriterResult: Equatable {
 /// In-memory diagnostics for developer tools only. Not persisted.
 enum HostLocalModelInferenceTracker {
   private static let lock = NSLock()
+  enum Task: String {
+    case hostBoardNarrative
+    case hostBriefing
+    case guestMessageDraft
+    case noteAnalysis
+    case diagnosticsPreload
+
+    var priority: Int {
+      switch self {
+      case .hostBoardNarrative, .guestMessageDraft:
+        return 100
+      case .hostBriefing:
+        return 80
+      case .noteAnalysis, .diagnosticsPreload:
+        return 10
+      }
+    }
+
+    var isLowPriority: Bool {
+      priority < 50
+    }
+  }
+
   nonisolated(unsafe) private static var activeRequestCount = 0
+  nonisolated(unsafe) private static var activeTasks: [Task: Int] = [:]
+  nonisolated(unsafe) private static var hostBoardPendingCount = 0
 
   static var isActive: Bool {
     lock.lock()
@@ -28,16 +53,120 @@ enum HostLocalModelInferenceTracker {
     return activeRequestCount > 0
   }
 
-  static func begin() {
+  static var currentTaskLabel: String? {
     lock.lock()
     defer { lock.unlock() }
+    return highestPriorityActiveTaskLocked()?.rawValue
+  }
+
+  static var blocksHostBoardNarrative: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let current = highestPriorityActiveTaskLocked() else { return false }
+    return !current.isLowPriority
+  }
+
+  static func begin() {
+    _ = begin(task: .hostBriefing)
+  }
+
+  @discardableResult
+  static func begin(task: Task) -> Bool {
+    lock.lock()
+    defer {
+      lock.unlock()
+    }
+    if task == .noteAnalysis, hostBoardPendingCount > 0 {
+      HostLocalModelPriorityTrace.log(
+        requested: task.rawValue,
+        decision: "defer",
+        reason: "host_board_pending"
+      )
+      return false
+    }
+    if task == .hostBoardNarrative {
+      if let current = highestPriorityActiveTaskLocked(), current.isLowPriority {
+        HostLocalModelPriorityTrace.log(
+          requested: task.rawValue,
+          decision: "wait_or_cancel_lower_priority",
+          reason: nil,
+          current: current.rawValue
+        )
+      } else {
+        HostLocalModelPriorityTrace.log(
+          requested: task.rawValue,
+          decision: "run",
+          reason: "host_priority"
+        )
+      }
+    }
     activeRequestCount += 1
+    activeTasks[task, default: 0] += 1
+    return true
   }
 
   static func end() {
+    end(task: .hostBriefing)
+  }
+
+  static func end(task: Task) {
     lock.lock()
     defer { lock.unlock() }
     activeRequestCount = max(0, activeRequestCount - 1)
+    if let count = activeTasks[task], count > 1 {
+      activeTasks[task] = count - 1
+    } else {
+      activeTasks.removeValue(forKey: task)
+    }
+  }
+
+  static func beginHostBoardPending() {
+    lock.lock()
+    defer { lock.unlock() }
+    hostBoardPendingCount += 1
+  }
+
+  static func endHostBoardPending() {
+    lock.lock()
+    defer { lock.unlock() }
+    hostBoardPendingCount = max(0, hostBoardPendingCount - 1)
+  }
+
+  private static func highestPriorityActiveTaskLocked() -> Task? {
+    activeTasks
+      .filter { $0.value > 0 }
+      .keys
+      .sorted { lhs, rhs in
+        if lhs.priority != rhs.priority {
+          return lhs.priority > rhs.priority
+        }
+        return lhs.rawValue < rhs.rawValue
+      }
+      .first
+  }
+}
+
+enum HostLocalModelPriorityTrace {
+  static func log(
+    requested: String,
+    decision: String,
+    reason: String? = nil,
+    current: String? = nil
+  ) {
+    #if DEBUG
+    var parts = [
+      "[LOCAL_MODEL_PRIORITY_TRACE]",
+      "requested=\(requested)",
+      "decision=\(decision)"
+    ]
+    if let reason, !reason.isEmpty {
+      parts.append("reason=\(reason)")
+    }
+    if let current, !current.isEmpty {
+      parts.append("current=\(current)")
+    }
+    print(parts.joined(separator: " "))
+    #endif
   }
 }
 
@@ -901,6 +1030,37 @@ enum HostBoardOperationalCategory: String, CaseIterable {
   }
 }
 
+enum HostDateGateTrace {
+  static func log(
+    selectedDate: String,
+    stable: Bool,
+    remainingMs: Int,
+    decision: String
+  ) {
+    #if DEBUG
+    print(
+      "[HOST_DATE_GATE_TRACE] selected=\(selectedDate) stable=\(stable) remainingMs=\(remainingMs) decision=\(decision)"
+    )
+    #endif
+  }
+}
+
+enum HostEnrichmentGateTrace {
+  static func log(
+    floor: String,
+    guestIntel: String,
+    availability: String,
+    dateStable: Bool,
+    decision: String
+  ) {
+    #if DEBUG
+    print(
+      "[HOST_ENRICHMENT_GATE_TRACE] floor=\(floor) guestIntel=\(guestIntel) availability=\(availability) dateStable=\(dateStable) decision=\(decision)"
+    )
+    #endif
+  }
+}
+
 @MainActor
 enum HostBoardModelDecisionTrace {
   struct Snapshot: Equatable {
@@ -1127,17 +1287,42 @@ enum HostBriefingHostBoardGate {
     }
     if context.isStartupNetworkPassInFlight { return .startup_in_flight }
     if context.isReservationRefreshInFlight { return .reservation_refresh_in_flight }
+    let dateRemainingMs = dateNavigationRemainingMs(context: context)
+    let dateStable = dateRemainingMs == 0
+    HostDateGateTrace.log(
+      selectedDate: context.selectedDateKey,
+      stable: dateStable,
+      remainingMs: dateRemainingMs,
+      decision: dateStable ? "allow" : "block"
+    )
+    let availabilityState = context.isAvailabilitySummaryLoading ? "loading" : "fresh"
+    let guestIntelState = context.isGuestIntelligenceLoading ? "loading" : "fresh"
+    HostEnrichmentGateTrace.log(
+      floor: context.floorSourceLabel,
+      guestIntel: guestIntelState,
+      availability: availabilityState,
+      dateStable: dateStable,
+      decision: context.isEnrichmentLoading ? "block" : "allow"
+    )
     if context.isEnrichmentLoading { return .enrichment_loading }
-    if let navigationAt = context.hostBoardDateNavigationAt,
-       context.now.timeIntervalSince(navigationAt) < dateNavigationCooldown {
+    if !dateStable {
       return .date_navigation
     }
-    if context.isLocalModelInferenceActive { return .local_model_in_flight }
+    if context.isLocalModelInferenceActive,
+       HostLocalModelInferenceTracker.blocksHostBoardNarrative {
+      return .local_model_in_flight
+    }
     guard let releasedAt = context.startupUIReleasedAt else { return .stabilization_delay }
     if context.now.timeIntervalSince(releasedAt) < stabilizationDelay {
       return .stabilization_delay
     }
     return nil
+  }
+
+  private static func dateNavigationRemainingMs(context: HostBriefingHostBoardContext) -> Int {
+    guard let navigationAt = context.hostBoardDateNavigationAt else { return 0 }
+    let remaining = max(0, dateNavigationCooldown - context.now.timeIntervalSince(navigationAt))
+    return Int((remaining * 1000).rounded(.up))
   }
 
   static func logGateDecision(

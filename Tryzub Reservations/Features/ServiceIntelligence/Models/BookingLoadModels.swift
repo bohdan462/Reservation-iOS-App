@@ -95,7 +95,7 @@ struct BookingLoadReport: Equatable {
     var knownOnlyNote: String {
         if let seats = plannedReservableSeats {
             let source = hasBackendLayout ? "backend tables" : "local config"
-            return "\(seats) seats (\(source)) — known reservations only, walk-ins not counted."
+            return "\(seats) seats (\(source)) - known reservations only, walk-ins not counted."
         }
         return "Known reservations only — walk-ins not counted. No table plan configured."
     }

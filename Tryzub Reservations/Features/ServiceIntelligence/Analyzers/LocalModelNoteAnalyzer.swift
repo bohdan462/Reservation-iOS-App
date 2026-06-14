@@ -49,13 +49,16 @@ actor LocalModelNoteAnalyzer {
             return []
         }
 
-        ModelTaskTrace.started(task: .noteAnalysis)
-
         let prompt = Self.buildPrompt(note: combined)
         let runtime = HostLocalModelRuntimeFactory.makeRuntime()
 
-        HostLocalModelInferenceTracker.begin()
-        defer { HostLocalModelInferenceTracker.end() }
+        guard HostLocalModelInferenceTracker.begin(task: .noteAnalysis) else {
+            ModelTaskTrace.blocked(task: .noteAnalysis, reason: "host_board_pending")
+            return []
+        }
+        defer { HostLocalModelInferenceTracker.end(task: .noteAnalysis) }
+
+        ModelTaskTrace.started(task: .noteAnalysis)
 
         let generated: String
         do {

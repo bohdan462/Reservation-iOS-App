@@ -70,7 +70,7 @@ enum TableAssignmentCoordinator {
             )
         }
 
-        // Legacy path — no conflict checks.
+        // Legacy path - no conflict checks.
         TableAssignmentTrace.legacyPatch(reservationID: reservationID, tableName: tableName)
         _ = try? await controller.updateReservation(
             id: reservationID,

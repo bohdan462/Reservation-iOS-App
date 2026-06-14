@@ -49,8 +49,8 @@ actor LocalModelGuestMessageDraftWriter: GuestMessageDraftWriting {
         let prompt = GuestMessageDraftPromptBuilder.buildPrompt(from: packet)
         let runtime = HostLocalModelRuntimeFactory.makeRuntime()
 
-        HostLocalModelInferenceTracker.begin()
-        defer { HostLocalModelInferenceTracker.end() }
+        HostLocalModelInferenceTracker.begin(task: .guestMessageDraft)
+        defer { HostLocalModelInferenceTracker.end(task: .guestMessageDraft) }
 
         ModelTaskTrace.started(task: .guestMessageDraft)
         let generationStart = ContinuousClock.now

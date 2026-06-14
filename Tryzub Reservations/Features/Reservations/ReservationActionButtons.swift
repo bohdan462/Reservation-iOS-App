@@ -9,7 +9,8 @@ import SwiftUI
 // MARK: - Staff Host Actions
 
 // Business intent enum for staff actions.
-// Confirm only is PATCH status=confirmed; Confirm + Email uses POST /confirm when enabled.
+// Confirm opens the manual Mail workflow when the reservation has an email.
+// Backend Confirm + Email is legacy/debug only when explicitly enabled.
 enum ReservationHostAction: String, Identifiable {
     case confirmOnly
     case confirmAndSendEmail
@@ -28,7 +29,7 @@ enum ReservationHostAction: String, Identifiable {
         case .confirmOnly:
             return "Confirm"
         case .confirmAndSendEmail:
-            return "Confirm + Email"
+            return "Backend email confirm (legacy/debug)"
         case .seat:
             return "Seat"
         case .assignTable:
@@ -49,7 +50,7 @@ enum ReservationHostAction: String, Identifiable {
         case .confirmOnly:
             return "Confirm"
         case .confirmAndSendEmail:
-            return "Email"
+            return "Backend Email"
         case .seat, .complete, .cancel, .noShow:
             return shortTitle
         }
@@ -58,7 +59,7 @@ enum ReservationHostAction: String, Identifiable {
     var fullTitle: String {
         switch self {
         case .confirmOnly:
-            return "Confirm Only"
+            return "Confirm"
         case .confirmAndSendEmail:
             return "Confirm + Email"
         case .seat:
@@ -114,6 +115,9 @@ enum ReservationHostAction: String, Identifiable {
     func displayRowTitle(for reservation: ReservationRecord, compact: Bool) -> String {
         switch self {
         case .seat:
+            if reservation.statusValue == .noShow {
+                return compact ? "Seat" : "Arrived late — seat"
+            }
             if let table = reservation.assignedTableName {
                 return "Seat at \(table)"
             }
@@ -126,6 +130,9 @@ enum ReservationHostAction: String, Identifiable {
     func displayPendingTitle(for reservation: ReservationRecord) -> String {
         switch self {
         case .seat:
+            if reservation.statusValue == .noShow {
+                return "Seat anyway?"
+            }
             if let table = reservation.assignedTableName {
                 return "Seat at \(table)?"
             }
@@ -214,7 +221,7 @@ enum ReservationHostAction: String, Identifiable {
             }
 
             if capabilities.canSeatReservations,
-               status == .confirmed {
+               (status == .confirmed || status == .noShow) {
                 actions.append(.seat)
 
                 if includeSecondary,
@@ -292,17 +299,17 @@ enum ReservationHostAction: String, Identifiable {
         switch self {
         case .confirmOnly:
             let helper = reservation.email.nilIfBlank == nil
-                ? "\n\nNo guest email on this reservation."
+                ? "\n\nNo guest email on this reservation. Mark confirmed without email."
                 : ""
-            let manualFlow = Self.isBackendConfirmEmailEnabled
-                ? "Choose Confirm only to update the reservation without email, or Confirm + Send Email to ask the server to send the confirmation email."
-                : "Choose Confirm only to update status. Use Detail → More → Open email draft for the manual Gmail/Mail flow."
+            let manualFlow = reservation.hasUsableConfirmationEmail
+                ? "This opens Mail. The reservation is marked confirmed only after the email is sent."
+                : "Mark confirmed without email."
             return "\(manualFlow)\(helper)"
         case .confirmAndSendEmail:
             if Self.isBackendConfirmEmailEnabled {
-                return "\(summary)\n\nThis will mark the reservation confirmed and ask the server to send a confirmation email to \(reservation.email)."
+                return "\(summary)\n\nLegacy/debug only. This asks the backend to send the confirmation email."
             }
-            return "Backend confirmation email is disabled for the pilot. Use Detail → More → Open email draft instead."
+            return "Backend email confirm is disabled for normal staff flow. Use the Mail draft confirmation flow."
         case .seat:
             return "\(summary)\n\nThis only updates staff status. No email will be sent."
         case .assignTable:
@@ -689,13 +696,13 @@ enum ReservationConfirmDialog {
     ) -> some View {
         if ReservationEmailWorkflow.isBackendConfirmEmailEnabled {
             if hasUsableEmail {
-                Button("Confirm + Email", action: action)
+                Button("Backend email confirm (legacy/debug)", action: action)
             } else {
-                Button("Confirm + Email") {}
+                Button("Backend email confirm (legacy/debug)") {}
                     .disabled(true)
             }
         } else {
-            Button("Confirm + Email (backend disabled)") {}
+            Button("Backend email confirm (legacy/debug disabled)") {}
                 .disabled(true)
         }
     }

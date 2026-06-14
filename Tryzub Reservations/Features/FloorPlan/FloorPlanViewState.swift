@@ -235,7 +235,7 @@ enum FloorPlanPresentation {
     }
 
     static func combinedCapacity(for tables: [RestaurantTableDTO]) -> String {
-        guard !tables.isEmpty else { return "—" }
+        guard !tables.isEmpty else { return "-" }
         let minTotal = tables.reduce(0) { $0 + $1.minCapacity }
         let maxTotal = tables.reduce(0) { $0 + $1.maxCapacity }
         return capacityRange(min: minTotal, max: maxTotal)

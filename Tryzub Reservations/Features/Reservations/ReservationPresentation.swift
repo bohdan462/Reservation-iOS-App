@@ -66,6 +66,7 @@ func activeReservationWindowQueryBounds(daysAhead: Int = 120) -> (from: String, 
 enum ReservationScheduleScope: String, CaseIterable, Identifiable {
     case upcoming = "Upcoming"
     case needsReview = "Review"
+    case noShow = "No Show"
     case all = "All"
     case cancelled = "Cancelled"
 

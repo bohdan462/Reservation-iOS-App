@@ -493,6 +493,16 @@ private struct ReservationFormContent: View {
             prepareAvailabilityState()
             refreshSlotContext()
             refreshGuestPhoneLookup()
+            WorkflowCleanupTrace.log(
+                "NEW_RESERVATION_UX_TRACE",
+                fields: [
+                    "phase": "render",
+                    "date": draft.reservationDate.reservationDateString(),
+                    "party": "\(draft.partySize)",
+                    "timeMode": timeChoices.contains(where: { isSameTime($0, draft.reservationTime) }) ? "preset" : "custom",
+                    "serviceTimes": "\(timeChoices.count)"
+                ]
+            )
         }
         .task(id: guestLookupCacheKey) {
             guestPhoneLookupStore.updateCache(
@@ -676,7 +686,8 @@ private struct ReservationFormContent: View {
                         phone: draft.phone,
                         confirmationBody: manualTextConfirmationBody,
                         tableDueBody: manualTextTableDueBody,
-                        isCompact: !isWideForm
+                        isCompact: !isWideForm,
+                        includesTableReady: mode.showsEditControls
                     )
                 }
             }
@@ -893,7 +904,7 @@ private struct ReservationFormContent: View {
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(TryzubColors.danger)
             } else if timeChoices.isEmpty {
-                Text("No service times for this date. Use Custom.")
+                Text("No preset service times for this date. Use Custom.")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.secondary)
             } else {
@@ -1012,7 +1023,18 @@ private struct ReservationFormContent: View {
             }
 
             HStack(spacing: ReservationFormLayout.fieldSpacing) {
-                Text("Party of \(draft.partySize)")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(draft.partySize >= 9 ? "Large party · \(draft.partySize) guests" : "Party of \(draft.partySize)")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    if draft.partySize >= 9 {
+                        Text("Review table plan / banquet note recommended")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -1239,6 +1261,17 @@ private struct ReservationFormContent: View {
         hasAttemptedSave = true
         dismissReservationFormKeyboard(reason: "submit")
         focusedField = nil
+        let isValid = !controller.isNetworkDegraded
+            && availabilityBlockingMessage == nil
+            && validationErrorMessage == nil
+            && !isSaving
+        WorkflowCleanupTrace.log(
+            "NEW_RESERVATION_UX_TRACE",
+            fields: [
+                "phase": "create_tapped",
+                "valid": "\(isValid)"
+            ]
+        )
         guard !controller.isNetworkDegraded,
               availabilityBlockingMessage == nil,
               validationErrorMessage == nil,

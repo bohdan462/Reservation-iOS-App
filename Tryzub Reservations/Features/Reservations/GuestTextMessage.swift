@@ -177,7 +177,7 @@ enum GuestTextMessagePresenter {
 
 struct GuestTextMessageComposer: UIViewControllerRepresentable {
     let draft: GuestTextMessageDraft
-    let onFinish: () -> Void
+    let onFinish: (MessageComposeResult) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onFinish: onFinish)
@@ -194,9 +194,9 @@ struct GuestTextMessageComposer: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: MFMessageComposeViewController, context: Context) {}
 
     final class Coordinator: NSObject, @preconcurrency MFMessageComposeViewControllerDelegate {
-        let onFinish: () -> Void
+        let onFinish: (MessageComposeResult) -> Void
 
-        init(onFinish: @escaping () -> Void) {
+        init(onFinish: @escaping (MessageComposeResult) -> Void) {
             self.onFinish = onFinish
         }
 
@@ -206,7 +206,7 @@ struct GuestTextMessageComposer: UIViewControllerRepresentable {
             didFinishWith result: MessageComposeResult
         ) {
             controller.dismiss(animated: true)
-            onFinish()
+            onFinish(result)
         }
     }
 }
@@ -216,6 +216,7 @@ struct GuestTextMessageActionButtons: View {
     let confirmationBody: String
     let tableDueBody: String
     var isCompact = false
+    var includesTableReady = true
 
     @State private var activeDraft: GuestTextMessageDraft?
 
@@ -228,11 +229,13 @@ struct GuestTextMessageActionButtons: View {
                         systemImage: "message.fill",
                         body: confirmationBody
                     )
-                    messageButton(
-                        title: "Text Table Ready",
-                        systemImage: "bell.badge.fill",
-                        body: tableDueBody
-                    )
+                    if includesTableReady {
+                        messageButton(
+                            title: "Text Table Ready",
+                            systemImage: "bell.badge.fill",
+                            body: tableDueBody
+                        )
+                    }
                 }
 
                 VStack(spacing: 8) {
@@ -242,16 +245,18 @@ struct GuestTextMessageActionButtons: View {
                         body: confirmationBody,
                         fillsWidth: true
                     )
-                    messageButton(
-                        title: "Text Table Ready",
-                        systemImage: "bell.badge.fill",
-                        body: tableDueBody,
-                        fillsWidth: true
-                    )
+                    if includesTableReady {
+                        messageButton(
+                            title: "Text Table Ready",
+                            systemImage: "bell.badge.fill",
+                            body: tableDueBody,
+                            fillsWidth: true
+                        )
+                    }
                 }
             }
             .sheet(item: $activeDraft) { draft in
-                GuestTextMessageComposer(draft: draft) {
+                GuestTextMessageComposer(draft: draft) { _ in
                     activeDraft = nil
                 }
             }

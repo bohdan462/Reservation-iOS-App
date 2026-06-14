@@ -295,7 +295,7 @@ enum GuestHistorySemantics {
     if mergedSource == .unknownNoSummary || mergedSource == .localIncomplete {
       return GuestInsightsMetricsPresentation(
         title: "Known visits",
-        value: "—",
+        value: "-",
         caption: "History not confirmed",
         source: .merged
       )

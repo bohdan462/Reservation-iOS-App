@@ -7,6 +7,20 @@
 
 import Foundation
 
+enum HostAIRetryTrace {
+  static func retry(packet: String, previousSkip: String) {
+    #if DEBUG
+    print("[HOST_AI_RETRY_TRACE] packet=\(packet) previousSkip=\(previousSkip) retry=true")
+    #endif
+  }
+
+  static func final(packet: String, source: String) {
+    #if DEBUG
+    print("[HOST_AI_RETRY_TRACE] packet=\(packet) final=true source=\(source)")
+    #endif
+  }
+}
+
 @MainActor
 final class HostIntelligenceController: ObservableObject {
 
@@ -46,6 +60,9 @@ final class HostIntelligenceController: ObservableObject {
   private var lastValidModelNarrative: ManagerNarrative?
   private var lastValidModelBriefingText: String?
   private var lastVisibleSourceLabel: String?
+  private var lastRetryableBriefingCacheKey: String?
+  private var lastRetryableBriefingPacketFingerprint: String?
+  private var lastRetryableBriefingSkipReason: HostBriefingHostBoardGate.SkipReason?
 
   init(
     settingsStore: HostIntelligenceSettingsStore? = nil,
@@ -304,8 +321,69 @@ final class HostIntelligenceController: ObservableObject {
       return
     }
 
+    let protectsHostModelSlot = shouldProtectHostBoardModelSlot(
+      settings: settings,
+      hostBoardContext: hostBoardContext,
+      packet: packet,
+      presentation: currentPresentation
+    )
+    if protectsHostModelSlot {
+      HostLocalModelInferenceTracker.beginHostBoardPending()
+    }
+    defer {
+      if protectsHostModelSlot {
+        HostLocalModelInferenceTracker.endHostBoardPending()
+      }
+    }
+
+    let hostBoardSkipReason = hostBoardContext.map { context in
+      HostBriefingHostBoardGate.localModelSkipReason(
+        settings: settings,
+        context: context,
+        packet: packet,
+        modelEligibleReason: currentPresentation.modelEligibleReason
+      )
+    } ?? nil
+    if let hostBoardContext {
+      HostBoardModelDecisionTrace.record(
+        allowed: hostBoardSkipReason == nil,
+        skipReason: hostBoardSkipReason,
+        packet: packet,
+        enrichmentLoading: hostBoardContext.isEnrichmentLoading,
+        modelEligibleReason: currentPresentation.modelEligibleReason
+      )
+    }
+    let retryingDeferredSkip = shouldRetryDeferredHostBriefing(
+      cacheKey: cacheKey,
+      fingerprint: fingerprint,
+      currentSkipReason: hostBoardSkipReason
+    )
+    if retryingDeferredSkip,
+       let previousSkip = lastRetryableBriefingSkipReason {
+      HostAIRetryTrace.retry(packet: fingerprint, previousSkip: previousSkip.rawValue)
+      clearRetryableHostBriefingSkip()
+    }
+
+    if let hostBoardSkipReason,
+       isRetryableHostBoardSkip(hostBoardSkipReason) {
+      recordRetryableHostBriefingSkip(
+        cacheKey: cacheKey,
+        fingerprint: fingerprint,
+        reason: hostBoardSkipReason
+      )
+      HostIntelligenceDiagnostics.skipLocalModel(reason: hostBoardSkipReason.rawValue)
+      HostAILifecycleTrace.modelSkipped(reason: hostBoardSkipReason.rawValue)
+      applyRetryableTemplateBriefing(
+        fallback: fallback,
+        templateNarrative: templateNarrative,
+        reason: hostBoardSkipReason.rawValue
+      )
+      return
+    }
+
     if cacheKey == lastBriefingCacheKey,
-       let cachedText = lastBriefingText {
+       let cachedText = lastBriefingText,
+       !retryingDeferredSkip {
       briefingText = cachedText
       briefingSource = lastBriefingSource ?? .template
       briefingFailureReason = lastBriefingFailureReason
@@ -324,15 +402,6 @@ final class HostIntelligenceController: ObservableObject {
         narrative: templateNarrative
       )
       return
-    }
-
-    if let hostBoardContext {
-      recordHostBoardGateDecision(
-        context: hostBoardContext,
-        settings: settings,
-        packet: packet,
-        presentation: currentPresentation
-      )
     }
 
     if hostBoardContext != nil,
@@ -393,6 +462,20 @@ final class HostIntelligenceController: ObservableObject {
             refreshDateKey == latestSelectedDateKey else {
         HostAILifecycleTrace.modelResultIgnored(reason: "date_changed")
         HostAILifecycleTrace.modelCancelled(reason: "date_changed")
+        return
+      }
+
+      if let retryableReason = retryableHostBoardSkipReason(rawValue: narrativeResult.failedReason) {
+        recordRetryableHostBriefingSkip(
+          cacheKey: cacheKey,
+          fingerprint: fingerprint,
+          reason: retryableReason
+        )
+        applyRetryableTemplateBriefing(
+          fallback: fallback,
+          templateNarrative: templateNarrative,
+          reason: retryableReason.rawValue
+        )
         return
       }
 
@@ -523,6 +606,91 @@ final class HostIntelligenceController: ObservableObject {
     briefingSource = .template
     briefingFailureReason = nil
     managerNarrative = narrative
+  }
+
+  private func applyRetryableTemplateBriefing(
+    fallback: String,
+    templateNarrative: ManagerNarrative,
+    reason: String
+  ) {
+    briefingText = fallback
+    briefingSource = .template
+    briefingFailureReason = reason
+    managerNarrative = templateNarrative
+    if decisionSnapshot.hasAttentionContent {
+      lastAttentionNarrative = templateNarrative
+      lastAttentionBriefingText = fallback
+    }
+  }
+
+  private func shouldProtectHostBoardModelSlot(
+    settings: HostIntelligenceSettings,
+    hostBoardContext: HostBriefingHostBoardContext?,
+    packet: HostLLMPacket,
+    presentation: HostAttentionPresentation
+  ) -> Bool {
+    guard hostBoardContext != nil else { return false }
+    guard settings.isEnabled,
+          settings.useEnhancedBriefing,
+          settings.enhancedBriefingProvider == .localModel,
+          settings.useLocalModelOnHostBoard else {
+      return false
+    }
+    guard packet.hasMeaningfulBriefingFacts else { return false }
+    return presentation.modelEligibleReason != nil
+  }
+
+  private func isRetryableHostBoardSkip(
+    _ reason: HostBriefingHostBoardGate.SkipReason
+  ) -> Bool {
+    switch reason {
+    case .date_navigation, .enrichment_loading, .local_model_in_flight:
+      return true
+    case .host_board_gate_off, .host_board_template_only, .model_not_ready,
+         .startup_in_flight, .reservation_refresh_in_flight, .stabilization_delay,
+         .no_meaningful_facts:
+      return false
+    }
+  }
+
+  private func retryableHostBoardSkipReason(
+    rawValue: String?
+  ) -> HostBriefingHostBoardGate.SkipReason? {
+    guard let rawValue,
+          let reason = HostBriefingHostBoardGate.SkipReason(rawValue: rawValue),
+          isRetryableHostBoardSkip(reason) else {
+      return nil
+    }
+    return reason
+  }
+
+  private func recordRetryableHostBriefingSkip(
+    cacheKey: String,
+    fingerprint: String,
+    reason: HostBriefingHostBoardGate.SkipReason
+  ) {
+    lastRetryableBriefingCacheKey = cacheKey
+    lastRetryableBriefingPacketFingerprint = fingerprint
+    lastRetryableBriefingSkipReason = reason
+  }
+
+  private func shouldRetryDeferredHostBriefing(
+    cacheKey: String,
+    fingerprint: String,
+    currentSkipReason: HostBriefingHostBoardGate.SkipReason?
+  ) -> Bool {
+    guard currentSkipReason == nil else { return false }
+    guard lastRetryableBriefingCacheKey == cacheKey
+            || lastRetryableBriefingPacketFingerprint == fingerprint else {
+      return false
+    }
+    return lastRetryableBriefingSkipReason != nil
+  }
+
+  private func clearRetryableHostBriefingSkip() {
+    lastRetryableBriefingCacheKey = nil
+    lastRetryableBriefingPacketFingerprint = nil
+    lastRetryableBriefingSkipReason = nil
   }
 
   private var shouldPreservePreviousAttentionCard: Bool {
@@ -772,6 +940,17 @@ final class HostIntelligenceController: ObservableObject {
     lastBriefingSource = source
     lastBriefingFailureReason = failureReason
     lastManagerNarrative = narrative
+    clearRetryableHostBriefingSkip()
+    HostAIRetryTrace.final(packet: fingerprint, source: retryFinalSourceLabel(for: source))
+  }
+
+  private func retryFinalSourceLabel(for source: HostBriefingWriterSource) -> String {
+    switch source {
+    case .localModel, .repairedLocalModel:
+      return "localModel"
+    case .template, .failedFallback, .localPlaceholder:
+      return "fallback"
+    }
   }
 
   private func clearValidModelBriefingCache() {

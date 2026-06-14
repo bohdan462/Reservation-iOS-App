@@ -332,9 +332,25 @@ enum ArrivalPressureEngine {
       )
     }
 
-    let resLabel = peak.reservationCount == 1 ? "1 reservation" : "\(peak.reservationCount) reservations"
     let guestLabel = peak.guestCount == 1 ? "1 guest" : "\(peak.guestCount) guests"
-    let headline = "Peak around \(peak.displayTime) · \(resLabel) / \(guestLabel)"
+    let headlinePhrase: String
+    if peak.largePartyCount == 1 && peak.reservationCount == 1 {
+      headlinePhrase = "Large party around \(peak.displayTime)."
+    } else if peak.reservationCount <= 1 {
+      headlinePhrase = peak.guestCount >= 7
+        ? "Large party around \(peak.displayTime)."
+        : "One party around \(peak.displayTime)."
+    } else if peak.reservationCount == 2 {
+      headlinePhrase = "A little busier around \(peak.displayTime)."
+    } else if peak.reservationCount >= 5 || peak.guestCount >= 18 {
+      headlinePhrase = "Main rush around \(peak.displayTime)."
+    } else {
+      headlinePhrase = "Busier around \(peak.displayTime)."
+    }
+    let headline = "\(headlinePhrase) · \(guestLabel)"
+    #if DEBUG
+    print("[SERVICE_PRESSURE_COPY_TRACE] peakWindow=\(peak.displayTime) reservationCount=\(peak.reservationCount) guestCount=\(peak.guestCount) phrase=\(headlinePhrase.replacingOccurrences(of: " ", with: "_"))")
+    #endif
 
     var subtitleParts: [String] = []
     if let waveStart = nextWaveStart {
@@ -346,11 +362,11 @@ enum ArrivalPressureEngine {
 
     if peak.noTableCount > 0 {
       subtitleParts.append("Pressure inside the \(peak.displayTime) wave")
-    } else if pressureLevel == .calm {
+    } else if pressureLevel == .calm && peak.reservationCount > 1 {
       let upcoming = buckets.filter { $0.hasArrivals && (!$0.isPast || !isToday) }
       if let first = upcoming.first, isToday, first.startTime > now {
         let quietUntil = ReservationFormatters.shortTime.string(from: first.startTime)
-        subtitleParts.insert("Quiet until \(quietUntil), then pressure builds", at: 0)
+        subtitleParts.insert("Quiet until \(quietUntil), then arrivals build", at: 0)
       }
     }
 

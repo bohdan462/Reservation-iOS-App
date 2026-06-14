@@ -451,6 +451,8 @@ struct ReservationDetailView: View {
     @State private var modelNoteSignals: [ReservationSignal] = []
     /// Controls the structured-notes editor sheet.
     @State private var showStructuredNoteEditor = false
+    @State private var showStaffNotesEditor = false
+    @State private var staffNotesDraft = ""
     // Phase 5 — Attachment state
     @State private var pendingPhotoItem: PhotosPickerItem?
     @State private var pendingPhotoData: Data?
@@ -480,6 +482,7 @@ struct ReservationDetailView: View {
             }
             guestIntelligenceStore.markDetailOpened(reservationID: reservation.remoteID)
             recomputeNoteSignals()
+            logNotesSemantics()
             autoSeedStructuredNoteFromSignals()
             // Schedule OCR for any existing attachments that haven't been scanned yet.
             if AttachmentFeatureFlag.ocrEnabled {
@@ -594,7 +597,7 @@ struct ReservationDetailView: View {
             }
         }
         .sheet(item: $guestMessageTextDraft) { draft in
-            GuestTextMessageComposer(draft: draft) {
+            GuestTextMessageComposer(draft: draft) { _ in
                 guestMessageTextDraft = nil
             }
         }
@@ -722,9 +725,6 @@ struct ReservationDetailView: View {
                     detailColumnPair {
                         VStack(spacing: 14) {
                             notesCard(presentation)
-                            structuredNotesSection
-                            depositSection
-                            preorderSection
                         }
                     } right: {
                         VStack(spacing: 14) {
@@ -757,9 +757,6 @@ struct ReservationDetailView: View {
                     importantCard(presentation)
                     noteSignalsCard
                     notesCard(presentation)
-                    structuredNotesSection
-                    depositSection
-                    preorderSection
                     attachmentsCard
                     guestInsightsSection
                     detailsCard(presentation)
@@ -937,6 +934,32 @@ struct ReservationDetailView: View {
         signals.append(contentsOf: newModelSignals)
 
         noteSignals = signals.sorted { $0.priority > $1.priority }
+        for signal in noteSignals {
+            WorkflowCleanupTrace.log(
+                "NOTE_SIGNAL_TRACE",
+                fields: [
+                    "reservation": "\(reservation.remoteID)",
+                    "signal": signal.type.rawValue,
+                    "source": signal.source.rawValue,
+                    "confidence": signal.confidence.rawValue,
+                    "label": signal.title.replacingOccurrences(of: " ", with: "_")
+                ]
+            )
+        }
+    }
+
+    private func logNotesSemantics() {
+        var sections = ["guest_notes", "staff_notes"]
+        if !noteSignals.isEmpty { sections.append("note_signals") }
+        WorkflowCleanupTrace.log(
+            "NOTES_SEMANTICS_TRACE",
+            fields: [
+                "reservation": "\(reservation.remoteID)",
+                "guestNotesPresent": "\(reservation.guestNotes?.nilIfBlank != nil)",
+                "staffNotesPresent": "\(reservation.staffNotes?.nilIfBlank != nil)",
+                "sections": sections.joined(separator: ",")
+            ]
+        )
     }
 
     /// Phase 10 — asks the on-device model to read the note for tone + missed signals.
@@ -1097,17 +1120,99 @@ struct ReservationDetailView: View {
     }
 
     private func notesCard(_ presentation: ReservationDetailPresentation) -> some View {
-        DetailSectionCard(title: "Notes", systemImage: "note.text") {
-            if presentation.notesRows.isEmpty {
-                DetailPlainLine("No guest or staff notes")
-            } else {
-                VStack(spacing: 10) {
-                    ForEach(Array(presentation.notesRows.enumerated()), id: \.offset) { index, row in
-                        if index > 0 { Divider().opacity(0.4) }
-                        DetailNoteRow(label: row.title, text: row.value)
+        VStack(spacing: 14) {
+            DetailSectionCard(title: "Guest Notes", systemImage: "note.text") {
+                if let guestNotes = reservation.guestNotes?.nilIfBlank {
+                    DetailNoteRow(label: "Guest", text: guestNotes)
+                } else {
+                    DetailPlainLine("No guest notes.")
+                }
+            }
+
+            DetailSectionCard(title: "Staff Notes", systemImage: "person.text.rectangle") {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let staffNotes = reservation.staffNotes?.nilIfBlank {
+                        DetailNoteRow(label: "Staff", text: staffNotes)
+                    } else {
+                        DetailPlainLine("No staff notes added yet.")
+                    }
+
+                    Button {
+                        staffNotesDraft = reservation.staffNotes ?? ""
+                        showStaffNotesEditor = true
+                    } label: {
+                        Label(reservation.staffNotes?.nilIfBlank == nil ? "Add staff notes" : "Edit staff notes", systemImage: "pencil")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(TryzubColors.primaryControl)
+                }
+            }
+        }
+        .sheet(isPresented: $showStaffNotesEditor) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Staff Notes")
+                        .font(.headline.weight(.semibold))
+                    TextEditor(text: $staffNotesDraft)
+                        .frame(minHeight: 180)
+                        .padding(8)
+                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .padding()
+                .navigationTitle("Staff Notes")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") {
+                            showStaffNotesEditor = false
+                        }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            Task { await saveStaffNotesDraft() }
+                        }
                     }
                 }
             }
+        }
+    }
+
+    @MainActor
+    private func saveStaffNotesDraft() async {
+        let trimmed = staffNotesDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.isEmpty ? nil : trimmed
+        do {
+            _ = try await controller.updateReservation(
+                id: reservation.remoteID,
+                request: ReservationUpdateRequest(
+                    staffNotes: normalized,
+                    expectedUpdatedAt: reservation.apiUpdatedAt
+                ),
+                context: modelContext,
+                action: "staff_notes_update"
+            )
+            WorkflowCleanupTrace.log(
+                "STAFF_NOTES_PATCH_TRACE",
+                fields: [
+                    "reservation": "\(reservation.remoteID)",
+                    "result": "success",
+                    "rowVersion": reservation.apiUpdatedAt ?? "none"
+                ]
+            )
+            showStaffNotesEditor = false
+            ReservationHaptics.success()
+        } catch {
+            WorkflowCleanupTrace.log(
+                "STAFF_NOTES_PATCH_TRACE",
+                fields: [
+                    "reservation": "\(reservation.remoteID)",
+                    "result": "failed",
+                    "rowVersion": reservation.apiUpdatedAt ?? "none"
+                ]
+            )
+            errorMessage = "Could not save staff notes. Check the connection and try again."
+            ReservationHaptics.warning()
         }
     }
 
@@ -1533,7 +1638,7 @@ struct ReservationDetailView: View {
             tableAssignmentReservation = reservation
         } else if action == .confirmOnly {
             Task {
-                await perform(.confirmOnly)
+                await beginPrimaryConfirmFlow(source: "primary_button")
             }
         } else if action == .cancel || action == .noShow || action == .confirmAndSendEmail {
             pendingAction = action
@@ -1545,7 +1650,7 @@ struct ReservationDetailView: View {
     }
 
     // Intent: Converts detail actions into controller calls.
-    // Confirm = PATCH status confirmed; Confirm + Email = POST /confirm.
+    // Confirm opens the manual Mail flow when an email exists; no-email call-ins PATCH confirmed.
     private func perform(_ action: ReservationHostAction) async {
         pendingAction = nil
         isSavingQuickAction = true
@@ -1557,14 +1662,23 @@ struct ReservationDetailView: View {
 
         switch action {
         case .confirmOnly:
-            await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
-            ReservationHaptics.success()
+            await beginPrimaryConfirmFlow(source: "legacy_action")
         case .confirmAndSendEmail:
             guard ReservationEmailWorkflow.isBackendConfirmEmailEnabled else { return }
             await controller.confirmReservation(reservation: reservation, context: modelContext)
             ReservationHaptics.success()
         case .seat:
             await controller.updateStatus(reservation: reservation, status: .seated, context: modelContext)
+            if reservation.statusValue == .noShow {
+                WorkflowCleanupTrace.log(
+                    "NO_SHOW_FLOW_TRACE",
+                    fields: [
+                        "reservation": "\(reservation.remoteID)",
+                        "action": "seat_after_no_show",
+                        "result": "success"
+                    ]
+                )
+            }
             ReservationHaptics.success()
         case .complete:
             await controller.updateStatus(reservation: reservation, status: .completed, context: modelContext)
@@ -1574,10 +1688,98 @@ struct ReservationDetailView: View {
             ReservationHaptics.warning()
         case .noShow:
             await controller.updateStatus(reservation: reservation, status: .noShow, context: modelContext)
+            WorkflowCleanupTrace.log(
+                "NO_SHOW_FLOW_TRACE",
+                fields: [
+                    "reservation": "\(reservation.remoteID)",
+                    "action": "mark_no_show",
+                    "result": "success"
+                ]
+            )
             ReservationHaptics.warning()
         case .assignTable:
             tableAssignmentReservation = reservation
         }
+    }
+
+    private func beginPrimaryConfirmFlow(source: String) async {
+        ConfirmFlowTrace.log(
+            reservationID: reservation.remoteID,
+            phase: "start",
+            fields: [
+                "source": source,
+                "status": reservation.status,
+                "emailPresent": "\(reservation.hasUsableConfirmationEmail)"
+            ]
+        )
+
+        switch reservation.statusValue {
+        case .completed:
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "blocked",
+                fields: ["reason": "terminal_status"]
+            )
+            guestManageLinkMessage = "Completed reservations cannot be confirmed."
+            ReservationHaptics.warning()
+            return
+        case .cancelled:
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "blocked",
+                fields: ["reason": "terminal_status"]
+            )
+            guestManageLinkMessage = "Cancelled reservations cannot be confirmed."
+            ReservationHaptics.warning()
+            return
+        case .noShow:
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "blocked",
+                fields: ["reason": "terminal_status"]
+            )
+            guestManageLinkMessage = "No-show reservations cannot be confirmed from the normal confirmation flow."
+            ReservationHaptics.warning()
+            return
+        case .confirmed:
+            guestManageLinkMessage = "Already confirmed."
+            ReservationHaptics.selection()
+            return
+        default:
+            break
+        }
+
+        if reservation.hasUsableConfirmationEmail {
+            await sendGuestConfirmationEmail(source: source)
+        } else {
+            await markConfirmedWithoutEmail()
+        }
+    }
+
+    private func markConfirmedWithoutEmail() async {
+        guard !isSavingQuickAction else { return }
+        isSavingQuickAction = true
+        errorMessage = nil
+        defer { isSavingQuickAction = false }
+
+        ConfirmFlowTrace.log(
+            reservationID: reservation.remoteID,
+            phase: "patch_confirmed",
+            fields: ["mode": "without_email"]
+        )
+        await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
+        ConfirmFlowTrace.log(
+            reservationID: reservation.remoteID,
+            phase: "patch_confirmed",
+            fields: ["result": "success"]
+        )
+        ConfirmFlowTrace.log(
+            reservationID: reservation.remoteID,
+            phase: "completed",
+            fields: ["result": "sent_and_confirmed"]
+        )
+        guestManageLinkMessage = "Marked confirmed without email."
+        ReservationHaptics.success()
     }
 
     // Intent: Hide a mistaken manual entry without hard-deleting server data.
@@ -1650,11 +1852,48 @@ struct ReservationDetailView: View {
         }
     }
 
-    private func sendGuestConfirmationEmail() async {
+    private func sendGuestConfirmationEmail(source: String = "more_menu") async {
         guard !isGeneratingGuestManageLink else { return }
+
+        switch reservation.statusValue {
+        case .completed:
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "blocked",
+                fields: ["reason": "terminal_status"]
+            )
+            guestManageLinkMessage = "Completed reservations cannot be confirmed."
+            ReservationHaptics.warning()
+            return
+        case .cancelled:
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "blocked",
+                fields: ["reason": "terminal_status"]
+            )
+            guestManageLinkMessage = "Cancelled reservations cannot be confirmed."
+            ReservationHaptics.warning()
+            return
+        case .noShow:
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "blocked",
+                fields: ["reason": "terminal_status"]
+            )
+            guestManageLinkMessage = "No-show reservations cannot be confirmed from the normal confirmation flow."
+            ReservationHaptics.warning()
+            return
+        default:
+            break
+        }
 
         let email = reservation.email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !email.isEmpty else {
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "blocked",
+                fields: ["reason": "missing_email"]
+            )
             errorMessage = "Add a guest email in Edit before sending confirmation."
             ReservationHaptics.warning()
             return
@@ -1669,6 +1908,7 @@ struct ReservationDetailView: View {
         }
 
         do {
+            ConfirmFlowTrace.log(reservationID: reservation.remoteID, phase: "guest_link_start")
             let link = try await controller.generateGuestManageLink(
                 reservation: reservation,
                 announceNotice: false
@@ -1688,16 +1928,19 @@ struct ReservationDetailView: View {
 
             if GuestConfirmationMailPresenter.canSendMail() {
                 guestConfirmationMailDraft = draft
+                ConfirmFlowTrace.log(reservationID: reservation.remoteID, phase: "mail_presented")
+                guestManageLinkMessage = "This opens Mail. The reservation is marked confirmed only after the email is sent."
                 ReservationHaptics.success()
             } else if GuestConfirmationMailPresenter.openMailtoFallback(draft: draft) {
-                guestManageLinkMessage = "Opened Mail with a plain-text confirmation draft. Record sent after staff sends it."
+                ConfirmFlowTrace.log(reservationID: reservation.remoteID, phase: "mail_presented")
+                guestManageLinkMessage = "Opened Mail with a plain-text confirmation draft. Reservation is not confirmed until staff records it as sent."
                 ReservationHaptics.success()
             } else {
                 UIPasteboard.general.string = ManualEmailDraftService.confirmationDraft(
                     reservation: reservation,
                     manageLink: link
                 )
-                guestManageLinkMessage = "Mail isn’t set up on this device. Confirmation draft copied. Record sent after staff sends it."
+                guestManageLinkMessage = "Mail is not set up. Draft copied. Reservation was not confirmed."
                 ReservationHaptics.success()
             }
         } catch {
@@ -1748,17 +1991,54 @@ struct ReservationDetailView: View {
 
         switch result {
         case .sent:
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "mail_result",
+                fields: ["result": "sent"]
+            )
             Task {
                 await finalizeManualConfirmationAfterSend(draft: draft)
             }
         case .failed:
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "mail_result",
+                fields: ["result": "failed"]
+            )
             Task {
                 await recordManualConfirmationFailure(draft: draft)
             }
-        case .cancelled, .saved:
-            guestManageLinkMessage = "Draft was not sent from Mail. Reservation status was not changed."
+        case .cancelled:
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "mail_result",
+                fields: ["result": "cancelled"]
+            )
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "completed",
+                fields: ["result": "cancelled_no_change"]
+            )
+            guestManageLinkMessage = "Email was not sent. Reservation was not confirmed."
+        case .saved:
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "mail_result",
+                fields: ["result": "saved"]
+            )
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "completed",
+                fields: ["result": "cancelled_no_change"]
+            )
+            guestManageLinkMessage = "Email was not sent. Reservation was not confirmed."
         @unknown default:
-            guestManageLinkMessage = "Draft was not sent from Mail. Reservation status was not changed."
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "mail_result",
+                fields: ["result": "failed"]
+            )
+            guestManageLinkMessage = "Email was not sent. Reservation was not confirmed."
         }
     }
 
@@ -1769,6 +2049,11 @@ struct ReservationDetailView: View {
                 toEmail: draft.recipients.first,
                 subject: draft.subject,
                 bodySnapshot: draft.logBodySnapshot
+            )
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "manual_email_log",
+                fields: ["status": "draft_created"]
             )
         } catch {
             if !error.isOfflineLike {
@@ -1790,10 +2075,45 @@ struct ReservationDetailView: View {
                 bodySnapshot: draft.logBodySnapshot,
                 context: modelContext
             )
-            guestManageLinkMessage = "Manual confirmation recorded."
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "manual_email_log",
+                fields: ["status": "manual_sent"]
+            )
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "patch_confirmed"
+            )
+            _ = try await controller.updateReservation(
+                id: reservation.remoteID,
+                request: ReservationUpdateRequest(status: .confirmed),
+                context: modelContext,
+                action: "confirm_after_manual_email"
+            )
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "patch_confirmed",
+                fields: ["result": "success"]
+            )
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "completed",
+                fields: ["result": "sent_and_confirmed"]
+            )
+            guestManageLinkMessage = "Confirmation sent and recorded."
             ReservationHaptics.success()
         } catch {
-            errorMessage = "Staff may have sent email from Mail, but activity was not recorded. Check details and retry if needed."
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "patch_confirmed",
+                fields: ["result": "failed"]
+            )
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "completed",
+                fields: ["result": "failed_no_change"]
+            )
+            errorMessage = "Staff may have sent email from Mail, but confirmation was not fully recorded. Check details and retry if needed."
             ReservationHaptics.warning()
         }
     }
@@ -1891,8 +2211,23 @@ struct ReservationDetailView: View {
                 bodySnapshot: draft.logBodySnapshot,
                 errorMessage: "Mail composer reported failure."
             )
-            guestManageLinkMessage = "Mail failed. Failure was recorded; reservation status was not changed."
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "manual_email_log",
+                fields: ["status": "manual_failed"]
+            )
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "completed",
+                fields: ["result": "failed_no_change"]
+            )
+            guestManageLinkMessage = "Email failed. Reservation was not confirmed."
         } catch {
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "completed",
+                fields: ["result": "failed_no_change"]
+            )
             guestManageLinkMessage = "Mail failed. Could not record failure on the server."
         }
         ReservationHaptics.warning()

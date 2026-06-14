@@ -1076,7 +1076,25 @@ struct HostBoardView: View {
 
         switch action {
         case .confirmOnly:
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "start",
+                fields: [
+                    "source": "host_board",
+                    "status": reservation.status,
+                    "emailPresent": "\(reservation.hasUsableConfirmationEmail)"
+                ]
+            )
+            if reservation.hasUsableConfirmationEmail {
+                onOpenReservation(reservation)
+                return
+            }
             await controller.updateStatus(reservation: reservation, status: .confirmed, context: modelContext)
+            ConfirmFlowTrace.log(
+                reservationID: reservation.remoteID,
+                phase: "patch_confirmed",
+                fields: ["result": "success"]
+            )
             ReservationHaptics.success()
         case .confirmAndSendEmail:
             guard ReservationEmailWorkflow.isBackendConfirmEmailEnabled else { return }

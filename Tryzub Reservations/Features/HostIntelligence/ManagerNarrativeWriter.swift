@@ -64,9 +64,11 @@ enum HostModelPacketTrace {
 }
 
 enum HostAIValidatorRepairTrace {
-  static func log(reason: String, repaired: Bool) {
+  static func log(reason: String, repaired: Bool, rejectedNames: [String] = []) {
     #if DEBUG
-    print("[HOST_AI_VALIDATOR_REPAIR_TRACE] reason=\(reason) repaired=\(repaired)")
+    print(
+      "[HOST_AI_VALIDATOR_REPAIR_TRACE] reason=\(reason) repaired=\(repaired) rejectedNames=\(rejectedNames.joined(separator: ","))"
+    )
     #endif
   }
 }
@@ -116,8 +118,8 @@ struct ManagerNarrativeWriter {
     }
 
     HostBriefingWriterDiagnostics.prepareForInference()
-    HostLocalModelInferenceTracker.begin()
-    defer { HostLocalModelInferenceTracker.end() }
+    HostLocalModelInferenceTracker.begin(task: .hostBoardNarrative)
+    defer { HostLocalModelInferenceTracker.end(task: .hostBoardNarrative) }
 
     // Resolve the best available wording profile. For the iPad/demo build this is
     // betterLocal3B when bundled. Falls back to smallFastLocal if 3B is absent, and
@@ -230,6 +232,10 @@ struct ManagerNarrativeWriter {
       )
       if !validation.isValid,
          validation.reason == ManagerNarrativeValidator.unknownGuestNameReason {
+        let nameValidation = ManagerNarrativeValidator.guestNameValidation(
+          parsed.compactBriefingText,
+          packet: narrativePacket
+        )
         if let repaired = ManagerNarrativeValidator.repairUnknownGuestNames(
           in: parsed,
           packet: narrativePacket
@@ -242,7 +248,8 @@ struct ManagerNarrativeWriter {
           )
           HostAIValidatorRepairTrace.log(
             reason: "unknown_name",
-            repaired: repairedValidation.isValid
+            repaired: repairedValidation.isValid,
+            rejectedNames: nameValidation.rejectedNames
           )
           if repairedValidation.isValid {
             parsed = repaired
@@ -251,7 +258,11 @@ struct ManagerNarrativeWriter {
             ManagerNarrativeWriterDiagnostics.recordSuccess(raw: repaired.compactBriefingText)
           }
         } else {
-          HostAIValidatorRepairTrace.log(reason: "unknown_name", repaired: false)
+          HostAIValidatorRepairTrace.log(
+            reason: "unknown_name",
+            repaired: false,
+            rejectedNames: nameValidation.rejectedNames
+          )
         }
       }
       let validationDurationMs = Int(

@@ -369,7 +369,7 @@ private struct GuestInsightSnapshotGrid: View {
         case .backendSummary:
             return "Server-backed summary for this guest."
         case .localCache:
-            return "Local cache supplement — counts from this device only."
+            return "Local cache supplement - counts from this device only."
         case .merged:
             if mergedSource == .unknownNotLoaded {
                 return "Guest history loading."

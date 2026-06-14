@@ -29,7 +29,7 @@ enum GuestMessageDraftTemplateWriter {
         let restaurant = packet.restaurantName
         let manage = manageURLLine(for: packet)
 
-        let subject = "Reservation confirmation — \(restaurant)"
+        let subject = "Reservation confirmation - \(restaurant)"
         let body = """
         \(greeting)
 
@@ -58,7 +58,7 @@ enum GuestMessageDraftTemplateWriter {
     private static func reminderDraft(from packet: GuestMessageDraftPacket) -> GuestMessageDraft {
         let greeting = greetingLine(for: packet)
         let restaurant = packet.restaurantName
-        let subject = "Reminder — your reservation at \(restaurant)"
+        let subject = "Reminder - your reservation at \(restaurant)"
         let body = """
         \(greeting)
 
