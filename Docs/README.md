@@ -1,5 +1,10 @@
 # Tryzub Reservations API
 
+> **Documentation index (iOS + audit):** See [DOCS_INDEX.md](./DOCS_INDEX.md)  
+> **Current-state audit:** [AUDIT_CURRENT_STATE.md](./AUDIT_CURRENT_STATE.md) — branch `audit-current-state`, 2026-06-14  
+> **Stabilization backlog:** [OPEN_WORK.md](./OPEN_WORK.md)  
+> This file remains the **WordPress backend API contract**. iOS app architecture lives in `IOS_*.md` files.
+
 Controlled restaurant pilot backend for Tryzub Ukrainian Kitchen reservations.
 
 This is a custom WordPress plugin that turns Contact Form 7 / Flamingo reservation submissions into a managed reservation backend for the iOS staff app.

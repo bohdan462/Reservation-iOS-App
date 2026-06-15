@@ -1,5 +1,7 @@
 # Tryzub Reservations — Project Map
 
+> **Audit:** `audit-current-state` (2026-06-14) — see [DOCS_INDEX.md](./DOCS_INDEX.md). Confirm flow and shift reminders sections here may be stale; prefer [RESERVATION_WORKFLOWS.md](./RESERVATION_WORKFLOWS.md).
+
 One-restaurant internal iOS app. **WordPress REST API is source of truth.** **SwiftData is cache only.**
 
 **REST base:** `https://tryzubchicago.com/wp-json/tryzub/v1`

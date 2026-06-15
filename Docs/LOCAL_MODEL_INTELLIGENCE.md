@@ -1,9 +1,13 @@
 # Local Model Intelligence
 
-**Branch:** `intelligence`  
-**Status:** Shipped — wording assistant only. Template fallback always available.
+**Status:** Current source of truth — wording assistant only  
+**Branch:** `audit-current-state`  
+**Audit date:** 2026-06-14  
+**Host pipeline:** [HOST_INTELLIGENCE.md](./HOST_INTELLIGENCE.md)
 
-**Historical research:** `Docs/HOST_INTELLIGENCE_LOCAL_MODEL_RUNTIME_PROPOSAL.md` (do not treat as current implementation).
+Template fallback always available.
+
+**Historical research:** `Docs/ARCHIVE/HOST_INTELLIGENCE_LOCAL_MODEL_RUNTIME_PROPOSAL.md`
 
 ## Runtime (current code)
 

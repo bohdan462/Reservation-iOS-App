@@ -1,5 +1,7 @@
 # Tryzub Reservations — Architecture Diagrams
 
+> **UPDATE_REQUIRED:** Audit sections (§13–16) may be stale. Prefer [AUDIT_CURRENT_STATE.md](./AUDIT_CURRENT_STATE.md) and [IOS_ARCHITECTURE.md](./IOS_ARCHITECTURE.md) for current behavior. Branch `audit-current-state`, 2026-06-14.
+
 **Source of truth:** WordPress REST API at `https://tryzubchicago.com/wp-json/tryzub/v1`  
 **Local cache:** SwiftData `ReservationRecord` only — never authoritative  
 **Hard rule:** iOS must **not** call `POST /managed-reservations/import` during normal workflow (not implemented in client; diagnostics tracks accidental use)

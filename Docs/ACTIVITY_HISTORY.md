@@ -1,10 +1,10 @@
 # Reservation Activity History (iOS)
 
-**Branch:** `intelligence`  
+**Status:** Current source of truth  
+**Branch:** `audit-current-state`  
+**Audit date:** 2026-06-14  
 **Backend schema:** 1.7.0  
-**Status:** Shipped in iOS — read-only display; backend writes all events.
-
-## Rule
+**Rule:** Shipped — read-only display; backend writes all events.
 
 Backend owns activity history. Mutation endpoints write activity automatically. iOS **reads** history for display. iOS **does not** create activity rows or POST a separate activity log.
 

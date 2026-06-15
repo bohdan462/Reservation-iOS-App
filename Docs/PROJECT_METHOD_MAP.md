@@ -1,5 +1,7 @@
 # Tryzub Reservations — Method Map
 
+> **UPDATE_REQUIRED:** Confirm semantics below are stale. Current MVP: Mail-first confirm via `beginPrimaryConfirmFlow`. See [RESERVATION_WORKFLOWS.md](./RESERVATION_WORKFLOWS.md). Branch `audit-current-state`, 2026-06-14.
+
 Method-level map of current behavior. **Source of truth: Swift code.**
 
 **Audience tags:** `staff` · `manager` · `developer` · `all`

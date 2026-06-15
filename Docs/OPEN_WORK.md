@@ -1,0 +1,195 @@
+# Open work — V1 stabilization backlog
+
+**Branch:** `audit-current-state`  
+**Audit date:** 2026-06-14  
+**Scope:** Stabilization only — no V2 automation unless noted
+
+Every item includes risk, files, approach, acceptance test, and classification.
+
+---
+
+## P0 — Trust and cache correctness
+
+### P0-1: Expand `isContentEquivalent` field coverage
+
+| Field | Value |
+|-------|-------|
+| **Risk if not fixed** | Staff sees stale confirmation/reminder sent state; superseded rows look active |
+| **Files** | `Persistence/ReservationRecord.swift`, `Services/ReservationRepository.swift` |
+| **Approach** | Include `confirmationEmailSentAt`, `reminderEmailSentAt`, `supersededById`, `sourceType` in equivalence OR always merge those fields on upsert |
+| **Acceptance** | PATCH response updating only `confirmationEmailSentAt` writes to SwiftData; `[NOOP_REFRESH_TRACE]` not emitted for that case |
+| **Class** | V1 stabilization — iOS only |
+
+### P0-2: Scheduled full active-window replace
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Delta leaves ghost rows (cancelled/moved/hidden on server still in cache) |
+| **Files** | `Import/ReservationsController.swift`, `Import/ReservationImportService.swift` |
+| **Approach** | After N delta cycles or on tab activation if last full > X hours, force `syncActiveWindowFull`; document policy in IOS_LIFECYCLE_AND_SYNC |
+| **Acceptance** | Cancel reservation on server → disappears from Host within one full sync cycle without manual app reinstall |
+| **Class** | V1 stabilization — iOS only |
+
+### P0-3: Confirm pending UI state
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Staff thinks reservation unconfirmed while Mail composer open; or confirmed before mail sent |
+| **Files** | `ReservationDetailView.swift`, `ReservationActionButtons.swift`, `DetailActionBar` |
+| **Approach** | Show “Confirmation email pending” while mail draft open; only show confirmed after `manual_sent` + PATCH |
+| **Acceptance** | Detail status badge matches server until mail `.sent`; traces show `ConfirmFlowTrace` phases in order |
+| **Class** | V1 stabilization — iOS only |
+
+---
+
+## P1 — Systems fighting each other
+
+### P1-1: Unify auto-refresh gating (Host vs Bookings)
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Bookings delta-syncs for past dates while Host does not; staff confused by different freshness |
+| **Files** | `HostBoardView.swift`, `ReservationsListView.swift`, `ReservationsController.swift` |
+| **Approach** | Single policy: auto delta only when selected date is today OR explicit “live service” flag; otherwise manual refresh only |
+| **Acceptance** | Viewing past date on Bookings does not trigger 60s network loop |
+| **Class** | V1 stabilization — iOS only |
+
+### P1-2: Block legacy `tableName` PATCH when backend layout exists
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Silent fallback assigns free-text table conflicting with floor plan |
+| **Files** | `TableAssignmentCoordinator.swift`, `FloorPlanStore.swift`, assignment sheets |
+| **Approach** | If `hasBackendLayout` and key unresolved → staff error, no legacy PATCH |
+| **Acceptance** | Assignment with backend tables always uses `PATCH /tables` or shows blocking message |
+| **Class** | V1 stabilization — iOS only |
+
+### P1-3: Guest intelligence loading uncertainty copy
+
+| Field | Value |
+|-------|-------|
+| **Risk** | “Seen before” from local cache before server contradicts |
+| **Files** | `GuestHistorySemantics.swift`, `GuestProfileViewState.swift`, `GuestInsightsView.swift` |
+| **Approach** | Until profile/date summary loads, show “Checking guest history…” not visit counts |
+| **Acceptance** | Slow network: no “prior visits” line until server or explicit local_bounded mode |
+| **Class** | V1 stabilization — iOS only |
+
+### P1-4: Wire `GuestIntelligenceStore` to `FreshnessCoordinator`
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Duplicate fetches; stale 180s data after mutations |
+| **Files** | `GuestIntelligenceStore.swift`, `FreshnessCoordinator.swift`, `ReservationActivityInvalidation` |
+| **Approach** | Invalidate guest intel on reservation mutation for affected date |
+| **Acceptance** | After seat/cancel, guest intel refetches within one visibility cycle |
+| **Class** | V1 stabilization — iOS only |
+
+---
+
+## P2 — Noise reduction and maintainability
+
+### P2-1: Remove dead sync methods
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Future agent re-wires legacy `performTodayRefresh` / `syncAllReservations` |
+| **Files** | `ReservationsController.swift`, `ReservationImportService.swift` |
+| **Approach** | Delete unused methods; grep confirms zero callers |
+| **Acceptance** | Build passes; no references to removed symbols |
+| **Class** | V1 stabilization — iOS only |
+
+### P2-2: Host Intelligence staff-facing AI label
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Local model prose presented with same weight as deterministic facts |
+| **Files** | `HostIntelligenceCard.swift`, `HostIntelligenceController.swift` |
+| **Approach** | When `briefingSource == .localModel`, show staff-only “AI wording (beta)” — not hidden by `staffFacingPresentation` |
+| **Acceptance** | Host card shows label when enhanced briefing on; guest emails still never mention AI |
+| **Class** | V1 stabilization — iOS only |
+
+### P2-3: Hard delete multi-device documentation + UI note
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Staff assumes delete propagates instantly to all iPads |
+| **Files** | `DIAGNOSTICS_AND_TESTING.md`, hard delete UI in More |
+| **Approach** | Confirm dialog explains other devices until sync |
+| **Acceptance** | Dialog copy present; documented in testing checklist |
+| **Class** | V1 stabilization — docs + iOS |
+
+### P2-4: Update legacy iOS reference docs
+
+| Field | Value |
+|-------|-------|
+| **Risk** | QA follows wrong confirm flow |
+| **Files** | `PROJECT_MAP.md`, `PROJECT_METHOD_MAP.md`, `ARCHITECTURE_DIAGRAMS.md` |
+| **Approach** | Align confirm, shift reminders, no-show sections with RESERVATION_WORKFLOWS.md |
+| **Acceptance** | No doc says “Confirm Only = PATCH only” without Mail-first qualifier |
+| **Class** | V1 stabilization — docs only |
+
+---
+
+## P3 — Structural (post-stabilization)
+
+### P3-1: Split `ReservationsListView.swift`
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Merge conflicts; hard onboarding |
+| **Files** | `ReservationsListView.swift` → Host/Bookings/More files |
+| **Approach** | Extract `HomeDashboardView`, `ReservationScheduleView`, `ReservationMoreView` to separate files |
+| **Acceptance** | Behavior unchanged; build passes |
+| **Class** | V1.1 — iOS only |
+
+---
+
+## Open from archived handoffs (verified still open)
+
+### OW-1: Bookings service-state tabs (Active / Seated / Completed)
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Staff mental model mismatch during service |
+| **Files** | `ReservationsListView.swift` (`ReservationScheduleScope`) |
+| **Approach** | Add scopes filtering `confirmed`/`seated`/`completed` for selected date |
+| **Acceptance** | Bookings can filter today’s seated without Host tab |
+| **Class** | **V2 feature** (was in workflow handoff; defer until P0–P1 done) |
+
+### OW-2: Backend confirmation email (`POST /confirm`)
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Re-enabling bypasses staff review |
+| **Files** | `ReservationEmailWorkflow.swift`, controller, action buttons |
+| **Approach** | Only with explicit product decision + Resend integration |
+| **Acceptance** | N/A — **out of V1** |
+| **Class** | V2 — backend + iOS |
+
+### OW-3: Automated due reminders (`send-due-reminders`)
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Auto-send without staff review |
+| **Files** | Not in API client today |
+| **Approach** | Shift reminders sheet remains normal flow |
+| **Acceptance** | No client route added in V1 |
+| **Class** | V2 — backend + iOS |
+
+---
+
+## Implemented — remove from active backlog
+
+- Mail-first confirm + manual-email-log + PATCH
+- Shift reminders (`ShiftReminderReviewSheet`) — Host ⋯ + Bookings bell
+- Shared guest email templates (`GuestEmailTemplateRenderer`)
+- No-show Bookings tab
+- Detail server fetch on cache miss
+- `HostAttentionGrouper`
+- Manual/custom email log skip + trace (`unsupported_email_type`)
+- `POST /import` not in normal client workflow
+- `isBackendConfirmEmailEnabled = false`
+
+---
+
+*Owner: stabilization pass on `audit-current-state`. Update this file when items close.*

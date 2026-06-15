@@ -1,11 +1,10 @@
 # Tryzub Reservations Intelligence Layer
 
-**Status:** Current source of truth (backend intelligence contract)  
-**Branch:** `audit-current-state`  
-**Audit date:** 2026-06-14  
-**iOS boundaries:** [HOST_INTELLIGENCE.md](./HOST_INTELLIGENCE.md), [LOCAL_MODEL_INTELLIGENCE.md](./LOCAL_MODEL_INTELLIGENCE.md)
+Internal restaurant intelligence for Tryzub Ukrainian Kitchen. This layer helps staff and management understand who is coming, who is returning, what guest context matters, what demand and risk are forming, and what data quality looks like.
 
-Internal restaurant intelligence for Tryzub Ukrainian Kitchen.
+The backend returns deterministic evidence fields. iOS controls staff and manager wording.
+
+Floor plan/table layout endpoints are documented in `README.md`. This file covers guest memory, business analytics, system health, and intake reconciliation only.
 
 ## Endpoints
 
@@ -18,7 +17,20 @@ All intelligence endpoints:
 - use contract version `1.0` for business/guest/system-status payloads
 - use contract version `1.1` for reservation pipeline diagnostics payloads
 
-Because these are read-only, they are not part of the optimistic-concurrency contract: iOS does not send `expected_updated_at` here. Concurrency tokens (`row_version`), lifecycle timestamps (`seated_at`, `completed_at`), `409 tryzub_reservation_conflict`, the status transition map, and floor-plan advisory locking apply to the managed-reservation write endpoints and are documented in `README.md` (db `1.7.0` for activity history; reservations lifecycle columns from `1.6.0`).
+Because these are read-only, they are not part of the optimistic-concurrency contract: iOS does not send `expected_updated_at` here. Concurrency tokens (`row_version`), lifecycle timestamps (`seated_at`, `completed_at`), `409 tryzub_reservation_conflict`, the status transition map, floor-plan advisory locking, and **activity history** (schema **1.7.0**) apply to managed-reservation write endpoints and are documented in backend `README.md` (db **1.7.0**).
+
+### Activity history (schema 1.7.0)
+
+Deterministic operational evidence written automatically on mutation. iOS reads only.
+
+| Endpoint | Use |
+|----------|-----|
+| `GET /managed-reservations/{id}/activity` | Reservation detail history |
+| `GET /activity?date=` | Service-day / manager recap context |
+
+- Do not expose raw old/new debug blobs in normal staff UI
+- iOS does not POST separate activity log events
+- No backfill for reservations unchanged before deploy — see `Docs/ACTIVITY_HISTORY.md`
 
 ### `GET /tryzub/v1/business-intelligence/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`
 
@@ -394,9 +406,6 @@ Spam support:
 - Developer intake reconciliation: `GET /intelligence/reservation-pipeline-diagnostics?from=...&to=...`
 - Owner range analytics: `GET /business-intelligence/summary`
 - Floor layout and assignments: see `README.md` (`GET /floor-plan`, `PUT /restaurant-tables`, `PATCH /managed-reservations/{id}/tables`)
-- Reservation change history / service-day recap: `GET /managed-reservations/{id}/activity`, `GET /activity?date=...` (see `README.md`)
-
-Activity history is deterministic operational evidence written by backend mutations. iOS may use it for Reservation Detail timelines and manager recap, but should not expose raw `old_value` / `new_value` debug blobs to staff UI.
 
 ## What iOS should trust
 
@@ -426,7 +435,7 @@ It is form/Flamingo scoped and is not the same contract as business intelligence
 
 ## Performance and caching
 
-Current indexes (db `1.6.0` for reservations intelligence queries; floor-plan tables documented in `README.md`):
+Current indexes (db **1.7.0** for reservations intelligence queries; floor-plan and activity tables documented in backend `README.md`):
 
 - `email`, `phone`, `reservation_date`, `status`, `source_submission_id`
 - composite: `email_reservation_date`, `phone_reservation_date`, `reservation_date_hidden_superseded`, `status_reservation_date`, `source_type_reservation_date`
