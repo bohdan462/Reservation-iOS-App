@@ -20,6 +20,8 @@ Every item includes risk, files, approach, acceptance test, and classification.
 | **Acceptance** | PATCH response updating only `confirmationEmailSentAt` writes to SwiftData; `[NOOP_REFRESH_TRACE]` not emitted for that case |
 | **Class** | V1 stabilization — iOS only |
 
+Implemented 2026-06-15: `isContentEquivalent` now compares all server-backed fields written by `update(from:)`, including confirmation/reminder timestamps, supersession, source, creator, and hidden metadata.
+
 ### P0-2: Scheduled full active-window replace
 
 | Field | Value |

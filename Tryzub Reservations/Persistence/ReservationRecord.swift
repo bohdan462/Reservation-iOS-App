@@ -133,9 +133,19 @@ class ReservationRecord: Identifiable {
             && guestNotes == dto.guestNotes?.nilIfEmpty
             && tableName == dto.tableName?.nilIfEmpty
             && staffNotes == dto.staffNotes?.nilIfEmpty
+            && createdAt == dto.createdAt
             && apiUpdatedAt == dto.updatedAt
             && confirmedAt == dto.confirmedAt
+            && confirmationEmailSentAt == dto.confirmationEmailSentAt
+            && reminderEmailSentAt == dto.reminderEmailSentAt
+            && supersededById == dto.supersededById
+            && sourceType == dto.sourceType?.rawValue
+            && createdByUserId == dto.createdByUserId
+            && createdByDevice == dto.createdByDevice
             && isHidden == (dto.isHidden ?? false)
+            && hiddenAt == dto.hiddenAt
+            && hiddenReason == dto.hiddenReason?.nilIfEmpty
+            && hiddenByUserId == dto.hiddenByUserId
     }
 
     func update(from dto: ReservationDTO) {
