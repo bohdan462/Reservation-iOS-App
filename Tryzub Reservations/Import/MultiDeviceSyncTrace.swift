@@ -35,6 +35,7 @@ enum MultiDeviceSyncTrace {
     #else
     static let isEnabled = false
     #endif
+    private static let enableVerboseDateFilterTrace = false
 
     private static let logger = Logger(
         subsystem: "Bohdan-Solovey.Tryzub-Reservations",
@@ -139,7 +140,7 @@ enum MultiDeviceSyncTrace {
         included: Bool,
         reason: String
     ) {
-        guard isEnabled else { return }
+        guard isEnabled, enableVerboseDateFilterTrace else { return }
         logger.debug(
             "[HOST_FILTER_TRACE] selectedDate=\(selectedDate, privacy: .public) id=\(id, privacy: .public) recordDate=\(recordDate, privacy: .public) time=\(String(time.prefix(5)), privacy: .public) status=\(status, privacy: .public) hidden=\(hidden, privacy: .public) superseded=\(superseded, privacy: .public) included=\(included, privacy: .public) reason=\(reason, privacy: .public)"
         )

@@ -7,6 +7,8 @@
 
 import Foundation
 
+private let enableVerboseDateFilterTrace = false
+
 enum ConfirmFlowTrace {
     static func log(reservationID: Int, phase: String, fields: [String: String] = [:]) {
         #if DEBUG
@@ -74,6 +76,7 @@ enum DateBoundaryTrace {
         reason: String
     ) {
         #if DEBUG
+        guard enableVerboseDateFilterTrace else { return }
         print(
             "[SELECTED_DATE_FILTER_TRACE] selectedDate=\(selectedDate) recordDate=\(recordDate) reservation=\(reservationID) included=\(included) reason=\(reason)"
         )
