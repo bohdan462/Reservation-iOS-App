@@ -171,7 +171,7 @@ extension RestaurantTableDTO {
     func asRestaurantTableConfig() -> RestaurantTableConfig {
         RestaurantTableConfig(
             name: label,
-            capacity: maxCapacity,
+            capacity: max(minCapacity, maxCapacity),
             section: section ?? "",
             isActive: isActive,
             sortOrder: sortOrder

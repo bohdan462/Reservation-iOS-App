@@ -41,6 +41,13 @@ struct FloorPlanTableAssignmentSheet: View {
             .filter { selectedTableKeys.contains($0.tableKey) }
     }
 
+    private var isTableDetailContext: Bool {
+        if case .table = context {
+            return true
+        }
+        return false
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -48,7 +55,9 @@ struct FloorPlanTableAssignmentSheet: View {
                 if case .table = context {
                     tableContextSection
                 }
-                tableSelectionSection
+                if !isTableDetailContext {
+                    tableSelectionSection
+                }
                 if let reservation {
                     actionSection(for: reservation)
                 }
@@ -97,8 +106,7 @@ struct FloorPlanTableAssignmentSheet: View {
                         .foregroundStyle(.secondary)
                 }
             case let .table(block):
-                Text(FloorPlanPresentation.tableDetailLine(table: block.table, reservation: block.reservation))
-                    .font(.subheadline)
+                tableDetailSummary(block)
             }
         }
     }
@@ -106,20 +114,20 @@ struct FloorPlanTableAssignmentSheet: View {
     @ViewBuilder
     private var tableContextSection: some View {
         if case let .table(block) = context {
-            if let reservation = block.reservation, block.assignment != nil {
-                Section("Assigned reservation") {
+            if let reservation = block.reservation {
+                Section("Current reservation") {
                     reservationSummary(reservation)
-                    Button("Change table") {
-                        confirmAssign(reservation: reservation)
+                    if block.assignment != nil {
+                        Button("Clear table assignment", role: .destructive) {
+                            onClear(reservation.id)
+                        }
+                        .disabled(isWorking)
                     }
-                    .disabled(selectedTableKeys.isEmpty || isWorking)
-                    Button("Clear table assignment", role: .destructive) {
-                        onClear(reservation.id)
-                    }
-                    .disabled(isWorking)
                 }
-            } else if !unassignedReservations.isEmpty {
-                Section("Assign reservation") {
+            }
+
+            if !unassignedReservations.isEmpty {
+                Section("Assign to this table") {
                     ForEach(unassignedReservations) { reservation in
                         Button {
                             confirmAssign(reservation: reservation)
@@ -129,6 +137,40 @@ struct FloorPlanTableAssignmentSheet: View {
                         .disabled(isWorking)
                     }
                 }
+            } else {
+                Section("Assign to this table") {
+                    Text("No unassigned reservations for this service date.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func tableDetailSummary(_ block: FloorPlanTableBlock) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(block.table.label)
+                .font(.headline)
+            Text("Key: \(block.table.tableKey)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Fits \(FloorPlanPresentation.capacityRange(min: block.table.minCapacity, max: block.table.maxCapacity)) guests")
+                .font(.subheadline)
+            if let section = block.table.section?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !section.isEmpty {
+                Text("Section: \(section)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let reservation = block.reservation {
+                Text("Assigned to \(reservation.guestName) · \(FloorPlanPresentation.displayTime(reservation.reservationTime))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("No reservation assigned.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -220,11 +262,7 @@ struct FloorPlanTableAssignmentSheet: View {
         case let .assignedReservation(_, assignment):
             selectedTableKeys = Set(assignment.tableKeys)
         case let .table(block):
-            if let assignment = block.assignment {
-                selectedTableKeys = Set(assignment.tableKeys)
-            } else {
-                selectedTableKeys = [block.table.tableKey]
-            }
+            selectedTableKeys = [block.table.tableKey]
         case .unassignedReservation:
             selectedTableKeys = []
         }
@@ -260,7 +298,7 @@ struct FloorPlanTableAssignmentSheet: View {
         guard !keys.isEmpty else { return }
 
         let minCapacity = selectedTables.reduce(0) { $0 + $1.minCapacity }
-        let maxCapacity = selectedTables.reduce(0) { $0 + $1.maxCapacity }
+        let maxCapacity = selectedTables.reduce(0) { $0 + max($1.minCapacity, $1.maxCapacity) }
         if reservation.partySize < minCapacity || reservation.partySize > maxCapacity {
             pendingTableKeys = keys
             pendingReservationID = reservation.id

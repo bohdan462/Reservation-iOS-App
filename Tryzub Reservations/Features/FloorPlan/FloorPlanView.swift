@@ -18,12 +18,22 @@ struct FloorPlanView: View {
     @State private var selectedTableBlock: FloorPlanTableBlock?
     @State private var showLayoutSetup = false
 
+    private var selectedDateKey: String {
+        selectedDate.reservationDateString()
+    }
+
+    private var isShowingStaleContent: Bool {
+        store.viewState.selectedDate != selectedDateKey
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     headerCard
-                    if store.viewState.hasTables {
+                    if isShowingStaleContent {
+                        dateLoadingState
+                    } else if store.viewState.hasTables {
                         gridSection
                         selectedTableSection
                         unassignedSection
@@ -40,13 +50,13 @@ struct FloorPlanView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        Task { await store.refresh(force: true) }
+                        Task { await store.refresh(date: selectedDateKey, force: true) }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
                     .disabled(store.isLoading)
                 }
-                if store.viewState.hasTables {
+                if !isShowingStaleContent && store.viewState.hasTables {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("Edit Layout") {
                             showLayoutSetup = true
@@ -100,7 +110,7 @@ struct FloorPlanView: View {
             ) { _ in
                 Button("Refresh Floor Plan") {
                     store.dismissConflict()
-                    Task { await store.refresh(force: true) }
+                    Task { await store.refresh(date: selectedDateKey, force: true) }
                 }
                 Button("OK", role: .cancel) {
                     store.dismissConflict()
@@ -110,6 +120,7 @@ struct FloorPlanView: View {
             }
             .onAppear {
                 loadForSelectedDate()
+                floorDateTrace(fetchDate: selectedDateKey)
                 store.setAutoRefreshActive(isActive && store.viewState.isToday)
             }
             .onDisappear {
@@ -120,9 +131,15 @@ struct FloorPlanView: View {
             }
             .onChange(of: selectedDate) { _, date in
                 loadForSelectedDate(date)
+                selectedTableBlock = nil
+                assignmentContext = nil
+                floorDateTrace(fetchDate: date.reservationDateString())
             }
             .onChange(of: store.viewState.isToday) { _, isToday in
                 store.setAutoRefreshActive(isActive && isToday)
+            }
+            .onChange(of: store.viewState.selectedDate) { _, _ in
+                floorDateTrace(fetchDate: selectedDateKey)
             }
         }
     }
@@ -138,29 +155,29 @@ struct FloorPlanView: View {
                 .datePickerStyle(.compact)
 
                 HStack {
-                    Label(store.viewState.mode.badgeTitle, systemImage: "circle.fill")
+                    Label(headerMode.badgeTitle, systemImage: "circle.fill")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(store.viewState.mode == .liveService ? TryzubColors.success : TryzubColors.info)
+                        .foregroundStyle(headerMode == .liveService ? TryzubColors.success : TryzubColors.info)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
                         .background(
-                            (store.viewState.mode == .liveService ? TryzubColors.success : TryzubColors.info)
+                            (headerMode == .liveService ? TryzubColors.success : TryzubColors.info)
                                 .opacity(0.12)
                         )
                         .clipShape(Capsule())
 
                     Spacer()
 
-                    Text(store.viewState.lastCheckedLine)
+                    Text(isShowingStaleContent ? "Loading selected date…" : store.viewState.lastCheckedLine)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 HStack {
-                    Text(FloorPlanPresentation.displayDate(store.viewState.selectedDate))
+                    Text(FloorPlanPresentation.displayDate(selectedDateKey))
                         .font(.subheadline.weight(.medium))
                     Spacer()
-                    if store.viewState.unassignedCount > 0 {
+                    if !isShowingStaleContent && store.viewState.unassignedCount > 0 {
                         Text("\(store.viewState.unassignedCount) unassigned")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(TryzubColors.warning)
@@ -183,6 +200,26 @@ struct FloorPlanView: View {
         }
     }
 
+    private var headerMode: FloorPlanMode {
+        isShowingStaleContent ? .planning : store.viewState.mode
+    }
+
+    private var dateLoadingState: some View {
+        TryzubChartCard(title: "Floor plan", systemImage: "square.grid.3x3") {
+            HStack(spacing: 10) {
+                TryzubSubtleLoadingDot(diameter: 6)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Loading \(FloorPlanPresentation.displayDate(selectedDateKey))")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Reservations and table assignments are hidden until this date loads.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     @ViewBuilder
     private var gridSection: some View {
         FloorPlanGridView(
@@ -190,12 +227,7 @@ struct FloorPlanView: View {
             unitSize: 44,
             onTableTap: { block in
                 selectedTableBlock = block
-                if let reservation = block.reservation,
-                   let assignment = block.assignment {
-                    assignmentContext = .assignedReservation(reservation, assignment)
-                } else {
-                    assignmentContext = .table(block)
-                }
+                assignmentContext = .table(block)
             }
         )
         .frame(minHeight: 320)
@@ -338,6 +370,14 @@ struct FloorPlanView: View {
     private func loadForSelectedDate(_ date: Date? = nil) {
         let target = date ?? selectedDate
         store.load(date: target.reservationDateString())
+    }
+
+    private func floorDateTrace(fetchDate: String) {
+        #if DEBUG
+        print(
+            "[FLOOR_DATE_TRACE] selectedDate=\(selectedDateKey) viewStateDate=\(store.viewState.selectedDate) staleContentHidden=\(isShowingStaleContent) fetchDate=\(fetchDate)"
+        )
+        #endif
     }
 }
 
