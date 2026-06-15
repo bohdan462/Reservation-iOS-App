@@ -159,7 +159,6 @@ private struct StartupRootView: View {
 }
 
 private struct ReservationsTabShell: View {
-    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @Query
     private var pendingReviewRows: [ReservationRecord]
@@ -176,7 +175,6 @@ private struct ReservationsTabShell: View {
     @StateObject private var floorPlanStore: FloorPlanStore
     @StateObject private var activityStore: ReservationActivityStore
     @State private var selectedTab: ReservationsAppTab = .host
-    @State private var bookingsManualAddSession: ManualReservationSession?
 
     let environment: AppEnvironment
     let onLogout: () -> Void
@@ -260,20 +258,7 @@ private struct ReservationsTabShell: View {
 
             ReservationScheduleView(
                 environment: environment,
-                isActive: selectedTab == .bookings,
-                isManualCreatePresented: bookingsManualAddSession != nil,
-                onCreateManualReservation: {
-                    let session = ManualReservationSession(source: "bookings")
-                    WorkflowCleanupTrace.log(
-                        "MANUAL_ADD_TRACE",
-                        fields: [
-                            "source": session.source,
-                            "event": "open",
-                            "draftID": session.id
-                        ]
-                    )
-                    bookingsManualAddSession = session
-                }
+                isActive: selectedTab == .bookings
             )
                 .tabItem {
                     Label(ReservationsAppTab.bookings.title, systemImage: ReservationsAppTab.bookings.systemImage)
@@ -294,12 +279,6 @@ private struct ReservationsTabShell: View {
                 .tag(ReservationsAppTab.more)
         }
         .fontDesign(.rounded)
-        .fullScreenCover(item: $bookingsManualAddSession) { session in
-            ManualReservationFormView(source: session.source, draftID: session.id) { request in
-                try await controller.createAcceptedManualReservation(request, context: modelContext)
-            }
-            .environmentObject(controller)
-        }
         .overlay(alignment: .topTrailing) {
             AppNoticeOverlay(
                 notices: visibleNotices,
@@ -570,16 +549,6 @@ private struct HomeDashboardView: View {
 
 }
 
-private struct ManualReservationSession: Identifiable, Equatable {
-    let id: String
-    let source: String
-
-    init(source: String) {
-        self.id = UUID().uuidString
-        self.source = source
-    }
-}
-
 // MARK: - Schedule View
 
 private struct ReservationScheduleView: View {
@@ -616,19 +585,13 @@ private struct ReservationScheduleView: View {
 
     let environment: AppEnvironment
     let isActive: Bool
-    let isManualCreatePresented: Bool
-    let onCreateManualReservation: () -> Void
 
     init(
         environment: AppEnvironment,
-        isActive: Bool,
-        isManualCreatePresented: Bool = false,
-        onCreateManualReservation: @escaping () -> Void = {}
+        isActive: Bool
     ) {
         self.environment = environment
         self.isActive = isActive
-        self.isManualCreatePresented = isManualCreatePresented
-        self.onCreateManualReservation = onCreateManualReservation
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
         let toDate = bounds.to
@@ -687,14 +650,11 @@ private struct ReservationScheduleView: View {
         switch scope {
         case .upcoming:
             rows = rows.filter {
-                $0.reservationDate == selectedDateKey
-                    && $0.statusValue != .completed
-                    && $0.statusValue != .cancelled
-                    && $0.statusValue != .noShow
+                $0.statusValue == .new
             }
         case .needsReview:
             rows = rows.filter {
-                $0.statusValue == .new || $0.statusValue == .needsReview
+                $0.statusValue == .needsReview
             }
         case .noShow:
             rows = rows.filter {
@@ -750,6 +710,8 @@ private struct ReservationScheduleView: View {
             return scheduleDateFilter.reservationDateString()
         }
         if scope == .noShow {
+            // TODO(P1): No Show is intentionally pinned to today's service date until
+            // Bookings range/lifecycle policy is unified outside this stabilization patch.
             return Date.reservationDateString()
         }
         return selectedDate.reservationDateString()
@@ -820,7 +782,7 @@ private struct ReservationScheduleView: View {
                     Section {
                         NewBookingsIntelligenceCard(
                             summary: NewBookingsIntelligenceSummary.build(
-                                from: reservations,
+                                from: displayedReservations,
                                 historyPool: guestInsightHistoryPool,
                                 tableConfigs: hostTableConfigStore.activeTables
                             )
@@ -938,15 +900,6 @@ private struct ReservationScheduleView: View {
             }
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    if controller.capabilities.canCreateManualReservations {
-                        Button {
-                            onCreateManualReservation()
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .accessibilityLabel("Create reservation")
-                    }
-
                     Button {
                         showShiftReminders = true
                     } label: {
@@ -988,8 +941,8 @@ private struct ReservationScheduleView: View {
                 .environmentObject(controller)
             }
             .onAppear {
-                // Every time the Bookings tab activates: if there are items to review → Review,
-                // otherwise stay on / return to Upcoming.
+                // Every time Bookings activates: staff-review rows open Review.
+                // Normal fresh submissions stay under New.
                 if reviewAttentionCount > 0 {
                     scope = .needsReview
                 }
@@ -1114,7 +1067,7 @@ private struct ReservationScheduleView: View {
             #endif
             await controller.autoRefreshDashboardIfAllowed(
                 context: modelContext,
-                isInteractionActive: isManualCreatePresented,
+                isInteractionActive: false,
                 isAppActive: scenePhase == .active,
                 source: .bookings
             )
@@ -1123,7 +1076,7 @@ private struct ReservationScheduleView: View {
 
     private func newBookingRowInsight(for reservation: ReservationRecord) -> NewBookingRowInsight? {
         guard scope == .needsReview else { return nil }
-        guard reservation.statusValue == .new || reservation.statusValue == .needsReview else {
+        guard reservation.statusValue == .needsReview else {
             return nil
         }
 
@@ -1134,10 +1087,17 @@ private struct ReservationScheduleView: View {
         )
     }
 
-    private var reviewAttentionCount: Int {
-        return reservations.filter { reservation in
+    private var newAttentionCount: Int {
+        reservations.filter { reservation in
             !hiddenReservations.isHidden(reservation)
-                && (reservation.statusValue == .new || reservation.statusValue == .needsReview)
+                && reservation.statusValue == .new
+        }.count
+    }
+
+    private var reviewAttentionCount: Int {
+        reservations.filter { reservation in
+            !hiddenReservations.isHidden(reservation)
+                && reservation.statusValue == .needsReview
         }.count
     }
 
@@ -1147,10 +1107,17 @@ private struct ReservationScheduleView: View {
                 segments: ReservationScheduleScope.allCases.map { scope in
                     TryzubSegmentedControl<ReservationScheduleScope>.Segment(
                         value: scope,
-                        title: scope.rawValue,
-                        attentionDotStyle: scope == .needsReview && reviewAttentionCount > 0
-                            ? .greenFlashing
-                            : nil
+                        title: scheduleSegmentTitle(for: scope),
+                        attentionDotStyle: {
+                            switch scope {
+                            case .upcoming:
+                                return newAttentionCount > 0 ? .greenFlashing : nil
+                            case .needsReview:
+                                return reviewAttentionCount > 0 ? .redFlashing : nil
+                            case .noShow, .all, .cancelled:
+                                return nil
+                            }
+                        }()
                     )
                 },
                 selection: $scope
@@ -1169,15 +1136,17 @@ private struct ReservationScheduleView: View {
 
     private var showsServiceDateSelector: Bool {
         switch scope {
-        case .upcoming, .cancelled:
+        case .cancelled:
             return true
-        case .needsReview, .noShow, .all:
+        case .upcoming, .needsReview, .noShow, .all:
             return false
         }
     }
 
     private var emptyStateTitle: String {
         switch scope {
+        case .upcoming:
+            return "No new reservations."
         case .needsReview:
             return "No reservations need review."
         default:
@@ -1187,12 +1156,29 @@ private struct ReservationScheduleView: View {
 
     private var emptyStateDescription: String {
         switch scope {
+        case .upcoming:
+            return "New online submissions will appear here."
         case .needsReview:
-            return "New website reservations will appear here."
+            return "Compare details before confirming."
         case .noShow:
             return "No no-shows for today."
         default:
             return "Try a different search or pull to refresh."
+        }
+    }
+
+    private func scheduleSegmentTitle(for scope: ReservationScheduleScope) -> String {
+        switch scope {
+        case .upcoming:
+            return "New"
+        case .needsReview:
+            return "Review"
+        case .noShow:
+            return "No Show"
+        case .all:
+            return "All"
+        case .cancelled:
+            return "Cancelled"
         }
     }
 

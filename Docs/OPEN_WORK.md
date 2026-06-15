@@ -186,6 +186,7 @@ Implemented 2026-06-15: `isContentEquivalent` now compares all server-backed fie
 - Shift reminders (`ShiftReminderReviewSheet`) — Host ⋯ + Bookings bell
 - Shared guest email templates (`GuestEmailTemplateRenderer`)
 - No-show Bookings tab
+- Bookings New/Review split: New now means `.new`, Review means `.needsReview`; manual add removed from Bookings.
 - Detail server fetch on cache miss
 - `HostAttentionGrouper`
 - Manual/custom email log skip + trace (`unsupported_email_type`)
