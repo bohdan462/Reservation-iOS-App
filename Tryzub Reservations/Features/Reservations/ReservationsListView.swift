@@ -824,7 +824,7 @@ private struct ReservationScheduleView: View {
                                     reservation: reservation,
                                     environment: environment,
                                     context: .schedule,
-                                    showsSubmittedTime: scope == .needsReview,
+                                    showsSubmittedTime: scope == .upcoming || scope == .needsReview,
                                     newBookingInsight: newBookingRowInsight(for: reservation),
                                     onOpenDetails: { navigationPath.append($0.remoteID) }
                                 )
@@ -1168,18 +1168,7 @@ private struct ReservationScheduleView: View {
     }
 
     private func scheduleSegmentTitle(for scope: ReservationScheduleScope) -> String {
-        switch scope {
-        case .upcoming:
-            return "New"
-        case .needsReview:
-            return "Review"
-        case .noShow:
-            return "No Show"
-        case .all:
-            return "All"
-        case .cancelled:
-            return "Cancelled"
-        }
+        scope.title
     }
 
     private var allModeSummaryText: String {
