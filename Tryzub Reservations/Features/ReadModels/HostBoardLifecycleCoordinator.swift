@@ -84,7 +84,10 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         lastEmittedVisible = true
         log(event: event, date: date)
 
-        if event == "noop" { return }
+        if event == "noop" {
+            guard !shouldDefer else { return }
+            log(event: "noop_prepare_after_deferral", date: date)
+        }
         prepareIfReady(
             date: date,
             shouldDefer: shouldDefer,
