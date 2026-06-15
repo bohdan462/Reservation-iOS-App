@@ -32,6 +32,8 @@ Implemented 2026-06-15: `isContentEquivalent` now compares all server-backed fie
 | **Acceptance** | Cancel reservation on server → disappears from Host within one full sync cycle without manual app reinstall |
 | **Class** | V1 stabilization — iOS only |
 
+Implemented 2026-06-15: automatic active-window refresh now forces full replace when no successful full has been recorded in the controller session, after 5 successful deltas since the last full, or when the last successful full is older than 2 hours. Manual Host/Bookings refresh remains forced full; delta remains upsert-only.
+
 ### P0-3: Confirm pending UI state
 
 | Field | Value |

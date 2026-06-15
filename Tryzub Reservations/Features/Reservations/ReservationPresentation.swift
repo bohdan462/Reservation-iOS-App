@@ -74,10 +74,16 @@ enum ReservationScheduleScope: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .needsReview:
+        case .upcoming:
             return "New"
-        default:
-            return rawValue
+        case .needsReview:
+            return "Review"
+        case .noShow:
+            return "No Show"
+        case .all:
+            return "All"
+        case .cancelled:
+            return "Cancelled"
         }
     }
 }

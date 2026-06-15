@@ -4,10 +4,18 @@
 //
 
 import Foundation
+import OSLog
 import SwiftData
 
 @MainActor
 final class ReservationsController: ObservableObject {
+    #if DEBUG
+    private static let activeWindowFullPolicyLogger = Logger(
+        subsystem: "Bohdan-Solovey.Tryzub-Reservations",
+        category: "ActiveWindowFullPolicy"
+    )
+    #endif
+
     // MARK: - Published UI State
 
     // Tracks staff-visible refreshes that update the SwiftData reservation cache.
@@ -139,6 +147,8 @@ final class ReservationsController: ObservableObject {
     private var manualAttemptByScope: [ReservationSyncScope: Date] = [:]
     private var syncStateByScope: [ReservationSyncScope: SyncScopeState] = [:]
     private var serverCursorByScope: [ReservationSyncScope: String] = [:]
+    private var successfulActiveWindowDeltaCountSinceFull = 0
+    private var lastSuccessfulActiveWindowFullRefreshAt: Date?
     private var activeSyncIntentByScope: [ReservationSyncScope: ReservationSyncIntent] = [:] {
         didSet { publishOperationState() }
     }
@@ -171,6 +181,8 @@ final class ReservationsController: ObservableObject {
     /// window so a successful startup delta is not re-fetched ~60s later while idle.
     /// Manual refresh, mutation reconcile, and window/date change bypass this.
     private let activeWindowAutoRefreshTTL: TimeInterval = 300
+    private let activeWindowFullDeltaThreshold = 5
+    private let activeWindowFullMaxAge: TimeInterval = 2 * 60 * 60
     private let autoRefreshFailureCooldown: TimeInterval = 180
     private let historyPrefetchStabilizationDelay: TimeInterval = 25
     private let historyPrefetchDateNavigationCooldown: TimeInterval = 5
@@ -1383,18 +1395,22 @@ final class ReservationsController: ObservableObject {
         let hasCursor = serverCursor(for: scope) != nil
 
         // Visible live refresh policy:
-        //   • When a server cursor exists we ALWAYS run a lightweight active-window delta
-        //     GET — cache freshness (the 300s idle TTL) must NOT suppress this. This is
-        //     what lets a manual reservation created on another device appear here within
-        //     one 60s auto-refresh interval.
+        //   • When a server cursor exists we normally run a lightweight active-window delta
+        //     GET — cache freshness (the 300s idle TTL) must NOT suppress this. A bounded
+        //     full-replace policy periodically forces full sync so deleted/moved rows clear.
         //   • When no cursor exists yet, only a full sync can advance us. Cache freshness
         //     MAY skip that full sync to avoid hammering full GETs while idle.
         if hasCursor {
-            MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "delta", reason: "cursor_exists")
+            let fullPolicy = activeWindowFullPolicyDecision(mode: .automatic, hasCursor: true, now: now)
+            MultiDeviceSyncTrace.visibleLiveRefresh(
+                source: source,
+                decision: fullPolicy.shouldForceFull ? "full" : "delta",
+                reason: fullPolicy.reason
+            )
             ActiveWindowFreshnessTrace.autoCheck(
                 source: "autoRefreshDashboard",
                 decision: "fetch",
-                reason: "visible_live_delta",
+                reason: fullPolicy.shouldForceFull ? "visible_live_force_full" : "visible_live_delta",
                 elapsed: elapsedSinceSuccess,
                 ttl: activeWindowAutoRefreshTTL
             )
@@ -1612,7 +1628,17 @@ final class ReservationsController: ObservableObject {
             let shouldAttemptDelta: Bool
             var resolvedSyncMode = "full"
             var resolvedCursorUsed: String?
-            if mode == .automatic || (mode == .startup && allowStartupDelta) {
+            if mode == .automatic {
+                let cursor = serverCursor(for: scope)
+                let fullPolicy = activeWindowFullPolicyDecision(
+                    mode: mode,
+                    hasCursor: cursor != nil,
+                    now: Date()
+                )
+                traceActiveWindowFullPolicy(fullPolicy)
+                deltaCursor = fullPolicy.shouldForceFull ? nil : cursor
+                shouldAttemptDelta = deltaCursor != nil
+            } else if mode == .startup && allowStartupDelta {
                 deltaCursor = serverCursor(for: scope)
                 shouldAttemptDelta = deltaCursor != nil
             } else {
@@ -1687,6 +1713,7 @@ final class ReservationsController: ObservableObject {
             updateServerCursor(for: scope, with: result.serverTime)
             noteReservationServerSyncCompleted()
             markScopeSuccess(scope)
+            recordActiveWindowFullPolicySuccess(syncMode: resolvedSyncMode)
             freshnessCoordinator?.markCompleted(freshnessScope)
             persistActiveWindowBoundsIfNeeded(scope: scope, window: window)
             MultiDeviceSyncTrace.activeWindowSync(
@@ -3885,6 +3912,99 @@ final class ReservationsController: ObservableObject {
         serverCursorByScope[scope] = serverTime
         persistSyncMetadata()
         publishOperationState()
+    }
+
+    private struct ActiveWindowFullPolicyDecision {
+        let decision: String
+        let reason: String
+        let shouldForceFull: Bool
+        let deltaCount: Int
+        let lastFullAge: TimeInterval?
+    }
+
+    private func activeWindowFullPolicyDecision(
+        mode: ReservationRefreshMode,
+        hasCursor: Bool,
+        now: Date
+    ) -> ActiveWindowFullPolicyDecision {
+        let lastFullAge = lastSuccessfulActiveWindowFullRefreshAt.map { now.timeIntervalSince($0) }
+        guard mode == .automatic, hasCursor else {
+            return ActiveWindowFullPolicyDecision(
+                decision: "full",
+                reason: hasCursor ? "non_automatic" : "no_cursor",
+                shouldForceFull: true,
+                deltaCount: successfulActiveWindowDeltaCountSinceFull,
+                lastFullAge: lastFullAge
+            )
+        }
+
+        if lastSuccessfulActiveWindowFullRefreshAt == nil {
+            return ActiveWindowFullPolicyDecision(
+                decision: "force_full",
+                reason: "no_recorded_full",
+                shouldForceFull: true,
+                deltaCount: successfulActiveWindowDeltaCountSinceFull,
+                lastFullAge: lastFullAge
+            )
+        }
+
+        if successfulActiveWindowDeltaCountSinceFull >= activeWindowFullDeltaThreshold {
+            return ActiveWindowFullPolicyDecision(
+                decision: "force_full",
+                reason: "delta_count_threshold",
+                shouldForceFull: true,
+                deltaCount: successfulActiveWindowDeltaCountSinceFull,
+                lastFullAge: lastFullAge
+            )
+        }
+
+        if let lastFullAge, lastFullAge >= activeWindowFullMaxAge {
+            return ActiveWindowFullPolicyDecision(
+                decision: "force_full",
+                reason: "last_full_stale",
+                shouldForceFull: true,
+                deltaCount: successfulActiveWindowDeltaCountSinceFull,
+                lastFullAge: lastFullAge
+            )
+        }
+
+        return ActiveWindowFullPolicyDecision(
+            decision: "delta",
+            reason: "cursor_exists",
+            shouldForceFull: false,
+            deltaCount: successfulActiveWindowDeltaCountSinceFull,
+            lastFullAge: lastFullAge
+        )
+    }
+
+    private func recordActiveWindowFullPolicySuccess(syncMode: String, now: Date = Date()) {
+        switch syncMode {
+        case "delta":
+            successfulActiveWindowDeltaCountSinceFull += 1
+        case "full", "delta_fallback_full":
+            successfulActiveWindowDeltaCountSinceFull = 0
+            lastSuccessfulActiveWindowFullRefreshAt = now
+        default:
+            break
+        }
+    }
+
+    private func traceActiveWindowFullPolicy(_ policy: ActiveWindowFullPolicyDecision) {
+        #if DEBUG
+        let ageText = Self.activeWindowFullPolicyAgeText(policy.lastFullAge)
+        Self.activeWindowFullPolicyLogger.debug(
+            "[ACTIVE_WINDOW_FULL_POLICY_TRACE] decision=\(policy.decision, privacy: .public) reason=\(policy.reason, privacy: .public) deltaCount=\(policy.deltaCount, privacy: .public) lastFullAge=\(ageText, privacy: .public)"
+        )
+        #endif
+    }
+
+    private static func activeWindowFullPolicyAgeText(_ age: TimeInterval?) -> String {
+        guard let age else { return "none" }
+        let totalMinutes = max(0, Int(age / 60))
+        if totalMinutes >= 120 {
+            return "\(totalMinutes / 60)h\(totalMinutes % 60)m"
+        }
+        return "\(totalMinutes)m"
     }
 
     private func allowManualAttempt(for scope: ReservationSyncScope) -> Bool {

@@ -43,7 +43,7 @@ performActiveWindowRefresh(scope)
 
 - **Network:** `GET /managed-reservations?from=&to=`
 - **SwiftData:** `replaceDateWindowYielding` — upsert all + **delete** local IDs in window not in response (non-hidden)
-- **Triggers:** Manual refresh (forced), startup (no cache/cursor), tab activation if stale, auto when no cursor + stale
+- **Triggers:** Manual refresh (forced), startup (no cache/cursor), tab activation if stale, auto when no cursor + stale, auto bounded-full policy
 
 ### Delta sync
 
@@ -51,7 +51,15 @@ performActiveWindowRefresh(scope)
 - **SwiftData:** upsert only — **never deletes**
 - **Triggers:** Auto-refresh when cursor exists; background startup delta
 
-**Risk:** Cancelled/moved/deleted server rows remain in cache until full replace. See OPEN_WORK P0-2.
+### Automatic bounded-full policy
+
+Automatic active-window refresh normally uses delta when a server cursor exists. To prevent ghost rows from living forever after backend cancel/hide/move/hard-delete, the controller forces a full active-window replace when:
+
+- no successful full active-window refresh has been recorded in the controller session,
+- 5 successful automatic active-window deltas have completed since the last successful full, or
+- the last successful full active-window refresh is older than 2 hours.
+
+Successful full refresh resets the delta count and records the full timestamp. Failed refreshes do not reset counters. Delta remains upsert-only; full remains `replaceDateWindowYielding`.
 
 ## Manual refresh
 
@@ -101,7 +109,7 @@ Blocked when: mutation in flight, `isSyncing`, interaction active (sheets).
 
 `ReservationRecord.isContentEquivalent(to:)` skips `update(from:)` when compared fields match.
 
-**Not compared today:** `confirmationEmailSentAt`, `reminderEmailSentAt`, `supersededById`, `sourceType`, etc. — see OPEN_WORK P0-1.
+`ReservationRecord.isContentEquivalent(to:)` compares all server-backed fields written by `update(from:)`, including confirmation/reminder timestamps, supersession, source/creator metadata, hidden metadata, status, notes, `tableName`, `createdAt`, `apiUpdatedAt`, and `confirmedAt`.
 
 ### Mutation local update
 
