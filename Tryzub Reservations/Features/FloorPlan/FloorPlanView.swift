@@ -144,7 +144,21 @@ struct FloorPlanView: View {
         }
     }
 
+    private var usesWideServiceHeader: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+
     private var headerCard: some View {
+        Group {
+            if usesWideServiceHeader {
+                wideServiceHeaderCard
+            } else {
+                compactServiceHeaderCard
+            }
+        }
+    }
+
+    private var compactServiceHeaderCard: some View {
         TryzubChartCard(title: "Service", systemImage: "calendar") {
             VStack(alignment: .leading, spacing: 12) {
                 DatePicker(
@@ -155,48 +169,104 @@ struct FloorPlanView: View {
                 .datePickerStyle(.compact)
 
                 HStack {
-                    Label(headerMode.badgeTitle, systemImage: "circle.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(headerMode == .liveService ? TryzubColors.success : TryzubColors.info)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            (headerMode == .liveService ? TryzubColors.success : TryzubColors.info)
-                                .opacity(0.12)
-                        )
-                        .clipShape(Capsule())
+                    serviceModeBadge
 
                     Spacer()
 
                     Text(isShowingStaleContent ? "Loading selected date…" : store.viewState.lastCheckedLine)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    serviceStatusTrailing
                 }
 
-                HStack {
-                    Text(FloorPlanPresentation.displayDate(selectedDateKey))
-                        .font(.subheadline.weight(.medium))
-                    Spacer()
-                    if !isShowingStaleContent && store.viewState.unassignedCount > 0 {
-                        Text("\(store.viewState.unassignedCount) unassigned")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(TryzubColors.warning)
-                    }
-                }
-
-                if store.isLoading {
-                    HStack(spacing: 8) {
-                        TryzubSubtleLoadingDot(diameter: 6)
-                        Text("Loading floor plan…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if let errorMessage = store.errorMessage {
-                    StaffFormErrorCaption(message: errorMessage)
-                }
+                serviceHeaderFooter
             }
+        }
+    }
+
+    private var wideServiceHeaderCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "calendar")
+                        .font(TryzubTypography.sectionTitle)
+                        .foregroundStyle(TryzubColors.primaryText)
+
+                    Text("Service")
+                        .font(TryzubTypography.sectionTitle)
+                        .foregroundStyle(TryzubColors.primaryText)
+
+                    serviceModeBadge
+                }
+
+                Spacer(minLength: 8)
+
+                DatePicker(
+                    "Service date",
+                    selection: $selectedDate,
+                    displayedComponents: .date
+                )
+                .labelsHidden()
+                .datePickerStyle(.compact)
+            }
+
+            HStack(spacing: 12) {
+                Text(isShowingStaleContent ? "Loading selected date…" : store.viewState.lastCheckedLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                serviceStatusTrailing
+            }
+
+            serviceHeaderFooter
+        }
+        .padding(TryzubSpacing.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(TryzubColors.cardBackground, in: RoundedRectangle(cornerRadius: TryzubSpacing.cornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: TryzubSpacing.cornerRadius, style: .continuous)
+                .stroke(TryzubColors.border, lineWidth: 1)
+        }
+    }
+
+    private var serviceModeBadge: some View {
+        Label(headerMode.badgeTitle, systemImage: "circle.fill")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(headerMode == .liveService ? TryzubColors.success : TryzubColors.info)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                (headerMode == .liveService ? TryzubColors.success : TryzubColors.info)
+                    .opacity(0.12)
+            )
+            .clipShape(Capsule())
+    }
+
+    @ViewBuilder
+    private var serviceStatusTrailing: some View {
+        if !isShowingStaleContent && store.viewState.unassignedCount > 0 {
+            Text("\(store.viewState.unassignedCount) unassigned")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(TryzubColors.warning)
+        }
+    }
+
+    @ViewBuilder
+    private var serviceHeaderFooter: some View {
+        if store.isLoading {
+            HStack(spacing: 8) {
+                TryzubSubtleLoadingDot(diameter: 6)
+                Text("Loading floor plan…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+
+        if let errorMessage = store.errorMessage {
+            StaffFormErrorCaption(message: errorMessage)
         }
     }
 
