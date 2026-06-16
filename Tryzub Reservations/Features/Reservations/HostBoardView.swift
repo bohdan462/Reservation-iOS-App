@@ -302,7 +302,8 @@ struct HostBoardView: View {
                         closedOrOperationalBody(
                             snapshot: snapshot,
                             closedPresentation: closedPresentation,
-                            isWideLayout: isWideLayout
+                            isWideLayout: isWideLayout,
+                            availableWidth: safeWidth
                         )
                     }
                     .padding(.bottom, 12)
@@ -691,7 +692,8 @@ struct HostBoardView: View {
     private func closedOrOperationalBody(
         snapshot: HostBoardSnapshot,
         closedPresentation: ClosedDayPresentation,
-        isWideLayout: Bool
+        isWideLayout: Bool,
+        availableWidth: CGFloat
     ) -> some View {
         switch closedPresentation {
         case .closedEmpty:
@@ -731,12 +733,23 @@ struct HostBoardView: View {
             }
 
         case .open:
-            homeOperationalHeader(snapshot: snapshot)
-
-            if isWideLayout {
+            let isWideIPad = horizontalSizeClass == .regular && availableWidth >= 900
+            
+            if isWideIPad {
+                // iPad wide layout: KPIs → Lists → Service Pressure → Reminders + Intelligence
+                hostOperationalKPIsSection(snapshot: snapshot)
                 wideBoard(snapshot: snapshot)
+                hostOperationalServicePressureSection(snapshot: snapshot)
+                hostRemindersAndIntelligenceSection()
             } else {
-                phoneLists(snapshot: snapshot)
+                // iPhone/narrow layout: original order (KPIs → Service Pressure → Reminders → Intelligence → Lists)
+                homeOperationalHeader(snapshot: snapshot, availableWidth: availableWidth)
+                
+                if isWideLayout {
+                    wideBoard(snapshot: snapshot)
+                } else {
+                    phoneLists(snapshot: snapshot)
+                }
             }
         }
     }
@@ -772,7 +785,7 @@ struct HostBoardView: View {
     }
 
     @ViewBuilder
-    private func homeOperationalHeader(snapshot: HostBoardSnapshot) -> some View {
+    private func hostOperationalKPIsSection(snapshot: HostBoardSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if selectedDateKey == Date.reservationDateString(),
                guestIntelligenceStore.isLoading(dateKey: selectedDateKey),
@@ -804,10 +817,174 @@ struct HostBoardView: View {
                     }
                 }
             )
+        }
+    }
 
+    @ViewBuilder
+    private func hostOperationalServicePressureSection(snapshot: HostBoardSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Service pressure")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TryzubColors.primaryText)
+                    Text(snapshot.arrivalPressure.chartSubtitle)
+                        .font(.caption2)
+                        .foregroundStyle(TryzubColors.mutedText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
+
+                VStack(alignment: .trailing, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Text("Peak")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(TryzubColors.mutedText)
+                        Text(snapshot.arrivalPressure.peakLegendText)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(TryzubColors.primaryText)
+                            .lineLimit(1)
+                    }
+                    if let next = snapshot.arrivalPressure.nextLegendText {
+                        HStack(spacing: 4) {
+                            Text("Next")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(TryzubColors.mutedText)
+                            Text(next)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(TryzubColors.primaryText)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            }
+
+            ArrivalPressureWaveChart(
+                summary: snapshot.arrivalPressure,
+                height: 112,
+                isToday: snapshot.selectedDate.reservationDateString() == Date.reservationDateString(),
+                now: snapshot.now,
+                onOpenReservation: { remoteID in
+                    if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
+                        onOpenReservation(reservation)
+                    }
+                }
+            )
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
+                .stroke(TryzubColors.border, lineWidth: 1)
+        }
+    }
+
+    @ViewBuilder
+    private func hostRemindersAndIntelligenceSection() -> some View {
+        HStack(alignment: .top, spacing: 16) {
             hostReminderBatchCard
-
+                .frame(width: 360, alignment: .topLeading)
+            
             hostIntelligenceSection
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    @ViewBuilder
+    private func homeOperationalHeader(snapshot: HostBoardSnapshot, availableWidth: CGFloat) -> some View {
+        let isTablet = UIDevice.current.userInterfaceIdiom == .pad
+        let horizontalPadding = isTablet ? CGFloat(32) : CGFloat(24)
+        let contentWidth = availableWidth - horizontalPadding
+        
+        // iPad or wide layout (width >= 700): stack reminders and intelligence horizontally
+        // iPhone or narrow: keep vertical stacking
+        let shouldUseHorizontalLayout = isTablet || contentWidth >= 700
+        
+        if shouldUseHorizontalLayout {
+            // iPad/wide layout: summary full-width, then reminders + intelligence side-by-side
+            VStack(alignment: .leading, spacing: 8) {
+                if selectedDateKey == Date.reservationDateString(),
+                   guestIntelligenceStore.isLoading(dateKey: selectedDateKey),
+                   guestIntelligenceStore.response(for: selectedDateKey) == nil {
+                    TryzubSectionLoadingCard(
+                        title: "Checking guest context…",
+                        systemImage: "person.2"
+                    )
+                }
+
+                HostBoardSummaryCard(
+                    reservationCount: snapshot.upcoming.count + snapshot.seated.count,
+                    guestCount: snapshot.expectedGuestCount,
+                    newCount: snapshot.newReservations.count,
+                    reviewCount: snapshot.needsReview.count,
+                    failedImportCount: controller.capabilities.canViewDeveloperDiagnostics ? failedImportCount : 0,
+                    noTableCount: snapshot.noTableCount,
+                    arrivalPressure: snapshot.arrivalPressure,
+                    isSelectedDateToday: snapshot.selectedDate.reservationDateString() == Date.reservationDateString(),
+                    referenceNow: snapshot.now,
+                    availabilitySummary: availabilitySummaryLine,
+                    isAvailabilityLoading: isLoadingAvailabilitySummary,
+                    onRefreshAvailability: selectedDate.reservationDateString() == Date.reservationDateString()
+                        ? { controller.ensureAvailabilitySummary(date: selectedDateKey, force: true) }
+                        : nil,
+                    onOpenReservationByID: { remoteID in
+                        if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
+                            onOpenReservation(reservation)
+                        }
+                    }
+                )
+                
+                // Reminders + Intelligence in HStack for wide layout
+                HStack(alignment: .top, spacing: 16) {
+                    // Today's Reminders: fixed width around 360
+                    hostReminderBatchCard
+                        .frame(width: 360, alignment: .topLeading)
+                    
+                    // Host Intelligence: flexible width
+                    hostIntelligenceSection
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+        } else {
+            // iPhone/narrow layout: keep vertical stacking (existing layout)
+            VStack(alignment: .leading, spacing: 8) {
+                if selectedDateKey == Date.reservationDateString(),
+                   guestIntelligenceStore.isLoading(dateKey: selectedDateKey),
+                   guestIntelligenceStore.response(for: selectedDateKey) == nil {
+                    TryzubSectionLoadingCard(
+                        title: "Checking guest context…",
+                        systemImage: "person.2"
+                    )
+                }
+
+                HostBoardSummaryCard(
+                    reservationCount: snapshot.upcoming.count + snapshot.seated.count,
+                    guestCount: snapshot.expectedGuestCount,
+                    newCount: snapshot.newReservations.count,
+                    reviewCount: snapshot.needsReview.count,
+                    failedImportCount: controller.capabilities.canViewDeveloperDiagnostics ? failedImportCount : 0,
+                    noTableCount: snapshot.noTableCount,
+                    arrivalPressure: snapshot.arrivalPressure,
+                    isSelectedDateToday: snapshot.selectedDate.reservationDateString() == Date.reservationDateString(),
+                    referenceNow: snapshot.now,
+                    availabilitySummary: availabilitySummaryLine,
+                    isAvailabilityLoading: isLoadingAvailabilitySummary,
+                    onRefreshAvailability: selectedDate.reservationDateString() == Date.reservationDateString()
+                        ? { controller.ensureAvailabilitySummary(date: selectedDateKey, force: true) }
+                        : nil,
+                    onOpenReservationByID: { remoteID in
+                        if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
+                            onOpenReservation(reservation)
+                        }
+                    }
+                )
+
+                hostReminderBatchCard
+
+                hostIntelligenceSection
+            }
         }
     }
 
@@ -816,12 +993,17 @@ struct HostBoardView: View {
         let settings = emailAutomationSettingsStore.settings
         let isToday = selectedDateKey == Date.reservationDateString()
         if isToday && (settings.automaticReminderProofEnabled || settings.manualReminderSendEnabled) {
+            let status = controller.lastReminderStatusByDate[selectedDateKey]
+            let eligibleCount = status?.summary.eligible ?? 0
+            let hasEligibleReminders = eligibleCount > 0
+            
             HostReminderBatchCard(
-                status: controller.lastReminderStatusByDate[selectedDateKey],
+                status: status,
                 notice: controller.reminderBatchNotice,
                 isSending: controller.isSendingReminderBatch,
                 showProof: settings.automaticReminderProofEnabled,
-                canSend: settings.manualReminderSendEnabled,
+                hasEligibleReminders: hasEligibleReminders,
+                manualSendEnabled: settings.manualReminderSendEnabled,
                 onSend: { showBackendReminderConfirmation = true }
             )
         }
@@ -1449,38 +1631,6 @@ private struct HostBoardSummaryCard: View {
                     TryzubSubtleLoadingDot(diameter: 6)
                 }
             }
-
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Service pressure")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(TryzubColors.primaryText)
-                        Text(arrivalPressure.chartSubtitle)
-                            .font(.caption2)
-                            .foregroundStyle(TryzubColors.mutedText)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Spacer(minLength: 8)
-
-                    VStack(alignment: .trailing, spacing: 4) {
-                        timelineLegend(label: "Peak", value: arrivalPressure.peakLegendText)
-                        if let next = arrivalPressure.nextLegendText {
-                            timelineLegend(label: "Next", value: next)
-                        }
-                    }
-                }
-
-                ArrivalPressureWaveChart(
-                    summary: arrivalPressure,
-                    height: 112,
-                    isToday: isSelectedDateToday,
-                    now: referenceNow,
-                    onOpenReservation: onOpenReservationByID
-                )
-            }
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
@@ -1525,7 +1675,8 @@ private struct HostReminderBatchCard: View {
     let notice: String?
     let isSending: Bool
     let showProof: Bool
-    let canSend: Bool
+    let hasEligibleReminders: Bool
+    let manualSendEnabled: Bool
     let onSend: () -> Void
 
     var body: some View {
@@ -1563,16 +1714,26 @@ private struct HostReminderBatchCard: View {
                     .foregroundStyle(TryzubColors.mutedText)
             }
 
-            if canSend {
-                Button {
-                    onSend()
-                } label: {
-                    Label("Send Today’s Reminders", systemImage: "paperplane")
+            if manualSendEnabled {
+                if hasEligibleReminders {
+                    // Button enabled: there are eligible reminders to send
+                    Button {
+                        onSend()
+                    } label: {
+                        Label("Send Today's Reminders", systemImage: "paperplane")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                    .disabled(isSending)
+                } else if let status {
+                    // Button disabled: no eligible reminders
+                    Text("No reminders to send")
                         .frame(maxWidth: .infinity)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(TryzubColors.mutedText)
+                        .padding(.vertical, 10)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
-                .disabled(isSending)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -9,11 +9,12 @@ enum ReservationEmailWorkflow {
     /// Staff-triggered only: when ON, an explicit Confirm & Send tap calls POST `/confirm`.
     /// Sync, startup, refresh, reminders, and background work must never confirm reservations.
     static var isBackendConfirmEmailEnabled: Bool {
-        guard let data = UserDefaults.standard.data(forKey: "tryzub.emailAutomation.settings.v1"),
-              let settings = try? JSONDecoder().decode(EmailAutomationSettings.self, from: data) else {
-            return EmailAutomationSettings.defaults.backendConfirmationEnabled
+        if let data = UserDefaults.standard.data(forKey: EmailAutomationSettings.storageKey)
+            ?? UserDefaults.standard.data(forKey: EmailAutomationSettings.legacyStorageKey),
+           let settings = try? JSONDecoder().decode(EmailAutomationSettings.self, from: data) {
+            return settings.backendConfirmationEnabled
         }
-        return settings.backendConfirmationEnabled
+        return EmailAutomationSettings.defaults.backendConfirmationEnabled
     }
 
     static let restaurantName = "Tryzub Ukrainian Kitchen"

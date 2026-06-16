@@ -585,7 +585,6 @@ private struct ReservationScheduleView: View {
     @State private var allModeTotal: Int?
     @State private var allModeTotalPages = 0
     @State private var allModeErrorMessage: String?
-    @State private var showShiftReminders = false
     @State private var navigationPath: [Int] = []
 
     let environment: AppEnvironment
@@ -906,13 +905,6 @@ private struct ReservationScheduleView: View {
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
-                        showShiftReminders = true
-                    } label: {
-                        Image(systemName: "bell.badge")
-                    }
-                    .accessibilityLabel("Shift reminders")
-
-                    Button {
                         Task {
                             guard isActive else { return }
                             if scope == .all {
@@ -937,13 +929,6 @@ private struct ReservationScheduleView: View {
                     .disabled(controller.isSyncing)
                     .accessibilityLabel("Refresh")
                 }
-            }
-            .sheet(isPresented: $showShiftReminders) {
-                ShiftReminderReviewSheet(
-                    dateKey: reminderDateKey,
-                    reservations: shiftReminderEligibleReservations
-                )
-                .environmentObject(controller)
             }
             .onAppear {
                 // Every time Bookings activates: staff-review rows open Review.
@@ -1033,14 +1018,6 @@ private struct ReservationScheduleView: View {
                 reservationDestination(remoteID: remoteID)
             }
         }
-    }
-
-    private var shiftReminderEligibleReservations: [ReservationRecord] {
-        ShiftReminderEligibility.eligibleReservations(
-            from: reservations,
-            dateKey: reminderDateKey,
-            isHidden: { hiddenReservations.isHidden($0) }
-        )
     }
 
     // Intent: Keeps Bookings current on other devices without interrupting staff.

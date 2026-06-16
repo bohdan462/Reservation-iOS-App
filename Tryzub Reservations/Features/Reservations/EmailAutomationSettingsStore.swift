@@ -13,7 +13,8 @@ final class EmailAutomationSettingsStore: ObservableObject {
 
     @Published private(set) var settings: EmailAutomationSettings
 
-    static let defaultsKey = "tryzub.emailAutomation.settings.v1"
+    static let defaultsKey = EmailAutomationSettings.storageKey
+    private static let legacyDefaultsKey = EmailAutomationSettings.legacyStorageKey
 
     init() {
         settings = .defaults
@@ -37,16 +38,22 @@ final class EmailAutomationSettingsStore: ObservableObject {
     }
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: Self.defaultsKey) else {
-            settings = .defaults
+        if let data = UserDefaults.standard.data(forKey: Self.defaultsKey),
+           let decoded = try? JSONDecoder().decode(EmailAutomationSettings.self, from: data) {
+            settings = decoded
             return
         }
 
-        do {
-            settings = try JSONDecoder().decode(EmailAutomationSettings.self, from: data)
-        } catch {
-            settings = .defaults
+        if let data = UserDefaults.standard.data(forKey: Self.legacyDefaultsKey),
+           var decoded = try? JSONDecoder().decode(EmailAutomationSettings.self, from: data) {
+            decoded.manualReminderSendEnabled = false
+            settings = decoded
+            persist()
+            UserDefaults.standard.removeObject(forKey: Self.legacyDefaultsKey)
+            return
         }
+
+        settings = .defaults
     }
 
     private func persist() {
