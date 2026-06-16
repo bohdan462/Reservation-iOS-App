@@ -37,6 +37,21 @@ struct FloorPlanTableBlock: Identifiable, Equatable {
     var id: String { table.tableKey }
 }
 
+struct FloorPlanAssignedReservation: Identifiable, Equatable {
+    let reservation: ManagedReservationDTO
+    let assignment: TableAssignmentDTO
+
+    var id: Int { reservation.id }
+
+    var tableLabel: String {
+        let trimmed = assignment.tableLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        return assignment.tableKeys.joined(separator: " + ")
+    }
+}
+
 struct FloorPlanConflictViewState: Equatable {
     let conflicts: [TableAssignmentConflictDTO]
     let message: String
@@ -49,6 +64,7 @@ struct FloorPlanViewState: Equatable {
         mode: .liveService,
         tableBlocks: [],
         unassignedReservations: [],
+        assignedReservations: [],
         assignmentsByTableKey: [:],
         reservationsByID: [:],
         gridWidth: 12,
@@ -62,6 +78,7 @@ struct FloorPlanViewState: Equatable {
     let mode: FloorPlanMode
     let tableBlocks: [FloorPlanTableBlock]
     let unassignedReservations: [ManagedReservationDTO]
+    let assignedReservations: [FloorPlanAssignedReservation]
     let assignmentsByTableKey: [String: TableAssignmentDTO]
     let reservationsByID: [Int: ManagedReservationDTO]
     let gridWidth: Int
@@ -127,6 +144,21 @@ enum FloorPlanViewStateBuilder {
             }
             .sorted(by: reservationSort)
 
+        let assignedReservations = response.assignments.compactMap { assignment -> FloorPlanAssignedReservation? in
+            guard !assignment.tableKeys.isEmpty,
+                  let reservation = reservationsByID[assignment.reservationId],
+                  isFloorPlanAssignable(reservation.status) else {
+                return nil
+            }
+            return FloorPlanAssignedReservation(
+                reservation: reservation,
+                assignment: assignment
+            )
+        }
+        .sorted { lhs, rhs in
+            reservationSort(lhs: lhs.reservation, rhs: rhs.reservation)
+        }
+
         let gridBounds = gridBounds(for: activeTables)
 
         return FloorPlanViewState(
@@ -135,6 +167,7 @@ enum FloorPlanViewStateBuilder {
             mode: mode,
             tableBlocks: tableBlocks,
             unassignedReservations: unassignedReservations,
+            assignedReservations: assignedReservations,
             assignmentsByTableKey: assignmentsByTableKey,
             reservationsByID: reservationsByID,
             gridWidth: gridBounds.width,

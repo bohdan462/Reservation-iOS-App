@@ -497,10 +497,12 @@ struct ReservationDetailView: View {
         @ViewBuilder right: () -> Right
     ) -> some View {
         HStack(alignment: .top, spacing: 14) {
-            left()
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            right()
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+            DetailGridColumn {
+                left()
+            }
+            DetailGridColumn {
+                right()
+            }
         }
     }
 
@@ -522,25 +524,24 @@ struct ReservationDetailView: View {
                         actionBar
                     }
 
-                    importantCard(presentation)
-                    noteSignalsCard
+                    wideImportantGuestNotesRow(presentation)
 
                     detailColumnPair {
-                        VStack(spacing: 14) {
-                            notesCard(presentation)
-                        }
+                        attachmentsCard
                     } right: {
-                        VStack(spacing: 14) {
-                            attachmentsCard
-                            guestInsightsSection
-                        }
+                        staffNotesCard
                     }
 
                     detailColumnPair {
                         detailsCard(presentation)
                     } right: {
-                        VStack(spacing: 14) {
-                            contactCard
+                        guestInsightsSection
+                    }
+
+                    detailColumnPair {
+                        contactCard
+                    } right: {
+                        VStack(alignment: .leading, spacing: 14) {
                             draftMessageCard
                             ReservationActivityHistorySection(
                                 reservationID: reservation.remoteID,
@@ -551,6 +552,7 @@ struct ReservationDetailView: View {
                                 sameDayReservations: sameDayReservations
                             )
                         }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
                 }
             } else {
@@ -559,7 +561,8 @@ struct ReservationDetailView: View {
                     actionBar
                     importantCard(presentation)
                     noteSignalsCard
-                    notesCard(presentation)
+                    guestNotesCard
+                    staffNotesCard
                     attachmentsCard
                     guestInsightsSection
                     detailsCard(presentation)
@@ -961,59 +964,86 @@ struct ReservationDetailView: View {
         }
     }
 
-    private func notesCard(_ presentation: ReservationDetailPresentation) -> some View {
-        VStack(spacing: 14) {
-            DetailSectionCard(title: "Guest Notes", systemImage: "note.text") {
-                if let guestNotes = reservation.guestNotes?.nilIfBlank {
-                    DetailNoteRow(label: "Guest", text: guestNotes)
-                } else {
-                    DetailPlainLine("No guest notes.")
+    @ViewBuilder
+    private func wideImportantGuestNotesRow(_ presentation: ReservationDetailPresentation) -> some View {
+        let hasImportant = !ReservationImportantFlags.make(reservation: reservation).isEmpty
+        let hasNoteSignals = !noteSignals.isEmpty
+
+        if hasImportant || hasNoteSignals {
+            detailColumnPair {
+                VStack(alignment: .leading, spacing: 14) {
+                    importantCard(presentation)
+                    noteSignalsCard
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } right: {
+                guestNotesCard
             }
+        } else {
+            guestNotesCard
+        }
+    }
 
-            DetailSectionCard(title: "Staff Notes", systemImage: "person.text.rectangle") {
-                VStack(alignment: .leading, spacing: 10) {
-                    if let staffNotes = reservation.staffNotes?.nilIfBlank {
-                        DetailNoteRow(label: "Staff", text: staffNotes)
-                    } else {
-                        DetailPlainLine("No staff notes added yet.")
-                    }
+    private var guestNotesCard: some View {
+        DetailSectionCard(title: "Guest Notes", systemImage: "note.text") {
+            if let guestNotes = reservation.guestNotes?.nilIfBlank {
+                DetailNoteRow(label: "Guest", text: guestNotes)
+            } else {
+                DetailPlainLine("No guest notes.")
+            }
+        }
+    }
 
-                    Button {
-                        staffNotesDraft = reservation.staffNotes ?? ""
-                        showStaffNotesEditor = true
-                    } label: {
-                        Label(reservation.staffNotes?.nilIfBlank == nil ? "Add staff notes" : "Edit staff notes", systemImage: "pencil")
-                            .font(.subheadline.weight(.medium))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(TryzubColors.primaryControl)
+    private var staffNotesCard: some View {
+        DetailSectionCard(title: "Staff Notes", systemImage: "person.text.rectangle") {
+            VStack(alignment: .leading, spacing: 10) {
+                if let staffNotes = DetailStaffNotesDisplay.normalized(reservation.staffNotes) {
+                    DetailNoteRow(label: "Staff", text: staffNotes)
+                } else {
+                    DetailPlainLine("No staff notes added yet.")
                 }
+
+                Button {
+                    staffNotesDraft = reservation.staffNotes ?? ""
+                    showStaffNotesEditor = true
+                } label: {
+                    Label(
+                        reservation.staffNotes?.nilIfBlank == nil ? "Add staff notes" : "Edit staff notes",
+                        systemImage: "pencil"
+                    )
+                    .font(.subheadline.weight(.medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(TryzubColors.primaryControl)
             }
         }
         .sheet(isPresented: $showStaffNotesEditor) {
-            NavigationStack {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Staff Notes")
-                        .font(.headline.weight(.semibold))
-                    TextEditor(text: $staffNotesDraft)
-                        .frame(minHeight: 180)
-                        .padding(8)
-                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .padding()
-                .navigationTitle("Staff Notes")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") {
-                            showStaffNotesEditor = false
-                        }
+            staffNotesEditorSheet
+        }
+    }
+
+    private var staffNotesEditorSheet: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Staff Notes")
+                    .font(.headline.weight(.semibold))
+                TextEditor(text: $staffNotesDraft)
+                    .frame(minHeight: 180)
+                    .padding(8)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .padding()
+            .navigationTitle("Staff Notes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        showStaffNotesEditor = false
                     }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") {
-                            Task { await saveStaffNotesDraft() }
-                        }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        Task { await saveStaffNotesDraft() }
                     }
                 }
             }
@@ -2265,6 +2295,7 @@ private enum DetailHeroLayout {
 private struct DetailHeroCard: View {
     let header: ReservationDetailPresentation.Header
     var layout: DetailHeroLayout = .standard
+    @Environment(\.detailGridEqualHeight) private var fillsAvailableHeight
 
     var body: some View {
         Group {
@@ -2276,7 +2307,11 @@ private struct DetailHeroCard: View {
             }
         }
         .padding(layout == .compact ? 16 : 18)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: fillsAvailableHeight ? .infinity : nil,
+            alignment: .topLeading
+        )
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
@@ -2609,10 +2644,32 @@ private struct DetailActionBar: View {
 
 // MARK: - Shared Detail Components
 
+private struct DetailGridEqualHeightKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var detailGridEqualHeight: Bool {
+        get { self[DetailGridEqualHeightKey.self] }
+        set { self[DetailGridEqualHeightKey.self] = newValue }
+    }
+}
+
+private struct DetailGridColumn<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .environment(\.detailGridEqualHeight, true)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
 private struct DetailSectionCard<Content: View>: View {
     let title: String
     let systemImage: String
     @ViewBuilder let content: Content
+    @Environment(\.detailGridEqualHeight) private var fillsAvailableHeight
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -2623,9 +2680,17 @@ private struct DetailSectionCard<Content: View>: View {
                 .lineLimit(1)
 
             content
+
+            if fillsAvailableHeight {
+                Spacer(minLength: 0)
+            }
         }
         .padding(16)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: fillsAvailableHeight ? .infinity : nil,
+            alignment: .topLeading
+        )
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
@@ -2761,6 +2826,49 @@ private struct DetailPill: View {
 }
 
 // MARK: - DetailNoteRow
+
+private enum DetailStaffNotesDisplay {
+    static func normalized(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+
+        let lines = raw
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        var kept: [String] = []
+        for line in lines {
+            let normalized = line.lowercased()
+            var skip = false
+
+            for index in kept.indices {
+                let existing = kept[index]
+                let existingNormalized = existing.lowercased()
+                if existingNormalized == normalized {
+                    skip = true
+                    break
+                }
+                if existingNormalized.contains(normalized), existing.count >= line.count {
+                    skip = true
+                    break
+                }
+                if normalized.contains(existingNormalized), line.count > existing.count {
+                    kept[index] = line
+                    skip = true
+                    break
+                }
+            }
+
+            if !skip {
+                kept.append(line)
+            }
+        }
+
+        return kept.isEmpty ? nil : kept.joined(separator: "\n")
+    }
+}
 
 private struct DetailNoteRow: View {
     let label: String

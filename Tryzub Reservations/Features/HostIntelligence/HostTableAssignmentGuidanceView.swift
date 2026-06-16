@@ -12,20 +12,27 @@ struct HostTableAssignmentGuidanceView: View {
   var onSelectProposal: (String) -> Void
 
   var body: some View {
-    if let context {
-      VStack(alignment: .leading, spacing: 12) {
+    if let context, showsSuggestedSeating(context) {
+      VStack(alignment: .leading, spacing: 10) {
+        Text("Suggested seating")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(TryzubColors.mutedText)
+
         if let slotContext = context.slotContext {
           HostReservationSlotContextBanner(context: slotContext)
         }
 
         if !context.proposals.isEmpty {
-          VStack(alignment: .leading, spacing: 8) {
-            Text("Suggested seating")
-              .font(.caption.weight(.semibold))
-              .foregroundStyle(TryzubColors.mutedText)
-
+          LazyVGrid(
+            columns: ReservationSlotGridStyle.fourColumns,
+            alignment: .leading,
+            spacing: ReservationSlotGridStyle.rowSpacing
+          ) {
             ForEach(context.proposals) { proposal in
-              proposalRow(proposal)
+              HostAssignmentTableProposalCard(proposal: proposal) {
+                onSelectProposal(proposal.tableLabel)
+                ReservationHaptics.selection()
+              }
             }
           }
         }
@@ -34,76 +41,65 @@ struct HostTableAssignmentGuidanceView: View {
     }
   }
 
-  @ViewBuilder
-  private func proposalRow(_ proposal: HostTableAssignmentProposal) -> some View {
-    Button {
-      onSelectProposal(proposal.tableLabel)
-      ReservationHaptics.selection()
-    } label: {
-      HStack(alignment: .top, spacing: 10) {
-        VStack(alignment: .leading, spacing: 3) {
-          HStack(spacing: 6) {
+  private func showsSuggestedSeating(_ context: HostTableAssignmentContext) -> Bool {
+    context.slotContext != nil || !context.proposals.isEmpty
+  }
+}
+
+struct HostAssignmentTableProposalCard: View {
+  let proposal: HostTableAssignmentProposal
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      HostAssignmentCardSurface(isMuted: !proposal.isAvailable) {
+        VStack(alignment: .leading, spacing: 4) {
+          HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(proposal.tableLabel)
               .font(.subheadline.weight(.semibold))
               .foregroundStyle(proposal.isAvailable ? TryzubColors.primaryText : TryzubColors.mutedText)
+              .lineLimit(1)
 
-            if proposal.isRecommended, proposal.isAvailable {
-              Text("Recommended")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(TryzubColors.primaryControl)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                  TryzubColors.primaryControl.opacity(0.12),
-                  in: Capsule()
-                )
+            Spacer(minLength: 0)
+
+            if let seatCount = proposal.seatCount {
+              Label {
+                Text("\(seatCount)")
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(.secondary)
+              } icon: {
+                Image(systemName: "person.2")
+                  .font(.caption2.weight(.semibold))
+              }
+              .labelStyle(.titleAndIcon)
             }
           }
 
-          Text(proposal.summary)
-            .font(.caption)
+          Text(displayFitDescription)
+            .font(.caption2)
             .foregroundStyle(.secondary)
+            .lineLimit(2)
             .multilineTextAlignment(.leading)
 
           if let detail = proposal.detail {
             Text(detail)
               .font(.caption2)
               .foregroundStyle(TryzubColors.warning)
+              .lineLimit(2)
               .multilineTextAlignment(.leading)
           }
         }
-
-        Spacer(minLength: 8)
-
-        if proposal.isAvailable {
-          Image(systemName: "checkmark.circle")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(TryzubColors.success)
-        } else {
-          Image(systemName: "exclamationmark.triangle")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(TryzubColors.warning)
-        }
-      }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 10)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(
-        proposal.isAvailable
-          ? Color(.secondarySystemGroupedBackground)
-          : Color(.tertiarySystemGroupedBackground),
-        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-      )
-      .overlay {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-          .stroke(
-            proposal.isRecommended && proposal.isAvailable
-              ? TryzubColors.primaryControl.opacity(0.28)
-              : TryzubColors.border,
-            lineWidth: 1
-          )
+        .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
       }
     }
     .buttonStyle(.plain)
+  }
+
+  private var displayFitDescription: String {
+    if let fitDescription = proposal.fitDescription?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !fitDescription.isEmpty {
+      return fitDescription
+    }
+    return proposal.summary
   }
 }

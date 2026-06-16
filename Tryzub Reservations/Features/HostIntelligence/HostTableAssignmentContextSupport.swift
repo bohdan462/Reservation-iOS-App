@@ -14,6 +14,28 @@ struct HostTableAssignmentProposal: Identifiable, Equatable {
   let detail: String?
   let isRecommended: Bool
   let isAvailable: Bool
+  let seatCount: Int?
+  let fitDescription: String?
+
+  init(
+    id: String,
+    tableLabel: String,
+    summary: String,
+    detail: String?,
+    isRecommended: Bool,
+    isAvailable: Bool,
+    seatCount: Int? = nil,
+    fitDescription: String? = nil
+  ) {
+    self.id = id
+    self.tableLabel = tableLabel
+    self.summary = summary
+    self.detail = detail
+    self.isRecommended = isRecommended
+    self.isAvailable = isAvailable
+    self.seatCount = seatCount
+    self.fitDescription = fitDescription
+  }
 }
 
 struct HostTableAssignmentContext: Equatable {
@@ -109,15 +131,18 @@ enum HostTableAssignmentContextSupport {
           settings: settings,
           now: now
         )
+        let display = proposalDisplay(for: fit)
 
         proposals.append(
           HostTableAssignmentProposal(
             id: fit.id,
             tableLabel: label,
-            summary: proposalSummary(for: fit),
+            summary: display.summary,
             detail: conflict,
             isRecommended: conflict == nil,
-            isAvailable: conflict == nil
+            isAvailable: conflict == nil,
+            seatCount: display.seatCount,
+            fitDescription: display.fitDescription
           )
         )
       }
@@ -138,19 +163,22 @@ enum HostTableAssignmentContextSupport {
         settings: settings,
         now: now
       )
+      let manualProposal = manualDisplay(
+        tableNames: names.isEmpty ? [suggestion] : names,
+        partySize: reservation.partySize,
+        tableConfigs: activeTables
+      )
 
       proposals.append(
         HostTableAssignmentProposal(
           id: "manual-\(key)",
           tableLabel: label,
-          summary: manualSummary(
-            tableNames: names.isEmpty ? [suggestion] : names,
-            partySize: reservation.partySize,
-            tableConfigs: activeTables
-          ),
+          summary: manualProposal.summary,
           detail: conflict,
           isRecommended: false,
-          isAvailable: conflict == nil
+          isAvailable: conflict == nil,
+          seatCount: manualProposal.seatCount,
+          fitDescription: manualProposal.fitDescription
         )
       )
     }
@@ -165,38 +193,65 @@ enum HostTableAssignmentContextSupport {
       .map { $0 }
   }
 
-  private static func proposalSummary(for fit: HostTableFitOption) -> String {
-    let fitLabel: String
-    switch fit.fitQuality {
-    case .exact: fitLabel = "Exact fit"
-    case .tight: fitLabel = "Tight fit"
-    case .comfortable: fitLabel = "Comfortable fit"
-    case .oversized: fitLabel = "Roomy fit"
-    case .unavailable: fitLabel = "Check capacity"
-    }
-
-    if fit.isCombination {
-      return "Combined · seats \(fit.totalCapacity) · \(fitLabel.lowercased())"
-    }
-    if let section = fit.section?.nilIfBlank {
-      return "Seats \(fit.totalCapacity) · \(section) · \(fitLabel.lowercased())"
-    }
-    return "Seats \(fit.totalCapacity) · \(fitLabel.lowercased())"
+  private struct ProposalDisplay {
+    let summary: String
+    let seatCount: Int?
+    let fitDescription: String?
   }
 
-  private static func manualSummary(
+  private static func proposalDisplay(for fit: HostTableFitOption) -> ProposalDisplay {
+    let fitLabel = fitLabel(for: fit.fitQuality).lowercased()
+    let summary = proposalSummary(for: fit, fitLabel: fitLabel)
+
+    return ProposalDisplay(
+      summary: summary,
+      seatCount: fit.totalCapacity,
+      fitDescription: fitLabel
+    )
+  }
+
+  private static func proposalSummary(for fit: HostTableFitOption, fitLabel: String) -> String {
+    if fit.isCombination {
+      return "Combined · seats \(fit.totalCapacity) · \(fitLabel)"
+    }
+    if let section = fit.section?.nilIfBlank {
+      return "Seats \(fit.totalCapacity) · \(section) · \(fitLabel)"
+    }
+    return "Seats \(fit.totalCapacity) · \(fitLabel)"
+  }
+
+  private static func fitLabel(for quality: HostTableFitQuality) -> String {
+    switch quality {
+    case .exact: return "Exact fit"
+    case .tight: return "Tight fit"
+    case .comfortable: return "Comfortable fit"
+    case .oversized: return "Roomy fit"
+    case .unavailable: return "Check capacity"
+    }
+  }
+
+  private static func manualDisplay(
     tableNames: [String],
     partySize: Int,
     tableConfigs: [RestaurantTableConfig]
-  ) -> String {
+  ) -> ProposalDisplay {
     if let matched = HostTableIntelligenceSupport.matchingTables(for: tableNames, in: tableConfigs) {
       let capacity = matched.reduce(0) { $0 + $1.capacity }
       if capacity >= partySize {
-        return "Seats \(capacity) · matches party"
+        return ProposalDisplay(
+          summary: "Seats \(capacity) · matches party",
+          seatCount: capacity,
+          fitDescription: "matches party"
+        )
       }
-      return "Seats \(capacity) · may be tight for \(partySize)"
+      return ProposalDisplay(
+        summary: "Seats \(capacity) · may be tight for \(partySize)",
+        seatCount: capacity,
+        fitDescription: "may be tight"
+      )
     }
-    return tableNames.count > 1 ? "Combined table" : "Saved table option"
+    let summary = tableNames.count > 1 ? "Combined table" : "Saved table option"
+    return ProposalDisplay(summary: summary, seatCount: nil, fitDescription: nil)
   }
 
   // MARK: - Conflicts

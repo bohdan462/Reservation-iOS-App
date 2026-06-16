@@ -15,7 +15,7 @@ struct FloorPlanView: View {
 
     @State private var selectedDate = Date()
     @State private var assignmentContext: FloorPlanAssignmentContext?
-    @State private var selectedTableBlock: FloorPlanTableBlock?
+    @State private var tableAssignmentReservation: ReservationRecord?
     @State private var showLayoutSetup = false
 
     private var selectedDateKey: String {
@@ -35,7 +35,7 @@ struct FloorPlanView: View {
                         dateLoadingState
                     } else if store.viewState.hasTables {
                         gridSection
-                        selectedTableSection
+                        assignedReservationsSection
                         unassignedSection
                     } else {
                         emptyState
@@ -98,6 +98,18 @@ struct FloorPlanView: View {
                     }
                 )
             }
+            .sheet(item: $tableAssignmentReservation) { reservation in
+                TableAssignmentSheet(reservation: reservation) { tableName in
+                    await TableAssignmentCoordinator.assign(
+                        reservationID: reservation.remoteID,
+                        tableName: tableName,
+                        floorPlanStore: store,
+                        controller: controller,
+                        context: modelContext
+                    )
+                    await store.refresh(date: selectedDateKey, force: true)
+                }
+            }
             .sheet(isPresented: $showLayoutSetup) {
                 FloorPlanLayoutSetupView(store: store) {
                     showLayoutSetup = false
@@ -131,8 +143,8 @@ struct FloorPlanView: View {
             }
             .onChange(of: selectedDate) { _, date in
                 loadForSelectedDate(date)
-                selectedTableBlock = nil
                 assignmentContext = nil
+                tableAssignmentReservation = nil
                 floorDateTrace(fetchDate: date.reservationDateString())
             }
             .onChange(of: store.viewState.isToday) { _, isToday in
@@ -296,28 +308,29 @@ struct FloorPlanView: View {
             viewState: store.viewState,
             unitSize: 44,
             onTableTap: { block in
-                selectedTableBlock = block
                 assignmentContext = .table(block)
             }
         )
         .frame(minHeight: 320)
     }
 
+    private var reservationGridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: usesWideServiceHeader ? 168 : 148), spacing: 10)]
+    }
+
     @ViewBuilder
-    private var selectedTableSection: some View {
-        if let block = selectedTableBlock ?? store.viewState.tableBlocks.first {
-            TryzubChartCard(title: "Selected table", systemImage: "table.furniture") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Table details")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(
-                        FloorPlanPresentation.tableDetailLine(
-                            table: block.table,
-                            reservation: block.reservation
-                        )
-                    )
-                    .font(.subheadline)
+    private var assignedReservationsSection: some View {
+        if !store.viewState.assignedReservations.isEmpty {
+            FloorPlanReservationGridSection(
+                title: "Assigned",
+                systemImage: "table.furniture"
+            ) {
+                LazyVGrid(columns: reservationGridColumns, alignment: .leading, spacing: 10) {
+                    ForEach(store.viewState.assignedReservations) { item in
+                        FloorPlanAssignedReservationCard(item: item) {
+                            openTableAssignment(for: item.reservation.id)
+                        }
+                    }
                 }
             }
         }
@@ -326,87 +339,29 @@ struct FloorPlanView: View {
     @ViewBuilder
     private var unassignedSection: some View {
         if !store.viewState.unassignedReservations.isEmpty {
-            TryzubChartCard(title: "Unassigned", systemImage: "person.crop.circle.badge.questionmark") {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(store.viewState.unassignedReservations.enumerated()), id: \.element.id) { index, reservation in
-                        if index > 0 {
-                            Divider().padding(.vertical, 8)
+            FloorPlanReservationGridSection(
+                title: "Unassigned",
+                systemImage: "person.crop.circle.badge.questionmark"
+            ) {
+                LazyVGrid(columns: reservationGridColumns, alignment: .leading, spacing: 10) {
+                    ForEach(store.viewState.unassignedReservations) { reservation in
+                        FloorPlanUnassignedReservationCard(reservation: reservation) {
+                            openTableAssignment(for: reservation.id)
                         }
-                        Button {
-                            assignmentContext = .unassignedReservation(reservation)
-                        } label: {
-                            UnassignedReservationRow(reservation: reservation)
-                        }
-                        .buttonStyle(.plain)
                     }
                 }
             }
         }
     }
 
-    private struct UnassignedReservationRow: View {
-        let reservation: ManagedReservationDTO
-
-        var body: some View {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(reservation.guestName)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Text("\(FloorPlanPresentation.displayTime(reservation.reservationTime)) · party of \(reservation.partySize)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if !noteChips.isEmpty {
-                        HStack(spacing: 4) {
-                            ForEach(noteChips, id: \.self) { chip in
-                                Text(chip)
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(.secondary.opacity(0.12))
-                                    .clipShape(Capsule())
-                            }
-                        }
-                        .padding(.top, 2)
-                    }
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("Assign table")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(TryzubColors.primaryControl)
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .padding(.vertical, 4)
+    private func openTableAssignment(for reservationID: Int) {
+        let predicate = #Predicate<ReservationRecord> { record in
+            record.remoteID == reservationID
         }
-
-        private var noteChips: [String] {
-            var chips: [String] = []
-            let combined = [reservation.guestNotes, reservation.staffNotes]
-                .compactMap { s -> String? in
-                    guard let s, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-                    return s
-                }
-                .joined(separator: " ")
-                .lowercased()
-            if !combined.isEmpty {
-                chips.append("Note")
-            }
-            if combined.contains("deposit") || combined.contains("payment") {
-                chips.append("Deposit")
-            }
-            if combined.contains("preorder") || combined.contains("pre-order") {
-                chips.append("Preorder")
-            }
-            if combined.contains("allerg") || combined.contains("gluten") || combined.contains("vegan") || combined.contains("vegetar") {
-                chips.append("Dietary")
-            }
-            return chips
-        }
+        var descriptor = FetchDescriptor<ReservationRecord>(predicate: predicate)
+        descriptor.fetchLimit = 1
+        guard let record = try? modelContext.fetch(descriptor).first else { return }
+        tableAssignmentReservation = record
     }
 
     private var emptyState: some View {

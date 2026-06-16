@@ -50,16 +50,11 @@ struct FloorPlanTableAssignmentSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                headerSection
-                if case .table = context {
-                    tableContextSection
-                }
-                if !isTableDetailContext {
-                    tableSelectionSection
-                }
-                if let reservation {
-                    actionSection(for: reservation)
+            Group {
+                if isTableDetailContext {
+                    tableDetailScrollBody
+                } else {
+                    reservationAssignmentListBody
                 }
             }
             .navigationTitle(navigationTitle)
@@ -92,6 +87,145 @@ struct FloorPlanTableAssignmentSheet: View {
         .onAppear(perform: seedSelection)
     }
 
+    // MARK: - Table tap layout
+
+    @ViewBuilder
+    private var tableDetailScrollBody: some View {
+        if case let .table(block) = context {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    tableDetailCard(block)
+
+                    if let reservation = block.reservation {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Current reservation")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(TryzubColors.mutedText)
+
+                            currentReservationCard(reservation: reservation, block: block)
+                        }
+                    }
+
+                    if !unassignedReservations.isEmpty {
+                        HostAssignmentChoiceList(
+                            sectionTitle: "Suggested guests",
+                            proposals: reservationProposals(for: block)
+                        ) { proposal in
+                            assignFromProposal(proposal)
+                        }
+                        .disabled(isWorking)
+                    } else if block.reservation == nil {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Suggested guests")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(TryzubColors.mutedText)
+
+                            HostAssignmentCardSurface {
+                                Text("No unassigned reservations for this service date.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+            }
+            .background(TryzubColors.screenBackground)
+        }
+    }
+
+    @ViewBuilder
+    private func tableDetailCard(_ block: FloorPlanTableBlock) -> some View {
+        HostAssignmentCardSurface {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(block.table.label)
+                        .font(.subheadline.weight(.semibold))
+
+                    Spacer(minLength: 8)
+
+                    Label {
+                        Text("\(FloorPlanPresentation.capacityRange(min: block.table.minCapacity, max: block.table.maxCapacity)) guests")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } icon: {
+                        Image(systemName: "person.2")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .labelStyle(.titleAndIcon)
+                }
+
+                HStack(alignment: .center, spacing: 10) {
+                    Label {
+                        Text(block.table.tableKey)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } icon: {
+                        Image(systemName: "key")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .labelStyle(.titleAndIcon)
+
+                    Spacer(minLength: 8)
+
+                    if block.reservation == nil {
+                        Text("No reservations assigned.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let section = block.table.section?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !section.isEmpty {
+                    Text("Section: \(section)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func currentReservationCard(
+        reservation: ManagedReservationDTO,
+        block: FloorPlanTableBlock
+    ) -> some View {
+        HostAssignmentCardSurface {
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(reservation.guestName)
+                        .font(.subheadline.weight(.semibold))
+                    Text("\(FloorPlanPresentation.displayTime(reservation.reservationTime)) · party of \(reservation.partySize)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if block.assignment != nil {
+                    Divider()
+
+                    Button("Clear table assignment", role: .destructive) {
+                        onClear(reservation.id)
+                    }
+                    .font(.caption.weight(.semibold))
+                    .disabled(isWorking)
+                }
+            }
+        }
+    }
+
+    // MARK: - Reservation-first layout
+
+    @ViewBuilder
+    private var reservationAssignmentListBody: some View {
+        List {
+            headerSection
+            tableSelectionSection
+            if let reservation {
+                actionSection(for: reservation)
+            }
+        }
+    }
+
     @ViewBuilder
     private var headerSection: some View {
         Section {
@@ -105,72 +239,8 @@ struct FloorPlanTableAssignmentSheet: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-            case let .table(block):
-                tableDetailSummary(block)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var tableContextSection: some View {
-        if case let .table(block) = context {
-            if let reservation = block.reservation {
-                Section("Current reservation") {
-                    reservationSummary(reservation)
-                    if block.assignment != nil {
-                        Button("Clear table assignment", role: .destructive) {
-                            onClear(reservation.id)
-                        }
-                        .disabled(isWorking)
-                    }
-                }
-            }
-
-            if !unassignedReservations.isEmpty {
-                Section("Assign to this table") {
-                    ForEach(unassignedReservations) { reservation in
-                        Button {
-                            confirmAssign(reservation: reservation)
-                        } label: {
-                            reservationSummary(reservation)
-                        }
-                        .disabled(isWorking)
-                    }
-                }
-            } else {
-                Section("Assign to this table") {
-                    Text("No unassigned reservations for this service date.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func tableDetailSummary(_ block: FloorPlanTableBlock) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(block.table.label)
-                .font(.headline)
-            Text("Key: \(block.table.tableKey)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text("Fits \(FloorPlanPresentation.capacityRange(min: block.table.minCapacity, max: block.table.maxCapacity)) guests")
-                .font(.subheadline)
-            if let section = block.table.section?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !section.isEmpty {
-                Text("Section: \(section)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let reservation = block.reservation {
-                Text("Assigned to \(reservation.guestName) · \(FloorPlanPresentation.displayTime(reservation.reservationTime))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("No reservation assigned.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            case .table:
+                EmptyView()
             }
         }
     }
@@ -297,9 +367,8 @@ struct FloorPlanTableAssignmentSheet: View {
         let keys = selectedTableKeys.sorted()
         guard !keys.isEmpty else { return }
 
-        let minCapacity = selectedTables.reduce(0) { $0 + $1.minCapacity }
         let maxCapacity = selectedTables.reduce(0) { $0 + max($1.minCapacity, $1.maxCapacity) }
-        if reservation.partySize < minCapacity || reservation.partySize > maxCapacity {
+        if reservation.partySize > maxCapacity {
             pendingTableKeys = keys
             pendingReservationID = reservation.id
             showCapacityWarning = true
@@ -308,5 +377,20 @@ struct FloorPlanTableAssignmentSheet: View {
 
         pendingReservationID = nil
         onAssign(reservation.id, keys)
+    }
+
+    private func reservationProposals(for block: FloorPlanTableBlock) -> [HostTableAssignmentProposal] {
+        FloorPlanReservationFitSupport.proposals(
+            for: block.table,
+            reservations: unassignedReservations
+        )
+    }
+
+    private func assignFromProposal(_ proposal: HostTableAssignmentProposal) {
+        guard let reservationID = Int(proposal.id),
+              let reservation = unassignedReservations.first(where: { $0.id == reservationID }) else {
+            return
+        }
+        confirmAssign(reservation: reservation)
     }
 }

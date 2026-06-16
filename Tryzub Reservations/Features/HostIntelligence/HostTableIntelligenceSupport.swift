@@ -226,12 +226,20 @@ enum HostTableIntelligenceSupport {
       || right.combinableTableIDs.contains(left.id)
   }
 
-  private static func fitQuality(partySize: Int, capacity: Int) -> HostTableFitQuality {
+  static func fitQuality(partySize: Int, capacity: Int) -> HostTableFitQuality {
     guard capacity >= partySize else { return .unavailable }
     if capacity == partySize { return .exact }
     if capacity == partySize + 1 { return .tight }
     if capacity <= partySize + 3 { return .comfortable }
     return .oversized
+  }
+
+  static func fitsTableCapacityRange(
+    partySize: Int,
+    minCapacity: Int,
+    maxCapacity: Int
+  ) -> Bool {
+    partySize >= minCapacity && partySize <= maxCapacity
   }
 
   private static func preferredSection(_ left: String, _ right: String) -> String? {
