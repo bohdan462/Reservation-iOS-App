@@ -57,6 +57,13 @@ struct ReservationDetailPresentation {
             reservationRows.append(Row(title: "Confirmed", value: serverTimestamp(confirmedAt)))
         }
 
+        if let reminderSentAt = reservation.reminderEmailSentAt?.nilIfBlank {
+            reservationRows.append(Row(title: "Reminder", value: "Sent \(serverTimestamp(reminderSentAt))"))
+        } else if reservation.statusValue == .confirmed,
+                  reservation.hasUsableConfirmationEmail {
+            reservationRows.append(Row(title: "Reminder", value: "Not sent"))
+        }
+
         var notesRows: [Row] = []
         if let guestNotes = reservation.guestNotes?.nilIfBlank {
             notesRows.append(Row(title: "Guest", value: guestNotes, allowsWrap: true))
@@ -135,6 +142,7 @@ struct ReservationDetailView: View {
     @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
     @EnvironmentObject private var activityStore: ReservationActivityStore
+    @EnvironmentObject private var emailAutomationSettingsStore: EmailAutomationSettingsStore
     // Guest Insights uses the active reservation window, not the full SwiftData cache.
     @Query private var windowCachedReservations: [ReservationRecord]
     /// Local-device attachments for this reservation (Phase 5). Persisted by reservationRemoteID.
@@ -626,19 +634,19 @@ struct ReservationDetailView: View {
             onAction: handleAction,
             onSeatRequiresTableChoice: { seatPromptReservation = reservation },
             onEdit: { showEditScreen = true },
-            onSendGuestConfirmationEmail: showsDeveloperGuestTools && controller.capabilities.canGenerateGuestManageLinks
+            onSendGuestConfirmationEmail: canShowManualConfirmationFallback
                 ? { Task { await sendGuestConfirmationEmail() } }
                 : nil,
-            onRecordManualConfirmationSent: showsDeveloperGuestTools && guestManageLink != nil && reservation.hasUsableConfirmationEmail
+            onRecordManualConfirmationSent: showsDeveloperGuestTools && canShowManualConfirmationFallback && guestManageLink != nil
                 ? { Task { await recordManualConfirmationSentFromCurrentDraft() } }
                 : nil,
-            onGenerateGuestManageLink: showsDeveloperGuestTools && controller.capabilities.canGenerateGuestManageLinks
+            onGenerateGuestManageLink: showsDeveloperGuestTools && canShowManualConfirmationFallback && controller.capabilities.canGenerateGuestManageLinks
                 ? { Task { await generateGuestManageLink() } }
                 : nil,
-            onCopyGuestManageLink: showsDeveloperGuestTools && guestManageLink != nil
+            onCopyGuestManageLink: showsDeveloperGuestTools && canShowManualConfirmationFallback && guestManageLink != nil
                 ? { copyGuestManageLink() }
                 : nil,
-            onCopyConfirmationDraft: showsDeveloperGuestTools && guestManageLink != nil
+            onCopyConfirmationDraft: showsDeveloperGuestTools && canShowManualConfirmationFallback && guestManageLink != nil
                 ? { copyGuestConfirmationDraft() }
                 : nil,
             onHideWrongEntry: reservation.canSoftHideAsWrongEntry && !reservation.isHidden
@@ -652,6 +660,17 @@ struct ReservationDetailView: View {
 
     private var showsDeveloperGuestTools: Bool {
         environment.role == .developer
+    }
+
+    private var canShowManualConfirmationFallback: Bool {
+        emailAutomationSettingsStore.settings.manualMailFallbackEnabled
+            && controller.capabilities.canGenerateGuestManageLinks
+            && reservation.hasUsableConfirmationEmail
+            && !reservation.isHidden
+            && reservation.statusValue != .confirmed
+            && reservation.statusValue != .completed
+            && reservation.statusValue != .cancelled
+            && reservation.statusValue != .noShow
     }
 
     private var draftMessageCard: some View {
@@ -1573,7 +1592,15 @@ struct ReservationDetailView: View {
         }
 
         if reservation.hasUsableConfirmationEmail {
-            await sendGuestConfirmationEmail(source: source)
+            if ReservationEmailWorkflow.isBackendConfirmEmailEnabled {
+                await controller.confirmReservation(reservation: reservation, context: modelContext)
+                ReservationHaptics.success()
+            } else if emailAutomationSettingsStore.settings.manualMailFallbackEnabled {
+                await sendGuestConfirmationEmail(source: source)
+            } else {
+                guestManageLinkMessage = "Manual Mail fallback is off."
+                ReservationHaptics.warning()
+            }
         } else {
             await markConfirmedWithoutEmail()
         }
@@ -2421,24 +2448,24 @@ private struct DetailActionBar: View {
     private var pendingConfirmationActions: some View {
         VStack(spacing: 10) {
             pendingConfirmationButton(
-                title: ReservationHostAction.confirmOnly.shortTitle,
-                systemImage: ReservationHostAction.confirmOnly.systemImage,
+                title: primaryConfirmationTitle,
+                systemImage: primaryConfirmationSystemImage,
                 isPrimary: true
             ) {
                 onAction(.confirmOnly)
             }
-
-            if reservation.hasUsableConfirmationEmail, let onSendGuestConfirmationEmail {
-                pendingConfirmationButton(
-                    title: isGeneratingGuestManageLink ? "Preparing draft" : "Open Email Draft",
-                    systemImage: "envelope",
-                    isPrimary: false
-                ) {
-                    onSendGuestConfirmationEmail()
-                }
-                .disabled(isGeneratingGuestManageLink)
-            }
         }
+    }
+
+    private var primaryConfirmationTitle: String {
+        if reservation.hasUsableConfirmationEmail {
+            return ReservationEmailWorkflow.isBackendConfirmEmailEnabled ? "Confirm & Send" : "Confirm Manually"
+        }
+        return ReservationHostAction.confirmOnly.shortTitle
+    }
+
+    private var primaryConfirmationSystemImage: String {
+        reservation.hasUsableConfirmationEmail ? "envelope.badge" : ReservationHostAction.confirmOnly.systemImage
     }
 
     @ViewBuilder
@@ -2493,7 +2520,7 @@ private struct DetailActionBar: View {
                     onSendGuestConfirmationEmail()
                 } label: {
                     Label(
-                        isGeneratingGuestManageLink ? "Preparing draft" : "Open email draft",
+                        isGeneratingGuestManageLink ? "Preparing draft" : "Confirm Manually",
                         systemImage: "envelope"
                     )
                 }
@@ -3003,5 +3030,9 @@ private extension String {
     .environmentObject(HostReservationOpenIntentStore())
     .environmentObject(HostTableConfigStore())
     .environmentObject(HostIntelligenceSettingsStore())
+    .environmentObject(GuestIntelligenceStore(apiClient: ReservationsAPIClient.preview))
+    .environmentObject(FloorPlanStore(apiClient: ReservationsAPIClient.preview))
+    .environmentObject(ReservationActivityStore(apiClient: ReservationsAPIClient.preview))
+    .environmentObject(EmailAutomationSettingsStore.shared)
 }
 #endif

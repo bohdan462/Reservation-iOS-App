@@ -66,6 +66,25 @@ final class RestaurantSettingsStore: ObservableObject {
         self.apiClient = apiClient
     }
 
+    func clearInMemoryCaches() {
+        selectedDateAvailability = nil
+        analyticsSummary = nil
+        analyticsLoadedAt = nil
+        selectedDateSlots = nil
+        selectedDateBlockedSlots = []
+        availabilityByDate = [:]
+        availabilityLoadedAtByDate = [:]
+        slotsByDate = [:]
+        slotsLoadedAtByDate = [:]
+        blockedSlotsByDate = [:]
+        blockedSlotsLoadedAtByDate = [:]
+        dateOperationsLoadedAtByDate = [:]
+        lastAnalyticsRequestKey = nil
+        analyticsInFlightKey = nil
+        reservationAnalyticsByRequestKey = [:]
+        reservationAnalyticsLoadedAtByRequestKey = [:]
+    }
+
     // MARK: - Setup
 
     func adoptRestaurantSetup(_ loadedSetup: RestaurantSetup, loadedAt: Date = Date()) {

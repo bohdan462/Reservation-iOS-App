@@ -36,9 +36,11 @@ struct HostBoardView: View {
     @EnvironmentObject private var hostIntelligenceController: HostIntelligenceController
     @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
+    @EnvironmentObject private var emailAutomationSettingsStore: EmailAutomationSettingsStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var pendingAction: ReservationPendingAction?
+    @State private var showBackendReminderConfirmation = false
     @State private var clockTick = Date()
     @State private var boardSnapshot: HostBoardSnapshot?
     /// Last known non-zero reservation count per date key, used to suppress
@@ -63,6 +65,7 @@ struct HostBoardView: View {
         externalInteractionActive
             || pendingAction != nil
             || showShiftReminders
+            || showBackendReminderConfirmation
     }
 
     private var shiftReminderEligibleReservations: [ReservationRecord] {
@@ -355,6 +358,20 @@ struct HostBoardView: View {
                 }
             }
         )
+        .confirmationDialog(
+            "Send reminders to confirmed guests for today?",
+            isPresented: $showBackendReminderConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Send Today’s Reminders") {
+                Task {
+                    await controller.sendDueReminders(for: selectedDateKey, context: modelContext)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This calls the backend reminder batch once. Nothing is sent from iOS directly.")
+        }
         .task(id: isVisible && isAppActive) {
             // Starts/stops the auto-refresh loop when Today is visible and app is active.
             guard !isRunningForPreviews else { return }
@@ -426,6 +443,13 @@ struct HostBoardView: View {
         .onAppear {
             controller.noteHostBoardSelectedDate(selectedDateKey)
             controller.refreshHomeServicePresentation(hostOperationalLoading: hostBoardOperationalLoading)
+        }
+        .task(id: "reminder-status-\(isVisible)-\(selectedDateKey)-\(emailAutomationSettingsStore.settings.automaticReminderProofEnabled)-\(emailAutomationSettingsStore.settings.manualReminderSendEnabled)") {
+            guard isVisible,
+                  selectedDateKey == Date.reservationDateString(),
+                  emailAutomationSettingsStore.settings.automaticReminderProofEnabled
+                    || emailAutomationSettingsStore.settings.manualReminderSendEnabled else { return }
+            _ = await controller.refreshReminderStatus(for: selectedDateKey)
         }
         .onChange(of: hostBoardViewStateBuildKey, initial: true) { _, _ in
             refreshHostBoardViewState(reason: "semantic_key_changed")
@@ -781,7 +805,25 @@ struct HostBoardView: View {
                 }
             )
 
+            hostReminderBatchCard
+
             hostIntelligenceSection
+        }
+    }
+
+    @ViewBuilder
+    private var hostReminderBatchCard: some View {
+        let settings = emailAutomationSettingsStore.settings
+        let isToday = selectedDateKey == Date.reservationDateString()
+        if isToday && (settings.automaticReminderProofEnabled || settings.manualReminderSendEnabled) {
+            HostReminderBatchCard(
+                status: controller.lastReminderStatusByDate[selectedDateKey],
+                notice: controller.reminderBatchNotice,
+                isSending: controller.isSendingReminderBatch,
+                showProof: settings.automaticReminderProofEnabled,
+                canSend: settings.manualReminderSendEnabled,
+                onSend: { showBackendReminderConfirmation = true }
+            )
         }
     }
 
@@ -1475,6 +1517,71 @@ private struct HostBoardSummaryCard: View {
                 .foregroundStyle(TryzubColors.primaryText)
                 .lineLimit(1)
         }
+    }
+}
+
+private struct HostReminderBatchCard: View {
+    let status: ReservationReminderStatusResponse?
+    let notice: String?
+    let isSending: Bool
+    let showProof: Bool
+    let canSend: Bool
+    let onSend: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Label("Today’s reminders", systemImage: "bell.badge")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if isSending {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            if showProof {
+                if let status {
+                    if status.morningBatchRan == true {
+                        Text("Automatic reminders ran today.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(summaryText(status.summary))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(TryzubColors.mutedText)
+                } else {
+                    Text("Checking reminders…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let notice, !notice.isEmpty {
+                Text(notice)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(TryzubColors.mutedText)
+            }
+
+            if canSend {
+                Button {
+                    onSend()
+                } label: {
+                    Label("Send Today’s Reminders", systemImage: "paperplane")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .disabled(isSending)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func summaryText(_ summary: ReservationReminderSummaryDTO) -> String {
+        "Sent \(summary.sent) · Already sent \(summary.alreadySent) · Skipped \(summary.skipped) · Failed \(summary.failed)"
     }
 }
 

@@ -11,15 +11,20 @@ struct DeveloperDiagnosticsView: View {
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var restaurantSettingsStore: RestaurantSettingsStore
     @ObservedObject private var requestLogStore = APIRequestLogStore.shared
+    @ObservedObject private var emailWorkflowDiagnostics = EmailWorkflowDiagnosticsStore.shared
 
     @Query private var reservations: [ReservationRecord]
 
     @State private var reservationIDText = ""
     @State private var isRunningTest = false
+    @State private var showClearLocalCacheConfirmation = false
+    @State private var isClearingLocalCache = false
     @State private var testResults: [AdminFetchTestResult] = []
 
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
+    @EnvironmentObject private var floorPlanStore: FloorPlanStore
+    @EnvironmentObject private var activityStore: ReservationActivityStore
     @StateObject private var hostIntelligenceSettings = HostIntelligenceSettingsStore()
 
     let environment: AppEnvironment
@@ -38,6 +43,7 @@ struct DeveloperDiagnosticsView: View {
             operationStateSection
             syncScopeSection
             safeFetchTestsSection
+            emailWorkflowResponsesSection
             requestLogSection
             cacheSection
             hostIntelligenceDiagnosticsSection
@@ -199,6 +205,27 @@ struct DeveloperDiagnosticsView: View {
         }
     }
 
+    private var emailWorkflowResponsesSection: some View {
+        Section("Email Workflow Responses") {
+            diagnosticsBlock(
+                title: "Last confirm response JSON",
+                text: emailWorkflowDiagnostics.lastConfirmResponseJSON
+            )
+            diagnosticsBlock(
+                title: "Last reminder send response JSON",
+                text: emailWorkflowDiagnostics.lastReminderSendResponseJSON
+            )
+            diagnosticsBlock(
+                title: "Last reminder status response JSON",
+                text: emailWorkflowDiagnostics.lastReminderStatusResponseJSON
+            )
+
+            Button("Clear Email Workflow Responses") {
+                emailWorkflowDiagnostics.clear()
+            }
+        }
+    }
+
     private var cacheSection: some View {
         let stats = cacheStats
         return Section("SwiftData Cache") {
@@ -292,6 +319,28 @@ struct DeveloperDiagnosticsView: View {
             Text("No mutation tests are implemented here. Confirm, cancel, seat, create, and email-send flows must only happen through the normal reservation workflow with explicit staff action.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+            Button(role: .destructive) {
+                showClearLocalCacheConfirmation = true
+            } label: {
+                Label(
+                    isClearingLocalCache ? "Clearing Local Cache…" : "Clear Local Cache",
+                    systemImage: "trash"
+                )
+            }
+            .disabled(isClearingLocalCache)
+        }
+        .confirmationDialog(
+            "Clear local cache on this iPad?",
+            isPresented: $showClearLocalCacheConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Local Cache", role: .destructive) {
+                clearLocalCache()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Reservations will reload from the server. Backend data is not deleted.")
         }
     }
 
@@ -340,6 +389,25 @@ struct DeveloperDiagnosticsView: View {
         }
     }
 
+    @ViewBuilder
+    private func diagnosticsBlock(title: String, text: String?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            if let text, !text.isEmpty {
+                Text(text)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("None")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
     private func idsText(_ ids: Set<Int>) -> String {
         let value = ids.sorted().map(String.init).joined(separator: ", ")
         return value.isEmpty ? "None" : value
@@ -375,6 +443,22 @@ struct DeveloperDiagnosticsView: View {
             if testResults.count > 10 {
                 testResults.removeLast(testResults.count - 10)
             }
+        }
+    }
+
+    private func clearLocalCache() {
+        Task {
+            isClearingLocalCache = true
+            defer { isClearingLocalCache = false }
+
+            activityStore.reset()
+            guestIntelligenceStore.reset()
+            floorPlanStore.clearCache()
+            restaurantSettingsStore.clearInMemoryCaches()
+            hostIntelligenceSettings.reload()
+            requestLogStore.clear()
+            emailWorkflowDiagnostics.clear()
+            await controller.clearLocalDeviceCache(context: modelContext)
         }
     }
 }

@@ -1,15 +1,10 @@
 # Tryzub Reservations API
 
-> **Documentation index (iOS + audit):** See [DOCS_INDEX.md](./DOCS_INDEX.md)  
-> **Current-state audit:** [AUDIT_CURRENT_STATE.md](./AUDIT_CURRENT_STATE.md) — branch `audit-current-state`, 2026-06-14  
-> **Stabilization backlog:** [OPEN_WORK.md](./OPEN_WORK.md)  
-> This file remains the **WordPress backend API contract**. iOS app architecture lives in `IOS_*.md` files.
-
 Controlled restaurant pilot backend for Tryzub Ukrainian Kitchen reservations.
 
 This is a custom WordPress plugin that turns Contact Form 7 / Flamingo reservation submissions into a managed reservation backend for the iOS staff app.
 
-This is not production SaaS infrastructure. It is a practical MVP for a restaurant test where email remains the backup.
+This is not production SaaS infrastructure. It is a practical MVP for a restaurant test where Resend-backed confirmation email is the primary backend path and manual Mail remains the fallback.
 
 DB schema version: `1.7.0`
 
@@ -26,7 +21,7 @@ SwiftData = iOS local cache only.
 
 The iOS app should read and update managed reservations. It should not read raw Flamingo for normal workflow, and it should not call the import endpoint as part of normal refresh.
 
-For the restaurant pilot, confirmation email is primarily a manual Gmail/Mail workflow from iOS/staff. The backend can generate guest manage links and record manual email activity, but the manual Gmail path does not send email from the backend.
+For the restaurant pilot, `POST /managed-reservations/{id}/confirm` is the primary iOS confirmation path after the iOS migration. When `TRYZUB_RESEND_API_KEY` is configured, the backend sends through Resend before confirming the reservation. Manual Mail remains available as a fallback and is recorded through `/manual-email-log`.
 
 Operational docs:
 
@@ -123,6 +118,7 @@ POST   /managed-reservations/{id}/confirm
 POST   /managed-reservations/{id}/manual-email-log
 POST   /managed-reservations/{id}/guest-manage-link
 POST   /managed-reservations/send-due-reminders
+GET    /managed-reservations/reminder-status
 GET    /reservation-analytics/summary
 GET    /business-intelligence/summary
 GET    /guest-intelligence
@@ -450,7 +446,7 @@ Hard delete does not delete the raw Flamingo post or email logs.
 
 Outbound/backend email attempt and manual email activity log.
 
-Used for confirmation, reminder, cancellation, and manual Gmail/Mail tracking.
+Used for confirmation, reminder, cancellation, and manual Mail tracking.
 
 Stores:
 
@@ -717,7 +713,7 @@ Staff-facing API responses expose `summary`, `event_type`, actor fields, timesta
 
 Future-ready communication thread table.
 
-For this pilot, guest replies still go to `reservations@tryzubchicago.com` manually. Later, an inbound email provider webhook can attach replies to reservations using this table.
+For this pilot, guest replies and contact copy use `info@tryzubchicago.com`. Later, an inbound email provider webhook can attach replies to reservations using this table.
 
 Stores:
 
@@ -920,8 +916,8 @@ Response:
     "same_day_booking_enabled": true,
     "minimum_lead_time_minutes": 60,
     "call_in_placeholder_email": "callinreservation@tryzubchicago.com",
-    "from_email": "reservations@tryzubchicago.com",
-    "reply_to_email": "reservations@tryzubchicago.com",
+    "from_email": "reservations@send.tryzubchicago.com",
+    "reply_to_email": "info@tryzubchicago.com",
     "created_at": "2026-05-27 12:00:00",
     "updated_at": "2026-05-27 12:00:00"
   }
@@ -1824,7 +1820,9 @@ Success:
 
 ### `POST /managed-reservations/{id}/guest-manage-link`
 
-Generate a guest self-service manage link for staff to paste into the manual Gmail confirmation flow.
+Generate a guest self-service manage link for staff to paste into the manual Mail confirmation flow.
+
+The backend `/confirm` endpoint also creates a fresh guest manage link internally for backend confirmation email. That internal confirmation flow does not return the raw token or full manage URL in its API response or diagnostics.
 
 Auth: required.
 
@@ -2247,7 +2245,7 @@ Imported CF7 rows: form
 
 Manual call-ins, walk-ins, and known guest manual rows live in the main managed table. They do not use a separate table. If email is blank for those manual source types, the backend stores the configured call-in placeholder internally and returns `email: ""` in the DTO.
 
-Manual creates do not send confirmation email. For the MVP manual Gmail/Mail flow, generate a guest manage link, draft/send in the external email client from iOS, then call `POST /managed-reservations/{id}/manual-email-log`. To confirm without email, PATCH `status=confirmed`. The `/confirm` endpoint remains available as the backend/provider email backup path.
+Manual creates do not send confirmation email automatically. For the primary backend path, iOS should call `POST /managed-reservations/{id}/confirm` when staff confirms. For the manual Mail fallback, generate a guest manage link, draft/send in the external email client from iOS, call `POST /managed-reservations/{id}/manual-email-log`, then PATCH `status=confirmed` only after Mail reports `.sent`.
 
 Success status: `201`.
 
@@ -2333,19 +2331,22 @@ Response:
 
 ### `POST /managed-reservations/{id}/confirm`
 
-Business action endpoint: confirm reservation and attempt backend/provider confirmation email.
+Business action endpoint: send the backend confirmation email, then confirm the reservation.
 
 Auth: required.
 
 This is intentionally separate from generic PATCH.
 
-This is the backend/provider email confirmation path. It may call Postmark or `wp_mail` and can send a real backend email. It remains available as the legacy/backup provider email flow.
+This is the primary iOS confirmation path after the iOS migration. It uses send-first-confirm-second semantics: a reservation with a usable guest email is confirmed only after the provider accepts the confirmation email. Generic PATCH does not send email and does not replace this endpoint.
 
 Provider note:
 
 ```text
-Define TRYZUB_POSTMARK_TOKEN or use the tryzub_postmark_token filter to send through Postmark.
-If no Postmark token is present, the plugin falls back to wp_mail.
+Define TRYZUB_RESEND_API_KEY or use the tryzub_resend_api_key filter to send through Resend.
+When Resend is configured, provider=resend is primary.
+If Resend is not configured, existing Postmark/wp_mail compatibility remains available.
+From defaults to Tryzub Reservations <reservations@send.tryzubchicago.com>.
+Reply-To/contact defaults to info@tryzubchicago.com.
 Do not hardcode provider tokens in plugin files.
 ```
 
@@ -2354,12 +2355,29 @@ Flow:
 ```text
 Load reservation.
 Reject cancelled, no_show, completed.
-Set status confirmed if needed.
+If usable guest email exists, create a fresh guest manage token/link with the existing token helper.
+Build polished HTML and plain text confirmation email.
+Send via Resend when TRYZUB_RESEND_API_KEY exists.
+Log email attempt with token-scrubbed body_snapshot.
+If provider send succeeds, set status confirmed if needed.
 Set confirmed_at if empty.
-Send confirmation email through Postmark when configured, otherwise wp_mail.
-Log email attempt.
 Set confirmation_email_sent_at only when email sends.
+If provider send fails, leave reservation unconfirmed and return manual fallback instructions.
+If no usable guest email exists, skip provider send and confirm directly.
 Return updated reservation.
+```
+
+Confirmation Resend payload includes both bodies:
+
+```php
+[
+  'from' => 'Tryzub Reservations <reservations@send.tryzubchicago.com>',
+  'to' => ['guest@example.com'],
+  'reply_to' => ['info@tryzubchicago.com'],
+  'subject' => 'Your Tryzub reservation is confirmed',
+  'html' => $html_body,
+  'text' => $text_body,
+]
 ```
 
 Success with email sent:
@@ -2373,13 +2391,27 @@ Success with email sent:
 }
 ```
 
-Success with email failure:
+Provider email failure:
+
+```json
+{
+  "success": false,
+  "email_status": "failed",
+  "email_error": "Resend send failed.",
+  "fallback": "manual_mail",
+  "data": {}
+}
+```
+
+On provider failure, `confirmed_at` and `confirmation_email_sent_at` are not set.
+
+No usable guest email:
 
 ```json
 {
   "success": true,
-  "email_status": "failed",
-  "email_error": "wp_mail failed",
+  "email_status": "skipped",
+  "email_error": "Reservation has no guest email.",
   "data": {}
 }
 ```
@@ -2395,15 +2427,48 @@ If already confirmed and a confirmation email was already sent or logged:
 }
 ```
 
+Authorized developer diagnostics are additive only. They are included for administrators, or for users with `manage_tryzub_reservations` when `X-Tryzub-Developer-Mode: 1` is present.
+
+Diagnostics shape:
+
+```json
+{
+  "diagnostics": {
+    "confirmation_order": "send_then_confirm",
+    "provider": "resend",
+    "provider_message_id": "resend-id-or-null",
+    "resend_http_status": 200,
+    "resend_response": {},
+    "email_log_id": 123,
+    "activity_event_ids": [456],
+    "guest_manage_link_created": true,
+    "token_expires_at": "2026-07-16 12:00:00",
+    "from_email": "reservations@send.tryzubchicago.com",
+    "reply_to_email": "info@tryzubchicago.com"
+  }
+}
+```
+
+Diagnostics must not include API keys, raw guest tokens, full manage URLs, full email bodies, staff notes, Authorization headers, or server secrets. Normal staff responses remain simple and do not expose provider details.
+
 ### `POST /managed-reservations/{id}/manual-email-log`
 
-Manual Gmail/Mail tracking path for the iOS pilot flow.
+Manual Mail tracking path for the fallback iOS flow.
 
 Auth: required.
 
-This endpoint does not send email. It does not call `wp_mail`, Postmark, or any other provider. It records what staff/iOS says happened in an external email client.
+This endpoint does not send email. It does not call Resend, `wp_mail`, Postmark, or any other provider. It records what staff/iOS says happened in an external email client.
 
-iOS should call this endpoint after staff sends or prepares the Gmail/Mail confirmation draft. `draft_created` does not mean delivered. `manual_sent` means staff reported/sent through external Mail/Gmail. The backend records `manual_sent`, but it cannot prove inbox delivery.
+iOS should call this endpoint after staff sends or prepares the Apple Mail confirmation draft. `draft_created` does not mean delivered. `manual_sent` means staff reported/sent through external Mail. The backend records `manual_sent`, but it cannot prove inbox delivery.
+
+Manual fallback sequence:
+
+```text
+1. POST /managed-reservations/{id}/guest-manage-link
+2. Build/send iOS HTML Mail with the returned manage URL
+3. POST /managed-reservations/{id}/manual-email-log
+4. PATCH status=confirmed only after Mail reports .sent
+```
 
 Request body:
 
@@ -2436,7 +2501,7 @@ Unknown request fields are rejected.
 to_email must be valid if provided.
 subject is optional and whitespace-normalized.
 body_snapshot is optional, token-scrubbed, and size-limited.
-Raw guest manage tokens should not be stored in email logs.
+Raw guest manage tokens must not be stored in email logs, diagnostics, activity metadata, or API responses.
 sent_at is set only when status is manual_sent.
 manual_sent for email_type confirmation sets confirmation_email_sent_at only if it is currently null.
 draft_created does not set confirmation_email_sent_at.
@@ -2471,22 +2536,43 @@ Manual email log checklist:
 9. Confirm no actual email was sent by backend.
 10. Confirm invalid email is rejected.
 11. Confirm unauthorized user gets 401/403.
-12. Confirm existing backend `/confirm` endpoint still works unchanged.
+12. Confirm body_snapshot replaces manage URLs with `[guest-manage-link]`.
 
 ### `POST /managed-reservations/send-due-reminders`
 
-Admin/debug trigger for reminder job.
+Manual trigger for today's reminder batch. This is the backend endpoint behind the iOS `Send Today's Reminders` button.
 
 Auth: required.
 
-Finds confirmed reservations due within the next 3 hours where `reminder_email_sent_at IS NULL`.
+Optional query/body param:
+
+```text
+date=YYYY-MM-DD
+```
+
+If omitted, the restaurant-local current date is used.
+
+Behavior:
+
+```text
+Uses the same day-reminder engine as automatic scheduling.
+Checks all reservations for the service date.
+Sends only reminders that are still unsent.
+If the morning batch has not run, the manual run acts as the morning batch.
+If the morning batch already ran, the manual run acts as catch-up.
+Catch-up sends only when reservation_time is at least 3 hours away.
+If less than 3 hours away, skips with reason too_close_to_reservation_time.
+```
 
 Idempotency:
 
 ```text
-If reminder_email_sent_at is set, no duplicate reminder is sent.
-Email attempts are logged.
-Failed reminders leave reminder_email_sent_at null so a later run may retry.
+Duplicate prevention uses reminder_email_sent_at plus a sent reminder email log check.
+If reminder_email_sent_at is set, result is already_sent.
+If a sent reminder email log exists, result is already_sent and reminder_email_sent_at is backfilled when possible.
+Successful sends set reminder_email_sent_at.
+Failed reminders leave reminder_email_sent_at null so a later run may retry if still eligible.
+Skipped no-email and too-close results write skipped reminder logs once per reason.
 ```
 
 Response:
@@ -2494,16 +2580,84 @@ Response:
 ```json
 {
   "success": true,
-  "result": {
+  "date": "2026-06-16",
+  "mode": "manual_morning",
+  "target_time": "09:00:00",
+  "morning_batch_ran": true,
+  "morning_batch": {},
+  "last_batch": {},
+  "summary": {
     "sent": 0,
     "failed": 0,
     "skipped": 0,
-    "checked": 0
-  }
+    "already_sent": 0,
+    "eligible": 0,
+    "total_checked": 0
+  },
+  "results": [
+    {
+      "reservation_id": 123,
+      "reservation_time": "18:00",
+      "status": "sent",
+      "reason": "sent",
+      "reminder_email_sent_at": "2026-06-16 09:05:00",
+      "display_message": "Reminder sent at 9:05 AM"
+    }
+  ]
 }
 ```
 
-The same reminder function is also attached to a WordPress hourly cron hook.
+Statuses/reasons iOS can display:
+
+```text
+sent: Reminder sent at 9:05 AM
+already_sent: Already sent / Reminder sent at 9:05 AM
+skipped + no_email: Skipped: no email
+skipped + too_close_to_reservation_time: Skipped: too close to reservation time
+failed + provider_failed: Failed: use manual follow-up
+```
+
+Authorized developer diagnostics are additive per reservation and include safe `resend_response`, `resend_http_status`, `provider_message_id`, and `email_log_id`. Normal staff responses stay simple and do not expose provider details.
+
+Every provider attempt writes `{prefix}tryzub_reservation_emails` with `email_type=reminder`, provider, status, provider_message_id when available, and sent_at when sent.
+
+### `GET /managed-reservations/reminder-status`
+
+Read-only reminder proof/status endpoint for iOS.
+
+Auth: required.
+
+Optional query param:
+
+```text
+date=YYYY-MM-DD
+```
+
+Returns the same summary/result shape as `send-due-reminders` without sending email or writing logs. iOS can use it to show whether the morning batch ran and whether each reservation is sent, already sent, skipped, failed, or still pending.
+
+### Automatic reminder scheduling
+
+The reminder scheduler is attached to the existing WordPress hourly cron hook.
+
+Automatic behavior:
+
+```text
+Restaurant timezone: America/Chicago by default, or restaurant settings timezone.
+Morning target: 09:00:00 by default.
+Before target time, cron returns waiting_for_morning_target.
+At/after target time, cron runs one morning batch per service date.
+After the morning batch, later cron runs act as same-day catch-up.
+Catch-up only sends reminders at least 3 hours before reservation_time.
+Last morning batch and last reminder batch are stored per date in WordPress options.
+```
+
+WP-Cron caveat:
+
+```text
+WordPress cron runs when site traffic triggers it; it is not a guaranteed real-time scheduler.
+The manual iOS button is the operational backup if staff need to verify or run reminders.
+Use GET /managed-reservations/reminder-status?date=YYYY-MM-DD to verify the morning batch ran.
+```
 
 ### `GET /reservations`
 
@@ -2601,15 +2755,18 @@ Staff cleanup should continue to use soft hide.
 
 ## Email Behavior
 
-Email remains backup during the pilot, but backend provider sending is not the primary MVP confirmation path.
+Backend confirmation email is primary for the iOS confirmation migration.
 
 Current direction:
 
 ```text
-iOS/staff generate confirmation text and use the restaurant Gmail/manual flow.
-Backend exposes reservation data and the guest manage link.
-Backend confirmation/reminder endpoints remain for compatibility and backup.
-Do not redesign provider sending in this pass.
+iOS calls POST /managed-reservations/{id}/confirm as the primary confirmation path after migration.
+Resend is primary when TRYZUB_RESEND_API_KEY is configured.
+The sending domain is reservations@send.tryzubchicago.com.
+Reply-To/contact is info@tryzubchicago.com.
+Backend confirmation email includes polished HTML plus plain text fallback.
+Backend confirmation email creates and includes a guest manage link.
+Manual Apple Mail remains available as fallback.
 ```
 
 Confirmation email:
@@ -2620,22 +2777,52 @@ POST /managed-reservations/{id}/confirm
 
 Generic PATCH does not send email.
 
-Email attempts are written to `{prefix}tryzub_reservation_emails` with provider, status, error message, and optional provider message ID. A sent log means the backend/provider accepted the attempt; it does not prove inbox delivery.
+Email attempts are written to `{prefix}tryzub_reservation_emails` with provider, status, error message, optional provider message ID, and token-scrubbed body snapshot. A sent log means the backend/provider accepted the attempt; it does not prove inbox delivery.
 
-Manual call-ins/walk-ins with no guest email are skipped for email and logged as `skipped` if the confirm endpoint is called.
+Manual call-ins/walk-ins with no guest email are skipped for provider email and confirmed directly if the confirm endpoint is called.
+
+Send-first-confirm-second:
+
+```text
+Usable email + Resend success: send email, then status=confirmed, confirmed_at, confirmation_email_sent_at.
+Usable email + Resend failure: do not confirm, return success=false, email_status=failed, fallback=manual_mail.
+No usable email: no Resend call, confirm directly, email_status=skipped.
+Already confirmed + confirmation already sent: email_status=already_sent, no duplicate provider send.
+```
+
+Token and log safety:
+
+```text
+Guest manage link creation stores only token_hash.
+Raw token is used only to build the manage URL.
+Raw guest token is never logged or returned in diagnostics.
+Email body_snapshot scrubs manage URLs to [guest-manage-link].
+Diagnostics never include the full manage URL or full email body.
+Activity metadata stores token expiry only, not URL/token.
+```
 
 Reminder email:
 
 ```text
 tryzub_send_due_reservation_reminders()
 POST /managed-reservations/send-due-reminders
+GET /managed-reservations/reminder-status?date=YYYY-MM-DD
 WP-Cron hourly hook
+```
+
+Reminder modes:
+
+```text
+Morning automatic batch runs once per service date at/after 9:00 AM America/Chicago by default.
+Manual Send Today's Reminders uses the same day-reminder engine and sends only unsent reminders.
+Late same-day catch-up runs after the morning batch and requires reservation_time to be at least 3 hours away.
+Confirmation email is considered enough for very late same-day bookings.
 ```
 
 Reply behavior for MVP:
 
 ```text
-Reply-To: reservations@tryzubchicago.com
+Reply-To: info@tryzubchicago.com
 Staff handles replies manually.
 ```
 
@@ -2667,8 +2854,9 @@ Persist row_version from every write response (it advances on success).
 Call POST /managed-reservations for manual_call_in, manual_walk_in, known_guest_manual, and import_repair reservations.
 Hide wrong manual rows with PATCH is_hidden, not DELETE.
 Read GET /managed-reservations/import-failures for backend/form problems.
-Use POST /managed-reservations/{id}/guest-manage-link when building manual Gmail confirmations.
-Call POST /managed-reservations/{id}/confirm only if staff intentionally uses the legacy/backend email flow.
+Use POST /managed-reservations/{id}/guest-manage-link when building manual Mail confirmations.
+Call POST /managed-reservations/{id}/confirm as the primary confirmation path after iOS migration.
+Use POST /managed-reservations/{id}/guest-manage-link, iOS HTML Mail, POST /manual-email-log, then PATCH confirmed only for manual Mail fallback.
 Use GET /floor-plan?date=... for shared floor state on the selected service date.
 Use PUT /restaurant-tables for floor layout setup.
 Use PATCH /managed-reservations/{id}/tables for server-confirmed table assignment/clear.
@@ -2688,7 +2876,8 @@ Mutation endpoints (PATCH, table assignment, confirm, manual email log, guest se
 Call POST /managed-reservations/import during normal refresh.
 Treat SwiftData as the source of truth.
 Read raw Flamingo for normal staff workflows.
-Depend on backend provider email sending as the primary MVP confirmation path.
+Expose provider diagnostics in normal staff UI.
+Log or persist raw guest manage tokens.
 Invent floor layout locally without backend confirmation.
 Infer returning-guest history from local cache alone when guest intelligence is available.
 Invent multi-device reservation change history from SwiftData alone; use backend activity endpoints.
@@ -2777,7 +2966,7 @@ Flow:
 ```text
 Staff/iOS calls POST /managed-reservations/{id}/guest-manage-link.
 Backend creates a raw token, stores only token_hash, and returns the manage URL once.
-Staff includes the URL in the manual Gmail confirmation flow.
+Staff includes the URL in the manual Mail confirmation flow.
 Guest opens the manage page.
 Shortcode fetches GET /reservation-self?token=...
 Guest can review booking details and cancel online only when policy allows.
@@ -2848,7 +3037,7 @@ Private endpoints require `manage_tryzub_reservations` or `manage_options`.
 13. Confirm same-day cancellation works if more than 2 hours away.
 14. Confirm invalid/expired/revoked token fails safely.
 15. Confirm hidden reservation token fails safely.
-16. Confirm iOS/manual Gmail flow can generate/copy guest manage link.
+16. Confirm iOS/manual Mail flow can generate/copy guest manage link.
 17. Confirm `manual-email-log` records `draft_created`.
 18. Confirm `manual-email-log` records `manual_sent` and sets `confirmation_email_sent_at` when appropriate.
 19. Confirm backend sends no email from `manual-email-log`.
@@ -2963,24 +3152,48 @@ Private endpoints require `manage_tryzub_reservations` or `manage_options`.
 
 ### H. Confirmation Email
 
-1. `POST /managed-reservations/{id}/confirm`
-2. Confirm status becomes `confirmed`.
+1. Resend success: `POST /managed-reservations/{id}/confirm` returns `success=true`, `email_status=sent`.
+2. Confirm reservation status becomes `confirmed`.
 3. Confirm `confirmed_at` is set.
-4. Confirm email log row is created.
-5. Confirm `confirmation_email_sent_at` is set only when sent.
-6. Call confirm again.
-7. Confirm duplicate email is not sent automatically.
-8. Confirm failed email logs `failed` and leaves reservation confirmed.
-9. Confirm no-email manual rows log `skipped` if confirm endpoint is called.
+4. Confirm `confirmation_email_sent_at` is set.
+5. Confirm Resend dashboard shows the email.
+6. Confirm email contains styled HTML.
+7. Confirm `View or Manage Reservation` opens the guest manage page.
+8. Confirm email log has `provider=resend`.
+9. Confirm `provider_message_id` is present.
+10. Confirm email log `body_snapshot` contains `[guest-manage-link]` and no raw token.
+11. Resend failure: use invalid key or bad from-address.
+12. Confirm `/confirm` returns `success=false`, `email_status=failed`, `fallback=manual_mail`.
+13. Confirm reservation remains unconfirmed.
+14. Confirm failed log is saved safely.
+15. Confirm diagnostics do not leak API key or token.
+16. No-email reservation: confirm directly, `email_status=skipped`, no Resend call.
+17. Already confirmed: second confirm returns `already_sent`, no duplicate provider send.
+18. Developer diagnostics: authorized developer gets diagnostics; normal staff response does not show provider details.
+19. README reflects new behavior.
 
 ### I. Reminder Job
 
-1. Create confirmed reservation due soon.
+1. Create confirmed reservations for today before the morning batch with usable email.
 2. Run `POST /managed-reservations/send-due-reminders`.
-3. Confirm reminder email log.
-4. Confirm `reminder_email_sent_at` is set on success.
-5. Run again.
-6. Confirm no duplicate reminder.
+3. Confirm response summary includes `sent`, `failed`, `skipped`, `already_sent`, `eligible`, and `total_checked`.
+4. Confirm each reservation has a per-reservation result and reason.
+5. Confirm successful rows write `email_type=reminder`, `provider=resend`, `status=sent`, `provider_message_id`, and `sent_at`.
+6. Confirm successful rows set `reminder_email_sent_at`.
+7. Run the endpoint again.
+8. Confirm previously sent rows return `already_sent` and no duplicate send occurs.
+9. Create/confirm a same-day reservation after morning batch with reservation_time at least 3 hours away.
+10. Run reminders again and confirm catch-up sends it.
+11. Create/confirm a same-day reservation less than 3 hours away.
+12. Confirm result is `skipped` with reason `too_close_to_reservation_time`.
+13. Create a confirmed no-email reservation and confirm result is `skipped` with reason `no_email`.
+14. Force a Resend failure and confirm result is `failed` with display message `Failed: use manual follow-up`.
+15. Confirm failed rows leave `reminder_email_sent_at` null.
+16. Confirm developer diagnostics include safe Resend response and `email_log_id`.
+17. Confirm normal staff response does not expose provider diagnostics.
+18. Call `GET /managed-reservations/reminder-status?date=YYYY-MM-DD`.
+19. Confirm iOS can show `Reminder sent at 9:05 AM`, `Already sent`, `Skipped: no email`, and `Failed: use manual follow-up`.
+20. Confirm morning/last batch run data is present so staff can verify the morning reminder ran.
 
 ### I2. Restaurant Setup
 
@@ -3182,9 +3395,9 @@ Private endpoints require `manage_tryzub_reservations` or `manage_options`.
 
 ```text
 This is a controlled restaurant pilot backend, not production-ready SaaS.
-Email remains backup.
+Resend-backed confirmation email is primary after iOS migration; manual Mail remains fallback.
 Inbound guest replies are not automated yet.
-Reminder delivery depends on WordPress cron unless the debug route is called.
+Reminder delivery depends on WordPress cron unless the manual iOS/backend reminder route is called; WP-Cron only runs when site traffic triggers it.
 The past-date completion sweep also depends on WordPress cron (hourly backstop) plus a throttled on-read sweep; near-immediate but not instant.
 iOS still needs a strong offline/pending mutation queue for real operations.
 Optimistic concurrency is opt-in via expected_updated_at; clients that omit it keep last-write-wins behavior.
@@ -3197,8 +3410,8 @@ Guest self-service is token-link only, not a full account portal.
 Explicitly deferred from Phase 2:
 
 ```text
-Postmark/DNS/domain confirmation
-Email template changes
+Inbound provider webhook/domain confirmation
+Additional reminder template changes
 Reminder changes
 Capacity logic beyond current floor-plan conflict rules
 Real-time websocket floor sync

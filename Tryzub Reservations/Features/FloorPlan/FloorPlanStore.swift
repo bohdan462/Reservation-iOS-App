@@ -58,6 +58,18 @@ final class FloorPlanStore: ObservableObject {
         autoRefreshTask?.cancel()
     }
 
+    func clearCache() {
+        loadTask?.cancel()
+        loadTask = nil
+        cacheByDate = [:]
+        lastCheckedAtByDate = [:]
+        fetchPhaseByDate = [:]
+        viewState = .empty
+        errorMessage = nil
+        conflict = nil
+        layoutTables = []
+    }
+
     // MARK: - Load
 
     func load(date: String) {

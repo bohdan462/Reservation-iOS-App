@@ -119,6 +119,10 @@ final class ReservationsController: ObservableObject {
     @Published private(set) var isSavingRestaurantDayAvailability = false
     @Published private(set) var isLoadingReservationAnalytics = false
     @Published private(set) var latestEmailStatusByReservationID: [Int: ReservationEmailStatus] = [:]
+    @Published var lastReminderStatusByDate: [String: ReservationReminderStatusResponse] = [:]
+    @Published var lastReminderBatchResponse: ReservationReminderBatchResponse?
+    @Published var isSendingReminderBatch: Bool = false
+    @Published var reminderBatchNotice: String?
 
     // Developer diagnostics show which sync scopes are fresh, busy, or cooling down.
     @Published private(set) var syncScopeSnapshots: [SyncScopeSnapshot] = []
@@ -315,6 +319,69 @@ final class ReservationsController: ObservableObject {
         lastFreshnessCheckedAt = nil
         cacheTrustSource = .unknown
         startupBackgroundWorkState = .idle
+    }
+
+    func clearLocalDeviceCache(context: ModelContext) async {
+        cancelOwnedTasksForSessionEnd()
+        do {
+            try ReservationRepository(context: context).deleteAllCachedReservations()
+        } catch {
+            postNotice(
+                severity: .warning,
+                source: .admin,
+                title: "Local cache clear failed",
+                message: "The app could not clear cached reservations on this iPad."
+            )
+            return
+        }
+
+        notices.removeAll()
+        errorMessage = nil
+        noticeMessage = nil
+        latestEmailStatusByReservationID = [:]
+        lastReminderStatusByDate = [:]
+        lastReminderBatchResponse = nil
+        reminderBatchNotice = nil
+        dayAvailabilityCacheByDate = [:]
+        dayAvailabilityTasksByDate = [:]
+        reservationSlotsCacheByDate = [:]
+        reservationSlotsTasksByDate = [:]
+        blockedSlotsCacheByDate = [:]
+        blockedSlotsTasksByDate = [:]
+        availabilitySummaryByDate = [:]
+        availabilitySummaryLoadingDates = []
+        availabilitySummaryErrorsByDate = [:]
+        localSeatedAtByReservationID = [:]
+        UserDefaults.standard.removeObject(forKey: localSeatedTimestampsKey)
+        hasAttemptedInitialLoad = false
+        hasStartedStartupPresentation = false
+        startupPresentationState = .checkingCache
+        startupNetworkPassError = nil
+        localCacheStoreHasReservations = false
+        hasReleasedStartupUI = false
+        startupUIReleasedAt = nil
+        isHistoryPrefetching = false
+        serverCursorByScope = [:]
+        syncStateByScope = [:]
+        successfulActiveWindowDeltaCountSinceFull = 0
+        lastSuccessfulActiveWindowFullRefreshAt = nil
+        UserDefaults.standard.removeObject(forKey: syncCursorDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: syncScopeSuccessDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: syncActiveWindowBoundsKey)
+        persistedActiveWindowBounds = nil
+        lastFreshnessCheckedAt = nil
+        cacheTrustSource = .unknown
+        startupBackgroundWorkState = .idle
+        publishOperationState()
+        refreshHomeServicePresentation()
+
+        postNotice(
+            severity: .success,
+            source: .admin,
+            title: "Local cache cleared",
+            message: "Reloading from server…"
+        )
+        _ = await requestManualTodayRefresh(context: context, source: .manual)
     }
 
     /// Synchronous local-only gate. Safe to call from view `onAppear` before async startup work.
@@ -2984,6 +3051,96 @@ final class ReservationsController: ObservableObject {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    // MARK: - Backend Reminder Batch
+
+    // Intent: Reads reminder proof/status for the selected service date.
+    // Network: GET /managed-reservations/reminder-status?date=YYYY-MM-DD.
+    @discardableResult
+    func refreshReminderStatus(for dateKey: String) async -> Bool {
+        let date = dateKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !date.isEmpty else { return false }
+        guard canStartMutationOnline() else { return false }
+
+        do {
+            let response = try await environment.apiClient.fetchReminderStatus(
+                date: date,
+                reason: .reminderStatus
+            )
+            lastReminderStatusByDate[date] = response
+            EmailWorkflowDiagnosticsStore.shared.recordReminderStatus(response)
+            return true
+        } catch {
+            if error.isCancellationLike {
+                return false
+            }
+            if error.isOfflineLike {
+                postOfflineNotice(source: .email, requestReason: .reminderStatus, error: error)
+            }
+            return false
+        }
+    }
+
+    // Intent: Staff-triggered backend reminder batch. iOS never loops reservations.
+    // Network: POST /managed-reservations/send-due-reminders.
+    @discardableResult
+    func sendDueReminders(for dateKey: String) async -> Bool {
+        let date = dateKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !date.isEmpty else { return false }
+        guard canStartMutationOnline() else { return false }
+        guard !isSendingReminderBatch else { return false }
+
+        isSendingReminderBatch = true
+        reminderBatchNotice = nil
+        defer { isSendingReminderBatch = false }
+
+        do {
+            let response = try await environment.apiClient.sendDueReminders(
+                date: date,
+                reason: .reminderBatch
+            )
+            lastReminderBatchResponse = response
+            lastReminderStatusByDate[date] = response
+            EmailWorkflowDiagnosticsStore.shared.recordReminderSend(response)
+
+            let summary = response.summary
+            let notice = "Sent \(summary.sent) · Already sent \(summary.alreadySent) · Skipped \(summary.skipped) · Failed \(summary.failed)"
+            reminderBatchNotice = notice
+            postNotice(
+                severity: summary.failed > 0 ? .warning : .success,
+                source: .email,
+                title: "Reminder batch complete",
+                message: notice
+            )
+
+            _ = await refreshReminderStatus(for: date)
+            markScopesTouched(afterDeletingReservationDate: date)
+            return true
+        } catch {
+            if error.isCancellationLike {
+                return false
+            }
+            if error.isOfflineLike {
+                postOfflineNotice(source: .email, requestReason: .reminderBatch, error: error)
+            }
+            reminderBatchNotice = "Could not send reminders. Please try again."
+            postNotice(
+                severity: .warning,
+                source: .email,
+                title: "Reminders not sent",
+                message: "Could not send reminders. Please try again."
+            )
+            return false
+        }
+    }
+
+    @discardableResult
+    func sendDueReminders(for dateKey: String, context: ModelContext) async -> Bool {
+        let didSend = await sendDueReminders(for: dateKey)
+        guard didSend else { return false }
+        _ = await requestManualTodayRefresh(context: context, source: .manual)
+        return true
+    }
+
     // MARK: - Confirm With Email
 
     // Intent: Confirms reservation and asks backend to send/record confirmation email.
@@ -3019,7 +3176,22 @@ final class ReservationsController: ObservableObject {
 
         do {
             let response = try await service.confirmReservation(id: id)
-            markScopesTouched(after: response.data)
+            EmailWorkflowDiagnosticsStore.shared.recordConfirm(response)
+            if let reservation = response.data {
+                markScopesTouched(after: reservation)
+            }
+
+            if !response.success || response.fallback == .manualMail {
+                latestEmailStatusByReservationID[id] = response.emailStatus == .unknown ? .failed : response.emailStatus
+                errorMessage = "Couldn’t send confirmation email. Use Confirm Manually."
+                postNotice(
+                    severity: .warning,
+                    source: .email,
+                    title: "Email failed",
+                    message: response.message ?? "Couldn’t send confirmation email. Use Confirm Manually."
+                )
+                return
+            }
 
             switch response.emailStatus {
             case .sent:
@@ -3030,8 +3202,8 @@ final class ReservationsController: ObservableObject {
                 postNotice(severity: .info, source: .email, title: "Already confirmed", message: "Confirmation email was already recorded as sent.")
             case .failed:
                 latestEmailStatusByReservationID[id] = .failed
-                errorMessage = "Reservation confirmed, but email failed. Follow up manually."
-                postNotice(severity: .warning, source: .email, title: "Email failed", message: "Reservation confirmed, but email failed. Follow up manually.")
+                errorMessage = "Couldn’t send confirmation email. Use Confirm Manually."
+                postNotice(severity: .warning, source: .email, title: "Email failed", message: "Couldn’t send confirmation email. Use Confirm Manually.")
             case .skipped:
                 latestEmailStatusByReservationID[id] = .skipped
                 postNotice(severity: .info, source: .email, title: "Email skipped", message: "No confirmation email sent: no guest email.")

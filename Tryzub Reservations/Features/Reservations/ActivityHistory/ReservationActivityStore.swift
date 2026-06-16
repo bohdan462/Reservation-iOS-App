@@ -123,6 +123,17 @@ final class ReservationActivityStore: ObservableObject {
         invalidationTask?.cancel()
     }
 
+    func reset() {
+        reservationLoadStateByID = [:]
+        feedLoadStateByDateKey = [:]
+        feedSummaryChipsByDateKey = [:]
+        feedPaginationByDateKey = [:]
+        reservationCache = [:]
+        feedCache = [:]
+        inFlightReservationIDs = []
+        inFlightFeedDateKeys = []
+    }
+
     // MARK: - Reservation scope
 
     func loadState(for reservationID: Int) -> ActivityLoadState {

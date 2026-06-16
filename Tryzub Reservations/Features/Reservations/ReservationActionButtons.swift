@@ -9,8 +9,7 @@ import SwiftUI
 // MARK: - Staff Host Actions
 
 // Business intent enum for staff actions.
-// Confirm opens the manual Mail workflow when the reservation has an email.
-// Backend Confirm + Email is legacy/debug only when explicitly enabled.
+// Confirm & Send is staff-triggered only; it may use backend email when enabled.
 enum ReservationHostAction: String, Identifiable {
     case confirmOnly
     case confirmAndSendEmail
@@ -29,7 +28,7 @@ enum ReservationHostAction: String, Identifiable {
         case .confirmOnly:
             return "Confirm"
         case .confirmAndSendEmail:
-            return "Backend email confirm (legacy/debug)"
+            return "Confirm & Send"
         case .seat:
             return "Seat"
         case .assignTable:
@@ -307,9 +306,9 @@ enum ReservationHostAction: String, Identifiable {
             return "\(manualFlow)\(helper)"
         case .confirmAndSendEmail:
             if Self.isBackendConfirmEmailEnabled {
-                return "\(summary)\n\nLegacy/debug only. This asks the backend to send the confirmation email."
+                return "\(summary)\n\nThis asks the backend to send the confirmation email and record the result."
             }
-            return "Backend email confirm is disabled for normal staff flow. Use the Mail draft confirmation flow."
+            return "Backend email is off for Confirm & Send. Use Confirm Manually from More."
         case .seat:
             return "\(summary)\n\nThis only updates staff status. No email will be sent."
         case .assignTable:
@@ -696,13 +695,13 @@ enum ReservationConfirmDialog {
     ) -> some View {
         if ReservationEmailWorkflow.isBackendConfirmEmailEnabled {
             if hasUsableEmail {
-                Button("Backend email confirm (legacy/debug)", action: action)
+                Button("Confirm & Send", action: action)
             } else {
-                Button("Backend email confirm (legacy/debug)") {}
+                Button("Confirm & Send") {}
                     .disabled(true)
             }
         } else {
-            Button("Backend email confirm (legacy/debug disabled)") {}
+            Button("Confirm & Send") {}
                 .disabled(true)
         }
     }

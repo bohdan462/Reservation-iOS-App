@@ -38,10 +38,51 @@ struct ReservationConfirmResponse: Codable {
     let success: Bool
     let emailStatus: ReservationEmailStatus
     let emailError: String?
+    let fallback: ReservationConfirmFallback?
     let message: String?
-    let data: ReservationDTO
+    let data: ReservationDTO?
     let activity: MutationActivityResultDTO?
+    let diagnostics: JSONValue?
 }
+
+enum ReservationConfirmFallback: String, Codable {
+    case manualMail = "manual_mail"
+}
+
+struct ReservationReminderSummaryDTO: Codable, Equatable {
+    let sent: Int
+    let failed: Int
+    let skipped: Int
+    let alreadySent: Int
+    let eligible: Int
+    let totalChecked: Int
+}
+
+struct ReservationReminderResultDTO: Codable, Equatable, Identifiable {
+    var id: Int { reservationId }
+
+    let reservationId: Int
+    let reservationTime: String?
+    let status: String
+    let reason: String?
+    let reminderEmailSentAt: String?
+    let displayMessage: String?
+}
+
+struct ReservationReminderBatchResponse: Codable {
+    let success: Bool
+    let date: String
+    let mode: String?
+    let targetTime: String?
+    let morningBatchRan: Bool?
+    let morningBatch: JSONValue?
+    let lastBatch: JSONValue?
+    let summary: ReservationReminderSummaryDTO
+    let results: [ReservationReminderResultDTO]
+    let diagnostics: JSONValue?
+}
+
+typealias ReservationReminderStatusResponse = ReservationReminderBatchResponse
 
 struct ReservationGuestManageLinkResponse: Codable {
     let success: Bool

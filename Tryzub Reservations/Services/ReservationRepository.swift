@@ -30,6 +30,7 @@ protocol ReservationRepositoryProtocol {
     func upsertYielding(_ reservations: [ReservationDTO]) async throws -> ReservationUpsertStats
     func replaceReviewQueue(with reservations: [ReservationDTO]) throws
     func deleteReservation(remoteID: Int) throws
+    func deleteAllCachedReservations() throws
     func rowVersion(forRemoteID remoteID: Int) -> String?
 }
 
@@ -219,6 +220,16 @@ final class ReservationRepository: ReservationRepositoryProtocol {
                 record.remoteID == remoteID
             }
         )
+        let records = try context.fetch(descriptor)
+        for record in records {
+            context.delete(record)
+        }
+        try context.save()
+    }
+
+    // Intent: Developer-only local cache cleanup. Does not call backend.
+    func deleteAllCachedReservations() throws {
+        let descriptor = FetchDescriptor<ReservationRecord>()
         let records = try context.fetch(descriptor)
         for record in records {
             context.delete(record)

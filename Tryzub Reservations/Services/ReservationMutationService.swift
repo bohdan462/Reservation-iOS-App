@@ -12,6 +12,8 @@ protocol ReservationMutationServiceProtocol {
     func updateReservation(id: Int, request: ReservationUpdateRequest) async throws -> ReservationDTO
     func createReservation(_ request: ReservationCreateRequest) async throws -> ReservationDTO
     func confirmReservation(id: Int) async throws -> ReservationConfirmResponse
+    func sendDueReminders(date: String?) async throws -> ReservationReminderBatchResponse
+    func fetchReminderStatus(date: String) async throws -> ReservationReminderStatusResponse
     func createGuestManageLink(id: Int) async throws -> ReservationGuestManageLinkDTO
     func logManualEmail(reservationID: Int, request: ReservationManualEmailLogRequest) async throws -> ReservationManualEmailLogDTO
     func hardDeleteReservation(id: Int) async throws
@@ -66,8 +68,24 @@ final class ReservationMutationService: ReservationMutationServiceProtocol {
     // Rename note: This method should mention email in a later cleanup.
     func confirmReservation(id: Int) async throws -> ReservationConfirmResponse {
         let response = try await client.confirmReservation(id: id, reason: .mutationConfirm)
-        try repository.upsert(response.data)
+        if let reservation = response.data {
+            try repository.upsert(reservation)
+        }
         return response
+    }
+
+    // MARK: - Reminder Batch
+
+    // Intent: Backend-owned reminder batch. iOS must not loop reservations.
+    // Network: POST /managed-reservations/send-due-reminders.
+    func sendDueReminders(date: String?) async throws -> ReservationReminderBatchResponse {
+        try await client.sendDueReminders(date: date, reason: .reminderBatch)
+    }
+
+    // Intent: Reads reminder proof/status for a selected date.
+    // Network: GET /managed-reservations/reminder-status.
+    func fetchReminderStatus(date: String) async throws -> ReservationReminderStatusResponse {
+        try await client.fetchReminderStatus(date: date, reason: .reminderStatus)
     }
 
     // MARK: - Guest Self-Service Link

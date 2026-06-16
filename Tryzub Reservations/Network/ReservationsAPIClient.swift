@@ -32,6 +32,8 @@ enum ReservationAPIRequestReason: String {
     case reviewQueues = "review_queues"
     case mutationPatch = "mutation_patch"
     case mutationConfirm = "mutation_confirm"
+    case reminderBatch = "reminder_batch"
+    case reminderStatus = "reminder_status"
     case mutationCreate = "mutation_create"
     case guestManageLink = "guest_manage_link"
     case manualEmailLog = "manual_email_log"
@@ -305,6 +307,8 @@ protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
     func updateReservation(id: Int, request: ReservationUpdateRequest, reason: ReservationAPIRequestReason) async throws -> ReservationDTO
     func createReservation(_ createRequest: ReservationCreateRequest, reason: ReservationAPIRequestReason) async throws -> ReservationDTO
     func confirmReservation(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationConfirmResponse
+    func sendDueReminders(date: String?, reason: ReservationAPIRequestReason) async throws -> ReservationReminderBatchResponse
+    func fetchReminderStatus(date: String, reason: ReservationAPIRequestReason) async throws -> ReservationReminderStatusResponse
     func createGuestManageLink(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationGuestManageLinkDTO
     func logManualEmail(reservationID: Int, request: ReservationManualEmailLogRequest, reason: ReservationAPIRequestReason) async throws -> ReservationManualEmailLogDTO
     func hardDeleteReservation(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationDeleteResponse
@@ -697,6 +701,44 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let response = try decode(ReservationConfirmResponse.self, from: data, request: request)
         traceOptionalMutationActivity(reservationID: id, activity: response.activity)
         return response
+    }
+
+    // Intent: Asks the backend to send the due reminder batch once for a selected date.
+    // Network: POST /managed-reservations/send-due-reminders?date=YYYY-MM-DD.
+    func sendDueReminders(
+        date: String?,
+        reason: ReservationAPIRequestReason = .reminderBatch
+    ) async throws -> ReservationReminderBatchResponse {
+        var queryItems: [URLQueryItem] = []
+        if let date = date?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !date.isEmpty {
+            queryItems.append(URLQueryItem(name: "date", value: date))
+        }
+
+        let url = try makeURL(
+            path: "managed-reservations/send-due-reminders",
+            queryItems: queryItems
+        )
+        let request = makeRequest(url: url, method: "POST")
+        let data = try await perform(request, reason: reason)
+
+        return try decode(ReservationReminderBatchResponse.self, from: data, request: request)
+    }
+
+    // Intent: Reads reminder proof/status for a date without sending anything.
+    // Network: GET /managed-reservations/reminder-status?date=YYYY-MM-DD.
+    func fetchReminderStatus(
+        date: String,
+        reason: ReservationAPIRequestReason = .reminderStatus
+    ) async throws -> ReservationReminderStatusResponse {
+        let url = try makeURL(
+            path: "managed-reservations/reminder-status",
+            queryItems: [URLQueryItem(name: "date", value: date)]
+        )
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+
+        return try decode(ReservationReminderStatusResponse.self, from: data, request: request)
     }
 
     // Intent: Generates a guest self-service URL for manual Gmail/Mail workflows.
