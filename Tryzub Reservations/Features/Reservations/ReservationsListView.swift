@@ -1474,6 +1474,7 @@ private struct ReservationMoreView: View {
 
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
+    @EnvironmentObject private var floorPlanStore: FloorPlanStore
     @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var showManualCreate = false
     @State private var showFailedImports = false
@@ -1507,7 +1508,9 @@ private struct ReservationMoreView: View {
 
                 RestaurantPrivacyCoverSettingsSection(settings: privacyCoverSettings)
 
-                OnDeviceSupportMoreSection(coordinator: onDeviceSupportCoordinator)
+                if controller.capabilities.canViewDeveloperDiagnostics {
+                    OnDeviceSupportMoreSection(coordinator: onDeviceSupportCoordinator)
+                }
 
                 Section("Restaurant Operations") {
                     NavigationLink(value: ReservationMoreDestination.cancelled) {
@@ -1689,7 +1692,10 @@ private struct ReservationMoreView: View {
         case .hostIntelligenceSettings:
             HostIntelligenceSettingsView(
                 settingsStore: hostIntelligenceSettingsStore,
-                tableStore: hostTableConfigStore
+                tableStore: hostTableConfigStore,
+                floorPlanStore: floorPlanStore,
+                capabilities: controller.capabilities,
+                restaurantSetup: controller.hasLoadedRestaurantSetup ? controller.restaurantSetup : nil
             )
         case .diagnostics:
             DeveloperDiagnosticsView(environment: environment)

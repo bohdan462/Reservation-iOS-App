@@ -20,6 +20,8 @@ struct HostIntelligenceDiagnosticsView: View {
   var briefingSource: HostBriefingWriterSource? = nil
   var briefingFailureReason: String? = nil
   var tableConfigs: [RestaurantTableConfig] = []
+  var backendFloorTables: [RestaurantTableDTO] = []
+  var floorTableSource: HostFloorTableSource = .pendingBackend
   var allKnownReservations: [ReservationRecord] = []
   var guestIntelligenceStore: GuestIntelligenceStore? = nil
 
@@ -49,6 +51,8 @@ struct HostIntelligenceDiagnosticsView: View {
       settings: settings,
       tableConfigs: tableConfigs,
       allKnownReservations: allKnownReservations,
+      backendFloorTables: backendFloorTables,
+      floorTableSource: floorTableSource,
       guestIntelligenceSummariesByReservationID: guestSummariesForEngine
     )
     return HostIntelligenceEngine().evaluateHostDecisionSnapshot(input: input)
@@ -200,23 +204,55 @@ struct HostIntelligenceDiagnosticsView: View {
   @ViewBuilder
   private var tableInventorySection: some View {
     Section("Table Inventory") {
-      let summary = HostTableIntelligenceSupport.buildTableCapacitySummary(
+      let activeBackendTables = backendFloorTables.filter(\.isActive)
+      let backendTotalCapacity = activeBackendTables.reduce(0) { $0 + max($1.minCapacity, $1.maxCapacity) }
+      let backendLargestSingle = activeBackendTables.map { max($0.minCapacity, $0.maxCapacity) }.max() ?? 0
+      let fallbackSummary = HostTableIntelligenceSupport.buildTableCapacitySummary(
         tableConfigs: tableConfigs
       )
+      let effectiveFitConfigs = diagnosticsTableConfigsForFits
 
-      LabeledContent("Tables configured", value: tableConfigs.isEmpty ? "No" : "Yes")
-      LabeledContent("Active tables", value: "\(summary.activeTableCount)")
-      LabeledContent("Inactive tables", value: "\(summary.inactiveTableCount)")
-      LabeledContent("Total active capacity", value: "\(summary.totalActiveCapacity)")
-      LabeledContent("Largest single table", value: "\(summary.largestSingleTableCapacity)")
-      LabeledContent("Largest combination", value: "\(summary.largestCombinationCapacity)")
-      LabeledContent("Capacity source") {
-        Text(summary.totalActiveCapacity > 0 ? "Table inventory" : "Settings fallback")
+      switch floorTableSource {
+      case .backend:
+        LabeledContent("Capacity source", value: "Backend floor plan")
+        LabeledContent("Active tables", value: "\(activeBackendTables.count)")
+        LabeledContent("Inactive tables", value: "\(backendFloorTables.count - activeBackendTables.count)")
+        LabeledContent("Total active capacity", value: "\(backendTotalCapacity)")
+        LabeledContent("Largest single table", value: "\(backendLargestSingle)")
+        LabeledContent("Largest combination", value: "Not configured")
+        Text("Backend Floor Plan is the source of truth for table names, seats, capacity, and assignments.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      case .legacyFallback:
+        LabeledContent("Capacity source", value: "Local fallback")
+        LabeledContent("Active tables", value: "\(fallbackSummary.activeTableCount)")
+        LabeledContent("Inactive tables", value: "\(fallbackSummary.inactiveTableCount)")
+        LabeledContent("Total active capacity", value: "\(fallbackSummary.totalActiveCapacity)")
+        LabeledContent("Largest single table", value: "\(fallbackSummary.largestSingleTableCapacity)")
+        LabeledContent("Largest combination", value: "\(fallbackSummary.largestCombinationCapacity)")
+        Text("Developer fallback only. Backend Floor Plan remains canonical when configured.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      case .pendingBackend:
+        LabeledContent("Capacity source", value: "Backend floor plan pending")
+        Text("Backend floor plan has not loaded from cache for this date yet.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      case .notConfigured:
+        LabeledContent("Capacity source", value: "Not configured")
+        Text("No backend floor plan configured.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      case .unavailable:
+        LabeledContent("Capacity source", value: "Not available")
+        Text("Backend floor plan is temporarily unavailable. Diagnostics did not fetch network data.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
 
       let fitRecommendations = HostTableIntelligenceSupport.recommendedTableFits(
         reservations: reservations,
-        tableConfigs: tableConfigs,
+        tableConfigs: effectiveFitConfigs,
         limit: 3
       )
       if !fitRecommendations.isEmpty {
@@ -234,6 +270,17 @@ struct HostIntelligenceDiagnosticsView: View {
           .padding(.vertical, 2)
         }
       }
+    }
+  }
+
+  private var diagnosticsTableConfigsForFits: [RestaurantTableConfig] {
+    switch floorTableSource {
+    case .backend:
+      return backendFloorTables.filter(\.isActive).map { $0.asRestaurantTableConfig() }
+    case .legacyFallback:
+      return tableConfigs
+    case .pendingBackend, .notConfigured, .unavailable:
+      return []
     }
   }
 
@@ -328,7 +375,7 @@ struct HostIntelligenceDiagnosticsView: View {
 
   @ViewBuilder
   private func bookingDecisionsSection(_ decision: HostDecisionSnapshot) -> some View {
-    Section("Booking Decisions") {
+    Section("Booking Decision Diagnostics") {
       LabeledContent("Total decisions") {
         Text("\(decision.bookingDecisions.count)")
       }
@@ -787,7 +834,7 @@ struct HostIntelligenceDiagnosticsView: View {
       }
     }()
 
-    Section("Briefing Writer") {
+    Section("Briefing Writer Diagnostics") {
       LabeledContent("Enhanced briefing") {
         Text(settings.useEnhancedBriefing ? "Yes" : "No")
       }

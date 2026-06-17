@@ -10,23 +10,29 @@ import SwiftUI
 struct HostIntelligenceSettingsView: View {
   @ObservedObject var settingsStore: HostIntelligenceSettingsStore
   @ObservedObject var tableStore: HostTableConfigStore
+  @ObservedObject var floorPlanStore: FloorPlanStore
+  let capabilities: AppCapabilities
+  let restaurantSetup: RestaurantSetup?
 
   @State private var showResetSettingsConfirmation = false
   @State private var showResetTablesConfirmation = false
 
   var body: some View {
     Form {
-      featureSection
-      briefingWriterSection
-      bookingDecisionsSection
-      capacitySection
-      timingSection
-      partyThresholdsSection
+      managerFeatureSection
+      managerBookingDecisionsSection
+      managerTimingSection
       tableInventorySection
-      if settingsStore.settings.useEnhancedBriefing {
+      if isDeveloper {
+        developerToolsIntroSection
+        developerBriefingWriterSection
+        developerBookingDecisionsSection
+        developerCapacitySection
+        developerAdvancedTimingSection
+        developerPartyThresholdsSection
         HostLocalModelSettingsSection(settingsStore: settingsStore)
+        developerResetSection
       }
-      resetSection
     }
     .navigationTitle("Host Intelligence")
     .navigationBarTitleDisplayMode(.inline)
@@ -34,23 +40,61 @@ struct HostIntelligenceSettingsView: View {
 
   // MARK: - Sections
 
-  private var featureSection: some View {
+  private var isDeveloper: Bool {
+    capabilities.canViewDeveloperDiagnostics
+  }
+
+  private var selectedDateKey: String {
+    Date.reservationDateString()
+  }
+
+  private var floorSource: HostFloorTableSource {
+    floorPlanStore.floorSourceStatus(
+      for: selectedDateKey,
+      allowsLegacyFallback: settingsStore.settings.useLegacyAdvisoryTableFallback,
+      localActiveTableCount: tableStore.activeTables.count
+    )
+  }
+
+  private var backendActiveTables: [RestaurantTableDTO] {
+    floorPlanStore.backendTables(for: selectedDateKey).filter(\.isActive)
+  }
+
+  private var backendTotalActiveSeats: Int {
+    backendActiveTables.reduce(0) { $0 + max($1.minCapacity, $1.maxCapacity) }
+  }
+
+  private var managerFeatureSection: some View {
     Section("Feature") {
       Toggle("Enable Host Intelligence", isOn: binding(\.isEnabled))
       Toggle("Include guest signals", isOn: binding(\.includeGuestSignals))
-      Toggle("Prepare LLM packet", isOn: binding(\.includeLLMPacket))
-      Toggle("Include analytics signals", isOn: binding(\.includeAnalyticsSignals))
-      Text("Historical signals use backend aggregate analytics, not full local reservation history.")
+      Toggle("Use enhanced briefing", isOn: binding(\.useEnhancedBriefing))
+      Toggle("Show separated operational prompts", isOn: binding(\.useSeparatedBriefingPrompts))
+      Text("Used for recommendations only. Does not change backend reservations.")
         .font(.caption)
         .foregroundStyle(.secondary)
-      Text("The host board uses cached analytics when loaded from Restaurant Settings. It does not fetch analytics during service.")
+      Text("Improves wording of approved Host Board facts. The template briefing remains the fallback.")
         .font(.caption)
         .foregroundStyle(.secondary)
     }
   }
 
-  private var briefingWriterSection: some View {
-    Section("Briefing Writer") {
+  private var developerToolsIntroSection: some View {
+    Section("Developer Host Intelligence Tools") {
+      Text("Developer-only controls for local model testing, fallback diagnostics, and prompt/runtime validation. These do not directly mutate reservations.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      Toggle("Prepare LLM packet", isOn: binding(\.includeLLMPacket))
+      Toggle("Include analytics signals", isOn: binding(\.includeAnalyticsSignals))
+      Toggle("Use local fallback table inventory", isOn: binding(\.useLegacyAdvisoryTableFallback))
+      Text("Historical signals use backend aggregate analytics, not full local reservation history. The host board uses cached analytics when loaded from Restaurant Settings and does not fetch analytics during service.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  private var developerBriefingWriterSection: some View {
+    Section("Developer Briefing Runtime") {
       Toggle("Use enhanced briefing", isOn: binding(\.useEnhancedBriefing))
 
       Picker("Provider", selection: providerBinding) {
@@ -115,11 +159,20 @@ struct HostIntelligenceSettingsView: View {
     )
   }
 
-  private var bookingDecisionsSection: some View {
-    Section("Booking Decisions") {
+  private var managerBookingDecisionsSection: some View {
+    Section("Booking Help") {
       Toggle("Enable booking decisioning", isOn: binding(\.enableBookingDecisioning))
       Toggle("Suggest alternate times", isOn: binding(\.suggestAlternateTimesEnabled))
-      Toggle("Show auto-confirm candidates", isOn: binding(\.autoConfirmRecommendationsEnabled))
+      Toggle("Show confirm candidates", isOn: binding(\.autoConfirmRecommendationsEnabled))
+
+      Text("Advisory only. Staff still confirms reservations manually unless backend auto-confirm is enabled in Restaurant Settings.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  private var developerBookingDecisionsSection: some View {
+    Section("Booking Decision Diagnostics") {
       Toggle("Auto-confirm weekdays only", isOn: binding(\.autoConfirmWeekdaysOnly))
         .disabled(!settingsStore.settings.autoConfirmRecommendationsEnabled)
 
@@ -146,15 +199,11 @@ struct HostIntelligenceSettingsView: View {
         in: 50...100
       ) {
         LabeledContent(
-          "Minimum confidence",
+          "Minimum confidence for auto-confirm recommendations",
           value: "\(Int((settingsStore.settings.minimumConfidenceForAutoConfirm * 100).rounded()))%"
         )
       }
       .disabled(!settingsStore.settings.autoConfirmRecommendationsEnabled)
-
-      Text("Recommendations only. Staff must still confirm in reservation detail.")
-        .font(.caption)
-        .foregroundStyle(.secondary)
 
       Text("Local host suggestions only. Backend auto-confirm is controlled from Restaurant Settings and runs only on the server.")
         .font(.caption)
@@ -162,8 +211,8 @@ struct HostIntelligenceSettingsView: View {
     }
   }
 
-  private var capacitySection: some View {
-    Section("Capacity") {
+  private var developerCapacitySection: some View {
+    Section("Developer Capacity Thresholds") {
       Stepper(
         value: intBinding(\.restaurantCapacity, minimum: 1, maximum: 500),
         in: 1...500
@@ -187,44 +236,98 @@ struct HostIntelligenceSettingsView: View {
     }
   }
 
-  private var timingSection: some View {
+  private var managerTimingSection: some View {
     Section("Timing") {
-      stepperRow("Slot interval (minutes)", keyPath: \.slotIntervalMinutes, range: 5...60)
-      stepperRow("Lookahead (minutes)", keyPath: \.lookaheadMinutes, range: 30...480)
       stepperRow("Due soon (minutes)", keyPath: \.dueSoonMinutes, range: 5...120)
       stepperRow("No-table due soon (minutes)", keyPath: \.noTableDueSoonMinutes, range: 5...120)
       stepperRow("Long-seated warning (minutes)", keyPath: \.longSeatedWarningMinutes, range: 30...240)
     }
   }
 
-  private var partyThresholdsSection: some View {
-    Section("Party Thresholds") {
+  private var developerAdvancedTimingSection: some View {
+    Section("Developer Timing Thresholds") {
+      stepperRow("Slot interval (minutes)", keyPath: \.slotIntervalMinutes, range: 5...60)
+      stepperRow("Lookahead (minutes)", keyPath: \.lookaheadMinutes, range: 30...480)
+    }
+  }
+
+  private var developerPartyThresholdsSection: some View {
+    Section("Developer Party Thresholds") {
+      if let restaurantSetup {
+        LabeledContent("Backend large-party review threshold", value: "\(restaurantSetup.largePartyReviewThreshold)")
+      }
       stepperRow("Large party threshold", keyPath: \.largePartyThreshold, range: 2...20)
       stepperRow("Critical party threshold", keyPath: \.criticalPartyThreshold, range: 2...30)
       stepperRow("Max reservations per slot", keyPath: \.maxReservationsPerSlot, range: 1...20)
       stepperRow("Max large parties per slot", keyPath: \.maxLargePartiesPerSlot, range: 1...10)
+      Text("Large-party review threshold comes from Restaurant Settings. Local Host Intelligence thresholds are advisory.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
   }
 
   private var tableInventorySection: some View {
     Section("Table Inventory") {
-      Text("Backend stores only the table name. Seat counts are local Host Intelligence settings used for recommendations.")
-        .font(.caption)
-        .foregroundStyle(.secondary)
+      switch floorSource {
+      case .backend:
+        Text("Table and seat counts come from the backend Floor Plan. Host Intelligence uses them for recommendations only.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
 
-      LabeledContent("Active tables", value: "\(tableStore.activeTables.count)")
-      LabeledContent("Total active seats", value: "\(tableStore.totalActiveCapacity)")
-      LabeledContent("Inactive tables", value: "\(tableStore.tables.count - tableStore.activeTables.count)")
+        LabeledContent("Active tables", value: "\(backendActiveTables.count)")
+        LabeledContent("Total active seats", value: "\(backendTotalActiveSeats)")
+        LabeledContent("Capacity source", value: "Backend floor plan")
+        Text("Edit tables from the Floor tab.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      case .legacyFallback:
+        Text("No backend floor plan is configured. Developer fallback table inventory may be used for limited recommendations.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
 
-      NavigationLink {
-        HostTableConfigView(tableStore: tableStore)
-      } label: {
-        Text("Manage Table Inventory")
+        LabeledContent("Active tables", value: "\(tableStore.activeTables.count)")
+        LabeledContent("Total active seats", value: "\(tableStore.totalActiveCapacity)")
+        LabeledContent("Capacity source", value: "Local fallback")
+        if isDeveloper {
+          NavigationLink {
+            HostTableConfigView(tableStore: tableStore)
+          } label: {
+            Text("Manage Local Fallback Table Inventory")
+          }
+        }
+      case .pendingBackend:
+        Text("Backend Floor Plan is the source of truth for tables and seats. Floor plan data has not loaded yet for today.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
+        LabeledContent("Capacity source", value: "Backend floor plan pending")
+        Text("Edit tables from the Floor tab.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      case .notConfigured, .unavailable:
+        Text("No backend floor plan is configured. Developer fallback table inventory may be used for limited recommendations.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
+        LabeledContent("Capacity source", value: floorSource == .unavailable ? "Not available" : "Not configured")
+        if isDeveloper {
+          LabeledContent("Local fallback active tables", value: "\(tableStore.activeTables.count)")
+          LabeledContent("Local fallback seats", value: "\(tableStore.totalActiveCapacity)")
+          NavigationLink {
+            HostTableConfigView(tableStore: tableStore)
+          } label: {
+            Text("Manage Local Fallback Table Inventory")
+          }
+        } else {
+          Text("Edit tables from the Floor tab.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
       }
     }
   }
 
-  private var resetSection: some View {
+  private var developerResetSection: some View {
     Section("Reset") {
       Button("Reset Host Intelligence Settings", role: .destructive) {
         showResetSettingsConfirmation = true

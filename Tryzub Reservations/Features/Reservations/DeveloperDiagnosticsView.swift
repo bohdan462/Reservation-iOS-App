@@ -37,8 +37,21 @@ struct DeveloperDiagnosticsView: View {
         requestLogStore.events.first { $0.outcome == .failed }
     }
 
+    private var todayDateKey: String {
+        Date.reservationDateString()
+    }
+
+    private var hostFloorTableSource: HostFloorTableSource {
+        floorPlanStore.floorSourceStatus(
+            for: todayDateKey,
+            allowsLegacyFallback: hostIntelligenceSettings.settings.useLegacyAdvisoryTableFallback,
+            localActiveTableCount: hostTableConfigStore.activeTables.count
+        )
+    }
+
     var body: some View {
         List {
+            developerReadOnlySection
             apiHealthSection
             operationStateSection
             syncScopeSection
@@ -56,6 +69,14 @@ struct DeveloperDiagnosticsView: View {
             safetySection
         }
         .navigationTitle("API Diagnostics")
+    }
+
+    private var developerReadOnlySection: some View {
+        Section {
+            Text("Developer diagnostics. Read-only unless a section explicitly says it clears local cache.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var syncScopeSection: some View {
@@ -312,6 +333,8 @@ struct DeveloperDiagnosticsView: View {
             localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
             settings: hostIntelligenceSettings.settings,
             tableConfigs: hostTableConfigStore.tables,
+            backendFloorTables: floorPlanStore.backendTables(for: todayDateKey),
+            floorTableSource: hostFloorTableSource,
             allKnownReservations: reservations,
             guestIntelligenceStore: guestIntelligenceStore
         )
