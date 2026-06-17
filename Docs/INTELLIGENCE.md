@@ -1,11 +1,10 @@
 # Tryzub Reservations Intelligence Layer
 
-**Status:** Current source of truth (backend intelligence contract)  
-**Branch:** `audit-current-state`  
-**Audit date:** 2026-06-14  
-**iOS boundaries:** [HOST_INTELLIGENCE.md](./HOST_INTELLIGENCE.md), [LOCAL_MODEL_INTELLIGENCE.md](./LOCAL_MODEL_INTELLIGENCE.md)
+Internal restaurant intelligence for Tryzub Ukrainian Kitchen. This layer helps staff and management understand who is coming, who is returning, what guest context matters, what demand and risk are forming, and what data quality looks like.
 
-Internal restaurant intelligence for Tryzub Ukrainian Kitchen.
+The backend returns deterministic evidence fields. iOS controls staff and manager wording.
+
+Floor plan/table layout endpoints are documented in `README.md`. This file covers guest memory, business analytics, system health, and intake reconciliation only.
 
 ## Endpoints
 

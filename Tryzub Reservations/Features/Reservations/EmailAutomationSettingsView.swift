@@ -7,6 +7,11 @@ import SwiftUI
 
 struct EmailAutomationSettingsView: View {
     @ObservedObject var settingsStore: EmailAutomationSettingsStore
+    @EnvironmentObject private var controller: ReservationsController
+
+    private var backendManualBatchEnabled: Bool {
+        controller.restaurantSetup.manualBatchRemindersEnabled
+    }
 
     var body: some View {
         Form {
@@ -20,7 +25,7 @@ struct EmailAutomationSettingsView: View {
                     isOn: binding(\.automaticReminderProofEnabled)
                 )
                 Toggle(
-                    "Manual reminder send",
+                    "Allow batch reminder sending",
                     isOn: binding(\.manualReminderSendEnabled)
                 )
                 Toggle(
@@ -28,7 +33,19 @@ struct EmailAutomationSettingsView: View {
                     isOn: binding(\.manualMailFallbackEnabled)
                 )
             } footer: {
-                Text("Applies on this iPad only. It does not change WordPress, Resend, or other devices yet.")
+                Text("Applies on this iPad only. Batch reminder sending also requires backend Restaurant Setup to allow manual batch reminders.")
+            }
+
+            if settingsStore.settings.manualReminderSendEnabled, !backendManualBatchEnabled {
+                Section {
+                    Label {
+                        Text("Backend reminder sending is off. This iPad cannot send batch reminders until it is enabled in Restaurant Setup.")
+                            .font(.subheadline)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
             }
         }
         .navigationTitle("Email Automation")

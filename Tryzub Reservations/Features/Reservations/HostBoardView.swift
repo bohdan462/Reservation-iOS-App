@@ -994,9 +994,16 @@ struct HostBoardView: View {
         let isToday = selectedDateKey == Date.reservationDateString()
         if isToday && (settings.automaticReminderProofEnabled || settings.manualReminderSendEnabled) {
             let status = controller.lastReminderStatusByDate[selectedDateKey]
+            let automation = ResolvedReminderAutomationSettings.resolving(
+                setup: controller.restaurantSetup,
+                status: status
+            )
             let eligibleCount = status?.summary.eligible ?? 0
             let hasEligibleReminders = eligibleCount > 0
-            
+            let canSendBatchReminders = settings.manualReminderSendEnabled
+                && automation.manualBatchRemindersEnabled
+                && hasEligibleReminders
+
             HostReminderBatchCard(
                 status: status,
                 notice: controller.reminderBatchNotice,
@@ -1004,6 +1011,10 @@ struct HostBoardView: View {
                 showProof: settings.automaticReminderProofEnabled,
                 hasEligibleReminders: hasEligibleReminders,
                 manualSendEnabled: settings.manualReminderSendEnabled,
+                backendManualBatchEnabled: automation.manualBatchRemindersEnabled,
+                automaticRemindersEnabled: automation.automaticRemindersEnabled,
+                reminderLeadHours: automation.reminderLeadHours,
+                canSendBatchReminders: canSendBatchReminders,
                 onSend: { showBackendReminderConfirmation = true }
             )
         }
@@ -1677,6 +1688,10 @@ private struct HostReminderBatchCard: View {
     let showProof: Bool
     let hasEligibleReminders: Bool
     let manualSendEnabled: Bool
+    let backendManualBatchEnabled: Bool
+    let automaticRemindersEnabled: Bool
+    let reminderLeadHours: Int
+    let canSendBatchReminders: Bool
     let onSend: () -> Void
 
     var body: some View {
@@ -1691,9 +1706,21 @@ private struct HostReminderBatchCard: View {
                 }
             }
 
+            if let leadHoursText {
+                Text(leadHoursText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !automaticRemindersEnabled {
+                Text("Automatic reminders are off.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if showProof {
                 if let status {
-                    if status.morningBatchRan == true {
+                    if automaticRemindersEnabled, status.morningBatchRan == true {
                         Text("Automatic reminders ran today.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -1715,8 +1742,11 @@ private struct HostReminderBatchCard: View {
             }
 
             if manualSendEnabled {
-                if hasEligibleReminders {
-                    // Button enabled: there are eligible reminders to send
+                if !backendManualBatchEnabled {
+                    Text("Manual batch reminders are disabled in backend settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if canSendBatchReminders {
                     Button {
                         onSend()
                     } label: {
@@ -1727,7 +1757,6 @@ private struct HostReminderBatchCard: View {
                     .controlSize(.regular)
                     .disabled(isSending)
                 } else if let status {
-                    // Button disabled: no eligible reminders
                     Text("No reminders to send")
                         .frame(maxWidth: .infinity)
                         .font(.subheadline.weight(.medium))
@@ -1739,6 +1768,12 @@ private struct HostReminderBatchCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var leadHoursText: String? {
+        guard reminderLeadHours > 0 else { return nil }
+        let unit = reminderLeadHours == 1 ? "hour" : "hours"
+        return "Catch-up reminders require at least \(reminderLeadHours) \(unit) before reservation."
     }
 
     private func summaryText(_ summary: ReservationReminderSummaryDTO) -> String {

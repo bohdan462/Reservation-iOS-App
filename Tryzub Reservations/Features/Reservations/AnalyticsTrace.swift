@@ -66,6 +66,16 @@ enum AnalyticsTrace {
         emit("range=\(range.traceLabel) ignored_response reason=\(reason)")
     }
 
+    static func advancedInsight(range: AnalyticsRangeKey, state: String, reason: String) {
+        guard isEnabled else { return }
+        emit("range=\(range.traceLabel) advanced_insight state=\(state) reason=\(reason)")
+    }
+
+    static func businessIntelligenceCache(event: String, key: String) {
+        guard isEnabled else { return }
+        emit("business_intelligence_cache event=\(event) key=\(key)")
+    }
+
     static func cacheMiss(range: AnalyticsRangeKey) {
         guard isEnabled else { return }
         emit("range=\(range.traceLabel) cacheHit=false fresh=false action=load")

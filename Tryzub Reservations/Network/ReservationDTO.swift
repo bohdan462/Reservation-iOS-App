@@ -466,6 +466,10 @@ struct RestaurantSetupDTO: Codable, Equatable {
     let callInPlaceholderEmail: String
     let fromEmail: String
     let replyToEmail: String
+    let automaticRemindersEnabled: Bool
+    let manualBatchRemindersEnabled: Bool
+    let reminderLeadHours: Int
+    let morningReminderTime: String
     let createdAt: String?
     let updatedAt: String?
 
@@ -483,6 +487,10 @@ struct RestaurantSetupDTO: Codable, Equatable {
         case callInPlaceholderEmail
         case fromEmail
         case replyToEmail
+        case automaticRemindersEnabled
+        case manualBatchRemindersEnabled
+        case reminderLeadHours
+        case morningReminderTime
         case createdAt
         case updatedAt
     }
@@ -502,9 +510,20 @@ struct RestaurantSetupDTO: Codable, Equatable {
         callInPlaceholderEmail = try container.decodeIfPresent(String.self, forKey: .callInPlaceholderEmail) ?? "callinreservation@tryzubchicago.com"
         fromEmail = try container.decodeIfPresent(String.self, forKey: .fromEmail) ?? "reservations@tryzubchicago.com"
         replyToEmail = try container.decodeIfPresent(String.self, forKey: .replyToEmail) ?? "reservations@tryzubchicago.com"
+        automaticRemindersEnabled = try container.decodeFlexibleBoolIfPresent(forKey: .automaticRemindersEnabled) ?? ReminderAutomationDefaults.automaticRemindersEnabled
+        manualBatchRemindersEnabled = try container.decodeFlexibleBoolIfPresent(forKey: .manualBatchRemindersEnabled) ?? ReminderAutomationDefaults.manualBatchRemindersEnabled
+        reminderLeadHours = try container.decodeFlexibleIntIfPresent(forKey: .reminderLeadHours) ?? ReminderAutomationDefaults.reminderLeadHours
+        morningReminderTime = try container.decodeIfPresent(String.self, forKey: .morningReminderTime) ?? ReminderAutomationDefaults.morningReminderTime
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
     }
+}
+
+enum ReminderAutomationDefaults {
+    static let automaticRemindersEnabled = true
+    static let manualBatchRemindersEnabled = false
+    static let reminderLeadHours = 3
+    static let morningReminderTime = "09:00:00"
 }
 
 struct RestaurantSetup: Codable, Equatable {
@@ -521,6 +540,10 @@ struct RestaurantSetup: Codable, Equatable {
     var callInPlaceholderEmail: String
     var fromEmail: String
     var replyToEmail: String
+    var automaticRemindersEnabled: Bool
+    var manualBatchRemindersEnabled: Bool
+    var reminderLeadHours: Int
+    var morningReminderTime: String
     var createdAt: String?
     var updatedAt: String?
 
@@ -538,6 +561,10 @@ struct RestaurantSetup: Codable, Equatable {
         callInPlaceholderEmail: "callinreservation@tryzubchicago.com",
         fromEmail: "reservations@tryzubchicago.com",
         replyToEmail: "reservations@tryzubchicago.com",
+        automaticRemindersEnabled: ReminderAutomationDefaults.automaticRemindersEnabled,
+        manualBatchRemindersEnabled: ReminderAutomationDefaults.manualBatchRemindersEnabled,
+        reminderLeadHours: ReminderAutomationDefaults.reminderLeadHours,
+        morningReminderTime: ReminderAutomationDefaults.morningReminderTime,
         createdAt: nil,
         updatedAt: nil
     )
@@ -556,6 +583,10 @@ struct RestaurantSetup: Codable, Equatable {
         callInPlaceholderEmail = dto.callInPlaceholderEmail
         fromEmail = dto.fromEmail
         replyToEmail = dto.replyToEmail
+        automaticRemindersEnabled = dto.automaticRemindersEnabled
+        manualBatchRemindersEnabled = dto.manualBatchRemindersEnabled
+        reminderLeadHours = dto.reminderLeadHours
+        morningReminderTime = dto.morningReminderTime
         createdAt = dto.createdAt
         updatedAt = dto.updatedAt
     }
@@ -574,6 +605,10 @@ struct RestaurantSetup: Codable, Equatable {
         callInPlaceholderEmail: String,
         fromEmail: String,
         replyToEmail: String,
+        automaticRemindersEnabled: Bool = ReminderAutomationDefaults.automaticRemindersEnabled,
+        manualBatchRemindersEnabled: Bool = ReminderAutomationDefaults.manualBatchRemindersEnabled,
+        reminderLeadHours: Int = ReminderAutomationDefaults.reminderLeadHours,
+        morningReminderTime: String = ReminderAutomationDefaults.morningReminderTime,
         createdAt: String?,
         updatedAt: String?
     ) {
@@ -590,6 +625,10 @@ struct RestaurantSetup: Codable, Equatable {
         self.callInPlaceholderEmail = callInPlaceholderEmail
         self.fromEmail = fromEmail
         self.replyToEmail = replyToEmail
+        self.automaticRemindersEnabled = automaticRemindersEnabled
+        self.manualBatchRemindersEnabled = manualBatchRemindersEnabled
+        self.reminderLeadHours = reminderLeadHours
+        self.morningReminderTime = morningReminderTime
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

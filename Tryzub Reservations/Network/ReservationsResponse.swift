@@ -80,9 +80,90 @@ struct ReservationReminderBatchResponse: Codable {
     let summary: ReservationReminderSummaryDTO
     let results: [ReservationReminderResultDTO]
     let diagnostics: JSONValue?
+    let automaticRemindersEnabled: Bool?
+    let manualBatchRemindersEnabled: Bool?
+    let reminderLeadHours: Int?
+    let morningReminderTime: String?
+
+    enum CodingKeys: String, CodingKey {
+        case success
+        case date
+        case mode
+        case targetTime
+        case morningBatchRan
+        case morningBatch
+        case lastBatch
+        case summary
+        case results
+        case diagnostics
+        case automaticRemindersEnabled
+        case manualBatchRemindersEnabled
+        case reminderLeadHours
+        case morningReminderTime
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        success = try container.decode(Bool.self, forKey: .success)
+        date = try container.decode(String.self, forKey: .date)
+        mode = try container.decodeIfPresent(String.self, forKey: .mode)
+        targetTime = try container.decodeIfPresent(String.self, forKey: .targetTime)
+        morningBatchRan = try container.decodeIfPresent(Bool.self, forKey: .morningBatchRan)
+        morningBatch = try container.decodeIfPresent(JSONValue.self, forKey: .morningBatch)
+        lastBatch = try container.decodeIfPresent(JSONValue.self, forKey: .lastBatch)
+        summary = try container.decode(ReservationReminderSummaryDTO.self, forKey: .summary)
+        results = try container.decodeIfPresent([ReservationReminderResultDTO].self, forKey: .results) ?? []
+        diagnostics = try container.decodeIfPresent(JSONValue.self, forKey: .diagnostics)
+        automaticRemindersEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticRemindersEnabled)
+        manualBatchRemindersEnabled = try container.decodeIfPresent(Bool.self, forKey: .manualBatchRemindersEnabled)
+        reminderLeadHours = try container.decodeFlexibleIntIfPresent(forKey: .reminderLeadHours)
+        morningReminderTime = try container.decodeIfPresent(String.self, forKey: .morningReminderTime)
+    }
 }
 
 typealias ReservationReminderStatusResponse = ReservationReminderBatchResponse
+
+struct ResolvedReminderAutomationSettings: Equatable {
+    let automaticRemindersEnabled: Bool
+    let manualBatchRemindersEnabled: Bool
+    let reminderLeadHours: Int
+    let morningReminderTime: String
+
+    static func resolving(
+        setup: RestaurantSetup,
+        status: ReservationReminderStatusResponse?
+    ) -> ResolvedReminderAutomationSettings {
+        ResolvedReminderAutomationSettings(
+            automaticRemindersEnabled: status?.automaticRemindersEnabled
+                ?? setup.automaticRemindersEnabled,
+            manualBatchRemindersEnabled: status?.manualBatchRemindersEnabled
+                ?? setup.manualBatchRemindersEnabled,
+            reminderLeadHours: status?.reminderLeadHours
+                ?? setup.reminderLeadHours,
+            morningReminderTime: resolvedMorningReminderTime(status: status, setup: setup)
+        )
+    }
+
+    private static func resolvedMorningReminderTime(
+        status: ReservationReminderStatusResponse?,
+        setup: RestaurantSetup
+    ) -> String {
+        if let value = trimmedNonEmpty(status?.morningReminderTime) {
+            return value
+        }
+        if let value = trimmedNonEmpty(setup.morningReminderTime) {
+            return value
+        }
+        return ReminderAutomationDefaults.morningReminderTime
+    }
+
+    private static func trimmedNonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+}
 
 struct ReservationGuestManageLinkResponse: Codable {
     let success: Bool

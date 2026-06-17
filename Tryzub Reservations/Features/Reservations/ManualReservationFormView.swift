@@ -399,6 +399,15 @@ private enum ReservationFormMode {
         }
     }
 
+    var toolbarSubmitTitle: String {
+        switch self {
+        case .manualCreate, .fixFailedImport:
+            return "Add"
+        case .edit:
+            return "Save"
+        }
+    }
+
     var showsEditControls: Bool {
         if case .edit = self {
             return true
@@ -422,17 +431,6 @@ private enum ReservationFormMode {
             return false
         case .manualCreate, .fixFailedImport:
             return true
-        }
-    }
-
-    // Edit is pushed inside the tab shell, so its primary button must clear the
-    // floating tab bar. Create/fix-import are full-screen covers without it.
-    var primaryButtonBottomInset: CGFloat {
-        switch self {
-        case .edit:
-            return ReservationLayout.floatingTabBarClearance
-        case .manualCreate, .fixFailedImport:
-            return 16
         }
     }
 }
@@ -544,7 +542,7 @@ private struct ReservationFormContent: View {
     var body: some View {
         ScrollView {
             formShell
-                .padding(.bottom, 96)
+                .padding(.bottom, ReservationLayout.scrollBottomInset)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle(mode.title)
@@ -556,6 +554,17 @@ private struct ReservationFormContent: View {
                         .foregroundStyle(ReservationUIStyle.cancelColor)
                         .tint(ReservationUIStyle.cancelColor)
                         .disabled(isSaving)
+                }
+            }
+
+            ToolbarItem(placement: .confirmationAction) {
+                if isSaving {
+                    ProgressView()
+                        .controlSize(.regular)
+                } else {
+                    Button(mode.toolbarSubmitTitle, action: submitIfValid)
+                        .fontWeight(.semibold)
+                        .disabled(isPrimaryActionDisabled)
                 }
             }
         }
@@ -638,9 +647,6 @@ private struct ReservationFormContent: View {
             slotContextRefreshTask?.cancel()
             slotContextRefreshTask = nil
             manualReservationFacade.cancelLoads()
-        }
-        .safeAreaInset(edge: .bottom) {
-            primaryActionButton
         }
     }
 
@@ -1299,32 +1305,8 @@ private struct ReservationFormContent: View {
         }
     }
 
-    private var primaryActionButton: some View {
-        let isSubmitDisabled = controller.isNetworkDegraded || availabilityBlockingMessage != nil
-
-        return VStack(spacing: 0) {
-            Divider()
-
-            Group {
-                if isSaving {
-                    ProgressView()
-                        .controlSize(.large)
-                        .frame(maxWidth: .infinity, minHeight: 50)
-                } else {
-                    Button(mode.primaryActionTitle, action: submitIfValid)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .frame(maxWidth: .infinity)
-                        .disabled(isSubmitDisabled)
-                }
-            }
-            .frame(maxWidth: isWideForm ? 680 : .infinity)
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, mode.primaryButtonBottomInset)
-            .frame(maxWidth: .infinity)
-            .background(Color(.systemGroupedBackground))
-        }
+    private var isPrimaryActionDisabled: Bool {
+        controller.isNetworkDegraded || availabilityBlockingMessage != nil || isSaving
     }
 
     private func submitIfValid() {

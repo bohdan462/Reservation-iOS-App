@@ -12,6 +12,7 @@ final class BusinessIntelligenceStore: ObservableObject {
     @Published private(set) var responsesByRangeKey: [String: BusinessIntelligenceSummaryDTO] = [:]
     @Published private(set) var loadedAtByRangeKey: [String: Date] = [:]
     @Published private(set) var errorByRangeKey: [String: String] = [:]
+    @Published private(set) var timeoutRangeKeys: Set<String> = []
 
     private var loadingRangeKeys: Set<String> = []
     private var activeTasksByRangeKey: [String: Task<Void, Never>] = [:]
@@ -38,8 +39,29 @@ final class BusinessIntelligenceStore: ObservableObject {
         errorByRangeKey[rangeKey(from: from, to: to)]
     }
 
+    func isTimeout(from: String, to: String) -> Bool {
+        timeoutRangeKeys.contains(rangeKey(from: from, to: to))
+    }
+
     func loadedAt(from: String, to: String) -> Date? {
         loadedAtByRangeKey[rangeKey(from: from, to: to)]
+    }
+
+    func dailyCacheKey(from: String, to: String, date: Date = Date(), calendar: Calendar = .current) -> String {
+        let dateKey = ReservationFormatters.reservationDateKey.string(from: calendar.startOfDay(for: date))
+        let rangeComponent = rangeKey(from: from, to: to).replacingOccurrences(of: "|", with: ".")
+        return "businessIntelligenceSummary.\(rangeComponent).\(dateKey)"
+    }
+
+    func hasFreshDailyCache(from: String, to: String, calendar: Calendar = .current) -> Bool {
+        let key = rangeKey(from: from, to: to)
+        guard responsesByRangeKey[key] != nil, let loadedAt = loadedAtByRangeKey[key] else { return false }
+        return calendar.isDateInToday(loadedAt)
+    }
+
+    func cachedToday(from: String, to: String, calendar: Calendar = .current) -> BusinessIntelligenceSummaryDTO? {
+        guard hasFreshDailyCache(from: from, to: to, calendar: calendar) else { return nil }
+        return response(from: from, to: to)
     }
 
     /// Data-only fingerprint for future UI refresh keys.
@@ -60,13 +82,29 @@ final class BusinessIntelligenceStore: ObservableObject {
     ) async {
         let key = rangeKey(from: from, to: to)
         guard !key.isEmpty, key != "|" else { return }
+        let dailyKey = dailyCacheKey(from: from, to: to)
 
-        let interval = freshnessInterval ?? self.freshnessInterval
-        if !force, isFresh(key, interval: interval), responsesByRangeKey[key] != nil {
+        if !force, hasFreshDailyCache(from: from, to: to) {
+            AnalyticsTrace.businessIntelligenceCache(event: "daily_cache_hit", key: dailyKey)
+            errorByRangeKey.removeValue(forKey: key)
+            timeoutRangeKeys.remove(key)
+            return
+        }
+
+        if responsesByRangeKey[key] != nil {
+            AnalyticsTrace.businessIntelligenceCache(event: "daily_cache_stale", key: dailyKey)
+        } else {
+            AnalyticsTrace.businessIntelligenceCache(event: "daily_cache_miss", key: dailyKey)
+        }
+
+        if let activeTask = activeTasksByRangeKey[key], !force {
+            await activeTask.value
             return
         }
 
         activeTasksByRangeKey[key]?.cancel()
+        errorByRangeKey.removeValue(forKey: key)
+        timeoutRangeKeys.remove(key)
         let task = Task(priority: .utility) { [weak self] in
             guard let self else { return }
             await self.performLoad(
@@ -89,12 +127,19 @@ final class BusinessIntelligenceStore: ObservableObject {
         loadingRangeKeys.remove(key)
     }
 
+    func clearError(from: String, to: String) {
+        let key = rangeKey(from: from, to: to)
+        errorByRangeKey.removeValue(forKey: key)
+        timeoutRangeKeys.remove(key)
+    }
+
     func reset() {
         activeTasksByRangeKey.values.forEach { $0.cancel() }
         activeTasksByRangeKey = [:]
         responsesByRangeKey = [:]
         loadedAtByRangeKey = [:]
         errorByRangeKey = [:]
+        timeoutRangeKeys = []
         loadingRangeKeys = []
     }
 
@@ -109,6 +154,10 @@ final class BusinessIntelligenceStore: ObservableObject {
         guard !trimmedFrom.isEmpty, !trimmedTo.isEmpty else { return }
 
         do {
+            AnalyticsTrace.businessIntelligenceCache(
+                event: "business_intelligence_fetch_started",
+                key: dailyCacheKey(from: trimmedFrom, to: trimmedTo)
+            )
             let response = try await apiClient.fetchBusinessIntelligenceSummary(
                 from: trimmedFrom,
                 to: trimmedTo,
@@ -118,9 +167,27 @@ final class BusinessIntelligenceStore: ObservableObject {
             responsesByRangeKey[key] = response
             loadedAtByRangeKey[key] = Date()
             errorByRangeKey.removeValue(forKey: key)
+            timeoutRangeKeys.remove(key)
+            AnalyticsTrace.businessIntelligenceCache(
+                event: "business_intelligence_fetch_succeeded",
+                key: dailyCacheKey(from: trimmedFrom, to: trimmedTo)
+            )
         } catch {
             guard !error.isCancellationLike else { return }
             errorByRangeKey[key] = IntelligenceStoreMessaging.displayMessage(for: error)
+            if error.isTimeoutLike {
+                timeoutRangeKeys.insert(key)
+                AnalyticsTrace.businessIntelligenceCache(
+                    event: "business_intelligence_fetch_timeout",
+                    key: dailyCacheKey(from: trimmedFrom, to: trimmedTo)
+                )
+            } else {
+                timeoutRangeKeys.remove(key)
+                AnalyticsTrace.businessIntelligenceCache(
+                    event: "business_intelligence_fetch_failed",
+                    key: dailyCacheKey(from: trimmedFrom, to: trimmedTo)
+                )
+            }
         }
     }
 
@@ -135,5 +202,22 @@ final class BusinessIntelligenceStore: ObservableObject {
     private func isFresh(_ key: String, interval: TimeInterval? = nil) -> Bool {
         guard let loadedAt = loadedAtByRangeKey[key] else { return false }
         return Date().timeIntervalSince(loadedAt) < (interval ?? freshnessInterval)
+    }
+}
+
+private extension Error {
+    var isTimeoutLike: Bool {
+        let nsError = self as NSError
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorTimedOut {
+            return true
+        }
+        if let urlError = self as? URLError {
+            return urlError.code == .timedOut
+        }
+        if let reservationError = self as? ReservationAPIError,
+           case .networkFailure(let urlError) = reservationError {
+            return urlError.code == .timedOut
+        }
+        return localizedDescription.localizedCaseInsensitiveContains("timed out")
     }
 }

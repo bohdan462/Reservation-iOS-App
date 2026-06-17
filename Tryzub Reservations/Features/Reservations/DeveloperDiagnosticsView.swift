@@ -44,6 +44,7 @@ struct DeveloperDiagnosticsView: View {
             syncScopeSection
             safeFetchTestsSection
             emailWorkflowResponsesSection
+            backendReminderAutomationSection
             requestLogSection
             cacheSection
             hostIntelligenceDiagnosticsSection
@@ -226,6 +227,23 @@ struct DeveloperDiagnosticsView: View {
         }
     }
 
+    private var backendReminderAutomationSection: some View {
+        let setup = controller.restaurantSetup
+        let status = controller.lastReminderStatusByDate[Date.reservationDateString()]
+        let automation = ResolvedReminderAutomationSettings.resolving(setup: setup, status: status)
+
+        return Section("Backend Reminder Automation") {
+            row("Setup loaded", controller.hasLoadedRestaurantSetup ? "Yes" : "No")
+            row("Automatic reminders", automation.automaticRemindersEnabled ? "Enabled" : "Disabled")
+            row("Manual batch reminders", automation.manualBatchRemindersEnabled ? "Enabled" : "Disabled")
+            row("Reminder lead hours", "\(automation.reminderLeadHours)")
+            row("Morning reminder time", automation.morningReminderTime)
+            if let status {
+                row("Today eligible", "\(status.summary.eligible)")
+            }
+        }
+    }
+
     private var cacheSection: some View {
         let stats = cacheStats
         return Section("SwiftData Cache") {
@@ -387,6 +405,13 @@ struct DeveloperDiagnosticsView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
         }
+    }
+
+    private func trimmedNonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
     }
 
     @ViewBuilder

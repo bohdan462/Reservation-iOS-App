@@ -500,6 +500,16 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return URLSession(configuration: configuration)
     }()
 
+    private static let longRunningIntelligenceSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.waitsForConnectivity = false
+        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForResource = 75
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.httpMaximumConnectionsPerHost = 1
+        return URLSession(configuration: configuration)
+    }()
+
     // MARK: - Initialization
 
     init(baseURL: URL,
@@ -1028,8 +1038,13 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
                 URLQueryItem(name: "to", value: to)
             ]
         )
-        let request = makeRequest(url: url, method: "GET")
-        let data = try await perform(request, reason: reason)
+        var request = makeRequest(url: url, method: "GET")
+        request.timeoutInterval = 60
+        let data = try await perform(
+            request,
+            reason: reason,
+            session: ReservationsAPIClient.longRunningIntelligenceSession
+        )
 
         return try decodeBusinessIntelligenceSummary(from: data, request: request)
     }
@@ -1607,13 +1622,15 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         _ request: URLRequest,
         retryCount: Int = 0,
         reason: ReservationAPIRequestReason = .unspecified,
-        requiresAuth: Bool = true
+        requiresAuth: Bool = true,
+        session: URLSession? = nil
     ) async throws -> Data {
         let (data, response) = try await execute(
             request,
             retryCount: retryCount,
             reason: reason,
-            requiresAuth: requiresAuth
+            requiresAuth: requiresAuth,
+            session: session
         )
         try validate(response: response, data: data, request: request, reason: reason)
         return data
@@ -1623,7 +1640,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         _ request: URLRequest,
         retryCount: Int = 0,
         reason: ReservationAPIRequestReason = .unspecified,
-        requiresAuth: Bool = true
+        requiresAuth: Bool = true,
+        session: URLSession? = nil
     ) async throws -> (Data, URLResponse) {
         if requiresAuth {
             try ensureProtectedCredentials()
@@ -1638,7 +1656,10 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
 
         while attempt <= effectiveRetryCount {
             do {
-                let (data, response) = try await requestSerializer.data(for: request, session: session)
+                let (data, response) = try await requestSerializer.data(
+                    for: request,
+                    session: session ?? self.session
+                )
                 let includeResponseBody = !reason.suppressesResponseBodyLogging
                 let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
                 let diagnostics = ReservationAPIDiagnostics.make(

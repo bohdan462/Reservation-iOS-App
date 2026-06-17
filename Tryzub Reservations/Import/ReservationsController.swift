@@ -3086,6 +3086,7 @@ final class ReservationsController: ObservableObject {
     func sendDueReminders(for dateKey: String) async -> Bool {
         let date = dateKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !date.isEmpty else { return false }
+        guard restaurantSetup.manualBatchRemindersEnabled else { return false }
         guard canStartMutationOnline() else { return false }
         guard !isSendingReminderBatch else { return false }
 
