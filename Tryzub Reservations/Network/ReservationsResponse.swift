@@ -236,7 +236,7 @@ struct PingResponseDTO: Decodable, Equatable {
         case success
         case message
         case time
-        case tableExists = "table_exists"
+        case tableExists
     }
 }
 
