@@ -713,7 +713,6 @@ extension RestaurantSetup {
 struct RestaurantSettingsView: View {
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
-    @EnvironmentObject private var emailAutomationSettingsStore: EmailAutomationSettingsStore
     @ObservedObject var settingsStore: RestaurantSettingsStore
 
     @State private var draft = RestaurantSetupDraft(setup: .default)
@@ -765,18 +764,7 @@ struct RestaurantSettingsView: View {
                     SettingsNumberField(title: "Large party review threshold", text: $draft.largePartyReviewThreshold)
                     SettingsNumberField(title: "Minimum lead time minutes", text: $draft.minimumLeadTimeMinutes)
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Slot interval")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-
-                        Picker("Slot interval", selection: $draft.slotIntervalMinutes) {
-                            ForEach(["15", "30", "45", "60"], id: \.self) { value in
-                                Text("\(value) min").tag(value)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                    }
+                    slotIntervalPicker
 
                     Toggle("Same-day booking enabled", isOn: $draft.sameDayBookingEnabled)
                         .font(.subheadline.weight(.medium))
@@ -862,10 +850,6 @@ struct RestaurantSettingsView: View {
                 backendRemindersReadOnlyCard
                 backendAutoConfirmReadOnlyCard
                 emailLimitsReadOnlyCard
-
-                if controller.capabilities.canManageRestaurantSettings {
-                    emailAutomationNavigationCard
-                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 24)
@@ -1032,17 +1016,20 @@ struct RestaurantSettingsView: View {
         }
     }
 
-    private var emailAutomationNavigationCard: some View {
-        SettingsCard(title: "This iPad Email Controls", systemImage: "ipad.and.arrow.forward") {
-            SettingsHelperText("These switches apply only on this iPad. They do not change backend restaurant settings.")
+    private let slotIntervalOptions = ["15", "30", "45", "60"]
 
-            NavigationLink {
-                EmailAutomationSettingsView(settingsStore: emailAutomationSettingsStore)
-            } label: {
-                Label("Open This iPad Email Controls", systemImage: "arrow.right.circle")
-                    .font(.subheadline.weight(.semibold))
+    private var slotIntervalPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Slot interval")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            Picker("Slot interval", selection: $draft.slotIntervalMinutes) {
+                ForEach(slotIntervalOptions, id: \.self) { value in
+                    Text("\(value) min").tag(value)
+                }
             }
-            .padding(.top, 4)
+            .pickerStyle(.segmented)
         }
     }
 
