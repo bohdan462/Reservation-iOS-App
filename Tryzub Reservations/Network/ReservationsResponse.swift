@@ -84,6 +84,7 @@ struct ReservationReminderBatchResponse: Codable {
     let manualBatchRemindersEnabled: Bool?
     let reminderLeadHours: Int?
     let morningReminderTime: String?
+    let emailUsage: EmailUsageSummary?
 
     enum CodingKeys: String, CodingKey {
         case success
@@ -100,6 +101,7 @@ struct ReservationReminderBatchResponse: Codable {
         case manualBatchRemindersEnabled
         case reminderLeadHours
         case morningReminderTime
+        case emailUsage
     }
 
     init(from decoder: Decoder) throws {
@@ -118,6 +120,7 @@ struct ReservationReminderBatchResponse: Codable {
         manualBatchRemindersEnabled = try container.decodeIfPresent(Bool.self, forKey: .manualBatchRemindersEnabled)
         reminderLeadHours = try container.decodeFlexibleIntIfPresent(forKey: .reminderLeadHours)
         morningReminderTime = try container.decodeIfPresent(String.self, forKey: .morningReminderTime)
+        emailUsage = try container.decodeIfPresent(EmailUsageSummary.self, forKey: .emailUsage)
     }
 }
 

@@ -155,6 +155,10 @@ struct HostIntelligenceSettingsView: View {
       Text("Recommendations only. Staff must still confirm in reservation detail.")
         .font(.caption)
         .foregroundStyle(.secondary)
+
+      Text("Local host suggestions only. Backend auto-confirm is controlled from Restaurant Settings and runs only on the server.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
   }
 

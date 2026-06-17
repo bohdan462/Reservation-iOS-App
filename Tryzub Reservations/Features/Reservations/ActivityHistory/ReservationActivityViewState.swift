@@ -22,6 +22,7 @@ struct ReservationActivityItemViewState: Identifiable, Equatable {
     let timeText: String
     let iconName: String
     let eventType: String
+    let source: String
     let reservationId: Int
     let createdAt: String
 }
@@ -40,6 +41,14 @@ struct ReservationActivityFeedViewState: Equatable {
     let total: Int
     let page: Int
     let totalPages: Int
+}
+
+enum ReservationActivityEvidence {
+    static func isBackendAutoConfirmed(eventType: String, source: String) -> Bool {
+        let normalizedType = eventType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedSource = source.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalizedType == "auto_confirmed" || normalizedSource == "auto_confirm"
+    }
 }
 
 enum ReservationActivityViewStateBuilder {
@@ -78,6 +87,7 @@ enum ReservationActivityViewStateBuilder {
             timeText: formattedTime(dto.createdAt, now: now),
             iconName: iconName(for: dto.eventType),
             eventType: dto.eventType,
+            source: dto.source,
             reservationId: dto.reservationId,
             createdAt: dto.createdAt
         )
@@ -180,6 +190,7 @@ enum ReservationActivityViewStateBuilder {
         case "restored": return "eye"
         case "hard_deleted": return "trash"
         case "auto_completed": return "clock.badge.checkmark"
+        case "auto_confirmed": return "checkmark.seal"
         default: return "clock.arrow.circlepath"
         }
     }
@@ -191,6 +202,7 @@ enum ReservationActivityViewStateBuilder {
         case "table_assigned", "table_cleared": return "Tables"
         case "guest_note_updated", "staff_note_updated": return "Notes"
         case "confirmed": return "Confirmed"
+        case "auto_confirmed": return "Auto-confirmed"
         case "status_changed": return "Status"
         case "manual_email_sent", "email_draft_created": return "Email"
         default:

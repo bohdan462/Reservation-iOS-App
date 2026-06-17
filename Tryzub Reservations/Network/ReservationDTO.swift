@@ -470,6 +470,15 @@ struct RestaurantSetupDTO: Codable, Equatable {
     let manualBatchRemindersEnabled: Bool
     let reminderLeadHours: Int
     let morningReminderTime: String
+    let autoConfirmEnabled: Bool
+    let autoConfirmRequireEmail: Bool
+    let autoConfirmBlockGuestNotes: Bool
+    let autoConfirmBlockDuplicates: Bool
+    let autoConfirmBlockSuspicious: Bool
+    let autoConfirmPolicy: AutoConfirmPolicy
+    let emailDailyLimit: Int
+    let emailMonthlyLimit: Int
+    let emailUsage: EmailUsageSummary?
     let createdAt: String?
     let updatedAt: String?
 
@@ -491,6 +500,15 @@ struct RestaurantSetupDTO: Codable, Equatable {
         case manualBatchRemindersEnabled
         case reminderLeadHours
         case morningReminderTime
+        case autoConfirmEnabled
+        case autoConfirmRequireEmail
+        case autoConfirmBlockGuestNotes
+        case autoConfirmBlockDuplicates
+        case autoConfirmBlockSuspicious
+        case autoConfirmPolicy
+        case emailDailyLimit
+        case emailMonthlyLimit
+        case emailUsage
         case createdAt
         case updatedAt
     }
@@ -514,6 +532,15 @@ struct RestaurantSetupDTO: Codable, Equatable {
         manualBatchRemindersEnabled = try container.decodeFlexibleBoolIfPresent(forKey: .manualBatchRemindersEnabled) ?? ReminderAutomationDefaults.manualBatchRemindersEnabled
         reminderLeadHours = try container.decodeFlexibleIntIfPresent(forKey: .reminderLeadHours) ?? ReminderAutomationDefaults.reminderLeadHours
         morningReminderTime = try container.decodeIfPresent(String.self, forKey: .morningReminderTime) ?? ReminderAutomationDefaults.morningReminderTime
+        autoConfirmEnabled = try container.decodeFlexibleBoolIfPresent(forKey: .autoConfirmEnabled) ?? AutoConfirmDefaults.enabled
+        autoConfirmRequireEmail = try container.decodeFlexibleBoolIfPresent(forKey: .autoConfirmRequireEmail) ?? AutoConfirmDefaults.requireEmail
+        autoConfirmBlockGuestNotes = try container.decodeFlexibleBoolIfPresent(forKey: .autoConfirmBlockGuestNotes) ?? AutoConfirmDefaults.blockGuestNotes
+        autoConfirmBlockDuplicates = try container.decodeFlexibleBoolIfPresent(forKey: .autoConfirmBlockDuplicates) ?? AutoConfirmDefaults.blockDuplicates
+        autoConfirmBlockSuspicious = try container.decodeFlexibleBoolIfPresent(forKey: .autoConfirmBlockSuspicious) ?? AutoConfirmDefaults.blockSuspicious
+        autoConfirmPolicy = try container.decodeIfPresent(AutoConfirmPolicy.self, forKey: .autoConfirmPolicy) ?? AutoConfirmDefaults.policy
+        emailDailyLimit = try container.decodeFlexibleIntIfPresent(forKey: .emailDailyLimit) ?? AutoConfirmDefaults.emailDailyLimit
+        emailMonthlyLimit = try container.decodeFlexibleIntIfPresent(forKey: .emailMonthlyLimit) ?? AutoConfirmDefaults.emailMonthlyLimit
+        emailUsage = try container.decodeIfPresent(EmailUsageSummary.self, forKey: .emailUsage)
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
     }
@@ -544,6 +571,15 @@ struct RestaurantSetup: Codable, Equatable {
     var manualBatchRemindersEnabled: Bool
     var reminderLeadHours: Int
     var morningReminderTime: String
+    var autoConfirmEnabled: Bool
+    var autoConfirmRequireEmail: Bool
+    var autoConfirmBlockGuestNotes: Bool
+    var autoConfirmBlockDuplicates: Bool
+    var autoConfirmBlockSuspicious: Bool
+    var autoConfirmPolicy: AutoConfirmPolicy
+    var emailDailyLimit: Int
+    var emailMonthlyLimit: Int
+    var emailUsage: EmailUsageSummary?
     var createdAt: String?
     var updatedAt: String?
 
@@ -565,6 +601,15 @@ struct RestaurantSetup: Codable, Equatable {
         manualBatchRemindersEnabled: ReminderAutomationDefaults.manualBatchRemindersEnabled,
         reminderLeadHours: ReminderAutomationDefaults.reminderLeadHours,
         morningReminderTime: ReminderAutomationDefaults.morningReminderTime,
+        autoConfirmEnabled: AutoConfirmDefaults.enabled,
+        autoConfirmRequireEmail: AutoConfirmDefaults.requireEmail,
+        autoConfirmBlockGuestNotes: AutoConfirmDefaults.blockGuestNotes,
+        autoConfirmBlockDuplicates: AutoConfirmDefaults.blockDuplicates,
+        autoConfirmBlockSuspicious: AutoConfirmDefaults.blockSuspicious,
+        autoConfirmPolicy: AutoConfirmDefaults.policy,
+        emailDailyLimit: AutoConfirmDefaults.emailDailyLimit,
+        emailMonthlyLimit: AutoConfirmDefaults.emailMonthlyLimit,
+        emailUsage: nil,
         createdAt: nil,
         updatedAt: nil
     )
@@ -587,6 +632,15 @@ struct RestaurantSetup: Codable, Equatable {
         manualBatchRemindersEnabled = dto.manualBatchRemindersEnabled
         reminderLeadHours = dto.reminderLeadHours
         morningReminderTime = dto.morningReminderTime
+        autoConfirmEnabled = dto.autoConfirmEnabled
+        autoConfirmRequireEmail = dto.autoConfirmRequireEmail
+        autoConfirmBlockGuestNotes = dto.autoConfirmBlockGuestNotes
+        autoConfirmBlockDuplicates = dto.autoConfirmBlockDuplicates
+        autoConfirmBlockSuspicious = dto.autoConfirmBlockSuspicious
+        autoConfirmPolicy = dto.autoConfirmPolicy
+        emailDailyLimit = dto.emailDailyLimit
+        emailMonthlyLimit = dto.emailMonthlyLimit
+        emailUsage = dto.emailUsage
         createdAt = dto.createdAt
         updatedAt = dto.updatedAt
     }
@@ -609,6 +663,15 @@ struct RestaurantSetup: Codable, Equatable {
         manualBatchRemindersEnabled: Bool = ReminderAutomationDefaults.manualBatchRemindersEnabled,
         reminderLeadHours: Int = ReminderAutomationDefaults.reminderLeadHours,
         morningReminderTime: String = ReminderAutomationDefaults.morningReminderTime,
+        autoConfirmEnabled: Bool = AutoConfirmDefaults.enabled,
+        autoConfirmRequireEmail: Bool = AutoConfirmDefaults.requireEmail,
+        autoConfirmBlockGuestNotes: Bool = AutoConfirmDefaults.blockGuestNotes,
+        autoConfirmBlockDuplicates: Bool = AutoConfirmDefaults.blockDuplicates,
+        autoConfirmBlockSuspicious: Bool = AutoConfirmDefaults.blockSuspicious,
+        autoConfirmPolicy: AutoConfirmPolicy = AutoConfirmDefaults.policy,
+        emailDailyLimit: Int = AutoConfirmDefaults.emailDailyLimit,
+        emailMonthlyLimit: Int = AutoConfirmDefaults.emailMonthlyLimit,
+        emailUsage: EmailUsageSummary? = nil,
         createdAt: String?,
         updatedAt: String?
     ) {
@@ -629,6 +692,15 @@ struct RestaurantSetup: Codable, Equatable {
         self.manualBatchRemindersEnabled = manualBatchRemindersEnabled
         self.reminderLeadHours = reminderLeadHours
         self.morningReminderTime = morningReminderTime
+        self.autoConfirmEnabled = autoConfirmEnabled
+        self.autoConfirmRequireEmail = autoConfirmRequireEmail
+        self.autoConfirmBlockGuestNotes = autoConfirmBlockGuestNotes
+        self.autoConfirmBlockDuplicates = autoConfirmBlockDuplicates
+        self.autoConfirmBlockSuspicious = autoConfirmBlockSuspicious
+        self.autoConfirmPolicy = autoConfirmPolicy
+        self.emailDailyLimit = emailDailyLimit
+        self.emailMonthlyLimit = emailMonthlyLimit
+        self.emailUsage = emailUsage
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -647,6 +719,18 @@ struct RestaurantSetupUpdateRequest: Encodable {
     var callInPlaceholderEmail: String? = nil
     var fromEmail: String? = nil
     var replyToEmail: String? = nil
+    var automaticRemindersEnabled: Bool? = nil
+    var reminderLeadHours: Int? = nil
+    var manualBatchRemindersEnabled: Bool? = nil
+    var morningReminderTime: String? = nil
+    var autoConfirmEnabled: Bool? = nil
+    var autoConfirmRequireEmail: Bool? = nil
+    var autoConfirmBlockGuestNotes: Bool? = nil
+    var autoConfirmBlockDuplicates: Bool? = nil
+    var autoConfirmBlockSuspicious: Bool? = nil
+    var autoConfirmPolicy: AutoConfirmPolicy? = nil
+    var emailDailyLimit: Int? = nil
+    var emailMonthlyLimit: Int? = nil
 }
 
 struct RestaurantHoursDTO: Codable, Equatable {

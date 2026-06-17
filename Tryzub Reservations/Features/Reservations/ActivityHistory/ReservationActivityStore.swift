@@ -149,6 +149,15 @@ final class ReservationActivityStore: ObservableObject {
         reservationCache[reservationID]?.items ?? []
     }
 
+    func hasBackendAutoConfirmEvidence(for reservationID: Int) -> Bool {
+        allItems(for: reservationID).contains {
+            ReservationActivityEvidence.isBackendAutoConfirmed(
+                eventType: $0.eventType,
+                source: $0.source
+            )
+        }
+    }
+
     func reservationPagination(for reservationID: Int) -> (page: Int, totalPages: Int, total: Int)? {
         guard let cache = reservationCache[reservationID] else { return nil }
         return (cache.page, cache.totalPages, cache.total)

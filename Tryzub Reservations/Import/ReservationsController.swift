@@ -3087,6 +3087,11 @@ final class ReservationsController: ObservableObject {
         let date = dateKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !date.isEmpty else { return false }
         guard restaurantSetup.manualBatchRemindersEnabled else { return false }
+        let status = lastReminderStatusByDate[date]
+        let emailUsage = ResolvedEmailUsage.resolving(setup: restaurantSetup, status: status)
+        if emailUsage.hasUsageData, emailUsage.isDailyLimitReached {
+            return false
+        }
         guard canStartMutationOnline() else { return false }
         guard !isSendingReminderBatch else { return false }
 

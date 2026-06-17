@@ -771,6 +771,18 @@ struct ReservationStatusBadge: View {
     }
 }
 
+struct AutoConfirmedBadge: View {
+    var body: some View {
+        TryzubStatusBadge(
+            title: "Auto-confirmed",
+            tint: .secondary,
+            minHeight: 22,
+            horizontalPadding: 8
+        )
+        .font(.caption2.weight(.medium))
+    }
+}
+
 //OLD
 //struct ReservationStatusBadge: View {
 //    let status: ReservationStatus

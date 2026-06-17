@@ -34,6 +34,7 @@ enum ReservationAPIRequestReason: String {
     case mutationConfirm = "mutation_confirm"
     case reminderBatch = "reminder_batch"
     case reminderStatus = "reminder_status"
+    case autoConfirmCandidates = "auto_confirm_candidates"
     case mutationCreate = "mutation_create"
     case guestManageLink = "guest_manage_link"
     case manualEmailLog = "manual_email_log"
@@ -309,6 +310,7 @@ protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
     func confirmReservation(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationConfirmResponse
     func sendDueReminders(date: String?, reason: ReservationAPIRequestReason) async throws -> ReservationReminderBatchResponse
     func fetchReminderStatus(date: String, reason: ReservationAPIRequestReason) async throws -> ReservationReminderStatusResponse
+    func fetchAutoConfirmCandidates(date: Date, reason: ReservationAPIRequestReason) async throws -> AutoConfirmCandidateResponse
     func createGuestManageLink(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationGuestManageLinkDTO
     func logManualEmail(reservationID: Int, request: ReservationManualEmailLogRequest, reason: ReservationAPIRequestReason) async throws -> ReservationManualEmailLogDTO
     func hardDeleteReservation(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationDeleteResponse
@@ -749,6 +751,23 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let data = try await perform(request, reason: reason)
 
         return try decode(ReservationReminderStatusResponse.self, from: data, request: request)
+    }
+
+    // Intent: Read-only auto-confirm dry-run candidates for a service date.
+    // Network: GET /auto-confirm/candidates?date=YYYY-MM-DD.
+    func fetchAutoConfirmCandidates(
+        date: Date,
+        reason: ReservationAPIRequestReason = .autoConfirmCandidates
+    ) async throws -> AutoConfirmCandidateResponse {
+        let dateKey = date.reservationDateString()
+        let url = try makeURL(
+            path: "auto-confirm/candidates",
+            queryItems: [URLQueryItem(name: "date", value: dateKey)]
+        )
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: reason)
+
+        return try decodeAutoConfirmCandidates(from: data, request: request)
     }
 
     // Intent: Generates a guest self-service URL for manual Gmail/Mail workflows.
@@ -1516,6 +1535,23 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
             }
 
             return try decoder.decode(RestaurantHoursDTO.self, from: data)
+        } catch {
+            let diagnostics = ReservationAPIDiagnostics.make(
+                request: request,
+                response: nil,
+                data: data,
+                decodingError: error
+            )
+            throw ReservationAPIError.decodingFailure(error, diagnostics: diagnostics)
+        }
+    }
+
+    private func decodeAutoConfirmCandidates(
+        from data: Data,
+        request: URLRequest
+    ) throws -> AutoConfirmCandidateResponse {
+        do {
+            return try decoder.decode(AutoConfirmCandidateResponse.self, from: data)
         } catch {
             let diagnostics = ReservationAPIDiagnostics.make(
                 request: request,

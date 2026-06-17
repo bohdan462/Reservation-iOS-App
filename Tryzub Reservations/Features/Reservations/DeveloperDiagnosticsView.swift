@@ -45,6 +45,9 @@ struct DeveloperDiagnosticsView: View {
             safeFetchTestsSection
             emailWorkflowResponsesSection
             backendReminderAutomationSection
+            backendAutoConfirmSection
+            backendEmailUsageSection
+            AutoConfirmDryRunDiagnosticsSection(environment: environment)
             requestLogSection
             cacheSection
             hostIntelligenceDiagnosticsSection
@@ -244,6 +247,45 @@ struct DeveloperDiagnosticsView: View {
         }
     }
 
+    private var backendAutoConfirmSection: some View {
+        let setup = controller.restaurantSetup
+
+        return Section("Backend Auto-Confirm") {
+            row("Setup loaded", controller.hasLoadedRestaurantSetup ? "Yes" : "No")
+            row("Auto-confirm", setup.autoConfirmEnabled ? "Enabled" : "Off")
+            row("Require email", setup.autoConfirmRequireEmail ? "Yes" : "No")
+            row("Block guest notes", setup.autoConfirmBlockGuestNotes ? "Yes" : "No")
+            row("Block duplicates", setup.autoConfirmBlockDuplicates ? "Yes" : "No")
+            row("Block suspicious", setup.autoConfirmBlockSuspicious ? "Yes" : "No")
+            row("Policy rules", "\(setup.autoConfirmPolicy.rules.count)")
+            row("Excluded dates", "\(setup.autoConfirmPolicy.excludedDates.count)")
+            row("Daily email limit", "\(setup.emailDailyLimit)")
+            row("Monthly email limit", "\(setup.emailMonthlyLimit)")
+        }
+    }
+
+    private var backendEmailUsageSection: some View {
+        let setup = controller.restaurantSetup
+        let status = controller.lastReminderStatusByDate[Date.reservationDateString()]
+        let usage = ResolvedEmailUsage.resolving(setup: setup, status: status)
+
+        return Section("Email Usage") {
+            if let daily = usage.daily {
+                row("Resend today", "\(daily.used) / \(daily.limit) used")
+                row("Remaining today", "\(daily.remaining)")
+            } else {
+                row("Resend today", "Usage unavailable")
+            }
+
+            if let monthly = usage.monthly {
+                row("Resend this month", "\(monthly.used) / \(monthly.limit) used")
+                row("Remaining this month", "\(monthly.remaining)")
+            } else {
+                row("Resend this month", "Usage unavailable")
+            }
+        }
+    }
+
     private var cacheSection: some View {
         let stats = cacheStats
         return Section("SwiftData Cache") {
@@ -315,6 +357,7 @@ struct DeveloperDiagnosticsView: View {
             endpointRow("PATCH /managed-reservations/{id}", pathFragment: "/managed-reservations/")
             endpointRow("POST /managed-reservations", pathFragment: "/managed-reservations")
             endpointRow("POST /managed-reservations/{id}/confirm", pathFragment: "/confirm")
+            endpointRow("GET /auto-confirm/candidates", pathFragment: "/auto-confirm/candidates")
             endpointRow("POST /managed-reservations/{id}/manual-email-log", pathFragment: "/manual-email-log")
             endpointRow("GET /managed-reservations/import-failures", pathFragment: "/managed-reservations/import-failures")
             endpointRow("POST /restaurant-blocked-slots", pathFragment: "/restaurant-blocked-slots")

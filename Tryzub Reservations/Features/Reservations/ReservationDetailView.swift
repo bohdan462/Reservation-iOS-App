@@ -519,7 +519,11 @@ struct ReservationDetailView: View {
             if isWide {
                 VStack(spacing: 14) {
                     detailColumnPair {
-                        DetailHeroCard(header: presentation.header, layout: .compact)
+                        DetailHeroCard(
+                            header: presentation.header,
+                            layout: .compact,
+                            showsAutoConfirmedBadge: isBackendAutoConfirmed
+                        )
                     } right: {
                         actionBar
                     }
@@ -557,7 +561,10 @@ struct ReservationDetailView: View {
                 }
             } else {
                 VStack(spacing: 14) {
-                    DetailHeroCard(header: presentation.header)
+                    DetailHeroCard(
+                        header: presentation.header,
+                        showsAutoConfirmedBadge: isBackendAutoConfirmed
+                    )
                     actionBar
                     importantCard(presentation)
                     noteSignalsCard
@@ -579,6 +586,10 @@ struct ReservationDetailView: View {
                 }
             }
         }
+    }
+
+    private var isBackendAutoConfirmed: Bool {
+        activityStore.hasBackendAutoConfirmEvidence(for: reservation.remoteID)
     }
 
     @ViewBuilder
@@ -2295,6 +2306,7 @@ private enum DetailHeroLayout {
 private struct DetailHeroCard: View {
     let header: ReservationDetailPresentation.Header
     var layout: DetailHeroLayout = .standard
+    var showsAutoConfirmedBadge = false
     @Environment(\.detailGridEqualHeight) private var fillsAvailableHeight
 
     var body: some View {
@@ -2374,7 +2386,12 @@ private struct DetailHeroCard: View {
 
             Spacer(minLength: 8)
 
-            ReservationStatusBadge(status: header.status)
+            HStack(spacing: 6) {
+                ReservationStatusBadge(status: header.status)
+                if showsAutoConfirmedBadge {
+                    AutoConfirmedBadge()
+                }
+            }
         }
     }
 }

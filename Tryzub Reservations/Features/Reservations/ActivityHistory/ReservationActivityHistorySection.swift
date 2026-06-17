@@ -132,15 +132,31 @@ struct ReservationActivityRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 if style == .compact {
-                    Text("\(item.timeText) · \(item.title)")
-                        .font(.subheadline)
-                        .foregroundStyle(TryzubColors.primaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("\(item.timeText) · \(item.title)")
+                            .font(.subheadline)
+                            .foregroundStyle(TryzubColors.primaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if ReservationActivityEvidence.isBackendAutoConfirmed(
+                            eventType: item.eventType,
+                            source: item.source
+                        ) {
+                            AutoConfirmedBadge()
+                        }
+                    }
                 } else {
-                    Text(item.title)
-                        .font(.subheadline)
-                        .foregroundStyle(TryzubColors.primaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(item.title)
+                            .font(.subheadline)
+                            .foregroundStyle(TryzubColors.primaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if ReservationActivityEvidence.isBackendAutoConfirmed(
+                            eventType: item.eventType,
+                            source: item.source
+                        ) {
+                            AutoConfirmedBadge()
+                        }
+                    }
                 }
 
                 if let subtitle = item.subtitle, !subtitle.isEmpty {

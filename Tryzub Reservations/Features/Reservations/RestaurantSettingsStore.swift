@@ -162,6 +162,12 @@ final class RestaurantSettingsStore: ObservableObject {
         }
     }
 
+    /// PATCH /restaurant-setup for backend reminder, auto-confirm, and email limit fields.
+    @discardableResult
+    func saveRestaurantAutomationSetup(request: RestaurantSetupUpdateRequest) async throws -> RestaurantSetup {
+        try await saveRestaurantSetup(request: request)
+    }
+
     // MARK: - Weekly Hours
 
     @discardableResult
@@ -847,6 +853,10 @@ struct RestaurantSettingsView: View {
 
                     SettingsHelperText("Email sending setup is handled separately after domain/DNS confirmation.")
                 }
+
+                backendRemindersReadOnlyCard
+                backendAutoConfirmReadOnlyCard
+                emailLimitsReadOnlyCard
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
@@ -894,6 +904,101 @@ struct RestaurantSettingsView: View {
         .onChange(of: hostTableConfigStore.tables) { _, _ in
             syncImportTextFromStructuredInventoryIfNeeded()
         }
+    }
+
+    private var resolvedEmailUsage: ResolvedEmailUsage {
+        ResolvedEmailUsage.resolving(
+            setup: setup,
+            status: controller.lastReminderStatusByDate[Date.reservationDateString()]
+        )
+    }
+
+    private var backendRemindersReadOnlyCard: some View {
+        SettingsCard(title: "Backend Reminders", systemImage: "bell.badge") {
+            SettingsKeyValueGrid(items: [
+                ("Automatic reminders", setup.automaticRemindersEnabled ? "On" : "Off"),
+                ("Manual batch reminders", setup.manualBatchRemindersEnabled ? "On" : "Off"),
+                ("Reminder lead time", reminderLeadHoursLabel(setup.reminderLeadHours)),
+                ("Morning reminder time", setup.morningReminderTime)
+            ])
+            SettingsHelperText("Server-owned reminder automation. Host batch sending still requires this iPad’s Email Automation toggle.")
+        }
+    }
+
+    private var backendAutoConfirmReadOnlyCard: some View {
+        let policy = setup.autoConfirmPolicy
+        let enabledRuleCount = policy.rules.filter(\.enabled).count
+
+        return SettingsCard(title: "Backend Auto-Confirm", systemImage: "checkmark.seal") {
+            SettingsKeyValueGrid(items: [
+                ("Auto-confirm", setup.autoConfirmEnabled ? "On" : "Off"),
+                ("Rules", "\(policy.rules.count)"),
+                ("Enabled rules", "\(enabledRuleCount)"),
+                ("Excluded dates", "\(policy.excludedDates.count)"),
+                ("Require email", setup.autoConfirmRequireEmail ? "On" : "Off"),
+                ("Block guest notes", setup.autoConfirmBlockGuestNotes ? "On" : "Off"),
+                ("Block duplicates", setup.autoConfirmBlockDuplicates ? "On" : "Off"),
+                ("Block suspicious contacts", setup.autoConfirmBlockSuspicious ? "On" : "Off")
+            ])
+
+            SettingsHelperText("Backend owns auto-confirm. This iPad never auto-confirms reservations.")
+
+            if setup.autoConfirmEnabled {
+                SettingsNoticeCard(
+                    message: "Auto-confirm sends confirmation emails and confirms eligible website reservations after import.",
+                    tint: .orange
+                )
+            }
+
+            if controller.capabilities.canManageRestaurantSettings {
+                NavigationLink {
+                    AutoConfirmPolicyEditorView(
+                        setup: setup,
+                        settingsStore: settingsStore,
+                        controller: controller,
+                        onSaved: { saved in
+                            setup = saved
+                        }
+                    )
+                } label: {
+                    Label("Edit Auto-Confirm Rules", systemImage: "slider.horizontal.3")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .padding(.top, 4)
+            }
+        }
+    }
+
+    private var emailLimitsReadOnlyCard: some View {
+        let usage = resolvedEmailUsage
+        var items: [(String, String)] = [
+            ("Daily limit", "\(setup.emailDailyLimit)"),
+            ("Monthly limit", "\(setup.emailMonthlyLimit)")
+        ]
+
+        if let daily = usage.daily {
+            items.append(("Resend today", "\(daily.used) / \(daily.limit) used"))
+            items.append(("Remaining today", "\(daily.remaining)"))
+        } else {
+            items.append(("Resend today", "Usage unavailable"))
+        }
+
+        if let monthly = usage.monthly {
+            items.append(("Resend this month", "\(monthly.used) / \(monthly.limit) used"))
+            items.append(("Remaining this month", "\(monthly.remaining)"))
+        } else {
+            items.append(("Resend this month", "Usage unavailable"))
+        }
+
+        return SettingsCard(title: "Email Limits", systemImage: "envelope.badge") {
+            SettingsKeyValueGrid(items: items)
+            SettingsHelperText("Resend usage counts backend provider sends only.")
+        }
+    }
+
+    private func reminderLeadHoursLabel(_ hours: Int) -> String {
+        let unit = hours == 1 ? "hour" : "hours"
+        return "\(hours) \(unit)"
     }
 
     private func syncImportTextFromStructuredInventoryIfNeeded() {

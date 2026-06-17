@@ -998,11 +998,17 @@ struct HostBoardView: View {
                 setup: controller.restaurantSetup,
                 status: status
             )
+            let emailUsage = ResolvedEmailUsage.resolving(
+                setup: controller.restaurantSetup,
+                status: status
+            )
             let eligibleCount = status?.summary.eligible ?? 0
             let hasEligibleReminders = eligibleCount > 0
+            let dailyEmailLimitReached = emailUsage.hasUsageData && emailUsage.isDailyLimitReached
             let canSendBatchReminders = settings.manualReminderSendEnabled
                 && automation.manualBatchRemindersEnabled
                 && hasEligibleReminders
+                && !dailyEmailLimitReached
 
             HostReminderBatchCard(
                 status: status,
@@ -1014,6 +1020,8 @@ struct HostBoardView: View {
                 backendManualBatchEnabled: automation.manualBatchRemindersEnabled,
                 automaticRemindersEnabled: automation.automaticRemindersEnabled,
                 reminderLeadHours: automation.reminderLeadHours,
+                emailUsage: emailUsage,
+                dailyEmailLimitReached: dailyEmailLimitReached,
                 canSendBatchReminders: canSendBatchReminders,
                 onSend: { showBackendReminderConfirmation = true }
             )
@@ -1691,6 +1699,8 @@ private struct HostReminderBatchCard: View {
     let backendManualBatchEnabled: Bool
     let automaticRemindersEnabled: Bool
     let reminderLeadHours: Int
+    let emailUsage: ResolvedEmailUsage
+    let dailyEmailLimitReached: Bool
     let canSendBatchReminders: Bool
     let onSend: () -> Void
 
@@ -1705,6 +1715,8 @@ private struct HostReminderBatchCard: View {
                         .controlSize(.small)
                 }
             }
+
+            emailUsageLines
 
             if let leadHoursText {
                 Text(leadHoursText)
@@ -1746,6 +1758,10 @@ private struct HostReminderBatchCard: View {
                     Text("Manual batch reminders are disabled in backend settings.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                } else if dailyEmailLimitReached {
+                    Text("Daily Resend limit reached. Batch reminders are unavailable until tomorrow.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } else if canSendBatchReminders {
                     Button {
                         onSend()
@@ -1774,6 +1790,25 @@ private struct HostReminderBatchCard: View {
         guard reminderLeadHours > 0 else { return nil }
         let unit = reminderLeadHours == 1 ? "hour" : "hours"
         return "Catch-up reminders require at least \(reminderLeadHours) \(unit) before reservation."
+    }
+
+    @ViewBuilder
+    private var emailUsageLines: some View {
+        if let dailyText = emailUsage.dailyDisplayText {
+            Text(dailyText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        if let monthlyText = emailUsage.monthlyDisplayText {
+            Text(monthlyText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        if !emailUsage.hasUsageData {
+            Text("Usage unavailable")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private func summaryText(_ summary: ReservationReminderSummaryDTO) -> String {
