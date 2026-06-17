@@ -13,6 +13,7 @@ struct GuestInsightsView: View {
     let allReservations: [ReservationRecord]
 
     @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
+    @EnvironmentObject private var guestProfileStore: GuestProfileStore
     @StateObject private var profileFacade = GuestProfileFacade()
 
     private var report: GuestInsightReport? {
@@ -26,7 +27,25 @@ struct GuestInsightsView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
-                if let report, let mergedContext {
+                if let viewState, let aggregateProfile = viewState.aggregateProfile {
+                    GuestInsightAggregateHeader(state: viewState)
+                    GuestInsightAggregateProfileSection(aggregateProfile: aggregateProfile)
+                    if let report {
+                        GuestInsightBookingHistorySection(
+                            report: report,
+                            bookingHistory: GuestHistorySemantics.localCachedHistoryPresentation(
+                                localReport: report,
+                                profilePack: nil
+                            ) ?? GuestHistorySemantics.GuestInsightsBookingHistoryPresentation(
+                                scope: .localCacheOnly,
+                                sectionTitle: "Offline supplement",
+                                scopeNote: "Offline supplement based on reservations saved on this device."
+                            )
+                        )
+                        GuestInsightPossibleMatchesSection(report: report)
+                        GuestInsightWarningsSection(warnings: report.warnings)
+                    }
+                } else if let report, let mergedContext {
                     GuestInsightHeader(
                         report: report,
                         mergedContext: mergedContext
@@ -101,7 +120,8 @@ struct GuestInsightsView: View {
             profileFacade.loadIfNeeded(
                 reservation: selectedReservation,
                 historyPool: allReservations,
-                store: guestIntelligenceStore
+                store: guestIntelligenceStore,
+                guestProfileStore: guestProfileStore
             )
         }
         .task(id: guestInsightsMergeTraceKey) {
@@ -224,6 +244,111 @@ struct GuestInsightsView: View {
         }
     }
 
+}
+
+private struct GuestInsightAggregateHeader: View {
+    let state: GuestProfileViewState
+
+    var body: some View {
+        GuestInsightCard(title: "Guest", systemImage: "person.crop.circle") {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(state.header.guestName)
+                        .font(.title3.weight(.semibold))
+                    Spacer(minLength: 0)
+                    if state.aggregateProfile?.showsUpdatingBadge == true {
+                        GuestInsightBadge("Profile updating", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+                Text(state.header.reservationLine)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text(state.header.historyTitle)
+                    .font(.subheadline.weight(.semibold))
+                Text(state.header.historyDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct GuestInsightAggregateProfileSection: View {
+    let aggregateProfile: GuestInsightsProfilePresentation.AggregateProfileState
+
+    var body: some View {
+        if !aggregateProfile.countCards.isEmpty {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 142), spacing: 10)], spacing: 10) {
+                ForEach(aggregateProfile.countCards) { metric in
+                    GuestInsightMetricCard(
+                        title: metric.title,
+                        value: metric.value,
+                        caption: metric.caption
+                    )
+                }
+            }
+        }
+
+        GuestInsightCard(title: "Backend guest profile", systemImage: "person.text.rectangle") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(aggregateProfile.sourceLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(Array(aggregateProfile.summaryLines.enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(.subheadline)
+                }
+
+                if !aggregateProfile.labels.isEmpty {
+                    FlowLayout(spacing: 7) {
+                        ForEach(aggregateProfile.labels) { label in
+                            GuestInsightBadge(label.title, systemImage: "tag")
+                        }
+                    }
+                }
+
+                if let upcomingLine = aggregateProfile.upcomingLine {
+                    Text(upcomingLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+
+        if !aggregateProfile.preferenceLines.isEmpty {
+            GuestInsightCard(title: "Patterns", systemImage: "chart.bar.doc.horizontal") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(aggregateProfile.preferenceLines, id: \.self) { line in
+                        Text(line)
+                            .font(.subheadline)
+                    }
+                }
+            }
+        }
+
+        if !aggregateProfile.noteLines.isEmpty || aggregateProfile.labels.contains(where: { $0.detail != nil || $0.evidence != nil }) {
+            GuestInsightCard(title: "Notes and evidence", systemImage: "note.text") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(aggregateProfile.noteLines, id: \.self) { line in
+                        Text(line)
+                            .font(.subheadline)
+                    }
+                    ForEach(aggregateProfile.labels) { label in
+                        if let detail = label.detail {
+                            Text("\(label.title): \(detail)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if let evidence = label.evidence {
+                            Text("\(label.title): \(evidence)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 private struct GuestInsightReservationShell: View {
@@ -1173,5 +1298,7 @@ struct FlowLayout<Content: View>: View {
         )
     }
     .modelContainer(ReservationPreviewData.previewContainer)
+    .environmentObject(GuestIntelligenceStore(apiClient: ReservationsAPIClient.preview))
+    .environmentObject(GuestProfileStore(apiClient: ReservationsAPIClient.preview))
 }
 #endif

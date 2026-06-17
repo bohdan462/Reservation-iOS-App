@@ -11,12 +11,14 @@ final class GuestProfileFacade: ObservableObject {
 
     @Published private(set) var viewState: GuestProfileViewState?
     @Published private(set) var localReport: GuestInsightReport?
+    @Published private(set) var aggregateProfile: GuestProfileDTO?
 
     let analysisCoordinator = GuestInsightsAnalysisCoordinator()
 
     private var generation = 0
     private var pendingReservationID: Int?
     private var boundStore: GuestIntelligenceStore?
+    private var boundGuestProfileStore: GuestProfileStore?
     private var reservationProvider: ReservationProvider?
     private var lastRebuildKey: String?
 
@@ -36,7 +38,8 @@ final class GuestProfileFacade: ObservableObject {
     func loadIfNeeded(
         reservation: ReservationRecord,
         historyPool: [ReservationRecord],
-        store: GuestIntelligenceStore
+        store: GuestIntelligenceStore,
+        guestProfileStore: GuestProfileStore
     ) {
         generation += 1
         let currentGeneration = generation
@@ -45,7 +48,9 @@ final class GuestProfileFacade: ObservableObject {
 
         pendingReservationID = reservationID
         boundStore = store
+        boundGuestProfileStore = guestProfileStore
         lastRebuildKey = nil
+        aggregateProfile = guestProfileStore.cachedProfile(byReservationID: reservationID)
 
         store.ensureSummary(
             reservationID: reservationID,
@@ -64,6 +69,19 @@ final class GuestProfileFacade: ObservableObject {
         )
 
         Task {
+            let aggregate = await guestProfileStore.loadProfile(byReservationID: reservationID)
+            guard currentGeneration == generation else { return }
+            if let aggregate {
+                aggregateProfile = aggregate
+                FacadeTrace.event(
+                    surface: "guest_profile",
+                    name: "aggregate_profile_loaded",
+                    extra: "reservation=\(reservationID) generation=\(currentGeneration) stale=\(aggregate.stale == true)"
+                )
+                requestRebuild(reason: "aggregate_profile_loaded", generation: currentGeneration)
+                return
+            }
+
             await store.loadProfile(
                 reservationID: reservationID,
                 dateKey: dateKey
@@ -71,10 +89,10 @@ final class GuestProfileFacade: ObservableObject {
             guard currentGeneration == generation else { return }
             FacadeTrace.event(
                 surface: "guest_profile",
-                name: "profile_loaded",
+                name: "legacy_profile_loaded",
                 extra: "reservation=\(reservationID) generation=\(currentGeneration)"
             )
-            requestRebuild(reason: "profile_loaded", generation: currentGeneration)
+            requestRebuild(reason: "legacy_profile_loaded", generation: currentGeneration)
         }
     }
 
@@ -88,6 +106,7 @@ final class GuestProfileFacade: ObservableObject {
             reservation: reservation,
             historyPool: historyPool,
             store: store,
+            aggregateProfile: aggregateProfile,
             localReport: analysisCoordinator.report,
             isAnalyzingLocalCache: analysisCoordinator.isAnalyzingLocalCache
         )
@@ -97,10 +116,12 @@ final class GuestProfileFacade: ObservableObject {
         generation += 1
         pendingReservationID = nil
         boundStore = nil
+        boundGuestProfileStore = nil
         reservationProvider = nil
         lastRebuildKey = nil
         viewState = nil
         localReport = nil
+        aggregateProfile = nil
         analysisCoordinator.reset()
     }
 
@@ -124,6 +145,7 @@ final class GuestProfileFacade: ObservableObject {
 
         let rebuildKey = [
             "\(context.reservation.remoteID)",
+            boundGuestProfileStore?.cachedProfile(byReservationID: context.reservation.remoteID)?.id ?? aggregateProfile?.id ?? "no_aggregate",
             store.semanticProfileStamp(
                 for: context.reservation.remoteID,
                 dateKey: context.reservation.reservationDate

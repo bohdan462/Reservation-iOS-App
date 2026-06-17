@@ -52,6 +52,7 @@ enum GuestProfileLoadingState: Equatable {
 
 struct GuestProfileViewState: Equatable {
     let header: GuestProfileHeaderState
+    let aggregateProfile: GuestInsightsProfilePresentation.AggregateProfileState?
     let profileSummary: GuestProfileSummaryState?
     let preferenceLines: [String]
     let priorNoteLines: [String]
@@ -79,6 +80,7 @@ enum GuestProfileViewStateBuilder {
         reservation: ReservationRecord,
         historyPool: [ReservationRecord],
         store: GuestIntelligenceStore,
+        aggregateProfile: GuestProfileDTO? = nil,
         localReport: GuestInsightReport?,
         isAnalyzingLocalCache: Bool,
         now: Date = Date()
@@ -88,6 +90,7 @@ enum GuestProfileViewStateBuilder {
         let reservationID = reservation.remoteID
         let dateKey = reservation.reservationDate
         let profilePack = store.profilePack(for: reservationID)
+        let aggregateState = GuestInsightsProfilePresentation.aggregateState(from: aggregateProfile)
         let serverSummary = store.summary(for: reservationID, dateKey: dateKey)
         let serverAnswered = store.hasServerAnswer(for: reservationID, dateKey: dateKey)
         let isLoadingProfile = store.isLoadingProfile(reservationID: reservationID)
@@ -113,10 +116,10 @@ enum GuestProfileViewStateBuilder {
         }()
 
         let header = GuestProfileHeaderState(
-            guestName: reservation.guestName,
+            guestName: cleaned(aggregateProfile?.primaryName) ?? reservation.guestName,
             reservationLine: "\(reservation.displayDate) at \(reservation.displayTime) · party of \(reservation.partySize)",
-            historyTitle: mergedContext?.historyTitle ?? (profilePack != nil ? "Seen before" : "Guest history"),
-            historyDetail: mergedContext?.historyDetail ?? fallbackHistoryDetail(
+            historyTitle: aggregateState != nil ? "Backend guest profile" : (mergedContext?.historyTitle ?? (profilePack != nil ? "Seen before" : "Guest history")),
+            historyDetail: aggregateState?.sourceLine ?? mergedContext?.historyDetail ?? fallbackHistoryDetail(
                 profilePack: profilePack,
                 isLoadingProfile: isLoadingProfile
             ),
@@ -175,28 +178,31 @@ enum GuestProfileViewStateBuilder {
 
         let built = GuestProfileViewState(
             header: header,
+            aggregateProfile: aggregateState,
             profileSummary: hasProfileSummaryContent(profileSummary) ? profileSummary : nil,
-            preferenceLines: GuestInsightsProfilePresentation.preferenceLines(from: profilePack),
-            priorNoteLines: GuestInsightsProfilePresentation.priorNoteLines(from: profilePack),
-            visitAnalyticsLines: GuestInsightsProfilePresentation.visitAnalyticsLines(from: profilePack),
-            serverHistory: serverHistory,
+            preferenceLines: aggregateState?.preferenceLines ?? GuestInsightsProfilePresentation.preferenceLines(from: profilePack),
+            priorNoteLines: aggregateState?.noteLines ?? GuestInsightsProfilePresentation.priorNoteLines(from: profilePack),
+            visitAnalyticsLines: aggregateState == nil ? GuestInsightsProfilePresentation.visitAnalyticsLines(from: profilePack) : [],
+            serverHistory: aggregateState == nil ? serverHistory : [],
             localHistory: localHistory,
             notes: notes,
             possibleMatchCount: localReport?.possibleMatches.count ?? 0,
             warningTitles: localReport?.warnings.map(\.title) ?? [],
             loadingState: loadingState,
             freshness: freshness,
-            showsLocalPreferences: profilePack == nil && localReport != nil,
-            showsLocalBookingHistory: serverHistory.isEmpty && localReport != nil,
-            showsSupplementalLocalHistory: localCachedHistory != nil,
+            showsLocalPreferences: aggregateState == nil && profilePack == nil && localReport != nil,
+            showsLocalBookingHistory: aggregateState == nil && serverHistory.isEmpty && localReport != nil,
+            showsSupplementalLocalHistory: aggregateState != nil ? localReport != nil : localCachedHistory != nil,
             localHistorySectionTitle: localCachedHistory?.sectionTitle,
-            localHistoryScopeNote: localCachedHistory?.scopeNote,
+            localHistoryScopeNote: aggregateState != nil ? "Offline supplement based on reservations saved on this device." : localCachedHistory?.scopeNote,
             traceKey: mergedContext?.traceKey
                 ?? store.semanticProfileStamp(for: reservationID, dateKey: dateKey)
         )
 
         let source: String
-        if profilePack != nil, localReport != nil, !isAnalyzingLocalCache {
+        if aggregateState != nil {
+            source = localReport != nil ? "aggregate_profile+local_supplement" : "aggregate_profile"
+        } else if profilePack != nil, localReport != nil, !isAnalyzingLocalCache {
             source = "profile_pack+local_report"
         } else if localReport != nil {
             source = "merged"
@@ -229,5 +235,11 @@ enum GuestProfileViewStateBuilder {
             return "Guest history loading…"
         }
         return "Found in local cache when server profile is not ready."
+    }
+
+    private static func cleaned(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

@@ -140,6 +140,7 @@ struct ReservationDetailView: View {
     @EnvironmentObject private var hostIntentStore: HostReservationOpenIntentStore
     @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
     @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
+    @EnvironmentObject private var guestProfileStore: GuestProfileStore
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
     @EnvironmentObject private var activityStore: ReservationActivityStore
     @EnvironmentObject private var emailAutomationSettingsStore: EmailAutomationSettingsStore
@@ -473,14 +474,16 @@ struct ReservationDetailView: View {
             )
         }
         .task(id: guestIntelligenceFetchKey) {
-            guestIntelligenceStore.ensureSummary(
-                reservationID: reservation.remoteID,
-                dateKey: reservation.reservationDate
-            )
-            await guestIntelligenceStore.loadProfile(
-                reservationID: reservation.remoteID,
-                dateKey: reservation.reservationDate
-            )
+            if await guestProfileStore.loadProfile(byReservationID: reservation.remoteID) == nil {
+                guestIntelligenceStore.ensureSummary(
+                    reservationID: reservation.remoteID,
+                    dateKey: reservation.reservationDate
+                )
+                await guestIntelligenceStore.loadProfile(
+                    reservationID: reservation.remoteID,
+                    dateKey: reservation.reservationDate
+                )
+            }
         }
         .task(id: guestMergeTraceKey) {
             guard let guestInsightReport else { return }
@@ -1422,6 +1425,7 @@ struct ReservationDetailView: View {
                             allReservations: guestInsightHistoryPool
                         )
                         .environmentObject(guestIntelligenceStore)
+                        .environmentObject(guestProfileStore)
                     } label: {
                         GuestInsightsPreviewCard(
                             report: guestInsightReport,
@@ -1434,16 +1438,28 @@ struct ReservationDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 } else if let guestProfilePreview {
                     // Profile available but no local history report yet.
-                    Text(guestProfilePreview.title)
-                        .font(.subheadline.weight(.semibold))
+                    HStack(spacing: 6) {
+                        Text(guestProfilePreview.title)
+                            .font(.subheadline.weight(.semibold))
+                        if guestProfilePreview.showsUpdatingBadge {
+                            DetailPill(label: "Profile updating", systemImage: "arrow.triangle.2.circlepath", tint: .secondary)
+                        }
+                    }
                     ForEach(Array(guestProfilePreview.lines.enumerated()), id: \.offset) { _, line in
                         Text(line)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                } else if guestIntelligenceStore.isLoadingProfile(reservationID: reservation.remoteID) {
-                    TryzubLoadingRow(title: "Loading server guest history...")
+                    if !guestProfilePreview.badges.isEmpty {
+                        FlowLayout(spacing: 7) {
+                            ForEach(guestProfilePreview.badges, id: \.self) { badge in
+                                DetailPill(label: badge, systemImage: "tag", tint: .secondary)
+                            }
+                        }
+                    }
+                } else if guestProfileStore.isLoadingDetail || guestIntelligenceStore.isLoadingProfile(reservationID: reservation.remoteID) {
+                    TryzubLoadingRow(title: "Loading guest profile...")
                 } else if guestInsightAnalysisCoordinator.isAnalyzingLocalCache {
                     TryzubLoadingRow(title: "Calculating local cache insights...")
                 }
@@ -1452,7 +1468,12 @@ struct ReservationDetailView: View {
     }
 
     private var guestProfilePreview: GuestInsightsProfilePresentation.DetailPreview? {
-        GuestInsightsProfilePresentation.detailPreview(
+        if let aggregatePreview = GuestInsightsProfilePresentation.detailPreview(
+            profile: guestProfileStore.cachedProfile(byReservationID: reservation.remoteID)
+        ) {
+            return aggregatePreview
+        }
+        return GuestInsightsProfilePresentation.detailPreview(
             guestName: reservation.guestName,
             pack: guestIntelligenceStore.profilePack(for: reservation.remoteID)
         )
@@ -2262,13 +2283,25 @@ private struct GuestInsightsPreviewCard: View {
                 }
 
                 if let profilePreview {
-                    Text(profilePreview.title)
-                        .font(.subheadline.weight(.semibold))
+                    HStack(spacing: 6) {
+                        Text(profilePreview.title)
+                            .font(.subheadline.weight(.semibold))
+                        if profilePreview.showsUpdatingBadge {
+                            DetailPill(label: "Profile updating", systemImage: "arrow.triangle.2.circlepath", tint: .secondary)
+                        }
+                    }
                     ForEach(Array(profilePreview.lines.enumerated()), id: \.offset) { _, line in
                         Text(line)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !profilePreview.badges.isEmpty {
+                        FlowLayout(spacing: 7) {
+                            ForEach(profilePreview.badges, id: \.self) { badge in
+                                DetailPill(label: badge, systemImage: "tag", tint: .secondary)
+                            }
+                        }
                     }
                 } else {
                     Text(presentation.historyTitle)
@@ -3179,6 +3212,7 @@ private extension String {
     .environmentObject(HostTableConfigStore())
     .environmentObject(HostIntelligenceSettingsStore())
     .environmentObject(GuestIntelligenceStore(apiClient: ReservationsAPIClient.preview))
+    .environmentObject(GuestProfileStore(apiClient: ReservationsAPIClient.preview))
     .environmentObject(FloorPlanStore(apiClient: ReservationsAPIClient.preview))
     .environmentObject(ReservationActivityStore(apiClient: ReservationsAPIClient.preview))
     .environmentObject(EmailAutomationSettingsStore.shared)
