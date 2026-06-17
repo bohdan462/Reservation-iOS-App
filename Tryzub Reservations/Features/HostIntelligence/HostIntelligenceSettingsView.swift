@@ -73,7 +73,7 @@ struct HostIntelligenceSettingsView: View {
       Text("Used for recommendations only. Does not change backend reservations.")
         .font(.caption)
         .foregroundStyle(.secondary)
-      Text("Improves wording of approved Host Board facts. The template briefing remains the fallback.")
+      Text("Host Intelligence uses approved facts and safe template wording for managers.")
         .font(.caption)
         .foregroundStyle(.secondary)
     }

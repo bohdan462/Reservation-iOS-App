@@ -444,14 +444,13 @@ struct HostIntelligenceSettings: Codable, Equatable {
         autoConfirmWeekdaysOnly: Bool = true,
         minimumConfidenceForAutoConfirm: Double = 0.8,
         maxPartySizeForAutoConfirm: Int = 6,
-        // iPad / demo build defaults: 3B model on by default when present.
-        // Enhanced briefing is enabled and the local model runs on the Host board.
-        // Existing persisted user settings still override these via the decoder below.
+        // Production-safe defaults: enhanced template wording on Host Board.
+        // Local model is opt-in via Developer settings; persisted values override below.
         useEnhancedBriefing: Bool = true,
-        enhancedBriefingProvider: HostBriefingProviderKind = .localModel,
-        useLocalModelOnHostBoard: Bool = true,
-        useLocalModelForGuestMessageDrafts: Bool = true,
-        useLocalModelForNoteAnalysis: Bool = true,
+        enhancedBriefingProvider: HostBriefingProviderKind = .template,
+        useLocalModelOnHostBoard: Bool = false,
+        useLocalModelForGuestMessageDrafts: Bool = false,
+        useLocalModelForNoteAnalysis: Bool = false,
         useSeparatedBriefingPrompts: Bool = false,
         useLegacyAdvisoryTableFallback: Bool = false
     ) {
@@ -512,13 +511,28 @@ struct HostIntelligenceSettings: Codable, Equatable {
             minimumConfidenceForAutoConfirm: try container.decodeIfPresent(Double.self, forKey: .minimumConfidenceForAutoConfirm) ?? 0.8,
             maxPartySizeForAutoConfirm: try container.decodeIfPresent(Int.self, forKey: .maxPartySizeForAutoConfirm) ?? 6,
             useEnhancedBriefing: try container.decodeIfPresent(Bool.self, forKey: .useEnhancedBriefing) ?? true,
-            enhancedBriefingProvider: try container.decodeIfPresent(HostBriefingProviderKind.self, forKey: .enhancedBriefingProvider) ?? .localModel,
-            useLocalModelOnHostBoard: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelOnHostBoard) ?? true,
-            useLocalModelForGuestMessageDrafts: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelForGuestMessageDrafts) ?? true,
-            useLocalModelForNoteAnalysis: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelForNoteAnalysis) ?? true,
+            enhancedBriefingProvider: try container.decodeIfPresent(HostBriefingProviderKind.self, forKey: .enhancedBriefingProvider) ?? .template,
+            useLocalModelOnHostBoard: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelOnHostBoard) ?? false,
+            useLocalModelForGuestMessageDrafts: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelForGuestMessageDrafts) ?? false,
+            useLocalModelForNoteAnalysis: try container.decodeIfPresent(Bool.self, forKey: .useLocalModelForNoteAnalysis) ?? false,
             useSeparatedBriefingPrompts: try container.decodeIfPresent(Bool.self, forKey: .useSeparatedBriefingPrompts) ?? false,
             useLegacyAdvisoryTableFallback: try container.decodeIfPresent(Bool.self, forKey: .useLegacyAdvisoryTableFallback) ?? false
         )
+    }
+
+    /// Role-aware runtime view of persisted settings. Developer tools keep stored values;
+    /// manager and staff never run local-model wording surfaces.
+    func effectiveForRole(canViewDeveloperDiagnostics: Bool) -> HostIntelligenceSettings {
+        guard canViewDeveloperDiagnostics else {
+            var copy = self
+            copy.enhancedBriefingProvider = .template
+            copy.useLocalModelOnHostBoard = false
+            copy.useLocalModelForGuestMessageDrafts = false
+            copy.useLocalModelForNoteAnalysis = false
+            copy.includeLLMPacket = false
+            return copy
+        }
+        return self
     }
 
     /// Stable stamp for Host pulse refresh — excludes guest-draft-only toggles.

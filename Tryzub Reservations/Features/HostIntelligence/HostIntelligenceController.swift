@@ -38,6 +38,15 @@ final class HostIntelligenceController: ObservableObject {
   let tableStore: HostTableConfigStore
   private let engine: HostIntelligenceEngine
 
+  /// When false, briefing and on-device wording use production-safe template defaults.
+  private(set) var canViewDeveloperDiagnostics = false
+
+  func updateDeveloperDiagnosticsAccess(_ canView: Bool) {
+    guard canViewDeveloperDiagnostics != canView else { return }
+    canViewDeveloperDiagnostics = canView
+    clearBriefingCache()
+  }
+
   private var lastAttentionSnapshot: HostDecisionSnapshot?
   private var lastAttentionPresentation: HostAttentionPresentation?
   private var lastAttentionNarrative: ManagerNarrative?
@@ -293,7 +302,7 @@ final class HostIntelligenceController: ObservableObject {
       presentation: currentPresentation
     )
     let fallback = templateNarrative.compactBriefingText
-    let settings = settingsStore.settings
+    let settings = runtimeSettings
     let packet = decisionSnapshot.llmPacket
     let fingerprint = hostBriefingFingerprint(
       packet: packet,
@@ -993,5 +1002,11 @@ final class HostIntelligenceController: ObservableObject {
 
   var settings: HostIntelligenceSettings {
     settingsStore.settings
+  }
+
+  private var runtimeSettings: HostIntelligenceSettings {
+    settingsStore.settings.effectiveForRole(
+      canViewDeveloperDiagnostics: canViewDeveloperDiagnostics
+    )
   }
 }

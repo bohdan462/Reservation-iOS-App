@@ -442,8 +442,14 @@ struct HostBoardView: View {
             controller.noteHostBoardSelectedDate(dateKey)
         }
         .onAppear {
+            hostIntelligenceController.updateDeveloperDiagnosticsAccess(
+                controller.capabilities.canViewDeveloperDiagnostics
+            )
             controller.noteHostBoardSelectedDate(selectedDateKey)
             controller.refreshHomeServicePresentation(hostOperationalLoading: hostBoardOperationalLoading)
+        }
+        .onChange(of: controller.capabilities.canViewDeveloperDiagnostics) { _, canView in
+            hostIntelligenceController.updateDeveloperDiagnosticsAccess(canView)
         }
         .task(id: "reminder-status-\(isVisible)-\(selectedDateKey)-\(emailAutomationSettingsStore.settings.automaticReminderProofEnabled)-\(emailAutomationSettingsStore.settings.manualReminderSendEnabled)") {
             guard isVisible,

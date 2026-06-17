@@ -209,6 +209,12 @@ struct ReservationDetailView: View {
         guestInsightAnalysisCoordinator.report
     }
 
+    private var hostIntelligenceRuntimeSettings: HostIntelligenceSettings {
+        hostIntelligenceSettingsStore.settings.effectiveForRole(
+            canViewDeveloperDiagnostics: controller.capabilities.canViewDeveloperDiagnostics
+        )
+    }
+
     /// First (and only) structured note record for this reservation, if it exists.
     private var structuredNote: ReservationStructuredNoteRecord? {
         structuredNoteRecords.first
@@ -280,7 +286,9 @@ struct ReservationDetailView: View {
         .toolbar(.hidden, for: .tabBar)
         .onAppear {
             guestCommunicationCoordinator.useLocalModelProvider = {
-                hostIntelligenceSettingsStore.settings.useLocalModelForGuestMessageDrafts
+                hostIntelligenceSettingsStore.settings.effectiveForRole(
+                    canViewDeveloperDiagnostics: controller.capabilities.canViewDeveloperDiagnostics
+                ).useLocalModelForGuestMessageDrafts
             }
             guestIntelligenceStore.markDetailOpened(reservationID: reservation.remoteID)
             recomputeNoteSignals()
@@ -821,7 +829,7 @@ struct ReservationDetailView: View {
     /// Phase 10 — asks the on-device model to read the note for tone + missed signals.
     /// Deterministic signals are already shown; this only adds, never blocks or replaces.
     private func enrichNoteSignalsWithModel() async {
-        guard hostIntelligenceSettingsStore.settings.useLocalModelForNoteAnalysis else { return }
+        guard hostIntelligenceRuntimeSettings.useLocalModelForNoteAnalysis else { return }
         let analyzer = LocalModelNoteAnalyzer()
         let enriched = await analyzer.analyze(
             LocalModelNoteAnalyzer.Input(
