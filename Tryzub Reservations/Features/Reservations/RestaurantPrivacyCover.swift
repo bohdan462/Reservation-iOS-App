@@ -97,7 +97,7 @@ struct RestaurantPrivacyCoverSettingsSection: View {
                 if settings.isEnabled {
                     Text("Shows a glass privacy overlay after the screen is untouched for the selected time. Touch anywhere to return.")
                 } else {
-                    Text("Privacy screen is turned off on this iPad.")
+                    Text("Privacy screen is turned off.")
                 }
             }
         }

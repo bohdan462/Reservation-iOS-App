@@ -70,8 +70,8 @@ struct ServiceBoardGuideView: View {
                 }
             }
 
-            Section("What is local") {
-                Text("This iPad can keep local display preferences and draft wording. Restaurant settings, floor tables, reminders, confirmations, and reservation status come from the shared backend.")
+            Section("") {
+                Text("Restaurant settings, floor tables, reminders, confirmations, and reservation status come from the shared backend.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -27,12 +27,6 @@ struct EmailAutomationSettingsView: View {
 
     var body: some View {
         Form {
-            Section {
-                Text("These switches apply only on this iPad. They do not change backend restaurant settings.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
 
             Section {
                 Toggle(
@@ -44,13 +38,13 @@ struct EmailAutomationSettingsView: View {
                     isOn: binding(\.automaticReminderProofEnabled)
                 )
                 Toggle(
-                    "Allow this iPad to send batch reminders",
+                    "Allow to send batch reminders",
                     isOn: binding(\.manualReminderSendEnabled)
                 )
                 .disabled(!backendManualBatchEnabled)
 
                 if !backendManualBatchEnabled {
-                    Text("Backend manual batch reminders are off. This iPad cannot send reminder batches until a manager enables them in Backend Reminders.")
+                    Text("Backend manual batch reminders are off.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -60,7 +54,7 @@ struct EmailAutomationSettingsView: View {
                     isOn: binding(\.manualMailFallbackEnabled)
                 )
             } header: {
-                Text("This iPad controls")
+                Text("Controls")
             } footer: {
                 Text("This is a local safety switch. Backend Reminders must also allow manual batch reminders.")
             }
@@ -73,7 +67,7 @@ struct EmailAutomationSettingsView: View {
 
                 if !backendManualBatchEnabled {
                     Label {
-                        Text("Backend manual batch reminders are off. This iPad cannot send reminder batches until a manager enables them in Backend Reminders.")
+                        Text("Backend manual batch reminders are off. Cannot send reminder batches until enabled in Backend Reminders.")
                             .font(.subheadline)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -112,7 +106,7 @@ struct EmailAutomationSettingsView: View {
                 }
             }
         }
-        .navigationTitle("This iPad Email Controls")
+        .navigationTitle("Email Controls")
         .navigationBarTitleDisplayMode(.inline)
     }
 

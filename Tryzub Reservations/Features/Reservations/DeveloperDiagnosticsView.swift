@@ -417,7 +417,7 @@ struct DeveloperDiagnosticsView: View {
             .disabled(isClearingLocalCache)
         }
         .confirmationDialog(
-            "Clear local cache on this iPad?",
+            "Clear local cache on this device?",
             isPresented: $showClearLocalCacheConfirmation,
             titleVisibility: .visible
         ) {

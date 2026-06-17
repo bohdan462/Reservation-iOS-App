@@ -2,7 +2,7 @@
 //  EmailAutomationSettingsStore.swift
 //  Tryzub Reservations
 //
-//  UserDefaults-backed email automation settings for this iPad.
+//  UserDefaults-backed email automation settings.
 //
 
 import Foundation

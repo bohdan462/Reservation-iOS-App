@@ -1817,7 +1817,7 @@ private struct HostReminderStaffSummary {
         if !automaticRemindersEnabled {
             return HostReminderStaffSummary(
                 title: title,
-                message: "Automatic reminders are off. Send reminders manually if guests still need notice.",
+                message: "Automatic reminders are off.",
                 secondary: cutoffLine(skipped: status?.summary.skipped ?? 0, leadHours: reminderLeadHours),
                 actionLabel: canSendBatchReminders ? "Send reminders" : nil,
                 severity: canSendBatchReminders ? .attention : .info

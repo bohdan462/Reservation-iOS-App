@@ -333,7 +333,7 @@ final class ReservationsController: ObservableObject {
                 severity: .warning,
                 source: .admin,
                 title: "Local cache clear failed",
-                message: "The app could not clear cached reservations on this iPad."
+                message: "The app could not clear cached reservations on device."
             )
             return
         }
