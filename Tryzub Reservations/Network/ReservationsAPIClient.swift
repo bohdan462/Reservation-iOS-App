@@ -339,6 +339,15 @@ protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
         reservationID: Int,
         reason: ReservationAPIRequestReason
     ) async throws -> GuestIntelligenceProfilePackDTO
+    func fetchGuestProfiles(
+        query: String?,
+        filter: String?,
+        sort: String?,
+        page: Int,
+        perPage: Int
+    ) async throws -> GuestProfileListResponseDTO
+    func fetchGuestProfile(guestKey: String) async throws -> GuestProfileDTO
+    func fetchGuestProfile(byReservationID reservationID: Int) async throws -> GuestProfileDTO
     func fetchIntelligenceSystemStatus(
         from: String,
         to: String,
@@ -1097,6 +1106,57 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return try decodeGuestIntelligenceProfile(from: data, request: request)
     }
 
+    // Intent: Reads precomputed backend guest profile aggregate list/search.
+    // Network: GET /guest-profiles.
+    func fetchGuestProfiles(
+        query: String? = nil,
+        filter: String? = nil,
+        sort: String? = nil,
+        page: Int = 1,
+        perPage: Int = 25
+    ) async throws -> GuestProfileListResponseDTO {
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "page", value: String(page)),
+            URLQueryItem(name: "per_page", value: String(perPage))
+        ]
+
+        if let query = query?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty {
+            queryItems.append(URLQueryItem(name: "q", value: query))
+        }
+        if let filter = filter?.trimmingCharacters(in: .whitespacesAndNewlines), !filter.isEmpty {
+            queryItems.append(URLQueryItem(name: "filter", value: filter))
+        }
+        if let sort = sort?.trimmingCharacters(in: .whitespacesAndNewlines), !sort.isEmpty {
+            queryItems.append(URLQueryItem(name: "sort", value: sort))
+        }
+
+        let url = try makeURL(path: "guest-profiles", queryItems: queryItems)
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: .guestIntelligence)
+
+        return try decode(GuestProfileListResponseDTO.self, from: data, request: request)
+    }
+
+    // Intent: Reads one precomputed backend guest profile aggregate by internal key.
+    // Network: GET /guest-profiles/{guestKey}.
+    func fetchGuestProfile(guestKey: String) async throws -> GuestProfileDTO {
+        let url = try apiURL(path: "guest-profiles/\(guestKey)")
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: .guestIntelligence)
+
+        return try decodeGuestProfileDetail(from: data, request: request)
+    }
+
+    // Intent: Reads one precomputed backend guest profile aggregate for a reservation.
+    // Network: GET /guest-profiles/by-reservation/{id}.
+    func fetchGuestProfile(byReservationID reservationID: Int) async throws -> GuestProfileDTO {
+        let url = try apiURL(path: "guest-profiles/by-reservation/\(reservationID)")
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: .guestIntelligence)
+
+        return try decodeGuestProfileDetail(from: data, request: request)
+    }
+
     // Intent: Reads intelligence pipeline health and contract checks for a date range.
     // Network: GET /intelligence/system-status.
     func fetchIntelligenceSystemStatus(
@@ -1455,6 +1515,34 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
             }
 
             return try decoder.decode(GuestIntelligenceDayResponseDTO.self, from: data)
+        } catch let error as ReservationAPIError {
+            throw error
+        } catch {
+            throw intelligenceDecodingFailure(error, data: data, request: request)
+        }
+    }
+
+    private func decodeGuestProfileDetail(
+        from data: Data,
+        request: URLRequest
+    ) throws -> GuestProfileDTO {
+        do {
+            let envelope = try decoder.decode(GuestProfileDetailResponseDTO.self, from: data)
+            if envelope.success == false {
+                throw intelligenceEnvelopeFailure()
+            }
+            if let profile = envelope.data {
+                return profile
+            }
+
+            let error = DecodingError.valueNotFound(
+                GuestProfileDTO.self,
+                DecodingError.Context(
+                    codingPath: [],
+                    debugDescription: "Guest profile detail response did not include data."
+                )
+            )
+            throw intelligenceDecodingFailure(error, data: data, request: request)
         } catch let error as ReservationAPIError {
             throw error
         } catch {

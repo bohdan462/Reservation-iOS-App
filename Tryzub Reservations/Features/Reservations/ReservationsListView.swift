@@ -170,6 +170,7 @@ private struct ReservationsTabShell: View {
     @StateObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
     @StateObject private var hostIntelligenceController: HostIntelligenceController
     @StateObject private var guestIntelligenceStore: GuestIntelligenceStore
+    @StateObject private var guestProfileStore: GuestProfileStore
     @StateObject private var businessIntelligenceStore: BusinessIntelligenceStore
     @StateObject private var intelligenceSystemStatusStore: IntelligenceSystemStatusStore
     @StateObject private var floorPlanStore: FloorPlanStore
@@ -198,6 +199,9 @@ private struct ReservationsTabShell: View {
         )
         _guestIntelligenceStore = StateObject(
             wrappedValue: GuestIntelligenceStore(apiClient: environment.apiClient)
+        )
+        _guestProfileStore = StateObject(
+            wrappedValue: GuestProfileStore(apiClient: environment.apiClient)
         )
         _businessIntelligenceStore = StateObject(
             wrappedValue: BusinessIntelligenceStore(apiClient: environment.apiClient)
@@ -311,6 +315,7 @@ private struct ReservationsTabShell: View {
         .environmentObject(hostIntelligenceSettingsStore)
         .environmentObject(hostIntelligenceController)
         .environmentObject(guestIntelligenceStore)
+        .environmentObject(guestProfileStore)
         .environmentObject(businessIntelligenceStore)
         .environmentObject(intelligenceSystemStatusStore)
         .environmentObject(floorPlanStore)
