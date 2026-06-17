@@ -2076,6 +2076,15 @@ final class ReservationsController: ObservableObject {
 
     // MARK: - Restaurant Setup
 
+    /// Applies a PATCH /restaurant-setup response locally without triggering a GET.
+    func adoptRestaurantSetup(_ setup: RestaurantSetup, reason: String) {
+        restaurantSetup = setup
+        restaurantSetupLoadedAt = Date()
+        print(
+            "[RESTAURANT_SETUP_TRACE] event=adopted source=patch reason=\(reason) autoConfirmRules=\(setup.autoConfirmPolicy.rules.count) enabledRules=\(setup.autoConfirmPolicy.rules.filter(\.enabled).count) manualBatch=\(setup.manualBatchRemindersEnabled)"
+        )
+    }
+
     // Intent: Loads the lightweight setup row used by manual-create defaults and settings.
     // Network: GET /restaurant-setup.
     @discardableResult
@@ -2157,8 +2166,7 @@ final class ReservationsController: ObservableObject {
                 reason: .restaurantSetupPatch
             )
             let setup = RestaurantSetup(dto: dto)
-            restaurantSetup = setup
-            restaurantSetupLoadedAt = Date()
+            adoptRestaurantSetup(setup, reason: "controller_updateRestaurantSetup")
             postNotice(severity: .success, source: .admin, title: "Restaurant settings saved")
             return setup
         } catch {

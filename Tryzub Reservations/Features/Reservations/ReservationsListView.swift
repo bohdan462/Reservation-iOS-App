@@ -1471,7 +1471,6 @@ private struct ReservationMoreView: View {
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var privacyCoverSettings: RestaurantPrivacyCoverSettingsStore
     @EnvironmentObject private var settingsStore: RestaurantSettingsStore
-    @EnvironmentObject private var emailAutomationSettingsStore: EmailAutomationSettingsStore
 
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
@@ -1540,10 +1539,6 @@ private struct ReservationMoreView: View {
 
                         NavigationLink(value: ReservationMoreDestination.hostIntelligenceSettings) {
                             Label("Host Intelligence Settings", systemImage: "brain.head.profile")
-                        }
-
-                        NavigationLink(value: ReservationMoreDestination.emailAutomationSettings) {
-                            Label("Email Automation", systemImage: "envelope.badge")
                         }
                     }
 
@@ -1696,8 +1691,6 @@ private struct ReservationMoreView: View {
                 settingsStore: hostIntelligenceSettingsStore,
                 tableStore: hostTableConfigStore
             )
-        case .emailAutomationSettings:
-            EmailAutomationSettingsView(settingsStore: emailAutomationSettingsStore)
         case .diagnostics:
             DeveloperDiagnosticsView(environment: environment)
                 .environmentObject(controller)
@@ -1725,7 +1718,6 @@ private enum ReservationMoreDestination: Hashable {
     case businessAnalytics
     case regularGuests
     case hostIntelligenceSettings
-    case emailAutomationSettings
     case diagnostics
 }
 

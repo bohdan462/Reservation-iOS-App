@@ -269,20 +269,22 @@ struct DeveloperDiagnosticsView: View {
         let status = controller.lastReminderStatusByDate[Date.reservationDateString()]
         let usage = ResolvedEmailUsage.resolving(setup: setup, status: status)
 
-        return Section("Email Usage") {
-            if let daily = usage.daily {
-                row("Resend today", "\(daily.used) / \(daily.limit) used")
-                row("Remaining today", "\(daily.remaining)")
+        return Section {
+            if let dailyText = usage.dailyDisplayText {
+                row("Resend today", dailyText)
             } else {
-                row("Resend today", "Usage unavailable")
+                row("Resend today", "Usage unavailable from backend")
             }
 
-            if let monthly = usage.monthly {
-                row("Resend this month", "\(monthly.used) / \(monthly.limit) used")
-                row("Remaining this month", "\(monthly.remaining)")
+            if let monthlyText = usage.monthlyDisplayText {
+                row("Resend this month", monthlyText)
             } else {
-                row("Resend this month", "Usage unavailable")
+                row("Resend this month", "Usage unavailable from backend")
             }
+        } header: {
+            Text("Email Usage")
+        } footer: {
+            Text("Diagnostics only. Reads backend status and does not mutate reservations.")
         }
     }
 

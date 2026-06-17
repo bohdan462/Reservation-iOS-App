@@ -8,20 +8,32 @@ import SwiftUI
 struct EmailAutomationSettingsView: View {
     @ObservedObject var settingsStore: EmailAutomationSettingsStore
     @EnvironmentObject private var controller: ReservationsController
+    @Environment(\.dismiss) private var dismiss
+
+    private var setup: RestaurantSetup {
+        controller.restaurantSetup
+    }
 
     private var backendManualBatchEnabled: Bool {
-        controller.restaurantSetup.manualBatchRemindersEnabled
+        setup.manualBatchRemindersEnabled
     }
 
     private var emailUsage: ResolvedEmailUsage {
         ResolvedEmailUsage.resolving(
-            setup: controller.restaurantSetup,
+            setup: setup,
             status: controller.lastReminderStatusByDate[Date.reservationDateString()]
         )
     }
 
     var body: some View {
         Form {
+            Section {
+                Text("These switches apply only on this iPad. They do not change backend restaurant settings.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section {
                 Toggle(
                     "Use backend email for Confirm & Send",
@@ -32,34 +44,61 @@ struct EmailAutomationSettingsView: View {
                     isOn: binding(\.automaticReminderProofEnabled)
                 )
                 Toggle(
-                    "Allow batch reminder sending",
+                    "Allow this iPad to send batch reminders",
                     isOn: binding(\.manualReminderSendEnabled)
                 )
+                .disabled(!backendManualBatchEnabled)
+
+                if !backendManualBatchEnabled {
+                    Text("Backend manual batch reminders are off. This iPad cannot send reminder batches until a manager enables them in Backend Reminders.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Toggle(
                     "Manual Mail fallback",
                     isOn: binding(\.manualMailFallbackEnabled)
                 )
+            } header: {
+                Text("This iPad controls")
             } footer: {
-                Text("Applies on this iPad only. Batch reminder sending also requires backend Restaurant Setup to allow manual batch reminders.")
+                Text("This is a local safety switch. Backend Reminders must also allow manual batch reminders.")
             }
 
-            Section("Resend usage") {
-                EmailUsageDisplayLines(usage: emailUsage)
-            }
+            Section {
+                LabeledContent("Automatic reminders", value: setup.automaticRemindersEnabled ? "On" : "Off")
+                LabeledContent("Manual batch reminders", value: setup.manualBatchRemindersEnabled ? "On" : "Off")
+                LabeledContent("Reminder lead time", value: reminderLeadHoursLabel(setup.reminderLeadHours))
+                LabeledContent("Morning reminder time", value: setup.morningReminderTime)
 
-            if settingsStore.settings.manualReminderSendEnabled, !backendManualBatchEnabled {
-                Section {
+                if !backendManualBatchEnabled {
                     Label {
-                        Text("Backend reminder sending is off. This iPad cannot send batch reminders until it is enabled in Restaurant Setup.")
+                        Text("Backend manual batch reminders are off. This iPad cannot send reminder batches until a manager enables them in Backend Reminders.")
                             .font(.subheadline)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                     }
                 }
+
+                Button {
+                    dismiss()
+                } label: {
+                    Label("Back to Restaurant Settings", systemImage: "arrow.uturn.backward.circle")
+                        .font(.subheadline.weight(.semibold))
+                }
+            } header: {
+                Text("Backend reminder status")
+            } footer: {
+                Text("Backend Reminders are global server settings and affect all devices.")
+            }
+
+            Section("Resend usage") {
+                EmailUsageDisplayLines(usage: emailUsage)
             }
 
             if settingsStore.settings.manualReminderSendEnabled,
+               backendManualBatchEnabled,
                emailUsage.hasUsageData,
                emailUsage.isDailyLimitReached {
                 Section {
@@ -73,7 +112,13 @@ struct EmailAutomationSettingsView: View {
                 }
             }
         }
-        .navigationTitle("Email Automation")
+        .navigationTitle("This iPad Email Controls")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func reminderLeadHoursLabel(_ hours: Int) -> String {
+        let unit = hours == 1 ? "hour" : "hours"
+        return "\(hours) \(unit)"
     }
 
     private func binding(_ keyPath: WritableKeyPath<EmailAutomationSettings, Bool>) -> Binding<Bool> {
@@ -98,7 +143,7 @@ struct EmailUsageDisplayLines: View {
             Text(monthlyText)
         }
         if !usage.hasUsageData {
-            Text("Usage unavailable")
+            Text("Usage unavailable from backend.")
                 .foregroundStyle(.secondary)
         }
     }

@@ -26,11 +26,6 @@ struct AutoConfirmPolicy: Codable, Equatable {
     let rules: [AutoConfirmRule]
     let excludedDates: [String]
 
-    enum CodingKeys: String, CodingKey {
-        case rules
-        case excludedDates = "excluded_dates"
-    }
-
     init(rules: [AutoConfirmRule], excludedDates: [String]) {
         self.rules = rules
         self.excludedDates = excludedDates
@@ -41,12 +36,6 @@ struct AutoConfirmPolicy: Codable, Equatable {
         rules = try container.decodeIfPresent([AutoConfirmRule].self, forKey: .rules) ?? []
         excludedDates = try container.decodeIfPresent([String].self, forKey: .excludedDates) ?? []
     }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(rules, forKey: .rules)
-        try container.encode(excludedDates, forKey: .excludedDates)
-    }
 }
 
 struct AutoConfirmRule: Codable, Equatable, Identifiable {
@@ -56,15 +45,6 @@ struct AutoConfirmRule: Codable, Equatable, Identifiable {
     let startTime: String
     let endTime: String
     let maxPartySize: Int
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case enabled
-        case weekday
-        case startTime = "start_time"
-        case endTime = "end_time"
-        case maxPartySize = "max_party_size"
-    }
 
     init(
         id: String,
@@ -90,16 +70,6 @@ struct AutoConfirmRule: Codable, Equatable, Identifiable {
         startTime = try container.decodeIfPresent(String.self, forKey: .startTime) ?? ""
         endTime = try container.decodeIfPresent(String.self, forKey: .endTime) ?? ""
         maxPartySize = try container.decodeFlexibleIntIfPresent(forKey: .maxPartySize) ?? 0
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(enabled, forKey: .enabled)
-        try container.encode(weekday, forKey: .weekday)
-        try container.encode(startTime, forKey: .startTime)
-        try container.encode(endTime, forKey: .endTime)
-        try container.encode(maxPartySize, forKey: .maxPartySize)
     }
 }
 
@@ -309,39 +279,122 @@ struct EmailUsageWindow: Codable, Equatable {
     let limit: Int
     let remaining: Int
 
-    enum CodingKeys: String, CodingKey {
-        case used
-        case limit
-        case remaining
-    }
-
     init(used: Int, limit: Int, remaining: Int) {
         self.used = used
         self.limit = limit
         self.remaining = remaining
     }
 
+    /// Normalizes optional backend fields into a coherent usage window, or nil when usage is unknown.
+    static func normalized(from raw: EmailUsageRawWindow?, fallbackLimit: Int) -> EmailUsageWindow? {
+        guard let raw else { return nil }
+
+        let resolvedUsed = raw.resolvedUsedCount
+        let hasUsed = resolvedUsed != nil
+        let hasRemaining = raw.remaining != nil
+        let hasLimit = raw.limit != nil && (raw.limit ?? 0) > 0
+
+        guard hasUsed || hasRemaining || hasLimit else { return nil }
+
+        let limitValue = (raw.limit ?? 0) > 0 ? (raw.limit ?? 0) : fallbackLimit
+        guard limitValue > 0 else { return nil }
+
+        if hasRemaining, let remaining = raw.remaining {
+            let clampedRemaining = min(max(remaining, 0), limitValue)
+            var usedValue = max(resolvedUsed ?? 0, 0)
+
+            if !hasUsed && usedValue == 0 {
+                if clampedRemaining < limitValue {
+                    usedValue = limitValue - clampedRemaining
+                } else if clampedRemaining == 0 {
+                    usedValue = limitValue
+                }
+            }
+
+            return EmailUsageWindow(
+                used: min(usedValue, limitValue),
+                limit: limitValue,
+                remaining: clampedRemaining
+            )
+        }
+
+        if hasUsed, let resolvedUsed {
+            let usedValue = min(max(resolvedUsed, 0), limitValue)
+            return EmailUsageWindow(
+                used: usedValue,
+                limit: limitValue,
+                remaining: max(limitValue - usedValue, 0)
+            )
+        }
+
+        return nil
+    }
+}
+
+struct EmailUsageRawWindow: Codable, Equatable {
+    let used: Int?
+    let limit: Int?
+    let remaining: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case used
+        case sent
+        case limit
+        case remaining
+    }
+
+    init(used: Int?, limit: Int?, remaining: Int?) {
+        self.used = used
+        self.limit = limit
+        self.remaining = remaining
+    }
+
+    /// Prefers explicit `used`, then backend `sent`, for display as "used".
+    var resolvedUsedCount: Int? {
+        used
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        used = try container.decodeFlexibleIntIfPresent(forKey: .used) ?? 0
-        limit = try container.decodeFlexibleIntIfPresent(forKey: .limit) ?? 0
-        remaining = try container.decodeFlexibleIntIfPresent(forKey: .remaining) ?? 0
+        let explicitUsed = try container.decodeFlexibleIntIfPresent(forKey: .used)
+        let sent = try container.decodeFlexibleIntIfPresent(forKey: .sent)
+        used = explicitUsed ?? sent
+        limit = try container.decodeFlexibleIntIfPresent(forKey: .limit)
+        remaining = try container.decodeFlexibleIntIfPresent(forKey: .remaining)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(used, forKey: .used)
+        try container.encodeIfPresent(limit, forKey: .limit)
+        try container.encodeIfPresent(remaining, forKey: .remaining)
     }
 }
 
 struct EmailUsageSummary: Codable, Equatable {
-    let daily: EmailUsageWindow?
-    let monthly: EmailUsageWindow?
+    let dailyRaw: EmailUsageRawWindow?
+    let monthlyRaw: EmailUsageRawWindow?
 
-    init(daily: EmailUsageWindow?, monthly: EmailUsageWindow?) {
-        self.daily = daily
-        self.monthly = monthly
+    enum CodingKeys: String, CodingKey {
+        case daily
+        case monthly
+    }
+
+    init(dailyRaw: EmailUsageRawWindow?, monthlyRaw: EmailUsageRawWindow?) {
+        self.dailyRaw = dailyRaw
+        self.monthlyRaw = monthlyRaw
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        daily = try container.decodeIfPresent(EmailUsageWindow.self, forKey: .daily)
-        monthly = try container.decodeIfPresent(EmailUsageWindow.self, forKey: .monthly)
+        dailyRaw = try container.decodeIfPresent(EmailUsageRawWindow.self, forKey: .daily)
+        monthlyRaw = try container.decodeIfPresent(EmailUsageRawWindow.self, forKey: .monthly)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(dailyRaw, forKey: .daily)
+        try container.encodeIfPresent(monthlyRaw, forKey: .monthly)
     }
 }
 
@@ -358,14 +411,24 @@ struct ResolvedEmailUsage: Equatable {
         return daily.remaining <= 0
     }
 
-    var dailyDisplayText: String? {
+    var dailyValueText: String? {
         guard let daily else { return nil }
-        return "Resend today: \(daily.used) / \(daily.limit) used"
+        return "\(daily.used) / \(daily.limit) used · \(daily.remaining) left"
+    }
+
+    var monthlyValueText: String? {
+        guard let monthly else { return nil }
+        return "\(monthly.used) / \(monthly.limit) used · \(monthly.remaining) left"
+    }
+
+    var dailyDisplayText: String? {
+        guard let dailyValueText else { return nil }
+        return "Resend today: \(dailyValueText)"
     }
 
     var monthlyDisplayText: String? {
-        guard let monthly else { return nil }
-        return "Resend this month: \(monthly.used) / \(monthly.limit) used"
+        guard let monthlyValueText else { return nil }
+        return "Resend this month: \(monthlyValueText)"
     }
 
     static func resolving(
@@ -374,20 +437,154 @@ struct ResolvedEmailUsage: Equatable {
     ) -> ResolvedEmailUsage {
         let source = status?.emailUsage ?? setup.emailUsage
         return ResolvedEmailUsage(
-            daily: resolvedWindow(source?.daily, fallbackLimit: setup.emailDailyLimit),
-            monthly: resolvedWindow(source?.monthly, fallbackLimit: setup.emailMonthlyLimit)
+            daily: EmailUsageWindow.normalized(
+                from: source?.dailyRaw,
+                fallbackLimit: setup.emailDailyLimit
+            ),
+            monthly: EmailUsageWindow.normalized(
+                from: source?.monthlyRaw,
+                fallbackLimit: setup.emailMonthlyLimit
+            )
         )
     }
+}
 
-    private static func resolvedWindow(
-        _ window: EmailUsageWindow?,
-        fallbackLimit: Int
-    ) -> EmailUsageWindow? {
-        guard let window else { return nil }
-        let limit = window.limit > 0 ? window.limit : fallbackLimit
-        let remaining = window.limit > 0
-            ? window.remaining
-            : max(limit - window.used, 0)
-        return EmailUsageWindow(used: window.used, limit: limit, remaining: remaining)
+// MARK: - Codable Verification
+
+enum AutoConfirmModelCodableVerification {
+    static func makeAPIJSONDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }
+
+    static func makeAPIJSONEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+
+    @discardableResult
+    static func runAll() -> [String] {
+        var errors: [String] = []
+        errors.append(contentsOf: verifyAutoConfirmPolicyRoundTrip())
+        errors.append(contentsOf: verifyEmailUsageSentDecode())
+
+        #if DEBUG
+        if errors.isEmpty {
+            print("[AutoConfirmCodableVerify] passed")
+        } else {
+            print("[AutoConfirmCodableVerify] failed: \(errors.joined(separator: "; "))")
+        }
+        #endif
+
+        return errors
+    }
+
+    static func verifyAutoConfirmPolicyRoundTrip() -> [String] {
+        var errors: [String] = []
+        let json = """
+        {
+          "rules": [
+            {
+              "id": "test_tue_1700_1800",
+              "enabled": true,
+              "weekday": 1,
+              "start_time": "17:00:00",
+              "end_time": "18:00:00",
+              "max_party_size": 4
+            }
+          ],
+          "excluded_dates": []
+        }
+        """
+
+        do {
+            let decoded = try makeAPIJSONDecoder().decode(
+                AutoConfirmPolicy.self,
+                from: Data(json.utf8)
+            )
+
+            guard decoded.rules.count == 1 else {
+                errors.append("expected 1 decoded rule, got \(decoded.rules.count)")
+                return errors
+            }
+
+            let rule = decoded.rules[0]
+            if rule.startTime != "17:00:00" {
+                errors.append("startTime expected 17:00:00, got \(rule.startTime)")
+            }
+            if rule.endTime != "18:00:00" {
+                errors.append("endTime expected 18:00:00, got \(rule.endTime)")
+            }
+            if rule.maxPartySize != 4 {
+                errors.append("maxPartySize expected 4, got \(rule.maxPartySize)")
+            }
+
+            let encoded = try makeAPIJSONEncoder().encode(decoded)
+            guard let encodedString = String(data: encoded, encoding: .utf8) else {
+                errors.append("encoded policy was not UTF-8")
+                return errors
+            }
+
+            for requiredKey in ["start_time", "end_time", "max_party_size", "excluded_dates"] {
+                if !encodedString.contains(requiredKey) {
+                    errors.append("encoded policy missing \(requiredKey)")
+                }
+            }
+
+            for leakedKey in ["startTime", "endTime", "maxPartySize", "excludedDates"] {
+                if encodedString.contains(leakedKey) {
+                    errors.append("encoded policy leaked camelCase key \(leakedKey)")
+                }
+            }
+        } catch {
+            errors.append("auto-confirm round trip failed: \(error.localizedDescription)")
+        }
+
+        return errors
+    }
+
+    static func verifyEmailUsageSentDecode() -> [String] {
+        var errors: [String] = []
+        let json = """
+        {
+          "sent": 7,
+          "limit": 100,
+          "remaining": 93
+        }
+        """
+
+        do {
+            let decoded = try makeAPIJSONDecoder().decode(
+                EmailUsageRawWindow.self,
+                from: Data(json.utf8)
+            )
+
+            if decoded.used != 7 {
+                errors.append("sent decode expected used=7, got \(decoded.used.map(String.init) ?? "nil")")
+            }
+
+            guard let normalized = EmailUsageWindow.normalized(from: decoded, fallbackLimit: 100) else {
+                errors.append("email usage normalization returned nil")
+                return errors
+            }
+
+            if normalized.used != 7 {
+                errors.append("normalized used expected 7, got \(normalized.used)")
+            }
+            if normalized.remaining != 93 {
+                errors.append("normalized remaining expected 93, got \(normalized.remaining)")
+            }
+        } catch {
+            errors.append("email usage sent decode failed: \(error.localizedDescription)")
+        }
+
+        return errors
     }
 }
+
+#if DEBUG
+private let _autoConfirmModelCodableVerificationRunOnce: [String] = AutoConfirmModelCodableVerification.runAll()
+#endif

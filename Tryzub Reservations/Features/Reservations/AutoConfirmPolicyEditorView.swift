@@ -108,15 +108,20 @@ struct AutoConfirmPolicyEditorView: View {
             Button("Cancel", role: .cancel) {}
         }
         .sheet(item: $editingRule) { rule in
+            let originalRuleID = rule.id
             AutoConfirmRuleEditorSheet(
-                draft: rule,
+                draft: rule.repairedForEditing(),
                 isNew: false,
+                showRepairWarning: !rule.isValidRule,
                 existingRuleIDs: draft.rules.map(\.id).filter { $0 != rule.id },
                 onCancel: { editingRule = nil },
                 onSave: { updated in
-                    if let index = draft.rules.firstIndex(where: { $0.id == rule.id }) {
-                        draft.rules[index] = updated
-                    }
+                    draft.replaceRule(replacingID: originalRuleID, with: updated)
+                    #if DEBUG
+                    print(
+                        "[AutoConfirmRuleEdit] savedDraft id=\(updated.id) valid=\(updated.isValidRule) start=\(updated.startTime) end=\(updated.endTime) party=\(updated.maxPartySize)"
+                    )
+                    #endif
                     editingRule = nil
                 }
             )
@@ -139,10 +144,6 @@ struct AutoConfirmPolicyEditorView: View {
 
     private var safetyHeaderCard: some View {
         editorCard(title: "Backend Auto-Confirm", systemImage: "checkmark.seal") {
-            Text("Backend auto-confirm sends confirmation emails and marks eligible website reservations as confirmed after website form import. This iPad never auto-confirms reservations locally.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -163,8 +164,8 @@ struct AutoConfirmPolicyEditorView: View {
             )
             .font(.subheadline.weight(.medium))
 
-            if draft.autoConfirmEnabled, draft.enabledRuleCount == 0 {
-                Text("Add at least one enabled time window before turning auto-confirm on.")
+            if draft.autoConfirmEnabled, draft.enabledValidRuleCount == 0 {
+                Text("Add at least one enabled valid time window before turning auto-confirm on.")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -172,23 +173,41 @@ struct AutoConfirmPolicyEditorView: View {
     }
 
     private var guardTogglesCard: some View {
-        editorCard(title: "Safety Guards", systemImage: "shield") {
+        editorCard(title: "Safety", systemImage: "shield") {
             Toggle("Require guest email", isOn: $draft.autoConfirmRequireEmail)
             Toggle("Block guest notes", isOn: $draft.autoConfirmBlockGuestNotes)
             Toggle("Block duplicates/corrections", isOn: $draft.autoConfirmBlockDuplicates)
             Toggle("Block suspicious contact info", isOn: $draft.autoConfirmBlockSuspicious)
-
-            Text("Safer settings leave these protections on. Reservations with notes, duplicate signals, or suspicious contact data should stay for staff review.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var rulesCard: some View {
-        editorCard(title: "Time Windows", systemImage: "clock") {
+        editorCard(title: "Auto-confirm windows", systemImage: "clock") {
+            if draft.invalidRuleCount > 0 {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(draft.invalidRuleCount) imported window(s) need repair.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text("Imported invalid windows are disabled until repaired.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button {
+                        removeInvalidWindows()
+                    } label: {
+                        Label("Remove Invalid Windows", systemImage: "trash")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.orange)
+                }
+            }
+
             if draft.rules.isEmpty {
-                Text("No rules yet. Add a time window to allow backend auto-confirm.")
+                Text("No windows yet. Add a time window to allow backend auto-confirm.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
@@ -196,6 +215,7 @@ struct AutoConfirmPolicyEditorView: View {
                     AutoConfirmRuleRow(
                         rule: rule,
                         onEdit: { editingRule = rule },
+                        onRepair: { repairRule(rule) },
                         onDelete: { draft.rules.removeAll { $0.id == rule.id } },
                         onToggleEnabled: {
                             guard let index = draft.rules.firstIndex(where: { $0.id == rule.id }) else { return }
@@ -208,12 +228,32 @@ struct AutoConfirmPolicyEditorView: View {
             Button {
                 isAddingRule = true
             } label: {
-                Label("Add Rule", systemImage: "plus.circle")
+                Label("Add Time Window", systemImage: "plus.circle")
                     .font(.subheadline.weight(.semibold))
             }
             .buttonStyle(.plain)
             .padding(.top, 4)
         }
+    }
+
+    private func repairRule(_ rule: AutoConfirmRuleDraft) {
+        let originalID = rule.id
+        var repaired = rule.repairedForEditing()
+        repaired.enabled = true
+        draft.replaceRule(replacingID: originalID, with: repaired)
+        #if DEBUG
+        print(
+            "[AutoConfirmRuleRepair] id=\(repaired.id) weekday=\(repaired.weekday) start=\(repaired.startTime) end=\(repaired.endTime) party=\(repaired.maxPartySize) enabled=\(repaired.enabled)"
+        )
+        #endif
+    }
+
+    private func removeInvalidWindows() {
+        let removedCount = draft.invalidRuleCount
+        draft.rules.removeAll { !$0.isValidRule }
+        #if DEBUG
+        print("[AutoConfirmInvalidCleanup] removed=\(removedCount) remaining=\(draft.rules.count)")
+        #endif
     }
 
     private var excludedDatesCard: some View {
@@ -327,21 +367,55 @@ struct AutoConfirmPolicyEditorView: View {
         }
 
         do {
-            let policy = try draft.buildPolicy()
+            let buildResult = try draft.buildPolicyForSave()
             let request = RestaurantSetupUpdateRequest(
                 autoConfirmEnabled: draft.autoConfirmEnabled,
                 autoConfirmRequireEmail: draft.autoConfirmRequireEmail,
                 autoConfirmBlockGuestNotes: draft.autoConfirmBlockGuestNotes,
                 autoConfirmBlockDuplicates: draft.autoConfirmBlockDuplicates,
                 autoConfirmBlockSuspicious: draft.autoConfirmBlockSuspicious,
-                autoConfirmPolicy: policy
+                autoConfirmPolicy: buildResult.policy
             )
 
+            #if DEBUG
+            print(
+                "[AutoConfirmSave] before rules=\(draft.rules.count) valid=\(draft.rules.filter(\.isValidRule).count) invalid=\(draft.invalidRuleCount) enabledValid=\(draft.enabledValidRuleCount) autoConfirmEnabled=\(draft.autoConfirmEnabled)"
+            )
+            #endif
+
             let saved = try await settingsStore.saveRestaurantAutomationSetup(request: request)
-            _ = try? await controller.loadRestaurantSetup(force: true)
+
+            let sentSignature = policySignature(buildResult.policy)
+            let savedSignature = policySignature(saved.autoConfirmPolicy)
+            let responseMatchesSent = sentSignature == savedSignature
+
+            #if DEBUG
+            if responseMatchesSent {
+                let patchEnabledRules = saved.autoConfirmPolicy.rules.filter(\.enabled).count
+                print(
+                    "[AutoConfirmSave] patchSaved rules=\(saved.autoConfirmPolicy.rules.count) enabled=\(patchEnabledRules) sentRules=\(buildResult.policy.rules.count)"
+                )
+            } else {
+                print(
+                    "[AUTO_CONFIRM_SAVE_MISMATCH] sentRules=\(buildResult.policy.rules.count) savedRules=\(saved.autoConfirmPolicy.rules.count) sent=\(sentSignature) saved=\(savedSignature)"
+                )
+            }
+            #endif
+
+            controller.adoptRestaurantSetup(saved, reason: "auto_confirm_policy_saved")
+
             draft = AutoConfirmPolicyEditorDraft(setup: saved)
+            if responseMatchesSent {
+                draft.rules = buildResult.policy.rules.map(AutoConfirmRuleDraft.init(rule:))
+            }
             onSaved(saved)
-            successMessage = "Auto-confirm policy saved."
+            if !responseMatchesSent {
+                successMessage = "Saved, but the server returned a different auto-confirm policy. Review the list."
+            } else if buildResult.removedInvalidRuleCount > 0 {
+                successMessage = "Invalid auto-confirm windows were removed from the saved policy."
+            } else {
+                successMessage = "Auto-confirm policy saved."
+            }
             ReservationHaptics.success()
         } catch {
             errorMessage = error.localizedDescription
@@ -386,7 +460,24 @@ struct AutoConfirmPolicyEditorView: View {
     }
 }
 
+// MARK: - Policy save signatures
+
+private func policySignature(_ policy: AutoConfirmPolicy) -> [String] {
+    var signatures = policy.rules
+        .map { rule in
+            "\(rule.id)|\(rule.enabled)|\(rule.weekday)|\(rule.startTime)|\(rule.endTime)|\(rule.maxPartySize)"
+        }
+        .sorted()
+    signatures.append("excluded_dates=" + policy.excludedDates.sorted().joined(separator: ","))
+    return signatures
+}
+
 // MARK: - Draft
+
+struct AutoConfirmPolicyBuildResult: Equatable {
+    let policy: AutoConfirmPolicy
+    let removedInvalidRuleCount: Int
+}
 
 struct AutoConfirmPolicyEditorDraft: Equatable {
     var autoConfirmEnabled: Bool
@@ -401,9 +492,17 @@ struct AutoConfirmPolicyEditorDraft: Equatable {
         rules.filter(\.enabled).count
     }
 
+    var enabledValidRuleCount: Int {
+        rules.filter { $0.enabled && $0.isValidRule }.count
+    }
+
+    var invalidRuleCount: Int {
+        rules.filter { !$0.isValidRule }.count
+    }
+
     var hasHighRiskRules: Bool {
         rules.contains { rule in
-            rule.enabled && (rule.weekday == 4 || rule.weekday == 5 || rule.maxPartySize >= 8)
+            rule.enabled && rule.isValidRule && (rule.weekday == 4 || rule.weekday == 5 || rule.maxPartySize >= 8)
         }
     }
 
@@ -413,30 +512,111 @@ struct AutoConfirmPolicyEditorDraft: Equatable {
         autoConfirmBlockGuestNotes = setup.autoConfirmBlockGuestNotes
         autoConfirmBlockDuplicates = setup.autoConfirmBlockDuplicates
         autoConfirmBlockSuspicious = setup.autoConfirmBlockSuspicious
-        rules = setup.autoConfirmPolicy.rules.map(AutoConfirmRuleDraft.init(rule:))
+        rules = setup.autoConfirmPolicy.rules.map { rule in
+            var draft = AutoConfirmRuleDraft(rule: rule)
+            if !draft.isValidRule {
+                draft.enabled = false
+            }
+            return draft
+        }
         excludedDates = setup.autoConfirmPolicy.excludedDates.sorted()
+
+        #if DEBUG
+        let invalidLoaded = rules.filter { !$0.isValidRule }.count
+        let disabledInvalid = rules.filter { !$0.isValidRule && !$0.enabled }.count
+        if invalidLoaded > 0 {
+            print("[AutoConfirmImportRepair] invalidLoaded=\(invalidLoaded) disabledInvalid=\(disabledInvalid)")
+        }
+        #endif
     }
 
     func validationMessages() -> [String] {
         var messages: [String] = []
 
-        if autoConfirmEnabled, enabledRuleCount == 0 {
-            messages.append("Add at least one enabled time window before turning auto-confirm on.")
+        if autoConfirmEnabled {
+            if enabledValidRuleCount == 0 {
+                messages.append("Add at least one enabled valid time window before turning auto-confirm on.")
+            }
+
+            if rules.contains(where: { $0.enabled && !$0.isValidRule }) {
+                messages.append("Repair or delete invalid windows before turning auto-confirm on.")
+            }
         }
 
-        do {
-            let policy = try buildPolicy()
-            messages.append(contentsOf: AutoConfirmPolicyValidation.validate(policy: policy))
-        } catch {
-            messages.append(error.localizedDescription)
-        }
+        let excludedMessages = AutoConfirmPolicyValidation.validate(
+            policy: AutoConfirmPolicy(rules: [], excludedDates: excludedDates)
+        )
+        messages.append(contentsOf: excludedMessages)
 
         return messages
     }
 
-    func buildPolicy() throws -> AutoConfirmPolicy {
-        let encodedRules = try rules.map { try $0.toRule() }
-        return AutoConfirmPolicy(rules: encodedRules, excludedDates: excludedDates)
+    func buildPolicyForSave() throws -> AutoConfirmPolicyBuildResult {
+        if autoConfirmEnabled, enabledValidRuleCount == 0 {
+            throw AutoConfirmEditorError(
+                message: "Add at least one enabled valid time window before turning auto-confirm on."
+            )
+        }
+
+        var validRules: [AutoConfirmRule] = []
+        var removedInvalidRuleCount = 0
+
+        for ruleDraft in rules {
+            guard ruleDraft.isValidRule else {
+                removedInvalidRuleCount += 1
+                continue
+            }
+            validRules.append(try ruleDraft.toRule())
+        }
+
+        let excludedMessages = AutoConfirmPolicyValidation.validate(
+            policy: AutoConfirmPolicy(rules: [], excludedDates: excludedDates)
+        )
+        if let first = excludedMessages.first {
+            throw AutoConfirmEditorError(message: first)
+        }
+
+        let validatedPolicy = try makeValidatedPolicy(rules: validRules)
+
+        return AutoConfirmPolicyBuildResult(
+            policy: validatedPolicy,
+            removedInvalidRuleCount: removedInvalidRuleCount
+        )
+    }
+
+    /// Replaces an edited rule in the draft, including invalid imported rows whose id may have changed during repair.
+    mutating func replaceRule(replacingID originalID: String, with updated: AutoConfirmRuleDraft) {
+        let trimmedOriginal = originalID.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !trimmedOriginal.isEmpty,
+           let index = rules.firstIndex(where: {
+               $0.id.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedOriginal
+           }) {
+            rules[index] = updated
+            return
+        }
+
+        if trimmedOriginal.isEmpty,
+           let index = rules.firstIndex(where: { !$0.isValidRule && $0.weekday == updated.weekday }) {
+            rules[index] = updated
+            return
+        }
+
+        if let index = rules.firstIndex(where: { $0.id == updated.id }) {
+            rules[index] = updated
+            return
+        }
+
+        rules.append(updated)
+    }
+
+    private func makeValidatedPolicy(rules: [AutoConfirmRule]) throws -> AutoConfirmPolicy {
+        let policy = AutoConfirmPolicy(rules: rules, excludedDates: excludedDates)
+        let policyMessages = AutoConfirmPolicyValidation.validate(policy: policy)
+        if let first = policyMessages.first {
+            throw AutoConfirmEditorError(message: first)
+        }
+        return policy
     }
 }
 
@@ -494,8 +674,14 @@ struct AutoConfirmRuleDraft: Identifiable, Equatable {
     }
 
     func toRule() throws -> AutoConfirmRule {
-        let normalizedStart = try AutoConfirmTimeFormatting.normalizedStorage(from: startTime, field: "Start time")
-        let normalizedEnd = try AutoConfirmTimeFormatting.normalizedStorage(from: endTime, field: "End time")
+        let normalizedStart = try AutoConfirmTimeFormatting.normalizedStorage(
+            from: startTime,
+            field: "\(AutoConfirmWeekdayFormatting.name(for: weekday)) window start time"
+        )
+        let normalizedEnd = try AutoConfirmTimeFormatting.normalizedStorage(
+            from: endTime,
+            field: "\(AutoConfirmWeekdayFormatting.name(for: weekday)) window end time"
+        )
         return AutoConfirmRule(
             id: id.trimmingCharacters(in: .whitespacesAndNewlines),
             enabled: enabled,
@@ -506,8 +692,68 @@ struct AutoConfirmRuleDraft: Identifiable, Equatable {
         )
     }
 
+    var isValidRule: Bool {
+        validationMessages.isEmpty
+    }
+
+    var validationMessages: [String] {
+        var messages: [String] = []
+        let label = "\(AutoConfirmWeekdayFormatting.name(for: weekday)) window"
+
+        if !AutoConfirmPolicyValidation.validWeekdayRange.contains(weekday) {
+            messages.append("\(label): Weekday must be 0–6.")
+        }
+
+        let trimmedStart = startTime.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedEnd = endTime.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !RestaurantAutomationTimeValidation.isValidTime(trimmedStart) {
+            messages.append("\(label): Start time must use HH:mm or HH:mm:ss.")
+        }
+
+        if !RestaurantAutomationTimeValidation.isValidTime(trimmedEnd) {
+            messages.append("\(label): End time must use HH:mm or HH:mm:ss.")
+        }
+
+        if !AutoConfirmPolicyValidation.validMaxPartySizeRange.contains(maxPartySize) {
+            messages.append("\(label): Max party size must be between 1 and 20.")
+        }
+
+        if RestaurantAutomationTimeValidation.isValidTime(trimmedStart),
+           RestaurantAutomationTimeValidation.isValidTime(trimmedEnd),
+           let startMinutes = RestaurantAutomationTimeValidation.minutes(from: trimmedStart),
+           let endMinutes = RestaurantAutomationTimeValidation.minutes(from: trimmedEnd),
+           endMinutes <= startMinutes {
+            messages.append("\(label): End time must be after start time.")
+        }
+
+        let trimmedID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedID.isEmpty {
+            messages.append("\(label): Each auto-confirm window needs an id.")
+        }
+
+        return messages
+    }
+
+    var displayTitle: String {
+        let weekdayName = AutoConfirmWeekdayFormatting.name(for: weekday)
+
+        if !isValidRule {
+            if !RestaurantAutomationTimeValidation.isValidTime(startTime.trimmingCharacters(in: .whitespacesAndNewlines))
+                || !RestaurantAutomationTimeValidation.isValidTime(endTime.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return "\(weekdayName) · Needs time · tap Edit"
+            }
+            if !AutoConfirmPolicyValidation.validMaxPartySizeRange.contains(maxPartySize) {
+                return "\(weekdayName) · Needs party size · tap Edit"
+            }
+            return "\(weekdayName) · Needs fix · tap Edit"
+        }
+
+        return "\(weekdayName) · \(AutoConfirmTimeFormatting.displayRange(start: startTime, end: endTime)) · up to \(maxPartySize) guests"
+    }
+
     var rowTitle: String {
-        "\(AutoConfirmWeekdayFormatting.name(for: weekday)) · \(AutoConfirmTimeFormatting.displayRange(start: startTime, end: endTime)) · up to \(maxPartySize) guests"
+        displayTitle
     }
 
     var showsWeekendWarning: Bool {
@@ -516,6 +762,60 @@ struct AutoConfirmRuleDraft: Identifiable, Equatable {
 
     var showsLargePartyWarning: Bool {
         maxPartySize >= 8
+    }
+
+    /// Returns a sheet-safe copy with editable defaults for invalid backend-loaded rules.
+    /// Does not mutate the policy draft until the user saves from the sheet.
+    func repairedForEditing() -> AutoConfirmRuleDraft {
+        guard !isValidRule else { return self }
+
+        var repaired = self
+
+        if !AutoConfirmPolicyValidation.validWeekdayRange.contains(repaired.weekday) {
+            repaired.weekday = 1
+        }
+
+        let trimmedStart = repaired.startTime.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !RestaurantAutomationTimeValidation.isValidTime(trimmedStart) {
+            repaired.startTime = "17:00"
+        }
+
+        let trimmedEnd = repaired.endTime.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !RestaurantAutomationTimeValidation.isValidTime(trimmedEnd) {
+            repaired.endTime = "18:00"
+        }
+
+        if !AutoConfirmPolicyValidation.validMaxPartySizeRange.contains(repaired.maxPartySize) {
+            repaired.maxPartySize = 4
+        }
+
+        if repaired.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let startStorage = repaired.startTime.count == 5 ? "\(repaired.startTime):00" : repaired.startTime
+            let endStorage = repaired.endTime.count == 5 ? "\(repaired.endTime):00" : repaired.endTime
+            repaired.id = Self.generateRuleID(
+                weekday: repaired.weekday,
+                start: startStorage,
+                end: endStorage
+            )
+        }
+
+        repaired.ensureEndTimeAfterStart()
+        repaired.enabled = true
+
+        return repaired
+    }
+
+    private mutating func ensureEndTimeAfterStart() {
+        guard RestaurantAutomationTimeValidation.isValidTime(startTime),
+              RestaurantAutomationTimeValidation.isValidTime(endTime),
+              let startMinutes = RestaurantAutomationTimeValidation.minutes(from: startTime),
+              let endMinutes = RestaurantAutomationTimeValidation.minutes(from: endTime),
+              endMinutes <= startMinutes else {
+            return
+        }
+
+        let bumpedMinutes = min(startMinutes + 60, (23 * 60) + 59)
+        endTime = String(format: "%02d:%02d", bumpedMinutes / 60, bumpedMinutes % 60)
     }
 }
 
@@ -573,6 +873,7 @@ struct AutoConfirmEditorError: LocalizedError {
 private struct AutoConfirmRuleRow: View {
     let rule: AutoConfirmRuleDraft
     let onEdit: () -> Void
+    let onRepair: () -> Void
     let onDelete: () -> Void
     let onToggleEnabled: () -> Void
 
@@ -581,16 +882,20 @@ private struct AutoConfirmRuleRow: View {
             HStack(alignment: .top) {
                 Button(action: onEdit) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(rule.rowTitle)
+                        Text(rule.displayTitle)
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(rule.isValidRule ? Color.primary : Color.orange)
                             .multilineTextAlignment(.leading)
 
                         HStack(spacing: 6) {
-                            if rule.showsWeekendWarning {
+                            if !rule.isValidRule {
+                                warningBadge("Needs repair")
+                                warningBadge("Disabled until repaired")
+                            }
+                            if rule.isValidRule && rule.showsWeekendWarning {
                                 warningBadge("Fri/Sat")
                             }
-                            if rule.showsLargePartyWarning {
+                            if rule.isValidRule && rule.showsLargePartyWarning {
                                 warningBadge("Large party")
                             }
                         }
@@ -600,14 +905,23 @@ private struct AutoConfirmRuleRow: View {
 
                 Spacer(minLength: 8)
 
-                Toggle("", isOn: Binding(
-                    get: { rule.enabled },
-                    set: { _ in onToggleEnabled() }
-                ))
-                .labelsHidden()
+                if rule.isValidRule {
+                    Toggle("", isOn: Binding(
+                        get: { rule.enabled },
+                        set: { _ in onToggleEnabled() }
+                    ))
+                    .labelsHidden()
+                } else {
+                    Toggle("", isOn: .constant(rule.enabled))
+                        .labelsHidden()
+                        .disabled(true)
+                }
             }
 
             HStack {
+                if !rule.isValidRule {
+                    Button("Repair", action: onRepair)
+                }
                 Button("Edit", action: onEdit)
                 Spacer()
                 Button("Delete", role: .destructive, action: onDelete)
@@ -632,6 +946,7 @@ private struct AutoConfirmRuleRow: View {
 private struct AutoConfirmRuleEditorSheet: View {
     @State private var draft: AutoConfirmRuleDraft
     let isNew: Bool
+    let showRepairWarning: Bool
     let existingRuleIDs: [String]
     let onCancel: () -> Void
     let onSave: (AutoConfirmRuleDraft) -> Void
@@ -641,25 +956,51 @@ private struct AutoConfirmRuleEditorSheet: View {
     init(
         draft: AutoConfirmRuleDraft,
         isNew: Bool,
+        showRepairWarning: Bool = false,
         existingRuleIDs: [String],
         onCancel: @escaping () -> Void,
         onSave: @escaping (AutoConfirmRuleDraft) -> Void
     ) {
         _draft = State(initialValue: draft)
         self.isNew = isNew
+        self.showRepairWarning = showRepairWarning
         self.existingRuleIDs = existingRuleIDs
         self.onCancel = onCancel
         self.onSave = onSave
     }
 
+    private var canSave: Bool {
+        draft.isValidRule
+            && !draft.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !existingRuleIDs.contains(draft.id.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     var body: some View {
         NavigationStack {
             Form {
+                if showRepairWarning {
+                    Section {
+                        Text("This saved window had invalid values. Review and save to repair it.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+
                 if let validationMessage {
                     Section {
                         Text(validationMessage)
                             .foregroundStyle(.red)
                             .font(.caption)
+                    }
+                }
+
+                if !draft.validationMessages.isEmpty {
+                    Section {
+                        ForEach(draft.validationMessages, id: \.self) { message in
+                            Text(message)
+                                .foregroundStyle(.red)
+                                .font(.caption)
+                        }
                     }
                 }
 
@@ -688,7 +1029,7 @@ private struct AutoConfirmRuleEditorSheet: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle(isNew ? "Add Rule" : "Edit Rule")
+            .navigationTitle(isNew ? "Add Time Window" : "Edit Time Window")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -698,6 +1039,7 @@ private struct AutoConfirmRuleEditorSheet: View {
                     Button("Done") {
                         saveTapped()
                     }
+                    .disabled(!canSave)
                 }
             }
         }
@@ -717,11 +1059,12 @@ private struct AutoConfirmRuleEditorSheet: View {
 
         do {
             let rule = try draft.toRule()
-            let messages = AutoConfirmPolicyValidation.validate(rule: rule)
+            let messages = draft.validationMessages
             guard messages.isEmpty else {
                 validationMessage = messages.joined(separator: "\n")
                 return
             }
+            _ = rule
             onSave(draft)
         } catch {
             validationMessage = error.localizedDescription

@@ -155,6 +155,7 @@ final class RestaurantSettingsStore: ObservableObject {
             let dto = try await apiClient.updateRestaurantSetup(request, reason: .restaurantSetupPatch)
             let savedSetup = RestaurantSetup(dto: dto)
             setup = savedSetup
+            setupLoadedAt = Date()
             return savedSetup
         } catch {
             setupError = error.localizedDescription
@@ -712,12 +713,14 @@ extension RestaurantSetup {
 struct RestaurantSettingsView: View {
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
+    @EnvironmentObject private var emailAutomationSettingsStore: EmailAutomationSettingsStore
     @ObservedObject var settingsStore: RestaurantSettingsStore
 
     @State private var draft = RestaurantSetupDraft(setup: .default)
     @State private var savedDraft = RestaurantSetupDraft(setup: .default)
     @State private var setup = RestaurantSetup.default
     @State private var isSaving = false
+    @State private var isLoadingReminderUsage = false
     @State private var errorMessage: String?
     @State private var successMessage: String?
     @State private var didLoadInitialDraft = false
@@ -779,61 +782,61 @@ struct RestaurantSettingsView: View {
                     SettingsHelperText("Booking window is how far ahead guests can book. Large party threshold marks reservations for review. Minimum lead time controls how soon before service online bookings are allowed.")
                 }
 
-                SettingsCard(title: "Table Setup", systemImage: "table.furniture") {
-                    SettingsHelperText("Tables are managed from Floor Plan → Edit Layout. Use the Floor tab to create, name, and arrange tables. The floor plan is the canonical source for all table assignment.")
-
-                    Button {
-                        showLegacyTableSettings.toggle()
-                    } label: {
-                        HStack {
-                            Text(showLegacyTableSettings ? "Hide legacy migration tools" : "Show legacy migration tools")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Spacer(minLength: 0)
-                            Image(systemName: showLegacyTableSettings ? "chevron.up" : "chevron.down")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-                    .buttonStyle(.plain)
-
-                    if showLegacyTableSettings {
-                        VStack(alignment: .leading, spacing: 10) {
-                            SettingsHelperText("These fields are migration/fallback only. They do not affect table assignment when a Floor Plan layout exists.")
-                                .foregroundStyle(.orange)
-
-                            SettingsTextEditor(
-                                title: "Fallback chip names (legacy)",
-                                text: $tableOptionsRawValue,
-                                minHeight: 60
-                            )
-
-                            SettingsTextEditor(
-                                title: "Import capacity text (legacy)",
-                                text: $tableCapacityRawValue,
-                                placeholder: HostTableCapacityTextParser.formattedExample(),
-                                minHeight: 60
-                            )
-                            SettingsHelperText("Format: Name: Capacity — one per line. Example: Bar: 4")
-
-                            if let tableCapacityValidationMessage {
-                                Text(tableCapacityValidationMessage)
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(.orange)
-                            }
-
-                            if !tableCapacitySummaryLines.isEmpty {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    ForEach(tableCapacitySummaryLines, id: \.self) { line in
-                                        Text(line)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+//                SettingsCard(title: "Table Setup", systemImage: "table.furniture") {
+//                    SettingsHelperText("Tables are managed from Floor Plan → Edit Layout. Use the Floor tab to create, name, and arrange tables. The floor plan is the canonical source for all table assignment.")
+//
+//                    Button {
+//                        showLegacyTableSettings.toggle()
+//                    } label: {
+//                        HStack {
+//                            Text(showLegacyTableSettings ? "Hide legacy migration tools" : "Show legacy migration tools")
+//                                .font(.caption.weight(.semibold))
+//                                .foregroundStyle(.secondary)
+//                            Spacer(minLength: 0)
+//                            Image(systemName: showLegacyTableSettings ? "chevron.up" : "chevron.down")
+//                                .font(.caption2)
+//                                .foregroundStyle(.tertiary)
+//                        }
+//                    }
+//                    .buttonStyle(.plain)
+//
+//                    if showLegacyTableSettings {
+//                        VStack(alignment: .leading, spacing: 10) {
+//                            SettingsHelperText("These fields are migration/fallback only. They do not affect table assignment when a Floor Plan layout exists.")
+//                                .foregroundStyle(.orange)
+//
+//                            SettingsTextEditor(
+//                                title: "Fallback chip names (legacy)",
+//                                text: $tableOptionsRawValue,
+//                                minHeight: 60
+//                            )
+//
+//                            SettingsTextEditor(
+//                                title: "Import capacity text (legacy)",
+//                                text: $tableCapacityRawValue,
+//                                placeholder: HostTableCapacityTextParser.formattedExample(),
+//                                minHeight: 60
+//                            )
+//                            SettingsHelperText("Format: Name: Capacity — one per line. Example: Bar: 4")
+//
+//                            if let tableCapacityValidationMessage {
+//                                Text(tableCapacityValidationMessage)
+//                                    .font(.caption.weight(.medium))
+//                                    .foregroundStyle(.orange)
+//                            }
+//
+//                            if !tableCapacitySummaryLines.isEmpty {
+//                                VStack(alignment: .leading, spacing: 4) {
+//                                    ForEach(tableCapacitySummaryLines, id: \.self) { line in
+//                                        Text(line)
+//                                            .font(.caption)
+//                                            .foregroundStyle(.secondary)
+//                                    }
+//                                }
+//                            }
+//                        }
+//                    }
+//                }
 
                 SettingsCard(title: "Email Identity", systemImage: "envelope") {
                     SettingsTextField(title: "Call-in placeholder email", text: $draft.callInPlaceholderEmail)
@@ -857,9 +860,13 @@ struct RestaurantSettingsView: View {
                 backendRemindersReadOnlyCard
                 backendAutoConfirmReadOnlyCard
                 emailLimitsReadOnlyCard
+
+                if controller.capabilities.canManageRestaurantSettings {
+                    emailAutomationNavigationCard
+                }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 14)
+            .padding(.top, 24)
             .padding(.bottom, hasChanges ? 112 : 28)
         }
         .background(Color(.systemGroupedBackground))
@@ -869,10 +876,10 @@ struct RestaurantSettingsView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     Task {
-                        await load(forceDraftUpdate: true)
+                        await load(forceDraftUpdate: true, forceSetup: true)
                     }
                 } label: {
-                    if settingsStore.setupLoading {
+                    if settingsStore.setupLoading || isLoadingReminderUsage {
                         ProgressView()
                     } else {
                         Image(systemName: "arrow.clockwise")
@@ -917,11 +924,35 @@ struct RestaurantSettingsView: View {
         SettingsCard(title: "Backend Reminders", systemImage: "bell.badge") {
             SettingsKeyValueGrid(items: [
                 ("Automatic reminders", setup.automaticRemindersEnabled ? "On" : "Off"),
-                ("Manual batch reminders", setup.manualBatchRemindersEnabled ? "On" : "Off"),
-                ("Reminder lead time", reminderLeadHoursLabel(setup.reminderLeadHours)),
-                ("Morning reminder time", setup.morningReminderTime)
+                ("Manual batch", setup.manualBatchRemindersEnabled ? "On" : "Off"),
+                ("Morning time", setup.morningReminderTime),
+                ("Lead time", reminderLeadHoursLabel(setup.reminderLeadHours))
             ])
-            SettingsHelperText("Server-owned reminder automation. Host batch sending still requires this iPad’s Email Automation toggle.")
+            SettingsHelperText("These settings are stored on the backend and affect all iPads.")
+
+            if !setup.manualBatchRemindersEnabled {
+                SettingsNoticeCard(
+                    message: "Staff cannot send reminder batches from the app until this is enabled.",
+                    tint: .orange
+                )
+            }
+
+            if controller.capabilities.canManageRestaurantSettings {
+                NavigationLink {
+                    BackendRemindersEditorView(
+                        setup: setup,
+                        settingsStore: settingsStore,
+                        controller: controller,
+                        onSaved: { saved in
+                            setup = saved
+                        }
+                    )
+                } label: {
+                    Label("Edit Backend Reminders", systemImage: "slider.horizontal.3")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .padding(.top, 4)
+            }
         }
     }
 
@@ -941,7 +972,6 @@ struct RestaurantSettingsView: View {
                 ("Block suspicious contacts", setup.autoConfirmBlockSuspicious ? "On" : "Off")
             ])
 
-            SettingsHelperText("Backend owns auto-confirm. This iPad never auto-confirms reservations.")
 
             if setup.autoConfirmEnabled {
                 SettingsNoticeCard(
@@ -976,23 +1006,39 @@ struct RestaurantSettingsView: View {
             ("Monthly limit", "\(setup.emailMonthlyLimit)")
         ]
 
-        if let daily = usage.daily {
-            items.append(("Resend today", "\(daily.used) / \(daily.limit) used"))
-            items.append(("Remaining today", "\(daily.remaining)"))
+        if let dailyText = usage.dailyValueText {
+            items.append(("Resend today", dailyText))
+        } else if isLoadingReminderUsage {
+            items.append(("Resend today", "Loading usage..."))
         } else {
-            items.append(("Resend today", "Usage unavailable"))
+            items.append(("Resend today", "Usage unavailable from backend"))
         }
 
-        if let monthly = usage.monthly {
-            items.append(("Resend this month", "\(monthly.used) / \(monthly.limit) used"))
-            items.append(("Remaining this month", "\(monthly.remaining)"))
+        if let monthlyText = usage.monthlyValueText {
+            items.append(("Resend this month", monthlyText))
+        } else if isLoadingReminderUsage {
+            items.append(("Resend this month", "Loading usage..."))
         } else {
-            items.append(("Resend this month", "Usage unavailable"))
+            items.append(("Resend this month", "Usage unavailable from backend"))
         }
 
         return SettingsCard(title: "Email Limits", systemImage: "envelope.badge") {
             SettingsKeyValueGrid(items: items)
             SettingsHelperText("Resend usage counts backend provider sends only.")
+        }
+    }
+
+    private var emailAutomationNavigationCard: some View {
+        SettingsCard(title: "This iPad Email Controls", systemImage: "ipad.and.arrow.forward") {
+            SettingsHelperText("These switches apply only on this iPad. They do not change backend restaurant settings.")
+
+            NavigationLink {
+                EmailAutomationSettingsView(settingsStore: emailAutomationSettingsStore)
+            } label: {
+                Label("Open This iPad Email Controls", systemImage: "arrow.right.circle")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .padding(.top, 4)
         }
     }
 
@@ -1036,20 +1082,21 @@ struct RestaurantSettingsView: View {
         }
     }
 
-    private func load(forceDraftUpdate: Bool) async {
+    private func load(forceDraftUpdate: Bool, forceSetup: Bool = false) async {
         errorMessage = nil
         successMessage = nil
         if settingsStore.setup == .default {
             settingsStore.adoptRestaurantSetup(controller.restaurantSetup)
         }
         do {
-            let loadedSetup = try await settingsStore.loadRestaurantSetup()
+            let loadedSetup = try await settingsStore.loadRestaurantSetup(force: forceSetup)
             setup = loadedSetup
             if forceDraftUpdate || !didLoadInitialDraft {
                 draft = RestaurantSetupDraft(setup: loadedSetup)
                 savedDraft = draft
                 didLoadInitialDraft = true
             }
+            await refreshTodayReminderUsage()
         } catch {
             errorMessage = error.localizedDescription
             setup = settingsStore.setup
@@ -1058,7 +1105,15 @@ struct RestaurantSettingsView: View {
                 savedDraft = draft
                 didLoadInitialDraft = true
             }
+            await refreshTodayReminderUsage()
         }
+    }
+
+    private func refreshTodayReminderUsage() async {
+        guard !isLoadingReminderUsage else { return }
+        isLoadingReminderUsage = true
+        defer { isLoadingReminderUsage = false }
+        _ = await controller.refreshReminderStatus(for: Date.reservationDateString())
     }
 
     private func resetDraft() {
@@ -1080,11 +1135,132 @@ struct RestaurantSettingsView: View {
         do {
             let request = try draft.updateRequest()
             let saved = try await settingsStore.saveRestaurantSetup(request: request)
-            _ = try? await controller.loadRestaurantSetup(force: true)
+            controller.adoptRestaurantSetup(saved, reason: "restaurant_settings_saved")
             setup = saved
             draft = RestaurantSetupDraft(setup: saved)
             savedDraft = draft
             successMessage = "Restaurant settings saved."
+            ReservationHaptics.success()
+        } catch {
+            errorMessage = error.localizedDescription
+            ReservationHaptics.warning()
+        }
+    }
+}
+
+// MARK: - Backend Reminders
+
+struct BackendRemindersEditorView: View {
+    @ObservedObject var settingsStore: RestaurantSettingsStore
+    @ObservedObject var controller: ReservationsController
+    var onSaved: (RestaurantSetup) -> Void = { _ in }
+
+    @State private var draft: BackendRemindersDraft
+    @State private var savedDraft: BackendRemindersDraft
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    @State private var successMessage: String?
+
+    init(
+        setup: RestaurantSetup,
+        settingsStore: RestaurantSettingsStore,
+        controller: ReservationsController,
+        onSaved: @escaping (RestaurantSetup) -> Void = { _ in }
+    ) {
+        let draft = BackendRemindersDraft(setup: setup)
+        self.settingsStore = settingsStore
+        self.controller = controller
+        self.onSaved = onSaved
+        _draft = State(initialValue: draft)
+        _savedDraft = State(initialValue: draft)
+    }
+
+    private var validationMessage: String? {
+        draft.validationMessage
+    }
+
+    private var canSave: Bool {
+        validationMessage == nil && !isSaving && draft != savedDraft
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if let errorMessage {
+                    SettingsNoticeCard(message: errorMessage, tint: .red)
+                } else if let successMessage {
+                    SettingsNoticeCard(message: successMessage, tint: .green, systemImage: "checkmark.circle")
+                }
+
+                SettingsCard(title: "Backend Reminders", systemImage: "bell.badge") {
+                    SettingsHelperText("Global backend reminder settings. These affect all devices.")
+
+                    Toggle("Automatic reminders", isOn: $draft.automaticRemindersEnabled)
+                        .font(.subheadline.weight(.medium))
+                    SettingsHelperText("Backend sends reminder emails automatically when this is on.")
+
+                    Toggle("Manual batch reminders", isOn: $draft.manualBatchRemindersEnabled)
+                        .font(.subheadline.weight(.medium))
+                    SettingsHelperText("Allows staff to send today's reminder batch from the app.")
+
+                    SettingsNumberField(title: "Lead time", text: $draft.reminderLeadHours)
+                    SettingsHelperText("Do not send reminders too close to the reservation time.")
+
+                    SettingsTextField(title: "Morning time", text: $draft.morningReminderTime, prompt: "09:00")
+                        .keyboardType(.numbersAndPunctuation)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SettingsHelperText("Target time for the morning reminder batch. WordPress cron may run later depending on site traffic.")
+
+                    if let validationMessage {
+                        SettingsNoticeCard(message: validationMessage, tint: .orange)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 24)
+            .padding(.bottom, 112)
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Backend Reminders")
+        .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            SettingsSaveBar(
+                title: "Save Backend Reminders",
+                isSaving: isSaving || settingsStore.setupSaving,
+                canSave: canSave,
+                onCancel: resetDraft,
+                onSave: { Task { await save() } }
+            )
+        }
+    }
+
+    private func resetDraft() {
+        draft = savedDraft
+        errorMessage = nil
+        successMessage = nil
+        ReservationHaptics.selection()
+    }
+
+    private func save() async {
+        guard canSave else { return }
+
+        isSaving = true
+        errorMessage = nil
+        successMessage = nil
+
+        defer {
+            isSaving = false
+        }
+
+        do {
+            let request = try draft.updateRequest()
+            let saved = try await settingsStore.saveRestaurantAutomationSetup(request: request)
+            controller.adoptRestaurantSetup(saved, reason: "backend_reminders_saved")
+            draft = BackendRemindersDraft(setup: saved)
+            savedDraft = draft
+            onSaved(saved)
+            successMessage = "Backend reminders saved."
             ReservationHaptics.success()
         } catch {
             errorMessage = error.localizedDescription
@@ -1909,6 +2085,7 @@ private struct SettingsNoticeCard: View {
 private struct SettingsSaveBar: View {
     let title: String
     let isSaving: Bool
+    var canSave = true
     let onCancel: () -> Void
     let onSave: () -> Void
 
@@ -1928,7 +2105,7 @@ private struct SettingsSaveBar: View {
                 }
             }
             .buttonStyle(TryzubPrimaryButtonStyle())
-            .disabled(isSaving)
+            .disabled(isSaving || !canSave)
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
@@ -2066,6 +2243,53 @@ private struct RestaurantSetupDraft: Equatable {
             throw SettingsValidationError(message: "\(field) must be a whole number.")
         }
         return intValue
+    }
+}
+
+private struct BackendRemindersDraft: Equatable {
+    var automaticRemindersEnabled: Bool
+    var manualBatchRemindersEnabled: Bool
+    var reminderLeadHours: String
+    var morningReminderTime: String
+
+    init(setup: RestaurantSetup) {
+        automaticRemindersEnabled = setup.automaticRemindersEnabled
+        manualBatchRemindersEnabled = setup.manualBatchRemindersEnabled
+        reminderLeadHours = String(setup.reminderLeadHours)
+        morningReminderTime = shortTimeString(setup.morningReminderTime) ?? setup.morningReminderTime
+    }
+
+    var validationMessage: String? {
+        let leadText = reminderLeadHours.trimmed
+        guard let leadHours = Int(leadText) else {
+            return "Lead time must be a whole number from 1 to 24."
+        }
+
+        guard (1...24).contains(leadHours) else {
+            return "Lead time must be between 1 and 24 hours."
+        }
+
+        do {
+            _ = try normalizedTime(morningReminderTime, field: "Morning time")
+        } catch {
+            return error.localizedDescription
+        }
+
+        return nil
+    }
+
+    func updateRequest() throws -> RestaurantSetupUpdateRequest {
+        let leadHours = Int(reminderLeadHours.trimmed) ?? 0
+        guard (1...24).contains(leadHours) else {
+            throw SettingsValidationError(message: "Lead time must be between 1 and 24 hours.")
+        }
+
+        return RestaurantSetupUpdateRequest(
+            automaticRemindersEnabled: automaticRemindersEnabled,
+            reminderLeadHours: leadHours,
+            manualBatchRemindersEnabled: manualBatchRemindersEnabled,
+            morningReminderTime: try normalizedTime(morningReminderTime, field: "Morning time")
+        )
     }
 }
 
