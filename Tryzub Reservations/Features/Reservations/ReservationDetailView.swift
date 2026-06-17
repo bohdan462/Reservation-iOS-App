@@ -1071,6 +1071,12 @@ struct ReservationDetailView: View {
 
     @MainActor
     private func saveStaffNotesDraft() async {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
         let trimmed = staffNotesDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = trimmed.isEmpty ? nil : trimmed
         do {
@@ -3115,8 +3121,10 @@ enum ReservationImportantFlags {
         if reservation.partySize >= 7 {
             flags.append(ReservationImportantFlag(
                 id: "large_party",
-                title: "Large party · \(reservation.partySize) guests",
-                detail: reservation.tableName.flatMap { $0.nilIfBlank }.map { "Table: \($0)" },
+                title: reservation.statusValue == .confirmed
+                    ? "Confirmed large party · \(reservation.partySize) guests"
+                    : "Large party · \(reservation.partySize) guests",
+                detail: largePartyDetail(for: reservation),
                 icon: "person.3",
                 tint: .blue
             ))
@@ -3127,6 +3135,13 @@ enum ReservationImportantFlags {
         // IMPORTANT keeps only operational flags: no table, large party.
 
         return flags
+    }
+
+    private static func largePartyDetail(for reservation: ReservationRecord) -> String {
+        if let table = reservation.tableName.flatMap({ $0.nilIfBlank }) {
+            return "Table plan: \(table)"
+        }
+        return "Plan tables before arrival."
     }
 }
 

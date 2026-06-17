@@ -122,6 +122,25 @@ enum HostServiceBriefingViewStateBuilder {
 
         let primary = briefing.checkNow + briefing.afterClose
         let secondary = briefing.comingUp + briefing.reviewLater
+        let missingTables = input.reservations.filter { reservation in
+            switch reservation.statusValue {
+            case .new, .needsReview, .confirmed:
+                return !reservation.hasTableAssignment
+            default:
+                return false
+            }
+        }.count
+        let displayHeadline = headline(
+            briefing: briefing,
+            input: input,
+            status: status,
+            totalGuests: totalGuests
+        )
+        let displaySummary = summary(
+            briefing: briefing,
+            mode: modeResult.mode,
+            missingTables: missingTables
+        )
 
         let durationMs = Int((start.duration(to: .now)).pressureTraceTimeInterval * 1000)
         ServiceIntelligenceTrace.evaluate(
@@ -135,8 +154,8 @@ enum HostServiceBriefingViewStateBuilder {
 
         return HostServiceBriefingViewState(
             mode: modeResult.mode,
-            headline: briefing.headline,
-            summary: briefing.summary,
+            headline: displayHeadline,
+            summary: displaySummary,
             primaryActions: primary,
             secondaryActions: secondary,
             todaySummary: briefing.todaySummary,
@@ -168,5 +187,31 @@ enum HostServiceBriefingViewStateBuilder {
         case 1...11: return "\(hour) AM"
         default: return nil
         }
+    }
+
+    private static func headline(
+        briefing: ServiceBriefing,
+        input: Input,
+        status: ServiceDayStatusSummary,
+        totalGuests: Int
+    ) -> String {
+        guard briefing.mode == .beforeService, status.activeOpenWork > 0 else {
+            return briefing.headline
+        }
+        let startText = input.openTime.map { ReservationFormatters.shortTime.string(from: $0) }
+        let serviceStart = startText.map { "Service starts at \($0)" } ?? "Service starts"
+        let guestText = totalGuests > 0 ? " and \(totalGuests) \(totalGuests == 1 ? "guest" : "guests")" : ""
+        return "\(serviceStart) with \(status.activeOpenWork) \(status.activeOpenWork == 1 ? "reservation" : "reservations")\(guestText)."
+    }
+
+    private static func summary(
+        briefing: ServiceBriefing,
+        mode: ServiceMode,
+        missingTables: Int
+    ) -> String {
+        guard mode == .beforeService, missingTables > 0 else {
+            return briefing.summary
+        }
+        return "\(missingTables) \(missingTables == 1 ? "reservation still needs" : "reservations still need") tables."
     }
 }

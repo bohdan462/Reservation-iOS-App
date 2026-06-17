@@ -6,7 +6,25 @@ This is a custom WordPress plugin that turns Contact Form 7 / Flamingo reservati
 
 This is not production SaaS infrastructure. It is a practical MVP for a restaurant test where Resend-backed confirmation email is the primary backend path and manual Mail remains the fallback.
 
-DB schema version: `1.7.0`
+DB schema version: `1.10.0`
+
+Plugin version: `0.5.4`
+
+### Current contract snapshot
+
+```text
+Backend (WordPress plugin):
+  {prefix}tryzub_restaurant_settings stores reminder automation, backend auto-confirm policy,
+  and Resend daily/monthly usage limits (db 1.10.0).
+  Auto-confirm is backend-owned, off by default, and runs only after successful website form import.
+  PATCH /restaurant-setup is the write path for auto-confirm policy and reminder automation.
+
+iOS staff app:
+  Manager-facing Restaurant Settings reads GET /restaurant-setup.
+  Auto-Confirm Rules editor PATCHes /restaurant-setup only; it never calls /confirm or PATCHes reservation status.
+  This iPad Email Controls (child of Restaurant Settings) stores local device toggles in UserDefaults.
+  iOS must not auto-confirm locally or set confirmed without backend success.
+```
 
 ## Project Overview
 
@@ -119,6 +137,7 @@ POST   /managed-reservations/{id}/manual-email-log
 POST   /managed-reservations/{id}/guest-manage-link
 POST   /managed-reservations/send-due-reminders
 GET    /managed-reservations/reminder-status
+GET    /auto-confirm/candidates
 GET    /reservation-analytics/summary
 GET    /business-intelligence/summary
 GET    /guest-intelligence
@@ -264,6 +283,7 @@ tryzub-reservations-api.php
 includes/
   activation.php
   assets.php
+  auto-confirm.php
   business-intelligence.php
   emails.php
   floor-plan.php
@@ -271,6 +291,7 @@ includes/
   guest-intelligence.php
   health.php
   import.php
+  intelligence-cache.php
   intelligence-helpers.php
   intelligence-system-status.php
   managed-reservations.php
@@ -471,7 +492,7 @@ Email failure does not erase or hide the reservation.
 
 ### `{prefix}tryzub_restaurant_settings`
 
-Restaurant setup and reservation policy foundation. Email identity fields remain here for existing confirmation/reminder behavior, but this phase does not change email sending.
+Restaurant setup, reservation policy, reminder automation, backend auto-confirm policy, and Resend usage limits.
 
 Stores:
 
@@ -486,6 +507,18 @@ max_online_party_size
 large_party_review_threshold
 same_day_booking_enabled
 minimum_lead_time_minutes
+automatic_reminders_enabled
+reminder_lead_hours
+manual_batch_reminders_enabled
+morning_reminder_time
+auto_confirm_enabled
+auto_confirm_require_email
+auto_confirm_block_guest_notes
+auto_confirm_block_duplicates
+auto_confirm_block_suspicious
+auto_confirm_policy_json
+email_daily_limit
+email_monthly_limit
 call_in_placeholder_email
 from_email
 reply_to_email
@@ -502,6 +535,18 @@ max_online_party_size = 8
 large_party_review_threshold = 7
 same_day_booking_enabled = true
 minimum_lead_time_minutes = 60
+automatic_reminders_enabled = true
+reminder_lead_hours = 3
+manual_batch_reminders_enabled = false
+morning_reminder_time = 09:00:00
+auto_confirm_enabled = false
+auto_confirm_require_email = true
+auto_confirm_block_guest_notes = true
+auto_confirm_block_duplicates = true
+auto_confirm_block_suspicious = true
+auto_confirm_policy_json = {"rules":[],"excluded_dates":[]}
+email_daily_limit = 100
+email_monthly_limit = 3000
 ```
 
 ### `{prefix}tryzub_restaurant_weekly_hours`
@@ -833,11 +878,43 @@ https://tryzubchicago.com/wp-json/tryzub/v1
 
 ## Response DTO
 
-Managed reservation responses use snake_case keys so iOS can decode with:
+Managed reservation and setup responses use snake_case JSON keys. The iOS API client uses:
 
 ```swift
 decoder.keyDecodingStrategy = .convertFromSnakeCase
+encoder.keyEncodingStrategy = .convertToSnakeCase
 ```
+
+### iOS Codable trap (nested DTOs)
+
+Because the global decoder uses `.convertFromSnakeCase`, **do not mix it with explicit snake_case `CodingKeys` raw values** on nested DTOs unless you have verified decoding with the global strategy.
+
+Known failure mode (auto-confirm policy round trip):
+
+```text
+Backend JSON:  "start_time": "17:00:00", "end_time": "18:00:00", "max_party_size": 4
+iOS CodingKeys: case startTime = "start_time"  (and similar for end_time, max_party_size)
+Result:         weekday/id/enabled decode; start_time/end_time/max_party_size decode as "" and 0
+Symptom:        PATCH 200 but iOS mismatch warning; list shows "Needs time · tap Edit"
+```
+
+Correct patterns (pick one per DTO tree):
+
+```text
+1. Preferred: use camelCase property names with synthesized or camelCase CodingKeys only,
+   and rely on convertFromSnakeCase / convertToSnakeCase globally.
+2. Alternative: decode specific types with a local JSONDecoder using .useDefaultKeys
+   when the backend JSON already uses exact snake_case key names you declare explicitly.
+```
+
+This applies to nested setup DTOs such as:
+
+```text
+AutoConfirmPolicy / AutoConfirmRule
+EmailUsageSummary / daily|monthly windows (backend field is sent, not used)
+```
+
+For Resend usage windows, backend JSON uses `sent`, `limit`, and `remaining`. iOS display may label this as "used", but decoders must read `sent` as the provider send count.
 
 Reservation DTO shape:
 
@@ -915,6 +992,21 @@ Response:
     "large_party_review_threshold": 7,
     "same_day_booking_enabled": true,
     "minimum_lead_time_minutes": 60,
+    "automatic_reminders_enabled": true,
+    "reminder_lead_hours": 3,
+    "manual_batch_reminders_enabled": false,
+    "morning_reminder_time": "09:00:00",
+    "auto_confirm_enabled": false,
+    "auto_confirm_require_email": true,
+    "auto_confirm_block_guest_notes": true,
+    "auto_confirm_block_duplicates": true,
+    "auto_confirm_block_suspicious": true,
+    "auto_confirm_policy": {
+      "rules": [],
+      "excluded_dates": []
+    },
+    "email_daily_limit": 100,
+    "email_monthly_limit": 3000,
     "call_in_placeholder_email": "callinreservation@tryzubchicago.com",
     "from_email": "reservations@send.tryzubchicago.com",
     "reply_to_email": "info@tryzubchicago.com",
@@ -942,6 +1034,19 @@ max_online_party_size
 large_party_review_threshold
 same_day_booking_enabled
 minimum_lead_time_minutes
+automatic_reminders_enabled
+reminder_lead_hours
+manual_batch_reminders_enabled
+morning_reminder_time
+auto_confirm_enabled
+auto_confirm_require_email
+auto_confirm_block_guest_notes
+auto_confirm_block_duplicates
+auto_confirm_block_suspicious
+auto_confirm_policy
+auto_confirm_policy_json
+email_daily_limit
+email_monthly_limit
 call_in_placeholder_email
 from_email
 reply_to_email
@@ -959,10 +1064,33 @@ max_online_party_size 1-100
 large_party_review_threshold 1-100
 same_day_booking_enabled boolean
 minimum_lead_time_minutes 0-1440
+automatic_reminders_enabled boolean
+manual_batch_reminders_enabled boolean
+reminder_lead_hours 1-24
+morning_reminder_time HH:MM or HH:MM:SS, normalized to HH:MM:SS
+auto_confirm_enabled boolean, default false
+auto_confirm_require_email boolean, default true
+auto_confirm_block_guest_notes boolean, default true
+auto_confirm_block_duplicates boolean, default true
+auto_confirm_block_suspicious boolean, default true
+auto_confirm_policy strict object with rules and excluded_dates
+email_daily_limit positive integer, default 100
+email_monthly_limit positive integer, default 3000
 email fields valid if updated
 ```
 
 Unknown fields are rejected.
+
+Auto-confirm and reminder write contract:
+
+```text
+iOS should send auto_confirm_policy (object). Do not PATCH the DB column name directly in normal app flows.
+Backend validates the policy, then writes auto_confirm_policy_json (LONGTEXT).
+GET/PATCH responses expose the normalized object as auto_confirm_policy (not the raw DB column).
+Auto-confirm rule times must be valid HH:MM:SS after normalization (HH:MM input is accepted on PATCH and normalized).
+morning_reminder_time accepts HH:MM or HH:MM:SS and normalizes to HH:MM:SS.
+Duplicate rule ids inside auto_confirm_policy.rules are rejected.
+```
 
 Example request:
 
@@ -972,7 +1100,18 @@ Example request:
   "slot_interval_minutes": 15,
   "max_online_party_size": 8,
   "same_day_booking_enabled": true,
-  "minimum_lead_time_minutes": 60
+  "minimum_lead_time_minutes": 60,
+  "automatic_reminders_enabled": true,
+  "reminder_lead_hours": 3,
+  "manual_batch_reminders_enabled": false,
+  "morning_reminder_time": "09:00",
+  "auto_confirm_enabled": false,
+  "auto_confirm_policy": {
+    "rules": [],
+    "excluded_dates": []
+  },
+  "email_daily_limit": 100,
+  "email_monthly_limit": 3000
 }
 ```
 
@@ -1632,6 +1771,86 @@ require manage_tryzub_reservations or manage_options
 are read-only GET
 return success + data
 use private, no-store cache headers
+```
+
+### `GET /business-intelligence/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`
+
+Owner/manager aggregate analytics over a reservation date range. Response shape remains:
+
+```text
+{ success: true, data: { ... } }
+```
+
+The endpoint uses an internal server-side daily cache in `tryzub_intelligence_cache` for expensive Business Intelligence summaries. Browser, iOS, proxy, and CDN caching must remain off; responses still send `Cache-Control: private, no-store, max-age=0` and `Pragma: no-cache`.
+
+Cache key format:
+
+```text
+bi:{cache_version}:{range_key}:{from}:{to}:{generated_date}
+```
+
+Range keys:
+
+```text
+this_month
+last_30_days
+all
+custom
+```
+
+The payload is aggregate-only and is scrubbed before storage so emails, phone numbers, names, guest notes, staff notes, tokens, and API keys are not persisted in cache rows.
+
+Additive cache diagnostics are returned inside `data.cache`:
+
+```json
+{
+  "hit": true,
+  "range_key": "last_30_days",
+  "generated_at": "2026-06-16T06:01:02-05:00",
+  "generated_date": "2026-06-16",
+  "compute_duration_ms": 24800,
+  "cache_version": 12,
+  "stale": true,
+  "stale_reason": "compute_in_progress",
+  "recompute_in_progress": true
+}
+```
+
+On cold compute, `hit` is `false` and `forced` is present. Stale cache is returned only when a recompute is already in progress or a recompute fails and a same-range cache row exists for the current cache version.
+
+Admins can force recompute with either query parameter:
+
+```text
+force=1
+cache_bust=1
+```
+
+Only `current_user_can('manage_options')` can force refresh. Non-admin callers may pass these parameters, but they are ignored and the normal cache path is used.
+
+Daily precompute runs through WP-Cron hook `tryzub_bi_daily_precompute_cron`, scheduled daily around 06:00 in the site timezone. It precomputes:
+
+```text
+this_month   first day of current month -> today
+last_30_days today minus 29 days -> today
+all          earliest visible managed reservation or today minus 365 days -> today
+```
+
+Rows older than 14 generated days are pruned. WordPress cron runs only when traffic triggers it; reliable production precompute may need an external uptime/cron ping later.
+
+Cache invalidation uses option `tryzub_bi_cache_version`, default `1`. The version is bumped after successful managed reservation insert/import, PATCH, hard delete, floor-plan table assignment changes, and guest self-service reservation status updates. Old rows are not dropped immediately; new requests use the new version in the key.
+
+Backend test checklist:
+
+```text
+1. Cold request returns data.cache.hit=false.
+2. Immediate identical request returns data.cache.hit=true quickly.
+3. force=1 as admin recomputes and returns data.cache.forced=true.
+4. force=1 as non-admin is ignored.
+5. PATCH reservation bumps tryzub_bi_cache_version.
+6. After version bump, the next request misses old cache and writes a new key.
+7. Cron action creates rows for this_month, last_30_days, and all.
+8. Cache table payload_json has no emails, phones, tokens, staff notes, or raw guest notes.
+9. Existing iOS-compatible fields remain under success + data.
 ```
 
 ### `GET /guest-intelligence?date=YYYY-MM-DD`
@@ -2367,6 +2586,84 @@ If no usable guest email exists, skip provider send and confirm directly.
 Return updated reservation.
 ```
 
+### Backend Auto-Confirm
+
+Auto-confirm is backend-owned and disabled by default. iOS must not auto-confirm locally; it should read server state after import/update.
+
+Storage lives in `{prefix}tryzub_restaurant_settings`:
+
+```text
+auto_confirm_enabled              default false
+auto_confirm_require_email        default true
+auto_confirm_block_guest_notes    default true
+auto_confirm_block_duplicates     default true
+auto_confirm_block_suspicious     default true
+auto_confirm_policy_json          default {"rules":[],"excluded_dates":[]}
+```
+
+Policy shape:
+
+```json
+{
+  "rules": [
+    {
+      "id": "tue_17_18",
+      "enabled": true,
+      "weekday": 1,
+      "start_time": "17:00:00",
+      "end_time": "18:00:00",
+      "max_party_size": 4
+    }
+  ],
+  "excluded_dates": ["2026-12-25"]
+}
+```
+
+Weekday is `0=Monday` through `6=Sunday`. Rule start is inclusive and end is exclusive. Empty rules mean no auto-confirm. If multiple enabled rules match, the backend uses the most permissive matching `max_party_size`.
+
+Eligibility requires a clean `source_type=form`, `status=new`, visible/non-superseded reservation inside an enabled window, usable email, no duplicate/correction markers, no staff notes, no prior sent confirmation, configured Resend provider, and no blocked guest notes when `auto_confirm_block_guest_notes=true`.
+
+Auto-confirm triggers only after successful website form import insert. It reuses the same confirmation executor as `POST /managed-reservations/{id}/confirm`: confirmation email sends first, and status changes to confirmed only after provider success. Failures leave the reservation unconfirmed and write `auto_confirm_failed` activity.
+
+Auto-confirm never runs on:
+
+```text
+iOS refresh / GET list
+manual POST /managed-reservations create
+PATCH /managed-reservations/{id}
+dry-run GET /auto-confirm/candidates
+reminder batch or reminder status endpoints
+import repair routes except the normal successful form import insert path
+```
+
+Dry-run endpoint (GET-only, no side effects):
+
+```text
+GET /auto-confirm/candidates?date=YYYY-MM-DD
+```
+
+Returns no PII and has no side effects:
+
+```json
+{
+  "success": true,
+  "date": "2026-06-16",
+  "data": [
+    {
+      "reservation_id": 123,
+      "reservation_time": "17:30",
+      "party_size": 4,
+      "status": "new",
+      "source_type": "form",
+      "eligible": true,
+      "matching_rule_id": "tue_17_18",
+      "matching_rule_max_party_size": 4,
+      "blocked_reasons": []
+    }
+  ]
+}
+```
+
 Confirmation Resend payload includes both bodies:
 
 ```php
@@ -2548,6 +2845,7 @@ Optional query/body param:
 
 ```text
 date=YYYY-MM-DD
+force=1              admin-only override when manual_batch_reminders_enabled=false
 ```
 
 If omitted, the restaurant-local current date is used.
@@ -2558,10 +2856,13 @@ Behavior:
 Uses the same day-reminder engine as automatic scheduling.
 Checks all reservations for the service date.
 Sends only reminders that are still unsent.
+Manual batch sending is controlled by restaurant setting manual_batch_reminders_enabled.
+If manual_batch_reminders_enabled=false, normal staff/manager calls send no emails and return code manual_batch_reminders_disabled.
+Admin force=1 can override the manual batch block for backend operations.
 If the morning batch has not run, the manual run acts as the morning batch.
 If the morning batch already ran, the manual run acts as catch-up.
-Catch-up sends only when reservation_time is at least 3 hours away.
-If less than 3 hours away, skips with reason too_close_to_reservation_time.
+Catch-up sends only when reservation_time is at least reminder_lead_hours away.
+If less than the configured lead time, skips with reason too_close_to_reservation_time.
 ```
 
 Idempotency:
@@ -2583,6 +2884,12 @@ Response:
   "date": "2026-06-16",
   "mode": "manual_morning",
   "target_time": "09:00:00",
+  "settings": {
+    "automatic_reminders_enabled": true,
+    "manual_batch_reminders_enabled": true,
+    "reminder_lead_hours": 3,
+    "morning_reminder_time": "09:00:00"
+  },
   "morning_batch_ran": true,
   "morning_batch": {},
   "last_batch": {},
@@ -2607,19 +2914,95 @@ Response:
 }
 ```
 
+Disabled manual batch response:
+
+```json
+{
+  "success": false,
+  "code": "manual_batch_reminders_disabled",
+  "message": "Manual batch reminder sending is disabled.",
+  "date": "2026-06-16",
+  "mode": "manual_batch_reminders_disabled",
+  "target_time": "09:00:00",
+  "settings": {
+    "automatic_reminders_enabled": true,
+    "manual_batch_reminders_enabled": false,
+    "reminder_lead_hours": 3,
+    "morning_reminder_time": "09:00:00"
+  },
+  "summary": {
+    "sent": 0,
+    "failed": 0,
+    "skipped": 0,
+    "already_sent": 0,
+    "eligible": 0,
+    "total_checked": 0
+  },
+  "results": []
+}
+```
+
 Statuses/reasons iOS can display:
 
 ```text
 sent: Reminder sent at 9:05 AM
 already_sent: Already sent / Reminder sent at 9:05 AM
 skipped + no_email: Skipped: no email
-skipped + too_close_to_reservation_time: Skipped: too close to reservation time
+skipped + too_close_to_reservation_time: Skipped: less than N hours before reservation
 failed + provider_failed: Failed: use manual follow-up
 ```
 
 Authorized developer diagnostics are additive per reservation and include safe `resend_response`, `resend_http_status`, `provider_message_id`, and `email_log_id`. Normal staff responses stay simple and do not expose provider details.
 
 Every provider attempt writes `{prefix}tryzub_reservation_emails` with `email_type=reminder`, provider, status, provider_message_id when available, and sent_at when sent.
+
+Reminder emails use the same branded HTML card style as confirmations, with a plain-text fallback. Reminder emails do not include a manage button, guest manage URL/token, or "reply to this email" language. They include reservation date, time, party size, restaurant name/address, and a call-the-restaurant instruction for changes.
+
+### Resend usage tracking
+
+Backend provider usage is counted from `{prefix}tryzub_reservation_emails` where `provider=resend`, `status=sent`, and `sent_at` is present. Manual providers such as `manual_gmail` do not count.
+
+Settings:
+
+```text
+email_daily_limit default 100
+email_monthly_limit default 3000
+```
+
+Before sending confirmation or reminder email through Resend, the backend checks daily and monthly usage. If a limit is reached, no provider send is attempted, a safe failed email log is written, and the business action does not confirm an auto-confirm reservation.
+
+Additive usage summary:
+
+```json
+{
+  "email_usage": {
+    "provider": "resend",
+    "daily": {
+      "date": "2026-06-16",
+      "sent": 6,
+      "limit": 100,
+      "remaining": 94
+    },
+    "monthly": {
+      "month": "2026-06",
+      "sent": 6,
+      "limit": 3000,
+      "remaining": 2994
+    }
+  }
+}
+```
+
+iOS contract note:
+
+```text
+Backend usage windows expose sent, limit, remaining.
+iOS UI may display sent as "6 / 100 used · 94 left" but decoders must map backend sent to the used count.
+Do not expect a used field in backend JSON.
+manual_gmail and other manual providers do not increment these counts.
+```
+
+Limit-reached reminder rows use display text `Email limit reached. Use manual follow-up.` Confirmation diagnostics include usage for admin/developer requests.
 
 ### `GET /managed-reservations/reminder-status`
 
@@ -2635,6 +3018,19 @@ date=YYYY-MM-DD
 
 Returns the same summary/result shape as `send-due-reminders` without sending email or writing logs. iOS can use it to show whether the morning batch ran and whether each reservation is sent, already sent, skipped, failed, or still pending.
 
+The response includes additive server settings so iOS can display backend truth and disable controls without guessing:
+
+```json
+{
+  "settings": {
+    "automatic_reminders_enabled": true,
+    "manual_batch_reminders_enabled": false,
+    "reminder_lead_hours": 3,
+    "morning_reminder_time": "09:00:00"
+  }
+}
+```
+
 ### Automatic reminder scheduling
 
 The reminder scheduler is attached to the existing WordPress hourly cron hook.
@@ -2643,11 +3039,13 @@ Automatic behavior:
 
 ```text
 Restaurant timezone: America/Chicago by default, or restaurant settings timezone.
-Morning target: 09:00:00 by default.
+Automatic sending is controlled by restaurant setting automatic_reminders_enabled.
+If automatic_reminders_enabled=false, cron sends no reminder emails.
+Morning target: morning_reminder_time, 09:00:00 by default.
 Before target time, cron returns waiting_for_morning_target.
 At/after target time, cron runs one morning batch per service date.
 After the morning batch, later cron runs act as same-day catch-up.
-Catch-up only sends reminders at least 3 hours before reservation_time.
+Catch-up only sends reminders at least reminder_lead_hours before reservation_time.
 Last morning batch and last reminder batch are stored per date in WordPress options.
 ```
 
@@ -2655,6 +3053,7 @@ WP-Cron caveat:
 
 ```text
 WordPress cron runs when site traffic triggers it; it is not a guaranteed real-time scheduler.
+Changing morning_reminder_time stores the new target immediately, but the hourly cron schedule itself remains hourly and may require rescheduling in a future release if a precise standalone event is added.
 The manual iOS button is the operational backup if staff need to verify or run reminders.
 Use GET /managed-reservations/reminder-status?date=YYYY-MM-DD to verify the morning batch ran.
 ```
@@ -2813,9 +3212,9 @@ WP-Cron hourly hook
 Reminder modes:
 
 ```text
-Morning automatic batch runs once per service date at/after 9:00 AM America/Chicago by default.
+Morning automatic batch runs once per service date at/after morning_reminder_time (09:00:00 America/Chicago by default).
 Manual Send Today's Reminders uses the same day-reminder engine and sends only unsent reminders.
-Late same-day catch-up runs after the morning batch and requires reservation_time to be at least 3 hours away.
+Late same-day catch-up runs after the morning batch and requires reservation_time to be at least reminder_lead_hours away.
 Confirmation email is considered enough for very late same-day bookings.
 ```
 
@@ -2838,6 +3237,111 @@ iOS shows unread guest replies.
 ```
 
 ## iOS Contract
+
+### Manager settings surfaces (current)
+
+```text
+Restaurant Settings (manager/developer):
+  GET/PATCH /restaurant-setup for global backend policy.
+  Read-only cards: Backend Reminders, Backend Auto-Confirm summary, Email Limits (Resend usage).
+  Child navigation: Auto-Confirm Rules editor, This iPad Email Controls.
+
+Auto-Confirm Rules editor (manager):
+  PATCH /restaurant-setup only.
+  Dry-run preview: GET /auto-confirm/candidates?date=YYYY-MM-DD (read-only).
+  Never calls POST /managed-reservations/{id}/confirm.
+  Never PATCHes reservation status.
+
+This iPad Email Controls (manager child screen):
+  Local UserDefaults toggles only; applies on this iPad.
+  Examples: use backend email for Confirm & Send, manual Mail fallback, reminder proof UI,
+  permission to tap Host Board batch reminder send.
+  Copy must say changes apply on this device only.
+```
+
+### iOS Auto-Confirm Rules editor
+
+```text
+Reads policy from GET /restaurant-setup (or adopted PATCH response).
+Writes via PATCH /restaurant-setup with auto_confirm_policy and scalar auto-confirm fields.
+
+Invalid backend-loaded windows:
+  List shows repair-oriented copy such as "Needs time · tap Edit".
+  Invalid rows are disabled locally until repaired.
+  Edit sheet can prefill safe defaults (for example Tuesday 17:00–18:00, max party 4) for human repair.
+  Repair is local until Save Auto-Confirm Policy.
+
+Save flow:
+  PATCH /restaurant-setup.
+  Adopt PATCH response into settings store, reservations controller, editor draft, and parent Restaurant Settings.
+  No redundant post-save GET is required when PATCH response is trusted.
+  Mismatch guard warns if decoded saved policy signature differs from sent payload
+  (often a Codable snake_case trap; see Response DTO section).
+
+Dry-run:
+  GET /auto-confirm/candidates only.
+  No reservation mutations, no email sends, no PII in response payload.
+```
+
+### Local iPad controls vs global backend settings
+
+| Scope | Storage | Affects | Examples |
+| --- | --- | --- | --- |
+| Global backend | WordPress `{prefix}tryzub_restaurant_settings` | All devices / server behavior | `automatic_reminders_enabled`, `manual_batch_reminders_enabled`, `reminder_lead_hours`, `morning_reminder_time`, auto-confirm policy, `email_daily_limit`, `email_monthly_limit` |
+| Local iPad | UserDefaults on device | This iPad only | Confirm & Send backend email toggle, manual Mail fallback toggle, reminder proof UI, local batch-send safety toggle |
+
+Batch reminder sending requires **both**:
+
+```text
+backend manual_batch_reminders_enabled=true
+local iPad manual reminder send toggle enabled (Email Automation / This iPad Email Controls)
+```
+
+The local toggle must not be presented as the global backend setting. Backend Reminders card shows server truth; Email Controls card shows device-only behavior.
+
+Admin-only backend override: `POST /managed-reservations/send-due-reminders?force=1` can bypass `manual_batch_reminders_enabled=false` for `manage_options` users. Normal staff/manager iOS paths do not use this override.
+
+### Startup and after-close date behavior
+
+```text
+Startup selects calendar today for Host Board / reservations list initial date.
+Host Board does not auto-advance selected date after close.
+Auto-refresh never advances selected date on its own.
+After close (iOS treats ~22:00 local on today's service date as after-close for traces),
+today can show zero active rows while tomorrow rows are filtered out when selected date is still today.
+This is intentional current product behavior.
+Managers who want tomorrow after close should manually select tomorrow.
+A future explicit "Tomorrow" shortcut after close is not implemented yet.
+```
+
+### Restaurant Settings architecture (current + planned)
+
+Current intended structure:
+
+```text
+Restaurant Settings owns global/backend settings and read-only backend automation summaries.
+This iPad Email Controls is a child screen for local device email behavior.
+Floor Plan (Floor tab → Edit Layout) is the canonical table layout path via PUT /restaurant-tables and GET /floor-plan.
+Reservation Policy and Email Identity remain advanced/rarely changed fields in Restaurant Settings.
+Legacy Table Setup / import text helpers are commented out in iOS UI; not normal manager settings.
+```
+
+Planned cleanup (not fully implemented):
+
+```text
+Dedicated backend Reminders editor screen (today: read-only summary + PATCH via broader setup flows).
+Hide legacy table migration tools from normal manager settings once floor plan setup is stable for pilot.
+Collapse Reservation Policy / Email Identity into advanced sections after pilot stabilization.
+```
+
+### Floor plan (current)
+
+```text
+PUT /restaurant-tables persists grid layout rows.
+GET /floor-plan?date=YYYY-MM-DD returns tables, assignments, and reservations for a service date.
+PATCH /managed-reservations/{id}/tables assigns or clears tables with advisory locking and 409 conflicts.
+iOS Floor tab Edit Layout is the staff-facing setup path; Restaurant Settings legacy table text tools are not primary.
+```
 
 iOS should:
 
@@ -2866,6 +3370,8 @@ Use GET /managed-reservations/{id}/activity for Reservation Detail change histor
 Use GET /activity?date=... for service-day manager recap / Service Intelligence context.
 Use GET /intelligence/system-status for manager/developer health summaries.
 Use GET /intelligence/reservation-pipeline-diagnostics for developer intake reconciliation details.
+Use GET /restaurant-setup and PATCH /restaurant-setup for manager global settings and auto-confirm policy.
+Use GET /auto-confirm/candidates for auto-confirm dry-run preview only.
 ```
 
 iOS should not:
@@ -2884,6 +3390,7 @@ Invent multi-device reservation change history from SwiftData alone; use backend
 Treat every missing managed row in diagnostics as a broken production state.
 Send blind status changes that skip the allowed transition map.
 Overwrite a reservation without expected_updated_at when another device may have edited it.
+Auto-confirm or set confirmed locally; backend owns auto-confirm.
 ```
 
 ## Backend Idempotency / Duplicate Protection
@@ -3086,6 +3593,32 @@ Private endpoints require `manage_tryzub_reservations` or `manage_options`.
 4. Confirm it creates a separate managed row.
 5. Confirm the existing duplicate/correction workflow marks rows `needs_review` as appropriate.
 
+### B4. Auto-Confirm
+
+1. Fresh `GET /restaurant-setup` returns `auto_confirm_enabled=false` and empty `auto_confirm_policy.rules`.
+2. PATCH a valid auto-confirm policy with an enabled weekday/time window.
+3. PATCH invalid time window where `end_time <= start_time` and confirm it is rejected.
+4. PATCH duplicate rule `id` values and confirm strict validation error.
+5. Immediately `GET /restaurant-setup` (or trust PATCH response) and confirm returned `start_time`, `end_time`, and `max_party_size` match normalized values.
+6. iOS: save repaired invalid window, reopen editor, and confirm no mismatch warning on valid round trip.
+7. iOS: confirm decoded `auto_confirm_policy.rules[].start_time`, `end_time`, and `max_party_size` are not blank/zero after PATCH/GET.
+8. `GET /auto-confirm/candidates?date=YYYY-MM-DD` returns eligible/ineligible rows with blocked reasons and no raw phone/email/notes; confirm no side effects.
+9. Submit a clean CF7 reservation inside an enabled window, party size within rule max, no notes, usable email, and confirm backend sends confirmation first, then sets `status=confirmed`, `confirmed_at`, and `confirmation_email_sent_at`.
+10. Confirm sent confirmation email log and `auto_confirmed` activity.
+11. Submit party above rule max and confirm it remains unconfirmed; dry-run shows `party_too_large_for_rule`.
+12. Submit with guest notes and confirm it remains unconfirmed when `auto_confirm_block_guest_notes=true`.
+13. Submit duplicate/correction and confirm it remains unconfirmed.
+14. Force Resend failure or limit block and confirm reservation remains unconfirmed, failed email log is written, and `auto_confirm_failed` activity exists.
+15. Manual reservation create never auto-confirms.
+16. iOS Auto-Confirm Rules editor never calls `POST /managed-reservations/{id}/confirm` or PATCHes reservation status.
+
+### B4b. iOS Codable / nested setup DTOs
+
+1. Decode a sample `auto_confirm_policy` response with global `convertFromSnakeCase` and confirm `start_time`, `end_time`, and `max_party_size` populate correctly.
+2. Decode `email_usage.daily.sent` and `email_usage.monthly.sent`; confirm UI used count matches backend `sent`.
+3. Confirm `manual_gmail` manual-email logs do not change backend `sent` counts.
+4. Regression: explicit snake_case raw `CodingKeys` plus global `convertFromSnakeCase` must not be reintroduced on nested policy/usage DTOs without a decode test.
+
 ### C. List Endpoint
 
 1. `GET /managed-reservations?per_page=10`
@@ -3182,9 +3715,9 @@ Private endpoints require `manage_tryzub_reservations` or `manage_options`.
 6. Confirm successful rows set `reminder_email_sent_at`.
 7. Run the endpoint again.
 8. Confirm previously sent rows return `already_sent` and no duplicate send occurs.
-9. Create/confirm a same-day reservation after morning batch with reservation_time at least 3 hours away.
+9. Create/confirm a same-day reservation after morning batch with reservation_time at least reminder_lead_hours away.
 10. Run reminders again and confirm catch-up sends it.
-11. Create/confirm a same-day reservation less than 3 hours away.
+11. Create/confirm a same-day reservation less than reminder_lead_hours away.
 12. Confirm result is `skipped` with reason `too_close_to_reservation_time`.
 13. Create a confirmed no-email reservation and confirm result is `skipped` with reason `no_email`.
 14. Force a Resend failure and confirm result is `failed` with display message `Failed: use manual follow-up`.
@@ -3192,15 +3725,33 @@ Private endpoints require `manage_tryzub_reservations` or `manage_options`.
 16. Confirm developer diagnostics include safe Resend response and `email_log_id`.
 17. Confirm normal staff response does not expose provider diagnostics.
 18. Call `GET /managed-reservations/reminder-status?date=YYYY-MM-DD`.
-19. Confirm iOS can show `Reminder sent at 9:05 AM`, `Already sent`, `Skipped: no email`, and `Failed: use manual follow-up`.
-20. Confirm morning/last batch run data is present so staff can verify the morning reminder ran.
+19. Confirm status response includes `settings.automatic_reminders_enabled`, `settings.manual_batch_reminders_enabled`, `settings.reminder_lead_hours`, and `settings.morning_reminder_time`.
+20. Confirm iOS can show `Reminder sent at 9:05 AM`, `Already sent`, `Skipped: no email`, and `Failed: use manual follow-up`.
+21. Confirm morning/last batch run data is present so staff can verify the morning reminder ran.
+22. Set `automatic_reminders_enabled=false` and confirm cron/auto mode sends no emails.
+23. Set `manual_batch_reminders_enabled=false` and confirm normal `POST /managed-reservations/send-due-reminders` returns `success=false`, `code=manual_batch_reminders_disabled`, and sends no emails.
+24. Set `manual_batch_reminders_enabled=true` and confirm manual batch behavior works.
+25. Set `reminder_lead_hours=4` and confirm a reservation 3 hours away skips with `too_close_to_reservation_time`.
+26. Set `reminder_lead_hours=2` and confirm a reservation 3 hours away is eligible.
+27. Confirm reminder HTML is styled like confirmation email and contains no manage button, manage URL/token, or reply-to-this-email copy.
+28. Confirm sent reminders increment `email_usage.daily.sent` and `email_usage.monthly.sent`.
+29. Confirm `manual_gmail` logs do not increment Resend usage.
+30. Set a low `email_daily_limit` or `email_monthly_limit` and confirm provider sends are blocked safely with `email_daily_limit_reached` or `email_monthly_limit_reached`.
+31. iOS Restaurant Settings Email Limits grid shows label `Resend today` with value `6 / 100 used · 94 left` (no duplicated prefix in the value column).
+32. iOS batch reminder button stays disabled when backend `manual_batch_reminders_enabled=false` even if local iPad toggle is on.
+33. iOS batch reminder button requires both backend manual batch enabled and local iPad manual send toggle enabled.
+34. Admin `POST /managed-reservations/send-due-reminders?force=1` can override backend manual batch disabled; normal staff path cannot.
 
 ### I2. Restaurant Setup
 
 1. `GET /restaurant-setup` returns the default `tryzub` row.
-2. PATCH `business_name`, `timezone`, `default_party_size`, policy fields, and email fields.
-3. PATCH unknown field returns `tryzub_unknown_setup_field`.
-4. Manual call-in blank email uses the configured placeholder internally.
+2. `GET /restaurant-setup` includes `automatic_reminders_enabled`, `manual_batch_reminders_enabled`, `reminder_lead_hours`, `morning_reminder_time`, auto-confirm fields, and email limits.
+3. PATCH `business_name`, `timezone`, `default_party_size`, policy fields, reminder fields, auto-confirm fields, email limits, and email fields.
+4. PATCH invalid `reminder_lead_hours` below 1 or above 24 returns `tryzub_invalid_reminder_lead_hours`.
+5. PATCH invalid `morning_reminder_time` returns `tryzub_invalid_morning_reminder_time`; valid `HH:MM` normalizes to `HH:MM:SS`.
+6. PATCH invalid auto-confirm policy returns a strict validation error.
+7. PATCH unknown field returns `tryzub_unknown_setup_field`.
+8. Manual call-in blank email uses the configured placeholder internally.
 
 ### I3. Restaurant Hours
 
@@ -3364,7 +3915,7 @@ Private endpoints require `manage_tryzub_reservations` or `manage_options`.
 
 ### I7b. Activity History
 
-1. Activate/upgrade plugin and confirm `{prefix}tryzub_reservation_activity` exists (db `1.7.0`).
+1. Activate/upgrade plugin and confirm `{prefix}tryzub_reservation_activity` exists (db `1.7.0` or later).
 2. `POST /managed-reservations` creates a row; `GET /managed-reservations/{id}/activity` returns a `created` event.
 3. `PATCH /managed-reservations/{id}` party size or time; confirm an `updated` event with `metadata.changed_fields`.
 4. `PATCH` status to `confirmed`; confirm `confirmed` or `status_changed` event.
@@ -3411,8 +3962,6 @@ Explicitly deferred from Phase 2:
 
 ```text
 Inbound provider webhook/domain confirmation
-Additional reminder template changes
-Reminder changes
 Capacity logic beyond current floor-plan conflict rules
 Real-time websocket floor sync
 SMS
@@ -3438,15 +3987,19 @@ Test on desktop.
 Keep email backup active.
 ```
 
-Schema upgrade (1.6.0 -> 1.7.0):
+Schema upgrade (1.9.0 -> 1.10.0):
 
 ```text
 On plugins_loaded, tryzub_maybe_upgrade_reservations_table runs automatically when the stored
-db version differs from 1.7.0.
-It creates {prefix}tryzub_reservation_activity if missing (dbDelta).
+db version differs from 1.10.0.
+It adds backend auto-confirm settings and email usage limits if missing:
+auto_confirm_enabled, auto_confirm_require_email, auto_confirm_block_guest_notes,
+auto_confirm_block_duplicates, auto_confirm_block_suspicious, auto_confirm_policy_json,
+email_daily_limit, email_monthly_limit.
 No existing reservation data is modified.
 If the upgrade does not trigger, deactivate and reactivate the plugin once to force schema creation.
-After upgrade, mutation endpoints begin writing activity rows automatically.
+After upgrade, auto-confirm remains off by default.
+The prior 1.9.0 upgrade added reminder automation settings and remains safe to rerun.
 ```
 
 Schema upgrade (1.5.0 -> 1.6.0):
@@ -3514,9 +4067,19 @@ Confirm a PATCH with stale expected_updated_at returns 409 tryzub_reservation_co
 
 [x] Failed imports endpoint contains failed record 357
 
-[ ] Reminder time-window fixed ----------NOT MVP
+[x] Reminder time-window configurable
 
-[ ] Reminder send verified --------------NOT MVP
+[x] Reminder backend send path implemented
+
+[ ] Reminder live delivery verified
+
+[ ] Auto-confirm dry-run verified
+
+[ ] Auto-confirm live send verified
+
+[ ] Auto-confirm iOS PATCH round trip decodes policy fields correctly
+
+[ ] iOS nested snake_case Codable regression checked
 
 [ ] iOS real phone decode/update verified
 

@@ -277,7 +277,7 @@ struct HostBoardView: View {
     var body: some View {
         GeometryReader { proxy in
             let safeWidth = proxy.size.width.tryzubFiniteNonNegativeLayoutValue
-            let safeHeight = proxy.size.height.tryzubFiniteNonNegativeLayoutValue
+            let safeHeight = proxy.size.height.tryzubFinitePositiveLayoutValue
             let isTablet = UIDevice.current.userInterfaceIdiom == .pad
             let isWideLayout = isTablet || safeWidth >= 1100
             let snapshot = boardSnapshot ?? HostBoardSnapshot(
@@ -1710,10 +1710,23 @@ private struct HostReminderBatchCard: View {
     let canSendBatchReminders: Bool
     let onSend: () -> Void
 
+    private var summary: HostReminderStaffSummary {
+        HostReminderStaffSummary.build(
+            status: status,
+            automaticRemindersEnabled: automaticRemindersEnabled,
+            manualSendEnabled: manualSendEnabled,
+            backendManualBatchEnabled: backendManualBatchEnabled,
+            reminderLeadHours: reminderLeadHours,
+            dailyEmailLimitReached: dailyEmailLimitReached,
+            canSendBatchReminders: canSendBatchReminders,
+            isLoading: showProof && status == nil
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Label("Today’s reminders", systemImage: "bell.badge")
+                Label(summary.title, systemImage: "bell.badge")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 if isSending {
@@ -1722,103 +1735,174 @@ private struct HostReminderBatchCard: View {
                 }
             }
 
-            emailUsageLines
+            Text(summary.message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-            if let leadHoursText {
-                Text(leadHoursText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if let secondary = summary.secondary {
+                Text(secondary)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(TryzubColors.mutedText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            if !automaticRemindersEnabled {
-                Text("Automatic reminders are off.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if showProof {
-                if let status {
-                    if automaticRemindersEnabled, status.morningBatchRan == true {
-                        Text("Automatic reminders ran today.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(summaryText(status.summary))
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(TryzubColors.mutedText)
-                } else {
-                    Text("Checking reminders…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            if canSendBatchReminders {
+                Button {
+                    onSend()
+                } label: {
+                    Label(summary.actionLabel ?? "Send reminders", systemImage: "paperplane")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .disabled(isSending)
+            } else if let actionLabel = summary.actionLabel {
+                Text(actionLabel)
+                    .frame(maxWidth: .infinity)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(TryzubColors.mutedText)
+                    .padding(.vertical, 10)
             }
 
             if let notice, !notice.isEmpty {
                 Text(notice)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(TryzubColors.mutedText)
-            }
-
-            if manualSendEnabled {
-                if !backendManualBatchEnabled {
-                    Text("Manual batch reminders are disabled in backend settings.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if dailyEmailLimitReached {
-                    Text("Daily Resend limit reached. Batch reminders are unavailable until tomorrow.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if canSendBatchReminders {
-                    Button {
-                        onSend()
-                    } label: {
-                        Label("Send Today's Reminders", systemImage: "paperplane")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-                    .disabled(isSending)
-                } else if let status {
-                    Text("No reminders to send")
-                        .frame(maxWidth: .infinity)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(TryzubColors.mutedText)
-                        .padding(.vertical, 10)
-                }
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
+}
 
-    private var leadHoursText: String? {
-        guard reminderLeadHours > 0 else { return nil }
-        let unit = reminderLeadHours == 1 ? "hour" : "hours"
-        return "Catch-up reminders require at least \(reminderLeadHours) \(unit) before reservation."
+private struct HostReminderStaffSummary {
+    enum Severity {
+        case ok
+        case attention
+        case blocked
+        case info
     }
 
-    @ViewBuilder
-    private var emailUsageLines: some View {
-        if let dailyText = emailUsage.dailyDisplayText {
-            Text(dailyText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    let title: String
+    let message: String
+    let secondary: String?
+    let actionLabel: String?
+    let severity: Severity
+
+    static func build(
+        status: ReservationReminderStatusResponse?,
+        automaticRemindersEnabled: Bool,
+        manualSendEnabled: Bool,
+        backendManualBatchEnabled: Bool,
+        reminderLeadHours: Int,
+        dailyEmailLimitReached: Bool,
+        canSendBatchReminders: Bool,
+        isLoading: Bool
+    ) -> HostReminderStaffSummary {
+        let title = "Guest reminders"
+
+        if isLoading {
+            return HostReminderStaffSummary(
+                title: title,
+                message: "Checking whether guests still need reminders.",
+                secondary: nil,
+                actionLabel: nil,
+                severity: .info
+            )
         }
-        if let monthlyText = emailUsage.monthlyDisplayText {
-            Text(monthlyText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+        if !automaticRemindersEnabled {
+            return HostReminderStaffSummary(
+                title: title,
+                message: "Automatic reminders are off. Send reminders manually if guests still need notice.",
+                secondary: cutoffLine(skipped: status?.summary.skipped ?? 0, leadHours: reminderLeadHours),
+                actionLabel: canSendBatchReminders ? "Send reminders" : nil,
+                severity: canSendBatchReminders ? .attention : .info
+            )
         }
-        if !emailUsage.hasUsageData {
-            Text("Usage unavailable")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+        if dailyEmailLimitReached {
+            return HostReminderStaffSummary(
+                title: title,
+                message: "Reminder sending is paused for today.",
+                secondary: "The daily email limit has been reached.",
+                actionLabel: nil,
+                severity: .blocked
+            )
         }
+
+        if manualSendEnabled && !backendManualBatchEnabled {
+            return HostReminderStaffSummary(
+                title: title,
+                message: "Guest reminders are controlled from Restaurant Settings.",
+                secondary: "Manual batch sending is off for this restaurant.",
+                actionLabel: nil,
+                severity: .info
+            )
+        }
+
+        let eligible = status?.summary.eligible ?? 0
+        if canSendBatchReminders, eligible > 0 {
+            return HostReminderStaffSummary(
+                title: title,
+                message: "\(eligible) \(eligible == 1 ? "reminder can" : "reminders can") be sent now.",
+                secondary: "Send reminders before the dinner rush.",
+                actionLabel: "Send reminders",
+                severity: .attention
+            )
+        }
+
+        if let status {
+            let skipped = status.summary.skipped
+            let failed = status.summary.failed
+            if failed > 0 {
+                return HostReminderStaffSummary(
+                    title: title,
+                    message: "\(failed) \(failed == 1 ? "reminder needs" : "reminders need") a staff check.",
+                    secondary: skipped > 0 ? cutoffLine(skipped: skipped, leadHours: reminderLeadHours) : nil,
+                    actionLabel: nil,
+                    severity: .attention
+                )
+            }
+            if skipped > 0 {
+                return HostReminderStaffSummary(
+                    title: title,
+                    message: "No reminders can be sent right now.",
+                    secondary: cutoffLine(skipped: skipped, leadHours: reminderLeadHours),
+                    actionLabel: nil,
+                    severity: .info
+                )
+            }
+            return HostReminderStaffSummary(
+                title: title,
+                message: "Guest reminders are handled for today.",
+                secondary: "No one needs a reminder right now.",
+                actionLabel: nil,
+                severity: .ok
+            )
+        }
+
+        return HostReminderStaffSummary(
+            title: title,
+            message: "Guest reminders are handled for today.",
+            secondary: "No one needs a reminder right now.",
+            actionLabel: nil,
+            severity: .ok
+        )
     }
 
-    private func summaryText(_ summary: ReservationReminderSummaryDTO) -> String {
-        "Sent \(summary.sent) · Already sent \(summary.alreadySent) · Skipped \(summary.skipped) · Failed \(summary.failed)"
+    private static func cutoffLine(skipped: Int, leadHours: Int) -> String? {
+        guard skipped > 0 else { return nil }
+        let cutoff: String
+        if leadHours > 0 {
+            cutoff = " because \(skipped == 1 ? "they are" : "they are") inside the \(leadHours)-hour cutoff"
+        } else {
+            cutoff = ""
+        }
+        return "\(skipped) \(skipped == 1 ? "guest was" : "guests were") skipped\(cutoff)."
     }
 }
 

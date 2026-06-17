@@ -556,6 +556,403 @@ private struct HomeDashboardView: View {
 
 // MARK: - Schedule View
 
+private enum BookingDateScope: Hashable, Identifiable {
+    case today
+    case tomorrow
+    case yesterday
+    case upcoming
+    case past
+    case last7Days
+    case allHistory
+    case custom(Date)
+
+    var id: String {
+        switch self {
+        case .today:
+            return "today"
+        case .tomorrow:
+            return "tomorrow"
+        case .yesterday:
+            return "yesterday"
+        case .upcoming:
+            return "upcoming"
+        case .past:
+            return "past"
+        case .last7Days:
+            return "last7Days"
+        case .allHistory:
+            return "allHistory"
+        case .custom(let date):
+            return "custom-\(date.reservationDateString())"
+        }
+    }
+
+    var customDate: Date? {
+        if case .custom(let date) = self {
+            return date
+        }
+        return nil
+    }
+
+    var summaryNoun: String {
+        switch self {
+        case .past, .allHistory, .last7Days:
+            return "records"
+        case .today, .tomorrow, .yesterday, .upcoming, .custom:
+            return "reservations"
+        }
+    }
+
+    var isSingleDateScope: Bool {
+        switch self {
+        case .today, .tomorrow, .yesterday, .custom:
+            return true
+        case .upcoming, .past, .last7Days, .allHistory:
+            return false
+        }
+    }
+
+    static func defaultScope(for statusScope: ReservationScheduleScope) -> BookingDateScope {
+        switch statusScope {
+        case .upcoming, .needsReview, .all:
+            return .upcoming
+        case .noShow, .cancelled:
+            return .last7Days
+        }
+    }
+
+    static func scopes(for statusScope: ReservationScheduleScope) -> [BookingDateScope] {
+        switch statusScope {
+        case .upcoming, .needsReview:
+            return [.today, .tomorrow, .upcoming]
+        case .noShow:
+            return [.today, .yesterday, .last7Days, .allHistory]
+        case .cancelled:
+            return [.today, .last7Days, .upcoming, .allHistory]
+        case .all:
+            return [.today, .upcoming, .past, .allHistory]
+        }
+    }
+
+    func label(for statusScope: ReservationScheduleScope) -> String {
+        switch self {
+        case .today:
+            return "Today"
+        case .tomorrow:
+            return "Tomorrow"
+        case .yesterday:
+            return "Yesterday"
+        case .upcoming:
+            return statusScope == .all ? "Upcoming" : "Upcoming"
+        case .past:
+            return "Past"
+        case .last7Days:
+            return "Last 7 days"
+        case .allHistory:
+            return "All history"
+        case .custom(let date):
+            return date.formatted(.dateTime.month(.abbreviated).day())
+        }
+    }
+
+    func contains(reservationDateKey: String, now: Date) -> Bool {
+        let calendar = Calendar.current
+        let todayKey = now.reservationDateString()
+
+        switch self {
+        case .today:
+            return reservationDateKey == todayKey
+        case .tomorrow:
+            let tomorrowKey = calendar.date(byAdding: .day, value: 1, to: now)?.reservationDateString() ?? todayKey
+            return reservationDateKey == tomorrowKey
+        case .yesterday:
+            let yesterdayKey = calendar.date(byAdding: .day, value: -1, to: now)?.reservationDateString() ?? todayKey
+            return reservationDateKey == yesterdayKey
+        case .upcoming:
+            return reservationDateKey >= todayKey
+        case .past:
+            return reservationDateKey < todayKey
+        case .last7Days:
+            let startKey = calendar.date(byAdding: .day, value: -6, to: now)?.reservationDateString() ?? todayKey
+            return reservationDateKey >= startKey && reservationDateKey <= todayKey
+        case .allHistory:
+            return true
+        case .custom(let date):
+            return reservationDateKey == date.reservationDateString()
+        }
+    }
+
+    func representativeDate(now: Date) -> Date {
+        let calendar = Calendar.current
+        switch self {
+        case .today, .upcoming, .past, .last7Days, .allHistory:
+            return now
+        case .tomorrow:
+            return calendar.date(byAdding: .day, value: 1, to: now) ?? now
+        case .yesterday:
+            return calendar.date(byAdding: .day, value: -1, to: now) ?? now
+        case .custom(let date):
+            return date
+        }
+    }
+
+    func prefersNewestFirst(for statusScope: ReservationScheduleScope) -> Bool {
+        switch statusScope {
+        case .noShow, .cancelled:
+            return true
+        case .all:
+            switch self {
+            case .past, .allHistory, .last7Days:
+                return true
+            case .today, .tomorrow, .yesterday, .upcoming, .custom:
+                return false
+            }
+        case .upcoming, .needsReview:
+            return false
+        }
+    }
+
+    var noShowEmptyTitle: String {
+        switch self {
+        case .today:
+            return "No no-shows today."
+        case .yesterday:
+            return "No no-shows yesterday."
+        case .last7Days:
+            return "No no-shows in the last 7 days."
+        case .allHistory:
+            return "No no-show records found."
+        case .custom:
+            return "No no-shows on this date."
+        case .tomorrow, .upcoming, .past:
+            return "No no-show records found."
+        }
+    }
+
+    var noShowEmptyDescription: String {
+        "No guests are marked no-show for this scope."
+    }
+
+    var cancelledEmptyTitle: String {
+        switch self {
+        case .today:
+            return "No cancelled reservations today."
+        case .last7Days:
+            return "No cancellations in the last 7 days."
+        case .upcoming:
+            return "No upcoming cancellations."
+        case .allHistory:
+            return "No cancelled reservations found."
+        case .custom:
+            return "No cancelled reservations on this date."
+        case .tomorrow, .yesterday, .past:
+            return "No cancelled reservations found."
+        }
+    }
+
+    var cancelledEmptyDescription: String {
+        "Cancelled reservations will appear here when they match this scope."
+    }
+
+    var allEmptyTitle: String {
+        switch self {
+        case .today:
+            return "No reservations today."
+        case .upcoming:
+            return "No upcoming reservations found."
+        case .past:
+            return "No past reservations found."
+        case .allHistory:
+            return "No reservation history found."
+        case .custom:
+            return "No reservations on this date."
+        case .tomorrow:
+            return "No reservations tomorrow."
+        case .yesterday:
+            return "No reservations yesterday."
+        case .last7Days:
+            return "No reservations in the last 7 days."
+        }
+    }
+
+    var allEmptyDescription: String {
+        "Pull to refresh if this device has not loaded recent records yet."
+    }
+}
+
+private struct BookingGlassSegmentBar<Value: Hashable>: View {
+    struct Segment: Identifiable {
+        let value: Value
+        let title: String
+        let accessibilityLabel: String
+        var attentionDotStyle: TryzubStaffStatusDotStyle?
+
+        var id: Value { value }
+    }
+
+    let segments: [Segment]
+    @Binding var selection: Value
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(segments) { segment in
+                    button(for: segment, isSelected: selection == segment.value)
+                }
+            }
+            .padding(4)
+            .background(.thinMaterial, in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            }
+        }
+        .scrollClipDisabled()
+    }
+
+    private func button(for segment: Segment, isSelected: Bool) -> some View {
+        Button {
+            guard selection != segment.value else { return }
+            ReservationHaptics.selection()
+            selection = segment.value
+        } label: {
+            HStack(spacing: 5) {
+                Text(segment.title)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+
+                if let attentionDotStyle = segment.attentionDotStyle {
+                    TryzubStaffStatusDot(style: attentionDotStyle, diameter: 5)
+                }
+            }
+            .font(.subheadline.weight(isSelected ? .semibold : .medium))
+            .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 40)
+            .background {
+                if isSelected {
+                    Capsule()
+                        .fill(Color(.systemBackground).opacity(0.88))
+                        .shadow(color: Color.black.opacity(0.08), radius: 5, y: 2)
+                }
+            }
+            .overlay {
+                if isSelected {
+                    Capsule()
+                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(segment.accessibilityLabel)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct BookingDateScopeBar: View {
+    let scopes: [BookingDateScope]
+    @Binding var selection: BookingDateScope
+    let onCalendarTap: () -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(visibleScopes) { scope in
+                    scopeButton(scope)
+                }
+
+                Button {
+                    ReservationHaptics.selection()
+                    onCalendarTap()
+                } label: {
+                    Image(systemName: "calendar")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 42, height: 40)
+                        .background(.thinMaterial, in: Capsule())
+                        .overlay {
+                            Capsule()
+                                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.primary.opacity(0.78))
+                .accessibilityLabel("Choose reservation date")
+            }
+            .padding(.vertical, 1)
+        }
+        .scrollClipDisabled()
+    }
+
+    private var visibleScopes: [BookingDateScope] {
+        guard case .custom = selection else { return scopes }
+        return scopes + [selection]
+    }
+
+    private func scopeButton(_ scope: BookingDateScope) -> some View {
+        let isSelected = selection == scope
+        return Button {
+            guard selection != scope else { return }
+            ReservationHaptics.selection()
+            selection = scope
+        } label: {
+            Text(scope.label(for: .all))
+                .font(.subheadline.weight(isSelected ? .semibold : .medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                .padding(.horizontal, 13)
+                .frame(minHeight: 40)
+                .background {
+                    Capsule()
+                        .fill(isSelected ? Color(.systemBackground).opacity(0.9) : Color.clear)
+                }
+                .overlay {
+                    Capsule()
+                        .stroke(Color.primary.opacity(isSelected ? 0.12 : 0.08), lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .background(.thinMaterial, in: Capsule())
+        .accessibilityLabel(scope.label(for: .all))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct BookingDatePickerSheet: View {
+    @Binding var draftDate: Date
+    let title: String
+    let onCancel: () -> Void
+    let onApply: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack {
+                DatePicker(
+                    "Reservation date",
+                    selection: $draftDate,
+                    displayedComponents: [.date]
+                )
+                .datePickerStyle(.graphical)
+                .padding()
+
+                Spacer(minLength: 0)
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done", action: onApply)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
 private struct ReservationScheduleView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
@@ -572,11 +969,11 @@ private struct ReservationScheduleView: View {
     // MARK: - Local UI State
 
     @State private var scope: ReservationScheduleScope = .upcoming
+    @State private var dateScope: BookingDateScope = .upcoming
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
-    @State private var selectedDate = Date()
-    @State private var scheduleDateFilter: Date?
-    @State private var scheduleCalendarAnchor = Date()
+    @State private var calendarDraftDate = Date()
+    @State private var isCalendarPresented = false
     @State private var isLoadingAllPage = false
     @State private var allModeRecords: [ReservationRecord] = []
     @State private var allModeRemoteIDs: [Int] = []
@@ -631,23 +1028,29 @@ private struct ReservationScheduleView: View {
     }
 
     private var usesAllModeCache: Bool {
-        scope == .all && debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        scope == .all
     }
 
     // Schedule reads cached rows; sync freshness is handled by ReservationsController.
     private var displayedReservations: [ReservationRecord] {
         guard isActive else { return [] }
-        let selectedDateKey = bookingsSelectedDateKey
+        let now = Date()
         let trimmedSearchText = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        var rows: [ReservationRecord]
-        if usesAllModeCache {
-            rows = allCachedReservations
-        } else if scope == .all {
-            rows = allModeRecords
-        } else {
-            rows = reservations
+        var rows: [ReservationRecord] = {
+            switch scope {
+            case .all, .cancelled, .noShow:
+                return allCachedReservations
+            case .upcoming, .needsReview:
+                return reservations
+            }
+        }()
+
+        if scope == .all, !allModeRecords.isEmpty {
+            let existingIDs = Set(rows.map(\.remoteID))
+            rows.append(contentsOf: allModeRecords.filter { !existingIDs.contains($0.remoteID) })
         }
+
         rows = rows.filter { !hiddenReservations.isHidden($0) }
         let candidateRows = rows
 
@@ -662,25 +1065,17 @@ private struct ReservationScheduleView: View {
             }
         case .noShow:
             rows = rows.filter {
-                $0.reservationDate == selectedDateKey
-                    && $0.statusValue == .noShow
+                $0.statusValue == .noShow
             }
         case .cancelled:
             rows = rows.filter {
-                $0.reservationDate == selectedDateKey
-                    && $0.statusValue == .cancelled
+                $0.statusValue == .cancelled
             }
         case .all:
             break
         }
 
-        if scope == .all, let scheduleDateFilter {
-            let filterKey = scheduleDateFilter.reservationDateString()
-            let cachedForDate = reservations.filter { $0.reservationDate == filterKey }
-            let existingIDs = Set(rows.map(\.remoteID))
-            rows.append(contentsOf: cachedForDate.filter { !existingIDs.contains($0.remoteID) })
-            rows = rows.filter { $0.reservationDate == filterKey }
-        }
+        rows = rows.filter { dateScope.contains(reservationDateKey: $0.reservationDate, now: now) }
 
         traceBookingsDateBoundary(candidateRows: candidateRows, includedRows: rows)
 
@@ -688,7 +1083,7 @@ private struct ReservationScheduleView: View {
             rows = rows.filter { $0.matchesSearch(trimmedSearchText) }
         }
 
-        return scope == .all
+        return dateScope.prefersNewestFirst(for: scope)
             ? ReservationRecord.sortedNewestFirst(rows)
             : ReservationRecord.sortedChronologically(rows)
     }
@@ -696,13 +1091,13 @@ private struct ReservationScheduleView: View {
     private var sections: [ReservationDateSection] {
         ReservationRecord.dateSections(
             from: displayedReservations,
-            newestFirst: scope == .all
+            newestFirst: dateScope.prefersNewestFirst(for: scope)
         )
     }
 
     private var filterTraceKey: String {
         let ids = displayedReservations.map(\.remoteID).map(String.init).joined(separator: ",")
-        return "\(reminderDateKey)|\(scope.rawValue)|\(debouncedSearchText)|\(ids)"
+        return "\(reminderDateKey)|\(scope.rawValue)|\(dateScope.id)|\(debouncedSearchText)|\(ids)"
     }
 
     private var reminderDateKey: String {
@@ -710,15 +1105,7 @@ private struct ReservationScheduleView: View {
     }
 
     private var bookingsSelectedDateKey: String {
-        if scope == .all, let scheduleDateFilter {
-            return scheduleDateFilter.reservationDateString()
-        }
-        if scope == .noShow {
-            // TODO(P1): No Show is intentionally pinned to today's service date until
-            // Bookings range/lifecycle policy is unified outside this stabilization patch.
-            return Date.reservationDateString()
-        }
-        return selectedDate.reservationDateString()
+        dateScope.representativeDate(now: Date()).reservationDateString()
     }
 
     private func traceBookingsDateBoundary(
@@ -727,10 +1114,11 @@ private struct ReservationScheduleView: View {
     ) {
         #if DEBUG
         guard isActive else { return }
-        guard scope != .all || scheduleDateFilter != nil else { return }
+        guard dateScope.isSingleDateScope else { return }
 
         let selectedKey = bookingsSelectedDateKey
         let includedIDs = Set(includedRows.map(\.remoteID))
+        let selectedDate = dateScope.representativeDate(now: Date())
         let afterClose = DateBoundaryTrace.isLikelyAfterClose(selectedDate: selectedDate)
         let tomorrowKey = Calendar.current.date(byAdding: .day, value: 1, to: Date())?.reservationDateString() ?? ""
         let tomorrowRowsFilteredOut = candidateRows.filter {
@@ -830,6 +1218,7 @@ private struct ReservationScheduleView: View {
                                     context: .schedule,
                                     showsSubmittedTime: scope == .upcoming || scope == .needsReview,
                                     newBookingInsight: newBookingRowInsight(for: reservation),
+                                    showsRowActions: showsRowActions(for: reservation),
                                     onOpenDetails: { navigationPath.append($0.remoteID) }
                                 )
                             }
@@ -853,7 +1242,7 @@ private struct ReservationScheduleView: View {
 
                             Spacer(minLength: 8)
 
-                            if allModeHasMore, scheduleDateFilter == nil {
+                            if allModeHasMore, dateScope == .allHistory {
                                 Button {
                                     Task {
                                         await loadAllPage(reset: false, caller: "load_more_button")
@@ -884,7 +1273,7 @@ private struct ReservationScheduleView: View {
             }
             .navigationTitle("Bookings")
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, prompt: "Name, phone, email, table")
+            .searchable(text: $searchText, prompt: "Search name, phone, email, table")
             .listStyle(.plain)
             .contentMargins(.horizontal, 0, for: .scrollContent)
             .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
@@ -988,34 +1377,26 @@ private struct ReservationScheduleView: View {
             }
             .onChange(of: scope) { _, newScope in
                 allModeLoadGeneration += 1
+                dateScope = BookingDateScope.defaultScope(for: newScope)
                 if newScope != .all {
                     isLoadingAllPage = false
-                    return
-                }
-
-                guard isActive else { return }
-                controller.scheduleHistoryPrefetchWhenReady(context: modelContext)
-            }
-            .onChange(of: debouncedSearchText) { _, _ in
-                guard isActive, scope == .all else { return }
-                allModeLoadGeneration += 1
-                Task {
-                    await loadAllPage(reset: true, caller: "search_change_all")
-                }
-            }
-            .onChange(of: scheduleDateFilter) { _, newFilter in
-                guard isActive, scope == .all, let newFilter else { return }
-                Task {
-                    let search = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
-                    try? await controller.refreshScheduleDate(
-                        context: modelContext,
-                        date: newFilter.reservationDateString(),
-                        search: search
-                    )
                 }
             }
             .navigationDestination(for: Int.self) { remoteID in
                 reservationDestination(remoteID: remoteID)
+            }
+            .sheet(isPresented: $isCalendarPresented) {
+                BookingDatePickerSheet(
+                    draftDate: $calendarDraftDate,
+                    title: "Choose date",
+                    onCancel: {
+                        isCalendarPresented = false
+                    },
+                    onApply: {
+                        dateScope = .custom(calendarDraftDate)
+                        isCalendarPresented = false
+                    }
+                )
             }
         }
     }
@@ -1036,6 +1417,7 @@ private struct ReservationScheduleView: View {
             guard isActive else { return }
             guard scenePhase == .active else { continue }
             #if DEBUG
+            let selectedDate = dateScope.representativeDate(now: Date())
             let selectedKey = selectedDate.reservationDateString()
             DateBoundaryTrace.boundary(
                 source: "autoRefresh",
@@ -1084,68 +1466,91 @@ private struct ReservationScheduleView: View {
     }
 
     private var scheduleControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            TryzubSegmentedControl(
-                segments: ReservationScheduleScope.allCases.map { scope in
-                    TryzubSegmentedControl<ReservationScheduleScope>.Segment(
-                        value: scope,
-                        title: scheduleSegmentTitle(for: scope),
-                        attentionDotStyle: {
-                            switch scope {
-                            case .upcoming:
-                                return newAttentionCount > 0 ? .greenFlashing : nil
-                            case .needsReview:
-                                return reviewAttentionCount > 0 ? .redFlashing : nil
-                            case .noShow, .all, .cancelled:
-                                return nil
-                            }
-                        }()
+        VStack(alignment: .leading, spacing: 12) {
+            BookingGlassSegmentBar(
+                segments: ReservationScheduleScope.allCases.map { statusScope in
+                    BookingGlassSegmentBar<ReservationScheduleScope>.Segment(
+                        value: statusScope,
+                        title: scheduleSegmentTitle(for: statusScope),
+                        accessibilityLabel: "\(scheduleSegmentTitle(for: statusScope)) reservations",
+                        attentionDotStyle: attentionDotStyle(for: statusScope)
                     )
                 },
                 selection: $scope
             )
 
-            if scope == .all {
-                ReservationOptionalDateFilter(
-                    filterDate: $scheduleDateFilter,
-                    calendarAnchor: $scheduleCalendarAnchor
-                )
-            } else if showsServiceDateSelector {
-                ReservationServiceDateSelector(selectedDate: $selectedDate)
-            }
+            BookingDateScopeBar(
+                scopes: BookingDateScope.scopes(for: scope),
+                selection: $dateScope,
+                onCalendarTap: openCalendarPicker
+            )
         }
     }
 
-    private var showsServiceDateSelector: Bool {
+    private func attentionDotStyle(for statusScope: ReservationScheduleScope) -> TryzubStaffStatusDotStyle? {
+        switch statusScope {
+        case .upcoming:
+            return newAttentionCount > 0 ? .greenFlashing : nil
+        case .needsReview:
+            return reviewAttentionCount > 0 ? .redFlashing : nil
+        case .noShow, .all, .cancelled:
+            return nil
+        }
+    }
+
+    private func openCalendarPicker() {
+        calendarDraftDate = dateScope.customDate ?? dateScope.representativeDate(now: Date())
+        isCalendarPresented = true
+    }
+
+    private func showsRowActions(for reservation: ReservationRecord) -> Bool {
         switch scope {
-        case .cancelled:
-            return true
-        case .upcoming, .needsReview, .noShow, .all:
+        case .cancelled, .noShow:
             return false
+        case .all:
+            return reservation.statusValue != .cancelled
+                && reservation.statusValue != .noShow
+                && reservation.statusValue != .completed
+        case .upcoming, .needsReview:
+            return true
         }
     }
 
     private var emptyStateTitle: String {
+        if !debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "No reservations match this search."
+        }
+
         switch scope {
         case .upcoming:
             return "No new reservations."
         case .needsReview:
             return "No reservations need review."
-        default:
-            return "No Reservations"
+        case .noShow:
+            return dateScope.noShowEmptyTitle
+        case .cancelled:
+            return dateScope.cancelledEmptyTitle
+        case .all:
+            return dateScope.allEmptyTitle
         }
     }
 
     private var emptyStateDescription: String {
+        if !debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Search checks guest name, phone, email, and table."
+        }
+
         switch scope {
         case .upcoming:
             return "New online submissions will appear here."
         case .needsReview:
             return "Compare details before confirming."
         case .noShow:
-            return "No no-shows for today."
-        default:
-            return "Try a different search or pull to refresh."
+            return dateScope.noShowEmptyDescription
+        case .cancelled:
+            return dateScope.cancelledEmptyDescription
+        case .all:
+            return dateScope.allEmptyDescription
         }
     }
 
@@ -1154,16 +1559,16 @@ private struct ReservationScheduleView: View {
     }
 
     private var allModeSummaryText: String {
-        if let scheduleDateFilter {
-            let dateLabel = scheduleDateFilter.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+        if let customDate = dateScope.customDate {
+            let dateLabel = customDate.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
             return "Showing \(displayedReservations.count) on \(dateLabel)"
         }
 
         if usesAllModeCache {
             if controller.isHistoryPrefetching {
-                return "\(displayedReservations.count) reservations · loading older history…"
+                return "\(displayedReservations.count) \(dateScope.summaryNoun) · loading older history…"
             }
-            return "\(displayedReservations.count) saved reservations"
+            return "\(displayedReservations.count) \(dateScope.summaryNoun) · \(dateScope.label(for: scope))"
         }
 
         guard let allModeTotal else {
@@ -1176,7 +1581,7 @@ private struct ReservationScheduleView: View {
     private var allModeHasMore: Bool {
         !usesAllModeCache
             && scope == .all
-            && scheduleDateFilter == nil
+            && dateScope == .allHistory
             && allModeLoadedPage > 0
             && allModeLoadedPage < allModeTotalPages
     }
@@ -1504,6 +1909,10 @@ private struct ReservationMoreView: View {
                             }
                         }
                     }
+
+                    NavigationLink(value: ReservationMoreDestination.serviceBoardGuide) {
+                        Label("Service Board Guide", systemImage: "questionmark.circle")
+                    }
                 }
 
                 RestaurantPrivacyCoverSettingsSection(settings: privacyCoverSettings)
@@ -1687,6 +2096,8 @@ private struct ReservationMoreView: View {
             ActivityHistoryView()
         case .businessAnalytics:
             BusinessAnalyticsView(settingsStore: settingsStore)
+        case .serviceBoardGuide:
+            ServiceBoardGuideView()
         case .regularGuests:
             RegularGuestsView()
         case .hostIntelligenceSettings:
@@ -1722,6 +2133,7 @@ private enum ReservationMoreDestination: Hashable {
     case serviceIntelligence
     case activityHistory
     case businessAnalytics
+    case serviceBoardGuide
     case regularGuests
     case hostIntelligenceSettings
     case diagnostics
@@ -2343,6 +2755,7 @@ private struct ReservationNavigationRow: View {
     var contextNote: String?
     var showsSubmittedTime = false
     var newBookingInsight: NewBookingRowInsight?
+    var showsRowActions = true
     let onOpenDetails: (ReservationRecord) -> Void
 
     @State private var pendingAction: ReservationHostAction?
@@ -2365,19 +2778,23 @@ private struct ReservationNavigationRow: View {
                 ? { tableAssignmentReservation = reservation }
                 : nil
         ) {
-            ReservationActionButtons(
-                reservation: reservation,
-                capabilities: controller.capabilities,
-                compact: true,
-                includeSecondary: false,
-                isBusy: controller.isActionInProgress(for: reservation) || controller.isNetworkDegraded,
-                onAction: { action in
-                    handleAction(action)
-                },
-                onSeatRequiresTableChoice: {
-                    seatPromptReservation = reservation
-                }
-            )
+            if showsRowActions {
+                ReservationActionButtons(
+                    reservation: reservation,
+                    capabilities: controller.capabilities,
+                    compact: true,
+                    includeSecondary: false,
+                    isBusy: controller.isActionInProgress(for: reservation) || controller.isNetworkDegraded,
+                    onAction: { action in
+                        handleAction(action)
+                    },
+                    onSeatRequiresTableChoice: {
+                        seatPromptReservation = reservation
+                    }
+                )
+            } else {
+                ReservationStatusBadge(status: reservation.statusValue)
+            }
         }
         .contentShape(Rectangle())
         .onTapGesture {

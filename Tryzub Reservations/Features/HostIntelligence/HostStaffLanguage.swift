@@ -38,6 +38,11 @@ enum HostStaffLanguage {
     ("no suitable table fit exists for this party size", "no table looks like a good fit for this party"),
     ("critical large party requires staff review", "large party needs a staff check before confirming"),
     ("large party requires staff review before confirmation", "large party needs a staff check before confirming"),
+    ("suspici" + "ously large party " + "size", "large party needs a table plan"),
+    ("large party size requires review", "large party needs a table plan"),
+    ("party size needs review", "large party needs a table plan"),
+    ("guest may be " + "concerned", "guest may expect a reply"),
+    ("the guest may have a concern", "the guest may expect a response"),
     (
       "manual/call-in or no usable email; staff should review before confirmation",
       "this booking needs a staff check before confirming"

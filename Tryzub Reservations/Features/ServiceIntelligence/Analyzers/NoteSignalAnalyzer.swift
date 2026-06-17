@@ -95,7 +95,7 @@ enum NoteSignalAnalyzer {
                     reservationID: input.reservationID,
                     type: .banquetMentioned,
                     title: "Banquet note",
-                    staffText: "Kitchen should review banquet details.",
+                    staffText: "Kitchen should review group details.",
                     evidence: trimEvidence(evidence, from: text),
                     confidence: .medium,
                     source: source,
@@ -149,7 +149,7 @@ enum NoteSignalAnalyzer {
                     reservationID: input.reservationID,
                     type: .occasion,
                     title: "Occasion note",
-                    staffText: "Note the occasion before seating.",
+                    staffText: "Mention the occasion before seating.",
                     evidence: trimEvidence(evidence, from: text),
                     confidence: .medium,
                     source: source,
@@ -157,6 +157,25 @@ enum NoteSignalAnalyzer {
                     priority: .medium
                 ))
                 usedTypes.insert(.occasion)
+            }
+
+            // Guest question / reply needed. A question is operationally useful, but
+            // not automatically a concern.
+            if !usedTypes.contains(.guestCommunicationNeeded),
+               looksLikeGuestQuestion(normalized) {
+                signals.append(ReservationSignal(
+                    id: "\(input.reservationID)-guest-reply",
+                    reservationID: input.reservationID,
+                    type: .guestCommunicationNeeded,
+                    title: "Guest may expect a reply",
+                    staffText: "Review the note before confirming or seating.",
+                    evidence: trimQuestionEvidence(from: text),
+                    confidence: .medium,
+                    source: source,
+                    requiresReview: true,
+                    priority: .medium
+                ))
+                usedTypes.insert(.guestCommunicationNeeded)
             }
 
             // Guest preference (seating, location)
@@ -289,11 +308,21 @@ enum NoteSignalAnalyzer {
         "wine pairing", "whiskey", "open bar", "drinks package"
     ]
 
+    private static let questionLeadIns = [
+        "why", "what", "when", "where", "who", "how", "can you", "could you",
+        "please reply", "please confirm", "let me know", "call me", "text me"
+    ]
+
     // MARK: - Helpers
 
     /// Returns the keyword that matched, or nil.
     private static func firstMatch(in normalized: String, keywords: [String]) -> String? {
         keywords.first { normalized.contains($0) }
+    }
+
+    private static func looksLikeGuestQuestion(_ normalized: String) -> Bool {
+        if normalized.contains("?") { return true }
+        return questionLeadIns.contains { normalized.contains($0) }
     }
 
     /// Short evidence snippet: up to 60 chars from the source text around the keyword.
@@ -306,5 +335,15 @@ enum NoteSignalAnalyzer {
         let snippetStart = max(0, start - 10)
         let snippet = String(source.dropFirst(snippetStart).prefix(60))
         return snippet.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func trimQuestionEvidence(from source: String) -> String? {
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let questionMark = trimmed.firstIndex(of: "?") {
+            let prefix = trimmed[...questionMark]
+            return String(prefix.prefix(60)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return String(trimmed.prefix(60)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

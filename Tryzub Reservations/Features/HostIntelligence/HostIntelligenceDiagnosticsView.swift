@@ -29,6 +29,7 @@ struct HostIntelligenceDiagnosticsView: View {
   @State private var modelImportMessage: String?
   @State private var modelImportError: String?
   @State private var readinessRefreshToken = UUID()
+  @State private var cachedSnapshot: HostDecisionSnapshot?
   @ObservedObject private var modelCoordinator = HostLocalModelDiagnosticsCoordinator.shared
 
   private var selectedDateKey: String {
@@ -39,7 +40,30 @@ struct HostIntelligenceDiagnosticsView: View {
     guestIntelligenceStore?.summariesByReservationID(for: selectedDateKey) ?? [:]
   }
 
-  private var snapshot: HostDecisionSnapshot {
+  private var diagnosticsInputKey: String {
+    var hasher = Hasher()
+    hasher.combine(selectedDateKey)
+    hasher.combine(settings.hostDecisionFingerprint)
+    hasher.combine(floorTableSource.traceLabel)
+    hasher.combine(tableConfigs.count)
+    hasher.combine(backendFloorTables.count)
+    hasher.combine(analyticsLoadedAt?.timeIntervalSince1970 ?? 0)
+    hasher.combine(restaurantSetup?.largePartyReviewThreshold ?? -1)
+    for reservation in reservations {
+      hasher.combine(reservation.remoteID)
+      hasher.combine(reservation.statusValue.rawValue)
+      hasher.combine(reservation.tableName ?? "")
+      hasher.combine(reservation.partySize)
+      hasher.combine(reservation.reservationTime)
+    }
+    for (id, seatedAt) in localSeatedAtByReservationID.sorted(by: { $0.key < $1.key }) {
+      hasher.combine(id)
+      hasher.combine(seatedAt.timeIntervalSince1970)
+    }
+    return "\(hasher.finalize())"
+  }
+
+  private func buildSnapshot() -> HostDecisionSnapshot {
     let input = HostEngineInput(
       now: Date(),
       selectedDate: selectedDate,
@@ -59,23 +83,30 @@ struct HostIntelligenceDiagnosticsView: View {
   }
 
   var body: some View {
-    let decision = snapshot
-
     Group {
-      hostIntelligenceSection(decision)
-      topFactsSection(decision)
-      suggestedActionsSection(decision)
-      slotPressureSection(decision)
-      tableInventorySection
-      guestSignalsSection(decision)
-      cancellationOverdueSection(decision)
-      bookingDecisionsSection(decision)
-      analyticsIntelligenceSection(decision)
-      briefingWriterSection(decision)
-      signalsSection(decision)
-      #if DEBUG
-      proofHarnessSection()
-      #endif
+      if let decision = cachedSnapshot {
+        hostIntelligenceSection(decision)
+        topFactsSection(decision)
+        suggestedActionsSection(decision)
+        slotPressureSection(decision)
+        tableInventorySection
+        guestSignalsSection(decision)
+        cancellationOverdueSection(decision)
+        bookingDecisionsSection(decision)
+        analyticsIntelligenceSection(decision)
+        briefingWriterSection(decision)
+        signalsSection(decision)
+        #if DEBUG
+        proofHarnessSection()
+        #endif
+      } else {
+        Section("Host Intelligence Diagnostics") {
+          ProgressView("Preparing diagnostics...")
+        }
+      }
+    }
+    .task(id: diagnosticsInputKey) {
+      cachedSnapshot = buildSnapshot()
     }
   }
 
@@ -99,9 +130,9 @@ struct HostIntelligenceDiagnosticsView: View {
   }
   #endif
 
-  private var analyticsIntelligence: HostAnalyticsIntelligenceResult {
+  private func analyticsIntelligence(for decision: HostDecisionSnapshot) -> HostAnalyticsIntelligenceResult {
     HostAnalyticsIntelligenceSupport.analyze(
-      slotPressures: snapshot.slotPressures,
+      slotPressures: decision.slotPressures,
       analyticsSummary: analyticsSummary,
       selectedDate: selectedDate,
       now: Date(),
@@ -424,7 +455,7 @@ struct HostIntelligenceDiagnosticsView: View {
 
   @ViewBuilder
   private func analyticsIntelligenceSection(_ decision: HostDecisionSnapshot) -> some View {
-    let metrics = analyticsIntelligence.metrics
+    let metrics = analyticsIntelligence(for: decision).metrics
     let analyticsFacts = decision.briefingFacts.filter { $0.category == .analytics }
 
     Section("Analytics Intelligence") {

@@ -169,7 +169,7 @@ struct BusinessIntelligenceVerticalBarChart: View {
                     .font(.system(size: 9, weight: .medium))
             }
         }
-        .frame(height: height.tryzubFiniteNonNegativeLayoutValue)
+        .frame(height: height.tryzubFinitePositiveLayoutValue)
     }
 }
 
@@ -201,6 +201,6 @@ struct BusinessIntelligenceHorizontalBarChart: View {
                     .font(.caption.weight(.medium))
             }
         }
-        .frame(height: (CGFloat(bars.count) * 28 + 8).tryzubFiniteNonNegativeLayoutValue)
+        .frame(height: (CGFloat(bars.count) * 28 + 8).tryzubFinitePositiveLayoutValue)
     }
 }

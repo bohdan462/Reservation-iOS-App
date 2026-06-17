@@ -687,6 +687,7 @@ struct FloorPlanLayoutSetupView: View {
     }
 
     private func saveLayout() async {
+        focusedLabelField = false
         let payload = drafts.map { $0.toDTO() }
         FloorLayoutTrace.layoutSaveStarted(count: payload.count)
         let saved = await store.saveLayout(payload)

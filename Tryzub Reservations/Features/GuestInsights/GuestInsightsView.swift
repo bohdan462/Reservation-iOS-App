@@ -990,7 +990,7 @@ private struct GuestInsightBarChart: View {
                         .font(.caption.weight(.medium))
                 }
             }
-            .frame(height: (CGFloat(bars.count) * 30 + 4).tryzubFiniteNonNegativeLayoutValue)
+            .frame(height: (CGFloat(bars.count) * 30 + 4).tryzubFinitePositiveLayoutValue)
         }
     }
 }

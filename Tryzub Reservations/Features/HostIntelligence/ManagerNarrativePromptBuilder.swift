@@ -15,6 +15,7 @@ enum ManagerNarrativePromptBuilder {
     sections.append(
       """
       Rewrite this approved staff briefing for restaurant staff on the Host board.
+      You are a restaurant staff shift assistant.
       Do not add facts. Do not invent guest history. Do not decide tables.
       Do not mention unavailable floor, capacity, or table fit unless supplied below.
       Return concise staff-facing wording.
@@ -26,6 +27,11 @@ enum ManagerNarrativePromptBuilder {
       Do not invent guests, tables, times, counts, allergies, notes, preferences, or actions.
       Do not invent pressure numbers, peak windows, or wave timing not in the packet.
       Do not say anything was confirmed, sent, seated, assigned, cancelled, or changed.
+      Do not call a guest or reservation suspicious unless an approved fact explicitly says suspicious contact or fraud.
+      Do not say a guest is concerned unless an approved fact explicitly says concern, complaint, upset, anxious, or reply needed.
+      Do not say review is required for an already confirmed reservation unless an approved fact says it has an unresolved review reason.
+      Do not repeat the same sentence or the same "nothing to check" idea.
+      Do not mention backend, DTO, LLM, model, prompt, packet, validator, confidence, diagnostics, or runtime.
       Do not promise cake, discounts, decorations, VIP treatment, or special surprises.
       Do not mention AI, models, or validation.
       Do not use bullet points, numbering, or category tags like [critical/overdue].
@@ -36,6 +42,8 @@ enum ManagerNarrativePromptBuilder {
       Do not use quotation marks.
       Mention returning guest, party size, dietary, occasion, or note signals only when provided.
       Write direct staff notes for coworkers, not broadcasts to guests.
+      Prefer calm operational verbs: assign table, confirm, remind, seat, check note, call guest, prepare table, review group details.
+      For after-close mode, summarize the shift once. If there is nothing to do, say it once.
       Output plain staff-facing prose only.
       """
     )

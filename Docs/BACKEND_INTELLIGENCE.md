@@ -17,7 +17,9 @@ All intelligence endpoints:
 - use contract version `1.0` for business/guest/system-status payloads
 - use contract version `1.1` for reservation pipeline diagnostics payloads
 
-Because these are read-only, they are not part of the optimistic-concurrency contract: iOS does not send `expected_updated_at` here. Concurrency tokens (`row_version`), lifecycle timestamps (`seated_at`, `completed_at`), `409 tryzub_reservation_conflict`, the status transition map, and floor-plan advisory locking apply to the managed-reservation write endpoints and are documented in `README.md` (db `1.7.0` for activity history; reservations lifecycle columns from `1.6.0`).
+Because these are read-only, they are not part of the optimistic-concurrency contract: iOS does not send `expected_updated_at` here. Concurrency tokens (`row_version`), lifecycle timestamps (`seated_at`, `completed_at`), `409 tryzub_reservation_conflict`, the status transition map, and floor-plan advisory locking apply to the managed-reservation write endpoints and are documented in `README.md` (db `1.10.0` adds backend auto-confirm settings and email usage limits; db `1.9.0` adds reminder automation settings; db `1.8.0` adds BI cache; db `1.7.0` for activity history; reservations lifecycle columns from `1.6.0`).
+
+Backend auto-confirm is server-owned and off by default. iOS must not locally auto-confirm reservations. The dry-run endpoint `GET /auto-confirm/candidates?date=YYYY-MM-DD` returns aggregate-safe candidate decisions without raw email, phone, or notes. Email usage summaries count Resend provider sends only and expose counts/limits, not guest addresses.
 
 ### `GET /tryzub/v1/business-intelligence/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`
 
@@ -27,6 +29,26 @@ Owner/manager aggregate analytics over a reservation date range.
 - excludes `is_hidden = 1`
 - excludes `superseded_by_id IS NOT NULL`
 - max range: 366 days inclusive
+- uses internal daily server-side cache keyed by cache version, range key, date range, and generated date
+- preserves `Cache-Control: private, no-store, max-age=0` and `Pragma: no-cache`
+- adds `data.cache` diagnostics only; no existing response fields are removed
+
+Cache diagnostics:
+
+```text
+cache.hit
+cache.forced
+cache.range_key
+cache.generated_at
+cache.generated_date
+cache.compute_duration_ms
+cache.cache_version
+cache.stale
+cache.stale_reason
+cache.recompute_in_progress
+```
+
+Admins can force refresh with `force=1` or `cache_bust=1`. These flags are ignored for non-admin callers.
 
 ### `GET /tryzub/v1/guest-intelligence?date=YYYY-MM-DD`
 
@@ -410,6 +432,7 @@ Activity history is deterministic operational evidence written by backend mutati
 ## What iOS should not do
 
 - no auto-confirm from intelligence
+- no local auto-confirm or setting `confirmed` without backend; backend owns auto-confirm
 - no auto-cancel from intelligence
 - no returning-guest claims from `weak` or `unknown` identity
 - no display of raw historical notes from intelligence endpoints
@@ -438,9 +461,15 @@ Guest intelligence cost model:
 
 Caching:
 
-- intelligence responses are not cached server-side in v1
-- responses use `private, no-store` headers
-- recommended future improvement: short-lived transient cache per date or reservation, bust on managed reservation import/update
+- `/business-intelligence/summary` is cached server-side in `tryzub_intelligence_cache`
+- cache rows are internal and auth-protected; HTTP responses still use `private, no-store`
+- cache key format: `bi:{cache_version}:{range_key}:{from}:{to}:{generated_date}`
+- range keys: `this_month`, `last_30_days`, `all`, `custom`
+- cache payloads are scrubbed before storage; no emails, phones, guest names, guest notes, staff notes, tokens, or API keys should be present in `payload_json`
+- `tryzub_bi_daily_precompute_cron` precomputes `this_month`, `last_30_days`, and `all` daily around 06:00 site time
+- WP-Cron runs when site traffic triggers it; production reliability may need an external uptime/cron ping later
+- `tryzub_bi_cache_version` invalidates old cache keys after successful reservation create/import, PATCH, hard delete, table assignment changes, and guest self-service status changes
+- old cache rows are retained briefly and pruned after 14 generated days
 
 ## Future improvements
 
@@ -449,4 +478,4 @@ Caching:
 - richer import failure and rejected-submission metrics
 - revenue or POS integration
 - optional note language classification if needed later
-- server-side transient cache with import/update busting
+- P1 business-intelligence algorithm rewrite for guest relationship metrics

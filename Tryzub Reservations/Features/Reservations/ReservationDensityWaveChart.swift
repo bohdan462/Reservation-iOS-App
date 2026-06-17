@@ -263,7 +263,8 @@ struct ReservationDensityWaveChart: View {
   }
 
   private var yAxisLabels: some View {
-    let plotHeight = height.tryzubFiniteNonNegativeLayoutValue - bottomGutter - topGutter
+    let resolvedHeight = height.tryzubFinitePositiveLayoutValue
+    let plotHeight = max(resolvedHeight - bottomGutter - topGutter, 1)
     return ZStack(alignment: .topLeading) {
       ForEach(yTicks.reversed(), id: \.self) { tick in
         Text("\(tick)")
@@ -273,7 +274,7 @@ struct ReservationDensityWaveChart: View {
           .offset(y: yOffset(for: tick, plotHeight: plotHeight))
       }
     }
-    .frame(width: leftGutter - 2, height: height.tryzubFiniteNonNegativeLayoutValue, alignment: .topLeading)
+    .frame(width: leftGutter - 2, height: resolvedHeight, alignment: .topLeading)
     .accessibilityHidden(true)
   }
 
@@ -307,7 +308,7 @@ struct ReservationDensityWaveChart: View {
 
   private var chartBody: some View {
     let chartMaxGuests = maxGuests
-    let plotHeight = max(resolvedHeight.tryzubFiniteNonNegativeLayoutValue - bottomGutter, Self.minChartHeight - bottomGutter)
+    let plotHeight = max(resolvedHeight.tryzubFinitePositiveLayoutValue - bottomGutter, Self.minChartHeight - bottomGutter, 1)
 
     return GeometryReader { proxy in
       let plotWidth = max(proxy.size.width, 1)

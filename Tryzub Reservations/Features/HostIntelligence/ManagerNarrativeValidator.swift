@@ -145,9 +145,9 @@ enum ManagerNarrativeValidator {
 
   private static let blockedPhrases = [
     "backend", "cached", "cache ", " sync", "synced", " api", "endpoint",
-    "payload", "packet", "json", "validation", "diagnostics", "debug output",
+    "payload", "packet", "json", "validation", "validator", "diagnostics", "debug output",
     "debug ", "confidence", "capacity ratio", "language model", "local model",
-    "llm", "server response", "api server", "backend server", "evidence array",
+    "llm", "dto", "runtime", "prompt", "server response", "api server", "backend server", "evidence array",
     "as an ai", "as a model",
     "minimum lead time", "lead time window", "auto-confirm", "auto confirm",
     "candidate", "slot pressure", "party size threshold", "eligible",
@@ -158,7 +158,8 @@ enum ManagerNarrativeValidator {
     "has been confirmed", "have been confirmed", "is confirmed",
     "has been assigned", "table assigned", "is seated", "has been seated",
     "has been cancelled", "has been canceled", "marked no-show",
-    "already reviewed", "has been reviewed", "auto-confirmed", "automatically"
+    "already reviewed", "has been reviewed", "auto-confirmed", "automatically",
+    "has been sent", "were sent", "reminders sent", "confirmation sent"
   ]
 
   private static let leakedLabelTokens = [
@@ -364,12 +365,12 @@ enum ManagerNarrativeValidator {
     if containsLeakedModelLabels(in: narrative) {
       return ManagerNarrativeValidationResult(
         isValid: false,
-        reason: "Narrative contains labeled or unnatural staff output."
+        reason: "mentions_model_or_backend"
       )
     }
 
     for field in [headline, narrative.whyItMatters, narrative.checkNext].compactMap({ $0 }) {
-      if let failure = validateOperationalClaims(field, hostPacket: hostPacket) {
+      if let failure = validateOperationalClaims(field, packet: packet, hostPacket: hostPacket) {
         return failure
       }
       if let failure = validateHospitalityAndPromises(field) {
@@ -390,7 +391,7 @@ enum ManagerNarrativeValidator {
        HostStaffLanguage.areSameStaffMeaning(headline, why) {
       return ManagerNarrativeValidationResult(
         isValid: false,
-        reason: "Narrative repeats the same meaning in headline and why."
+        reason: "duplicate_line"
       )
     }
 
@@ -400,7 +401,7 @@ enum ManagerNarrativeValidator {
           || (narrative.whyItMatters.map { HostStaffLanguage.areSameStaffMeaning($0, check) } == true) {
         return ManagerNarrativeValidationResult(
           isValid: false,
-          reason: "Narrative repeats the same meaning across lines."
+          reason: "duplicate_line"
         )
       }
     }
@@ -942,14 +943,14 @@ enum ManagerNarrativeValidator {
     if containsBlockedTechnicalLanguage(lower) {
       return ManagerNarrativeValidationResult(
         isValid: false,
-        reason: "Narrative contains blocked technical language."
+        reason: "mentions_model_or_backend"
       )
     }
 
     for phrase in completionPhrases where containsCompletionPhrase(phrase, in: lower) {
       return ManagerNarrativeValidationResult(
         isValid: false,
-        reason: "Narrative claims an action was already completed."
+        reason: "unsupported_status_claim"
       )
     }
 
@@ -994,6 +995,7 @@ enum ManagerNarrativeValidator {
 
   static func validateOperationalClaims(
     _ text: String,
+    packet: ManagerNarrativePacket,
     hostPacket: HostLLMPacket
   ) -> ManagerNarrativeValidationResult? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1010,12 +1012,17 @@ enum ManagerNarrativeValidator {
 
     if lower.contains("please check your reservation")
         || lower.contains("your reservation is")
-        || lower.contains("you are late") {
-      return ManagerNarrativeValidationResult(isValid: false, reason: "second_person_guest_facing")
+        || lower.contains("you are late")
+        || lower.contains("dear guest") {
+      return ManagerNarrativeValidationResult(isValid: false, reason: "guest_facing_language")
     }
 
     if tableAvailablePhrases.contains(where: { lower.contains($0) }) {
       return ManagerNarrativeValidationResult(isValid: false, reason: "unsupported_table_available_claim")
+    }
+
+    if let semanticFailure = validateUnsupportedStaffSemantics(lower, packet: packet) {
+      return semanticFailure
     }
 
     for fact in hostPacket.topFacts {
@@ -1066,6 +1073,49 @@ enum ManagerNarrativeValidator {
     }
 
     return nil
+  }
+
+  private static func validateUnsupportedStaffSemantics(
+    _ lower: String,
+    packet: ManagerNarrativePacket
+  ) -> ManagerNarrativeValidationResult? {
+    let supportText = ([packet.groupedHeadline, packet.groupedSummary].compactMap { $0 }
+      + packet.headlineFacts.flatMap { [$0.title, $0.detail ?? ""] }
+      + packet.availableActions.map(\.title))
+      .joined(separator: " ")
+      .lowercased()
+
+    if lower.contains("suspicious"),
+       !containsAny(supportText, ["suspicious", "fraud"]) {
+      return ManagerNarrativeValidationResult(isValid: false, reason: "unsupported_suspicious")
+    }
+
+    if containsAny(lower, ["concerned", "concern", "worried", "upset", "anxious"]),
+       !containsAny(supportText, ["concern", "worried", "upset", "anxious", "reply", "response"]) {
+      return ManagerNarrativeValidationResult(isValid: false, reason: "unsupported_concern")
+    }
+
+    if containsAny(lower, ["requires review", "review required"]),
+       !containsAny(supportText, ["needs review", "requires review", "review required", "unresolved review"]) {
+      return ManagerNarrativeValidationResult(isValid: false, reason: "unsupported_review_required")
+    }
+
+    let mode = (packet.serviceMode ?? packet.serviceState).lowercased()
+    if lower.contains("service is wrapped"),
+       !(mode.contains("afterclose") || mode.contains("pastrecap") || mode.contains("wrapped")) {
+      return ManagerNarrativeValidationResult(isValid: false, reason: "service_mode_contradiction")
+    }
+
+    if containsAny(lower, ["nothing left", "nothing to check", "nothing needs attention"]),
+       (!packet.headlineFacts.isEmpty || !packet.availableActions.isEmpty) {
+      return ManagerNarrativeValidationResult(isValid: false, reason: "service_mode_contradiction")
+    }
+
+    return nil
+  }
+
+  private static func containsAny(_ text: String, _ needles: [String]) -> Bool {
+    needles.contains { text.contains($0) }
   }
 
   private static func guestName(from fact: HostLLMFact) -> String? {

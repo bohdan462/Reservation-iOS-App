@@ -17,6 +17,10 @@ extension CGFloat {
         Swift.max(tryzubFiniteLayoutValue, 0)
     }
 
+    var tryzubFinitePositiveLayoutValue: CGFloat {
+        Swift.max(tryzubFiniteLayoutValue, 1)
+    }
+
     static func tryzubSafeRatio(numerator: CGFloat, denominator: CGFloat) -> CGFloat {
         guard numerator.isFinite,
               denominator.isFinite,
@@ -1551,7 +1555,7 @@ struct ServiceLoadChart: View {
                     }
                 }
             }
-            .frame(height: height.tryzubFiniteNonNegativeLayoutValue)
+            .frame(height: height.tryzubFinitePositiveLayoutValue)
         }
     }
 

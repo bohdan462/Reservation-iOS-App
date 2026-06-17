@@ -7,6 +7,11 @@
 
 import SwiftUI
 
+private enum AutoConfirmRuleFocusedField: Hashable {
+    case startTime
+    case endTime
+}
+
 // MARK: - Editor
 
 struct AutoConfirmPolicyEditorView: View {
@@ -952,6 +957,7 @@ private struct AutoConfirmRuleEditorSheet: View {
     let onSave: (AutoConfirmRuleDraft) -> Void
 
     @State private var validationMessage: String?
+    @FocusState private var focusedField: AutoConfirmRuleFocusedField?
 
     init(
         draft: AutoConfirmRuleDraft,
@@ -1015,8 +1021,14 @@ private struct AutoConfirmRuleEditorSheet: View {
 
                     TextField("Start time (HH:mm)", text: $draft.startTime)
                         .keyboardType(.numbersAndPunctuation)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .startTime)
                     TextField("End time (HH:mm)", text: $draft.endTime)
                         .keyboardType(.numbersAndPunctuation)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .endTime)
 
                     Stepper(value: $draft.maxPartySize, in: 1...20) {
                         Text("Max party size: \(draft.maxPartySize)")
@@ -1046,6 +1058,7 @@ private struct AutoConfirmRuleEditorSheet: View {
     }
 
     private func saveTapped() {
+        focusedField = nil
         let trimmedID = draft.id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedID.isEmpty else {
             validationMessage = "Each auto-confirm rule needs an id."

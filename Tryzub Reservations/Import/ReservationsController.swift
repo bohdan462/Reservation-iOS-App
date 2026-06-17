@@ -123,6 +123,9 @@ final class ReservationsController: ObservableObject {
     @Published var lastReminderBatchResponse: ReservationReminderBatchResponse?
     @Published var isSendingReminderBatch: Bool = false
     @Published var reminderBatchNotice: String?
+    private var reminderStatusInFlightDates: Set<String> = []
+    private var reminderStatusLoadedAtByDate: [String: Date] = [:]
+    private let reminderStatusFreshnessInterval: TimeInterval = 60
 
     // Developer diagnostics show which sync scopes are fresh, busy, or cooling down.
     @Published private(set) var syncScopeSnapshots: [SyncScopeSnapshot] = []
@@ -340,6 +343,8 @@ final class ReservationsController: ObservableObject {
         noticeMessage = nil
         latestEmailStatusByReservationID = [:]
         lastReminderStatusByDate = [:]
+        reminderStatusInFlightDates = []
+        reminderStatusLoadedAtByDate = [:]
         lastReminderBatchResponse = nil
         reminderBatchNotice = nil
         dayAvailabilityCacheByDate = [:]
@@ -3064,10 +3069,23 @@ final class ReservationsController: ObservableObject {
     // Intent: Reads reminder proof/status for the selected service date.
     // Network: GET /managed-reservations/reminder-status?date=YYYY-MM-DD.
     @discardableResult
-    func refreshReminderStatus(for dateKey: String) async -> Bool {
+    func refreshReminderStatus(for dateKey: String, force: Bool = false) async -> Bool {
         let date = dateKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !date.isEmpty else { return false }
         guard canStartMutationOnline() else { return false }
+        guard force || reminderStatusInFlightDates.contains(date) == false else { return false }
+
+        if !force,
+           lastReminderStatusByDate[date] != nil,
+           let loadedAt = reminderStatusLoadedAtByDate[date],
+           Date().timeIntervalSince(loadedAt) < reminderStatusFreshnessInterval {
+            return true
+        }
+
+        reminderStatusInFlightDates.insert(date)
+        defer {
+            reminderStatusInFlightDates.remove(date)
+        }
 
         do {
             let response = try await environment.apiClient.fetchReminderStatus(
@@ -3075,6 +3093,7 @@ final class ReservationsController: ObservableObject {
                 reason: .reminderStatus
             )
             lastReminderStatusByDate[date] = response
+            reminderStatusLoadedAtByDate[date] = Date()
             EmailWorkflowDiagnosticsStore.shared.recordReminderStatus(response)
             return true
         } catch {
@@ -3114,10 +3133,11 @@ final class ReservationsController: ObservableObject {
             )
             lastReminderBatchResponse = response
             lastReminderStatusByDate[date] = response
+            reminderStatusLoadedAtByDate[date] = Date()
             EmailWorkflowDiagnosticsStore.shared.recordReminderSend(response)
 
             let summary = response.summary
-            let notice = "Sent \(summary.sent) · Already sent \(summary.alreadySent) · Skipped \(summary.skipped) · Failed \(summary.failed)"
+            let notice = "Reminder check finished: \(summary.sent) sent, \(summary.alreadySent) already handled, \(summary.skipped) skipped, \(summary.failed) failed."
             reminderBatchNotice = notice
             postNotice(
                 severity: summary.failed > 0 ? .warning : .success,

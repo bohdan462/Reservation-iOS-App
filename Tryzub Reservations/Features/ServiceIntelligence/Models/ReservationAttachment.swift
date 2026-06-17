@@ -50,7 +50,7 @@ enum AttachmentLabel: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .deposit:         return "Manager should verify deposit."
         case .preorder:        return "Kitchen should review preorder."
-        case .banquet:         return "Kitchen should review banquet details."
+        case .banquet:         return "Kitchen should review group details."
         case .guestScreenshot: return "Check guest screenshot."
         case .receipt:         return "Review receipt."
         case .setup:           return "Check setup requirements."

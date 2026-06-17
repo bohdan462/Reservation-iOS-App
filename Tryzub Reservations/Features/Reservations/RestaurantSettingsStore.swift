@@ -721,6 +721,8 @@ struct RestaurantSettingsView: View {
     @State private var setup = RestaurantSetup.default
     @State private var isSaving = false
     @State private var isLoadingReminderUsage = false
+    @State private var hasLoadedReminderUsageForCurrentScreen = false
+    @State private var lastReminderUsageLoadDateKey: String?
     @State private var errorMessage: String?
     @State private var successMessage: String?
     @State private var didLoadInitialDraft = false
@@ -877,6 +879,7 @@ struct RestaurantSettingsView: View {
                 Button {
                     Task {
                         await load(forceDraftUpdate: true, forceSetup: true)
+                        await loadEmailUsageIfNeeded(reason: "settings_manual_refresh", force: true)
                     }
                 } label: {
                     if settingsStore.setupLoading || isLoadingReminderUsage {
@@ -899,7 +902,8 @@ struct RestaurantSettingsView: View {
             }
         }
         .task {
-            await load(forceDraftUpdate: !didLoadInitialDraft)
+            await loadInitialSettingsIfNeeded()
+            await loadEmailUsageIfNeeded(reason: "settings_initial")
         }
         .onAppear {
             syncImportTextFromStructuredInventoryIfNeeded()
@@ -1082,6 +1086,11 @@ struct RestaurantSettingsView: View {
         }
     }
 
+    private func loadInitialSettingsIfNeeded() async {
+        guard !didLoadInitialDraft else { return }
+        await load(forceDraftUpdate: true)
+    }
+
     private func load(forceDraftUpdate: Bool, forceSetup: Bool = false) async {
         errorMessage = nil
         successMessage = nil
@@ -1096,7 +1105,6 @@ struct RestaurantSettingsView: View {
                 savedDraft = draft
                 didLoadInitialDraft = true
             }
-            await refreshTodayReminderUsage()
         } catch {
             errorMessage = error.localizedDescription
             setup = settingsStore.setup
@@ -1105,15 +1113,22 @@ struct RestaurantSettingsView: View {
                 savedDraft = draft
                 didLoadInitialDraft = true
             }
-            await refreshTodayReminderUsage()
         }
     }
 
-    private func refreshTodayReminderUsage() async {
+    private func loadEmailUsageIfNeeded(reason: String, force: Bool = false) async {
+        let dateKey = Date.reservationDateString()
+        if lastReminderUsageLoadDateKey != dateKey {
+            hasLoadedReminderUsageForCurrentScreen = false
+        }
+        guard force || !hasLoadedReminderUsageForCurrentScreen else { return }
         guard !isLoadingReminderUsage else { return }
         isLoadingReminderUsage = true
         defer { isLoadingReminderUsage = false }
-        _ = await controller.refreshReminderStatus(for: Date.reservationDateString())
+        _ = reason
+        _ = await controller.refreshReminderStatus(for: dateKey, force: force)
+        lastReminderUsageLoadDateKey = dateKey
+        hasLoadedReminderUsageForCurrentScreen = true
     }
 
     private func resetDraft() {
@@ -1124,6 +1139,7 @@ struct RestaurantSettingsView: View {
     }
 
     private func save() async {
+        dismissKeyboard()
         isSaving = true
         errorMessage = nil
         successMessage = nil
@@ -1145,6 +1161,10 @@ struct RestaurantSettingsView: View {
             errorMessage = error.localizedDescription
             ReservationHaptics.warning()
         }
+    }
+
+    private func dismissKeyboard() {
+        dismissSettingsKeyboard()
     }
 }
 
@@ -1245,6 +1265,7 @@ struct BackendRemindersEditorView: View {
     private func save() async {
         guard canSave else { return }
 
+        dismissSettingsKeyboard()
         isSaving = true
         errorMessage = nil
         successMessage = nil
@@ -2050,6 +2071,16 @@ private struct SettingsTextEditor: View {
             }
         }
     }
+}
+
+@MainActor
+private func dismissSettingsKeyboard() {
+    UIApplication.shared.sendAction(
+        #selector(UIResponder.resignFirstResponder),
+        to: nil,
+        from: nil,
+        for: nil
+    )
 }
 
 private struct SettingsHelperText: View {

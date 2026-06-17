@@ -278,11 +278,11 @@ struct HostIntelligenceCard: View {
   private var staffFacingNarrative: ManagerNarrative? {
     guard staffFacingPresentation, let managerNarrative else { return nil }
     if isLoadingPresentation {
-      return .loading
+      return nil
     }
     if renderState != .ready,
        managerNarrative.headline == ManagerNarrative.empty.headline {
-      return .loading
+      return nil
     }
     guard managerNarrative.source != .localModel
         || !ManagerNarrativeValidator.containsLeakedModelLabels(in: managerNarrative) else {
@@ -304,12 +304,7 @@ struct HostIntelligenceCard: View {
           .foregroundStyle(.tertiary)
       }
     } else if isLoadingPresentation {
-      HStack(spacing: 6) {
-        TryzubSubtleLoadingDot(diameter: 6)
-        Text("Checking service status…")
-          .font(.caption2)
-          .foregroundStyle(.tertiary)
-      }
+      EmptyView()
     }
   }
 

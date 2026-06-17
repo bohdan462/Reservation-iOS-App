@@ -88,7 +88,7 @@ struct HostIntelligenceReviewView: View {
         .font(.headline)
 
       if operationalPrompts.isEmpty && actions.isEmpty {
-        Text("Nothing to check right now.")
+        Text("Nothing needs action right now.")
           .font(.subheadline)
           .foregroundStyle(.secondary)
           .reviewCardStyle()

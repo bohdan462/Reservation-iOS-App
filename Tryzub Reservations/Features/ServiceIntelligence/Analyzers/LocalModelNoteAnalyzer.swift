@@ -73,7 +73,7 @@ actor LocalModelNoteAnalyzer {
             return []
         }
 
-        let signals = Self.makeSignals(from: payload, reservationID: input.reservationID)
+        let signals = Self.makeSignals(from: payload, reservationID: input.reservationID, note: combined)
         ModelTaskTrace.completed(task: .noteAnalysis, detail: "signals=\(signals.count)")
         return signals
     }
@@ -107,6 +107,10 @@ actor LocalModelNoteAnalyzer {
         - Use only types from the allowed list.
         - Only include a signal the note clearly supports.
         - Never claim a deposit is paid or an allergy is confirmed.
+        - A normal question is guestCommunicationNeeded, not concerned.
+        - Large party size alone is not suspicious and is not a banquet note.
+        - Use banquetMentioned only when the note clearly says banquet, event, private dining, group package, buyout, or similar.
+        - Use concerned only for actual worry, complaint, upset, anxious, safety, refund, or service issue language.
         - If nothing is notable, return an empty signals array.
 
         Write the JSON now:
@@ -147,7 +151,7 @@ actor LocalModelNoteAnalyzer {
 
     // MARK: - Signal construction (app owns all wording)
 
-    private static func makeSignals(from payload: Payload, reservationID: String) -> [ReservationSignal] {
+    private static func makeSignals(from payload: Payload, reservationID: String, note: String) -> [ReservationSignal] {
         var signals: [ReservationSignal] = []
         var usedTypes = Set<ReservationSignalType>()
 
@@ -155,7 +159,8 @@ actor LocalModelNoteAnalyzer {
         if let sentimentSignal = sentimentSignal(
             from: payload.sentiment,
             reason: payload.sentimentReason,
-            reservationID: reservationID
+            reservationID: reservationID,
+            note: note
         ) {
             signals.append(sentimentSignal)
         }
@@ -164,6 +169,7 @@ actor LocalModelNoteAnalyzer {
             guard let type = ReservationSignalType(rawValue: item.type),
                   allowedTypes.contains(type),
                   !usedTypes.contains(type) else { continue }
+            guard Self.signal(type, isSupportedBy: note, evidence: item.evidence) else { continue }
             let wording = staffWording(for: type)
             signals.append(ReservationSignal(
                 id: "\(reservationID)-model-\(type.rawValue)",
@@ -186,7 +192,8 @@ actor LocalModelNoteAnalyzer {
     private static func sentimentSignal(
         from sentiment: String?,
         reason: String?,
-        reservationID: String
+        reservationID: String,
+        note: String
     ) -> ReservationSignal? {
         guard let raw = sentiment?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) else {
             return nil
@@ -194,11 +201,25 @@ actor LocalModelNoteAnalyzer {
         let cleanReason = sanitizedEvidence(reason)
         switch raw {
         case "concerned", "negative", "anxious", "upset":
+            guard containsConcernLanguage(note) || containsConcernLanguage(reason ?? "") else {
+                return ReservationSignal(
+                    id: "\(reservationID)-model-reply",
+                    reservationID: reservationID,
+                    type: .guestCommunicationNeeded,
+                    title: "Guest may expect a reply",
+                    staffText: "Review the note before confirming or seating.",
+                    evidence: cleanReason,
+                    confidence: .low,
+                    source: .localModel,
+                    requiresReview: true,
+                    priority: .medium
+                )
+            }
             return ReservationSignal(
                 id: "\(reservationID)-model-sentiment",
                 reservationID: reservationID,
                 type: .guestSentiment,
-                title: "Guest may be concerned",
+                title: "Guest concern note",
                 staffText: "Read the note — the guest may have a concern.",
                 evidence: cleanReason,
                 confidence: .low,
@@ -235,13 +256,13 @@ actor LocalModelNoteAnalyzer {
         case .preorderMentioned:
             return ("Preorder mentioned", "Kitchen should review preorder note.", .high, true)
         case .banquetMentioned:
-            return ("Banquet note", "Kitchen should review banquet details.", .high, true)
+            return ("Banquet note", "Kitchen should review group details.", .high, true)
         case .allergyOrDietary:
             return ("Dietary or allergy note", "Check guest notes before seating.", .critical, true)
         case .accessibility:
             return ("Accessibility note", "Check setup before seating.", .high, true)
         case .occasion:
-            return ("Occasion note", "Note the occasion before seating.", .medium, false)
+            return ("Occasion note", "Mention the occasion before seating.", .medium, false)
         case .guestPreference:
             return ("Guest preference", "Note the seating preference.", .low, false)
         case .kitchenNote:
@@ -251,7 +272,7 @@ actor LocalModelNoteAnalyzer {
         case .serviceIssue:
             return ("Possible service issue", "Read the note and check with a manager.", .high, true)
         case .guestCommunicationNeeded:
-            return ("Guest may need a reply", "Check whether the guest needs a response.", .medium, true)
+            return ("Guest may expect a reply", "Review the note before confirming or seating.", .medium, true)
         default:
             return ("Note signal", "Review this note.", .low, false)
         }
@@ -265,6 +286,40 @@ actor LocalModelNoteAnalyzer {
         if raw.contains("@") { return nil }
         let digitRun = raw.filter(\.isNumber)
         if digitRun.count >= 7 { return nil }
+        let lower = raw.lowercased()
+        if lower.contains("suspici" + "ously " + "large")
+            || lower.contains("large party size requires review")
+            || lower.contains("party size needs review") {
+            return nil
+        }
         return String(raw.prefix(60))
+    }
+
+    private static func signal(
+        _ type: ReservationSignalType,
+        isSupportedBy note: String,
+        evidence: String?
+    ) -> Bool {
+        let combined = "\(note) \(evidence ?? "")".lowercased()
+        switch type {
+        case .banquetMentioned:
+            return ["banquet", "private event", "private dining", "buyout", "group package", "event package"]
+                .contains { combined.contains($0) }
+        case .guestCommunicationNeeded:
+            return combined.contains("?")
+                || ["please reply", "please confirm", "let me know", "call me", "text me", "can you", "could you", "why ", "how "]
+                    .contains { combined.contains($0) }
+        default:
+            return true
+        }
+    }
+
+    private static func containsConcernLanguage(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return [
+            "concern", "worried", "worry", "upset", "angry", "complaint",
+            "disappointed", "refund", "unsafe", "sick", "allergic reaction",
+            "problem", "issue", "wrong", "bad experience"
+        ].contains { lower.contains($0) }
     }
 }

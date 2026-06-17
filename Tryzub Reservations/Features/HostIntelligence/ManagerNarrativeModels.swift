@@ -71,8 +71,8 @@ struct ManagerNarrative: Equatable {
   )
 
   static let loading = ManagerNarrative(
-    headline: "Checking service status…",
-    whyItMatters: "Looking for reservations that need attention.",
+    headline: "Preparing service summary…",
+    whyItMatters: "Reviewing current reservations.",
     checkNext: nil,
     source: .template,
     failedReason: nil

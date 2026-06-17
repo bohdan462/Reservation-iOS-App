@@ -110,10 +110,14 @@ enum ServiceIntelligenceEngine {
         let headline: String
         let summary: String
         if input.mode == .beforeService {
-            headline = input.upcomingCount > 0
-                ? "Service hasn't started. \(input.upcomingCount) \(reservationWord(input.upcomingCount)) coming up."
-                : "Service hasn't started yet."
-            summary = comingUp.isEmpty ? "" : "Get setup and tables ready before guests arrive."
+            if input.upcomingCount > 0 {
+                let firstPart = "Service starts"
+                let guestPart = input.totalGuests > 0 ? " and \(input.totalGuests) \(guestWord(input.totalGuests))" : ""
+                headline = "\(firstPart) with \(input.upcomingCount) \(reservationWord(input.upcomingCount))\(guestPart)."
+            } else {
+                headline = "Service is quiet. No reservations are active for this date."
+            }
+            summary = comingUp.isEmpty ? "" : "Get tables and notes ready before guests arrive."
         } else if checkNow.isEmpty && comingUp.isEmpty {
             headline = "Service is running. Nothing needs a check right now."
             summary = ""
@@ -172,8 +176,8 @@ enum ServiceIntelligenceEngine {
 
         return ServiceBriefing(
             mode: input.mode,
-            headline: "Service is over, but \(input.status.afterCloseCleanupCount) \(reservationWord(input.status.afterCloseCleanupCount)) need a status update.",
-            summary: "Check if they were seated or should be marked complete.",
+            headline: "Service is wrapped, but \(input.status.afterCloseCleanupCount) \(reservationWord(input.status.afterCloseCleanupCount)) still need a final status.",
+            summary: "Check if they were seated, completed, or did not show.",
             checkNow: [],
             comingUp: [],
             reviewLater: [],
@@ -189,8 +193,8 @@ enum ServiceIntelligenceEngine {
     private static func recapBriefing(_ input: Input) -> ServiceBriefing {
         ServiceBriefing(
             mode: input.mode,
-            headline: input.mode == .pastRecap ? "Recap" : "Service is wrapped.",
-            summary: "Nothing is left to check.",
+            headline: recapHeadline(input),
+            summary: recapSummary(input),
             checkNow: [],
             comingUp: [],
             reviewLater: [],
@@ -237,10 +241,6 @@ enum ServiceIntelligenceEngine {
         var lines: [String] = []
         let s = input.status
 
-        if s.totalReservations > 0 {
-            lines.append("Today had \(s.totalReservations) \(reservationWord(s.totalReservations)) and \(input.totalGuests) \(guestWord(input.totalGuests)).")
-        }
-
         // Prefer backend business peak-window label over local slot analysis when available.
         let backendPeak = input.backendBusinessSummary
             .flatMap { BusinessIntelligenceFormatting.peakWindowLabel(summary: $0) }
@@ -255,10 +255,42 @@ enum ServiceIntelligenceEngine {
         if s.noShowCount > 0 {
             lines.append("\(s.noShowCount) \(s.noShowCount == 1 ? "guest was a no-show" : "guests were no-shows").")
         }
-        if finished {
-            lines.append("Nothing is left to check.")
-        }
         return lines
+    }
+
+    private static func recapHeadline(_ input: Input) -> String {
+        let total = input.status.totalReservations
+        if total == 0 {
+            return input.mode == .pastRecap
+                ? "Service was quiet. No reservations were active for this date."
+                : "Service is quiet. No reservations are active for this date."
+        }
+        let guestLine = input.totalGuests > 0 ? " and \(input.totalGuests) \(guestWord(input.totalGuests))" : ""
+        return "Service is wrapped. \(total) \(reservationWord(total))\(guestLine) \(total == 1 ? "was" : "were") on the book."
+    }
+
+    private static func recapSummary(_ input: Input) -> String {
+        let s = input.status
+        if s.activeService > 0 {
+            return "\(s.activeService) \(reservationWord(s.activeService)) still \(s.activeService == 1 ? "has" : "have") active guests."
+        }
+        if s.totalReservations == 0 {
+            return ""
+        }
+        var parts: [String] = []
+        if s.completedCount > 0 {
+            parts.append("\(s.completedCount) completed")
+        }
+        if s.noShowCount > 0 {
+            parts.append("\(s.noShowCount) no-show")
+        }
+        if s.cancelledCount > 0 {
+            parts.append("\(s.cancelledCount) cancelled")
+        }
+        if parts.isEmpty {
+            return "No active guests remain."
+        }
+        return "\(parts.joined(separator: " · ")). No active guests remain."
     }
 
     private static func reservationWord(_ count: Int) -> String {
