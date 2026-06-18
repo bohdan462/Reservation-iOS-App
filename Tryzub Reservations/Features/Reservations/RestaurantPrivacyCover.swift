@@ -11,7 +11,7 @@ import UIKit
 @MainActor
 final class RestaurantPrivacyCoverSettingsStore: ObservableObject {
     static let idleTimeoutOptions = [1, 2, 3, 5, 10, 15, 30]
-    static let defaultIdleTimeoutMinutes = 2
+    static let defaultIdleTimeoutMinutes = 5
 
     @Published private(set) var isEnabled: Bool
     @Published private(set) var idleTimeoutMinutes: Int
@@ -39,10 +39,14 @@ final class RestaurantPrivacyCoverSettingsStore: ObservableObject {
             isEnabled = true
         }
 
-        let storedMinutes = defaults.integer(forKey: idleMinutesKey)
-        idleTimeoutMinutes = Self.idleTimeoutOptions.contains(storedMinutes)
-            ? storedMinutes
-            : Self.defaultIdleTimeoutMinutes
+        if defaults.object(forKey: idleMinutesKey) == nil {
+            idleTimeoutMinutes = Self.defaultIdleTimeoutMinutes
+        } else {
+            let storedMinutes = defaults.integer(forKey: idleMinutesKey)
+            idleTimeoutMinutes = Self.idleTimeoutOptions.contains(storedMinutes)
+                ? storedMinutes
+                : Self.defaultIdleTimeoutMinutes
+        }
     }
 
     func setEnabled(_ value: Bool) {
@@ -362,18 +366,19 @@ final class RestaurantPrivacyCoverController: ObservableObject {
         guard monitorTask == nil else { return }
 
         lastInteraction = Date()
-        monitorTask = Task {
+        monitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled else { return }
+                guard let self else { return }
                 guard settings.isActive else { continue }
 
-                let idle = Date().timeIntervalSince(lastInteraction)
-                if isCoverPresented {
+                let idle = Date().timeIntervalSince(self.lastInteraction)
+                if self.isCoverPresented {
                     continue
                 }
                 if idle >= settings.idleInterval {
-                    isCoverPresented = true
+                    self.isCoverPresented = true
                 }
             }
         }
@@ -474,7 +479,7 @@ private struct RestaurantPrivacyCoverModifier: ViewModifier {
                 restartMonitoring()
             }
             .onChange(of: privacyCoverSettings.idleTimeoutMinutes) { _, _ in
-                controller.recordInteraction()
+                restartMonitoring()
             }
     }
 
@@ -568,34 +573,58 @@ private final class PrivacyCoverWindowTouchMonitor: NSObject {
 
     private let gestureDelegate = PrivacyCoverGestureDelegate()
     private weak var attachedWindow: UIWindow?
-    private var recognizer: UITapGestureRecognizer?
+    private var recognizers: [UIGestureRecognizer] = []
 
     func install(on hostWindow: UIWindow) {
         guard attachedWindow !== hostWindow else { return }
 
         remove()
         attachedWindow = hostWindow
+        gestureDelegate.isActive = isActive
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleInteraction(_:)))
         tap.cancelsTouchesInView = false
         tap.delaysTouchesBegan = false
         tap.delegate = gestureDelegate
-        gestureDelegate.isActive = isActive
         hostWindow.addGestureRecognizer(tap)
-        recognizer = tap
+        recognizers.append(tap)
+
+        // Scrolling and drags count as activity — taps alone caused the saver to appear
+        // while staff were still using lists and charts.
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleInteraction(_:)))
+        pan.cancelsTouchesInView = false
+        pan.delaysTouchesBegan = false
+        pan.delegate = gestureDelegate
+        hostWindow.addGestureRecognizer(pan)
+        recognizers.append(pan)
+
+        let press = UILongPressGestureRecognizer(target: self, action: #selector(handleInteraction(_:)))
+        press.minimumPressDuration = 0
+        press.cancelsTouchesInView = false
+        press.delaysTouchesBegan = false
+        press.delegate = gestureDelegate
+        hostWindow.addGestureRecognizer(press)
+        recognizers.append(press)
     }
 
     func remove() {
-        if let recognizer, let attachedWindow {
-            attachedWindow.removeGestureRecognizer(recognizer)
+        if let attachedWindow {
+            for recognizer in recognizers {
+                attachedWindow.removeGestureRecognizer(recognizer)
+            }
         }
-        recognizer = nil
+        recognizers = []
         attachedWindow = nil
     }
 
-    @objc private func handleInteraction(_ gesture: UITapGestureRecognizer) {
-        guard isActive, gesture.state == .ended else { return }
-        onInteraction?()
+    @objc private func handleInteraction(_ gesture: UIGestureRecognizer) {
+        guard isActive else { return }
+        switch gesture.state {
+        case .began, .changed, .ended:
+            onInteraction?()
+        default:
+            break
+        }
     }
 
     fileprivate static func isWithinNavigationChrome(_ view: UIView) -> Bool {
