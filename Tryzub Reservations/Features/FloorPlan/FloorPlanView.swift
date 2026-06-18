@@ -30,19 +30,21 @@ struct FloorPlanView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    headerCard
                     if isShowingStaleContent {
+                        headerCard
                         dateLoadingState
                     } else if store.viewState.hasTables {
                         gridSection
                         assignedReservationsSection
                         unassignedSection
                     } else {
+                        headerCard
                         emptyState
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
             }
             .background(TryzubColors.screenBackground)
             .navigationTitle("Floor Plan")
@@ -97,6 +99,8 @@ struct FloorPlanView: View {
                         assignmentContext = nil
                     }
                 )
+                .presentationDetents(presentationDetents(for: context))
+                .presentationDragIndicator(.visible)
             }
             .sheet(item: $tableAssignmentReservation) { reservation in
                 TableAssignmentSheet(reservation: reservation) { tableName in
@@ -109,6 +113,8 @@ struct FloorPlanView: View {
                     )
                     await store.refresh(date: selectedDateKey, force: true)
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showLayoutSetup) {
                 FloorPlanLayoutSetupView(store: store) {
@@ -304,18 +310,23 @@ struct FloorPlanView: View {
 
     @ViewBuilder
     private var gridSection: some View {
-        FloorPlanGridView(
-            viewState: store.viewState,
-            unitSize: 44,
-            onTableTap: { block in
-                assignmentContext = .table(block)
-            }
-        )
-        .frame(minHeight: 320)
+        ZStack(alignment: .top) {
+            FloorPlanGridView(
+                viewState: store.viewState,
+                unitSize: usesWideServiceHeader ? 48 : 44,
+                onTableTap: { block in
+                    assignmentContext = .table(block)
+                }
+            )
+
+            floorMapChromeOverlay
+                .padding(10)
+        }
+        .frame(minHeight: usesWideServiceHeader ? 430 : 360)
     }
 
     private var reservationGridColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: usesWideServiceHeader ? 168 : 148), spacing: 10)]
+        [GridItem(.adaptive(minimum: usesWideServiceHeader ? 150 : 138), spacing: 8)]
     }
 
     @ViewBuilder
@@ -390,6 +401,75 @@ struct FloorPlanView: View {
                 }
             }
         )
+    }
+
+    private var floorMapChromeOverlay: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 10) {
+                floorMapServicePill
+                Spacer(minLength: 12)
+                floorMapDatePill
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                floorMapServicePill
+                floorMapDatePill
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var floorMapServicePill: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "calendar")
+                    .font(.caption.weight(.semibold))
+                Text("Service")
+                    .font(.caption.weight(.semibold))
+                serviceModeBadge
+            }
+
+            Text(isShowingStaleContent ? "Loading selected date…" : store.viewState.lastCheckedLine)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            serviceHeaderFooter
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(TryzubColors.border.opacity(0.8), lineWidth: 1)
+        }
+    }
+
+    private var floorMapDatePill: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            DatePicker(
+                "Service date",
+                selection: $selectedDate,
+                displayedComponents: .date
+            )
+            .labelsHidden()
+            .datePickerStyle(.compact)
+
+            serviceStatusTrailing
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(TryzubColors.border.opacity(0.8), lineWidth: 1)
+        }
+    }
+
+    private func presentationDetents(for context: FloorPlanAssignmentContext) -> Set<PresentationDetent> {
+        if case .table = context {
+            return [.large]
+        }
+        return [.medium, .large]
     }
 
     private func loadForSelectedDate(_ date: Date? = nil) {

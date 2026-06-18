@@ -31,10 +31,20 @@ enum FloorPlanTableState: Equatable {
 struct FloorPlanTableBlock: Identifiable, Equatable {
     let table: RestaurantTableDTO
     let state: FloorPlanTableState
-    let reservation: ManagedReservationDTO?
-    let assignment: TableAssignmentDTO?
+    let assignments: [FloorPlanTableReservationAssignment]
+    let displayReservation: FloorPlanTableReservationAssignment?
 
     var id: String { table.tableKey }
+    var reservation: ManagedReservationDTO? { displayReservation?.reservation }
+    var assignment: TableAssignmentDTO? { displayReservation?.assignment }
+    var assignedCount: Int { assignments.count }
+}
+
+struct FloorPlanTableReservationAssignment: Identifiable, Equatable {
+    let reservation: ManagedReservationDTO
+    let assignment: TableAssignmentDTO
+
+    var id: Int { reservation.id }
 }
 
 struct FloorPlanAssignedReservation: Identifiable, Equatable {
@@ -79,7 +89,7 @@ struct FloorPlanViewState: Equatable {
     let tableBlocks: [FloorPlanTableBlock]
     let unassignedReservations: [ManagedReservationDTO]
     let assignedReservations: [FloorPlanAssignedReservation]
-    let assignmentsByTableKey: [String: TableAssignmentDTO]
+    let assignmentsByTableKey: [String: [FloorPlanTableReservationAssignment]]
     let reservationsByID: [Int: ManagedReservationDTO]
     let gridWidth: Int
     let gridHeight: Int
@@ -108,10 +118,17 @@ enum FloorPlanViewStateBuilder {
             uniqueKeysWithValues: response.assignments.map { ($0.reservationId, $0) }
         )
 
-        var assignmentsByTableKey: [String: TableAssignmentDTO] = [:]
+        var assignmentsByTableKey: [String: [FloorPlanTableReservationAssignment]] = [:]
         for assignment in response.assignments {
+            guard let reservation = reservationsByID[assignment.reservationId] else { continue }
+            let tableAssignment = FloorPlanTableReservationAssignment(
+                reservation: reservation,
+                assignment: assignment
+            )
+            var seenTableKeys = Set<String>()
             for tableKey in assignment.tableKeys {
-                assignmentsByTableKey[tableKey] = assignment
+                guard seenTableKeys.insert(tableKey).inserted else { continue }
+                assignmentsByTableKey[tableKey, default: []].append(tableAssignment)
             }
         }
 
@@ -125,14 +142,21 @@ enum FloorPlanViewStateBuilder {
             }
 
         let tableBlocks = activeTables.map { table in
-            let assignment = assignmentsByTableKey[table.tableKey]
-            let reservation = assignment.flatMap { reservationsByID[$0.reservationId] }
-            let state = tableState(for: reservation)
+            let assignments = (assignmentsByTableKey[table.tableKey] ?? [])
+                .sorted { lhs, rhs in
+                    reservationSort(lhs: lhs.reservation, rhs: rhs.reservation)
+                }
+            let displayReservation = FloorPlanDisplayReservationResolver.resolve(
+                assignments: assignments,
+                selectedDate: selectedDate,
+                now: Date()
+            )
+            let state = tableState(for: displayReservation?.reservation)
             return FloorPlanTableBlock(
                 table: table,
                 state: state,
-                reservation: reservation,
-                assignment: assignment
+                assignments: assignments,
+                displayReservation: displayReservation
             )
         }
 
@@ -267,6 +291,14 @@ enum FloorPlanPresentation {
         return "\(table.label)\n\(capacity)\nAssigned to \(guest) · \(time)"
     }
 
+    static func assignmentCountHint(for count: Int) -> String? {
+        count > 1 ? "+\(count - 1) more" : nil
+    }
+
+    static func assignmentCountAccessibilityHint(for count: Int) -> String? {
+        count > 1 ? "\(count) assigned reservations" : nil
+    }
+
     static func combinedCapacity(for tables: [RestaurantTableDTO]) -> String {
         guard !tables.isEmpty else { return "-" }
         let minTotal = tables.reduce(0) { $0 + $1.minCapacity }
@@ -306,5 +338,76 @@ enum FloorPlanPresentation {
         case .completed, .cancelled, .noShow:
             return "Done"
         }
+    }
+}
+
+enum FloorPlanDisplayReservationResolver {
+    static func resolve(
+        assignments: [FloorPlanTableReservationAssignment],
+        selectedDate: String,
+        now: Date = Date()
+    ) -> FloorPlanTableReservationAssignment? {
+        assignments.min { lhs, rhs in
+            sortKey(for: lhs.reservation, selectedDate: selectedDate, now: now)
+                < sortKey(for: rhs.reservation, selectedDate: selectedDate, now: now)
+        }
+    }
+
+    private static func sortKey(
+        for reservation: ManagedReservationDTO,
+        selectedDate: String,
+        now: Date
+    ) -> ReservationDisplaySortKey {
+        let reservationDate = reservationDate(for: reservation, selectedDate: selectedDate)
+        let timeInterval = reservationDate.map { $0.timeIntervalSince(now) }
+        let distance = abs(timeInterval ?? .greatestFiniteMagnitude)
+        let currentWindow: TimeInterval = 90 * 60
+
+        switch reservation.status {
+        case .seated:
+            return ReservationDisplaySortKey(priority: 0, distance: distance, time: reservation.reservationTime, guestName: reservation.guestName)
+        case .confirmed, .new, .needsReview:
+            if let timeInterval, abs(timeInterval) <= currentWindow {
+                return ReservationDisplaySortKey(priority: 1, distance: distance, time: reservation.reservationTime, guestName: reservation.guestName)
+            }
+            if let timeInterval, timeInterval >= 0 {
+                return ReservationDisplaySortKey(priority: 2, distance: timeInterval, time: reservation.reservationTime, guestName: reservation.guestName)
+            }
+            return ReservationDisplaySortKey(priority: 3, distance: distance, time: reservation.reservationTime, guestName: reservation.guestName)
+        case .completed, .cancelled, .noShow:
+            return ReservationDisplaySortKey(priority: 4, distance: distance, time: reservation.reservationTime, guestName: reservation.guestName)
+        }
+    }
+
+    private static func reservationDate(
+        for reservation: ManagedReservationDTO,
+        selectedDate: String
+    ) -> Date? {
+        let date = reservation.reservationDate.isEmpty ? selectedDate : reservation.reservationDate
+        if let parsed = ReservationFormatters.serverDateTime.date(from: "\(date) \(reservation.reservationTime)") {
+            return parsed
+        }
+        let time = String(reservation.reservationTime.prefix(5))
+        return ReservationFormatters.serverDateMinute.date(from: "\(date) \(time)")
+    }
+}
+
+private struct ReservationDisplaySortKey: Comparable {
+    let priority: Int
+    let distance: TimeInterval
+    let time: String
+    let guestName: String
+
+    static func < (lhs: ReservationDisplaySortKey, rhs: ReservationDisplaySortKey) -> Bool {
+        if lhs.priority != rhs.priority {
+            return lhs.priority < rhs.priority
+        }
+        if lhs.distance != rhs.distance {
+            return lhs.distance < rhs.distance
+        }
+        if lhs.time != rhs.time {
+            return lhs.time < rhs.time
+        }
+        return lhs.guestName.localizedCaseInsensitiveCompare(rhs.guestName) == .orderedAscending
     }
 }

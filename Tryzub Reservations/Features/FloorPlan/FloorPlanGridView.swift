@@ -102,10 +102,18 @@ struct FloorPlanGridView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-            Text(FloorPlanPresentation.compactTableStatusLabel(for: block))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+                Text(FloorPlanPresentation.compactTableStatusLabel(for: block))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            if let hint = FloorPlanPresentation.assignmentCountHint(for: block.assignedCount),
+               block.table.widthUnits > 1 || block.table.heightUnits > 1 {
+                Text(hint)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TryzubColors.info)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
             Spacer(minLength: 0)
         }
     }
@@ -128,6 +136,13 @@ struct FloorPlanGridView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let hint = FloorPlanPresentation.assignmentCountHint(for: block.assignedCount) {
+                    Text(hint)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(TryzubColors.info)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
             } else {
                 Text(FloorPlanPresentation.tableStatusLabel(for: block))
                     .font(.caption)
@@ -174,6 +189,10 @@ struct FloorPlanGridView: View {
     }
 
     private func accessibilityLabel(for block: FloorPlanTableBlock) -> String {
-        FloorPlanPresentation.tableDetailLine(table: block.table, reservation: block.reservation)
+        var label = FloorPlanPresentation.tableDetailLine(table: block.table, reservation: block.reservation)
+        if let hint = FloorPlanPresentation.assignmentCountAccessibilityHint(for: block.assignedCount) {
+            label += "\n\(hint)"
+        }
+        return label
     }
 }

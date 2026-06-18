@@ -96,25 +96,39 @@ struct FloorPlanTableAssignmentSheet: View {
                 VStack(alignment: .leading, spacing: 14) {
                     tableDetailCard(block)
 
-                    if let reservation = block.reservation {
+                    if !block.assignments.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Current reservation")
+                            Text("Assigned reservations")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(TryzubColors.mutedText)
 
-                            currentReservationCard(reservation: reservation, block: block)
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(block.assignments) { item in
+                                    assignedReservationCard(item)
+                                }
+                            }
+                            .overlay(alignment: .leading) {
+                                Rectangle()
+                                    .fill(TryzubColors.border)
+                                    .frame(width: 1)
+                                    .padding(.leading, 5)
+                                    .padding(.vertical, 12)
+                            }
                         }
                     }
 
                     if !unassignedReservations.isEmpty {
-                        HostAssignmentChoiceList(
-                            sectionTitle: "Suggested guests",
-                            proposals: reservationProposals(for: block)
-                        ) { proposal in
-                            assignFromProposal(proposal)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Suggested guests")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(TryzubColors.mutedText)
+
+                            ForEach(reservationProposals(for: block)) { proposal in
+                                suggestedGuestRow(proposal)
+                            }
                         }
                         .disabled(isWorking)
-                    } else if block.reservation == nil {
+                    } else if block.assignments.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Suggested guests")
                                 .font(.caption.weight(.semibold))
@@ -145,11 +159,11 @@ struct FloorPlanTableAssignmentSheet: View {
                     Spacer(minLength: 8)
 
                     Label {
-                        Text("\(FloorPlanPresentation.capacityRange(min: block.table.minCapacity, max: block.table.maxCapacity)) guests")
+                        Text(FloorPlanPresentation.capacityRange(min: block.table.minCapacity, max: block.table.maxCapacity))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } icon: {
-                        Image(systemName: "person.2")
+                        Image(systemName: "person.2.fill")
                             .font(.caption.weight(.semibold))
                     }
                     .labelStyle(.titleAndIcon)
@@ -168,10 +182,27 @@ struct FloorPlanTableAssignmentSheet: View {
 
                     Spacer(minLength: 8)
 
-                    if block.reservation == nil {
-                        Text("No reservations assigned.")
+                    if block.assignments.isEmpty {
+                        Image(systemName: "circle")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .accessibilityLabel("No reservations assigned")
+                    } else if block.assignedCount > 1 {
+                        Label {
+                            Text("\(block.assignedCount)")
+                                .font(.caption.weight(.semibold))
+                        } icon: {
+                            Image(systemName: "list.bullet")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(TryzubColors.info)
+                        .accessibilityLabel("\(block.assignedCount) assigned reservations")
+                    } else {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(TryzubColors.success)
+                            .accessibilityLabel("One assigned reservation")
                     }
                 }
 
@@ -186,29 +217,54 @@ struct FloorPlanTableAssignmentSheet: View {
     }
 
     @ViewBuilder
-    private func currentReservationCard(
-        reservation: ManagedReservationDTO,
-        block: FloorPlanTableBlock
+    private func assignedReservationCard(
+        _ item: FloorPlanTableReservationAssignment
     ) -> some View {
+        let reservation = item.reservation
         HostAssignmentCardSurface {
-            VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                Circle()
+                    .fill(TryzubColors.info)
+                    .frame(width: 10, height: 10)
+                    .padding(.leading, -2)
+
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(reservation.guestName)
-                        .font(.subheadline.weight(.semibold))
-                    Text("\(FloorPlanPresentation.displayTime(reservation.reservationTime)) · party of \(reservation.partySize)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                    HStack(spacing: 8) {
+                        Text(reservation.guestName)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(TryzubColors.primaryText)
+                            .lineLimit(1)
 
-                if block.assignment != nil {
-                    Divider()
-
-                    Button("Clear table assignment", role: .destructive) {
-                        onClear(reservation.id)
+                        Text(reservation.status.displayName)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.secondary.opacity(0.12))
+                            .clipShape(Capsule())
                     }
-                    .font(.caption.weight(.semibold))
-                    .disabled(isWorking)
+
+                    HStack(spacing: 8) {
+                        Text(FloorPlanPresentation.displayTime(reservation.reservationTime))
+                        Label("\(reservation.partySize)", systemImage: "person.2.fill")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
+
+                Spacer(minLength: 8)
+
+                Button(role: .destructive) {
+                    onClear(reservation.id)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3.weight(.semibold))
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking)
+                .accessibilityLabel("Clear table assignment for \(reservation.guestName)")
             }
         }
     }
@@ -321,10 +377,63 @@ struct FloorPlanTableAssignmentSheet: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(reservation.guestName)
                 .font(.headline)
-            Text("\(FloorPlanPresentation.displayTime(reservation.reservationTime)) · party of \(reservation.partySize)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text(FloorPlanPresentation.displayTime(reservation.reservationTime))
+                Label("\(reservation.partySize)", systemImage: "person.2.fill")
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
         }
+    }
+
+    private func suggestedGuestRow(_ proposal: HostTableAssignmentProposal) -> some View {
+        Button {
+            assignFromProposal(proposal)
+            ReservationHaptics.selection()
+        } label: {
+            HostAssignmentCardSurface(isMuted: !proposal.isAvailable) {
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(proposal.tableLabel)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(proposal.isAvailable ? TryzubColors.primaryText : TryzubColors.mutedText)
+                            .lineLimit(1)
+
+                        HStack(spacing: 8) {
+                            if let reservationID = Int(proposal.id),
+                               let reservation = unassignedReservations.first(where: { $0.id == reservationID }) {
+                                Text(FloorPlanPresentation.displayTime(reservation.reservationTime))
+                                Label("\(reservation.partySize)", systemImage: "person.2.fill")
+                            } else {
+                                Text(proposal.summary)
+                            }
+
+                            if let fit = proposal.fitDescription {
+                                Text(fit)
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                        if let detail = proposal.detail {
+                            Text(detail)
+                                .font(.caption2)
+                                .foregroundStyle(TryzubColors.warning)
+                                .lineLimit(2)
+                        }
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Image(systemName: proposal.isAvailable ? "plus.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(proposal.isAvailable ? TryzubColors.success : TryzubColors.warning)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!proposal.isAvailable || isWorking)
     }
 
     private func seedSelection() {

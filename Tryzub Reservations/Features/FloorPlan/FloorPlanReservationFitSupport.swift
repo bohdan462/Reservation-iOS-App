@@ -64,7 +64,9 @@ enum FloorPlanReservationFitSupport {
       ),
       detail: detail,
       isRecommended: isRecommended,
-      isAvailable: isAvailable
+      isAvailable: isAvailable,
+      seatCount: maxCapacity,
+      fitDescription: fitLabel(for: fitQuality).lowercased()
     )
   }
 
@@ -82,7 +84,17 @@ enum FloorPlanReservationFitSupport {
     case .oversized: fitLabel = "Roomy fit"
     case .unavailable: fitLabel = "Check capacity"
     }
-    return "\(time) · party of \(partySize) · \(fitLabel.lowercased())"
+    return "\(time) · \(partySize) · \(fitLabel.lowercased())"
+  }
+
+  private static func fitLabel(for quality: HostTableFitQuality) -> String {
+    switch quality {
+    case .exact: return "Matches party"
+    case .tight: return "Tight"
+    case .comfortable: return "Comfortable"
+    case .oversized: return "Roomy"
+    case .unavailable: return "May be tight"
+    }
   }
 
   private static func fitRank(for proposal: HostTableAssignmentProposal) -> Int {

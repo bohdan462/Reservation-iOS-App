@@ -25,29 +25,28 @@ struct FloorPlanAssignedReservationCard: View {
 
     var body: some View {
         Button(action: action) {
-            HostAssignmentCardSurface {
-                VStack(alignment: .leading, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.reservation.guestName)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(TryzubColors.primaryText)
-                            .lineLimit(1)
-
-                        Text(
-                            "\(FloorPlanPresentation.displayTime(item.reservation.reservationTime)) · party of \(item.reservation.partySize)"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            FloorPlanReservationChipSurface {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(item.reservation.guestName)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(TryzubColors.primaryText)
                         .lineLimit(1)
+
+                    HStack(spacing: 7) {
+                        Text(FloorPlanPresentation.displayTime(item.reservation.reservationTime))
+                        Label("\(item.reservation.partySize)", systemImage: "person.2.fill")
                     }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
 
                     Label {
                         Text(item.tableLabel)
-                            .font(.caption.weight(.semibold))
+                            .font(.caption2.weight(.semibold))
                             .foregroundStyle(TryzubColors.primaryControl)
                     } icon: {
                         Image(systemName: "table.furniture")
-                            .font(.caption.weight(.semibold))
+                            .font(.caption2.weight(.semibold))
                     }
                     .labelStyle(.titleAndIcon)
                 }
@@ -63,21 +62,20 @@ struct FloorPlanUnassignedReservationCard: View {
 
     var body: some View {
         Button(action: action) {
-            HostAssignmentCardSurface {
-                VStack(alignment: .leading, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(reservation.guestName)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(TryzubColors.primaryText)
-                            .lineLimit(1)
-
-                        Text(
-                            "\(FloorPlanPresentation.displayTime(reservation.reservationTime)) · party of \(reservation.partySize)"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            FloorPlanReservationChipSurface {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(reservation.guestName)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(TryzubColors.primaryText)
                         .lineLimit(1)
+
+                    HStack(spacing: 7) {
+                        Text(FloorPlanPresentation.displayTime(reservation.reservationTime))
+                        Label("\(reservation.partySize)", systemImage: "person.2.fill")
                     }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
 
                     if !noteChips.isEmpty {
                         HStack(spacing: 4) {
@@ -95,11 +93,11 @@ struct FloorPlanUnassignedReservationCard: View {
 
                     Label {
                         Text("Assign")
-                            .font(.caption.weight(.semibold))
+                            .font(.caption2.weight(.semibold))
                             .foregroundStyle(TryzubColors.primaryControl)
                     } icon: {
                         Image(systemName: "table.furniture")
-                            .font(.caption.weight(.semibold))
+                            .font(.caption2.weight(.semibold))
                     }
                     .labelStyle(.titleAndIcon)
                 }
@@ -139,6 +137,22 @@ struct FloorPlanUnassignedReservationCard: View {
     }
 }
 
+private struct FloorPlanReservationChipSurface<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(TryzubColors.border.opacity(0.8), lineWidth: 1)
+            }
+    }
+}
+
 struct FloorPlanReservationGridSection<Content: View>: View {
     let title: String
     let systemImage: String
@@ -147,7 +161,7 @@ struct FloorPlanReservationGridSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: systemImage)
-                .font(TryzubTypography.sectionTitle)
+                .font(.headline.weight(.semibold))
                 .foregroundStyle(TryzubColors.primaryText)
 
             content()
