@@ -287,6 +287,7 @@ private struct ReservationsTabShell: View {
                 .tag(ReservationsAppTab.more)
         }
         .fontDesign(.rounded)
+        .background(TryzubColors.screenBackground.ignoresSafeArea())
         .overlay(alignment: .topTrailing) {
             AppNoticeOverlay(
                 notices: visibleNotices,

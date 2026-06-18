@@ -82,6 +82,11 @@ struct ReservationRowPresentation: Identifiable {
     let secondaryActions: [ReservationHostAction]
 }
 
+enum ReservationRowDisplayStyle {
+    case standard
+    case hostBoard
+}
+
 enum ReservationRowPresenter {
     static func make(
         reservation: ReservationRecord,
@@ -321,6 +326,7 @@ struct ReservationRowView<Accessory: View>: View {
     var seatedDurationDotStyle: TryzubStaffStatusDotStyle?
     var capabilities: AppCapabilities?
     var onTableTap: (() -> Void)?
+    var displayStyle: ReservationRowDisplayStyle = .standard
 
     @ViewBuilder let accessory: () -> Accessory
 
@@ -337,6 +343,7 @@ struct ReservationRowView<Accessory: View>: View {
         seatedDurationDotStyle: TryzubStaffStatusDotStyle? = nil,
         capabilities: AppCapabilities? = nil,
         onTableTap: (() -> Void)? = nil,
+        displayStyle: ReservationRowDisplayStyle = .standard,
         @ViewBuilder accessory: @escaping () -> Accessory
     ) {
         self.reservation = reservation
@@ -348,6 +355,7 @@ struct ReservationRowView<Accessory: View>: View {
         self.seatedDurationDotStyle = seatedDurationDotStyle
         self.capabilities = capabilities
         self.onTableTap = onTableTap
+        self.displayStyle = displayStyle
         self.accessory = accessory
     }
 
@@ -376,23 +384,26 @@ struct ReservationRowView<Accessory: View>: View {
     private func wideRow(_ presentation: ReservationRowPresentation) -> some View {
         HStack(alignment: .center, spacing: ReservationRowLayout.wideSectionSpacing) {
             ReservationRowTimeSection(
-                eyebrow: presentation.dateText,
+                eyebrow: timeEyebrow(for: presentation),
                 time: presentation.timeText,
-                guestCountText: presentation.partyText,
-                width: ReservationRowLayout.wideTimeWidth
+                guestCountText: timeGuestCountText(for: presentation),
+                showsGuestIcon: displayStyle == .hostBoard,
+                eyebrowIsStatus: displayStyle == .hostBoard,
+                width: timeColumnWidth
             )
 
             Rectangle()
                 .fill(Color.primary.opacity(0.10))
-                .frame(width: 1, height: 52)
+                .frame(width: 1, height: displayStyle == .hostBoard ? 48 : 52)
+                .padding(.leading, displayStyle == .hostBoard ? ReservationRowLayout.hostTrailingContentLeadingInset : 0)
 
             ReservationRowGuestSection(
                 guestName: presentation.guestName,
                 status: nil,
-                metaItems: wideMetaItems(for: presentation),
-                submittedInsight: presentation.submittedInsight,
-                insight: presentation.insight,
-                newBookingInsight: newBookingInsight,
+                metaItems: metaItems(for: presentation),
+                submittedInsight: displayStyle == .hostBoard ? nil : presentation.submittedInsight,
+                insight: displayStyle == .hostBoard ? nil : presentation.insight,
+                newBookingInsight: displayStyle == .hostBoard ? nil : newBookingInsight,
                 seatedDurationDotStyle: seatedDurationDotStyle,
                 onTableTap: onTableTap,
                 usesCompactName: false
@@ -402,38 +413,41 @@ struct ReservationRowView<Accessory: View>: View {
             Spacer(minLength: ReservationRowLayout.minimumSpacer)
 
             ReservationRowAccessorySection(
-                status: presentation.status,
-                width: ReservationRowLayout.wideActionWidth,
+                status: displayStyle == .hostBoard ? nil : presentation.status,
+                width: actionColumnWidth,
                 accessory: accessory
             )
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .frame(minHeight: 70)
-        .background(presentation.rowStyle.background, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+        .padding(.vertical, displayStyle == .hostBoard ? 8 : 9)
+        .frame(minHeight: displayStyle == .hostBoard ? 68 : 70)
+        .background(rowBackground(for: presentation.rowStyle))
         .overlay(rowStroke(for: presentation.rowStyle))
     }
 
     private func compactRow(_ presentation: ReservationRowPresentation) -> some View {
         HStack(alignment: .center, spacing: ReservationRowLayout.compactSectionSpacing) {
             ReservationRowTimeSection(
-                eyebrow: presentation.dateText,
+                eyebrow: timeEyebrow(for: presentation),
                 time: presentation.timeText,
-                guestCountText: presentation.partyText,
-                width: ReservationRowLayout.compactTimeWidth
+                guestCountText: timeGuestCountText(for: presentation),
+                showsGuestIcon: displayStyle == .hostBoard,
+                eyebrowIsStatus: displayStyle == .hostBoard,
+                width: timeColumnWidth
             )
 
             Rectangle()
                 .fill(Color.primary.opacity(0.10))
-                .frame(width: 1, height: 50)
+                .frame(width: 1, height: displayStyle == .hostBoard ? 46 : 50)
+                .padding(.leading, displayStyle == .hostBoard ? ReservationRowLayout.hostTrailingContentLeadingInset : 0)
 
             ReservationRowGuestSection(
                 guestName: presentation.guestName,
                 status: nil,
-                metaItems: compactMetaItems(for: presentation),
-                submittedInsight: presentation.submittedInsight,
-                insight: presentation.insight,
-                newBookingInsight: newBookingInsight,
+                metaItems: metaItems(for: presentation),
+                submittedInsight: displayStyle == .hostBoard ? nil : presentation.submittedInsight,
+                insight: displayStyle == .hostBoard ? nil : presentation.insight,
+                newBookingInsight: displayStyle == .hostBoard ? nil : newBookingInsight,
                 seatedDurationDotStyle: seatedDurationDotStyle,
                 onTableTap: onTableTap,
                 usesCompactName: true
@@ -447,13 +461,54 @@ struct ReservationRowView<Accessory: View>: View {
             )
         }
         .padding(.horizontal, 11)
-        .padding(.vertical, 9)
-        .frame(minHeight: 68)
-        .background(presentation.rowStyle.background, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+        .padding(.vertical, displayStyle == .hostBoard ? 8 : 9)
+        .frame(minHeight: displayStyle == .hostBoard ? 66 : 68)
+        .background(rowBackground(for: presentation.rowStyle))
         .overlay(rowStroke(for: presentation.rowStyle))
     }
 
     // MARK: - Display Helpers
+
+    private var timeColumnWidth: CGFloat {
+        switch displayStyle {
+        case .standard:
+            return horizontalSizeClass == .regular
+                ? ReservationRowLayout.wideTimeWidth
+                : ReservationRowLayout.compactTimeWidth
+        case .hostBoard:
+            return horizontalSizeClass == .regular
+                ? ReservationRowLayout.hostWideTimeWidth
+                : ReservationRowLayout.hostCompactTimeWidth
+        }
+    }
+
+    private var actionColumnWidth: CGFloat? {
+        switch displayStyle {
+        case .standard:
+            return ReservationRowLayout.wideActionWidth
+        case .hostBoard:
+            return ReservationRowLayout.hostWideActionWidth
+        }
+    }
+
+    private func timeGuestCountText(for presentation: ReservationRowPresentation) -> String {
+        displayStyle == .hostBoard ? presentation.compactPartyText : presentation.partyText
+    }
+
+    private func timeEyebrow(for presentation: ReservationRowPresentation) -> String? {
+        displayStyle == .hostBoard ? presentation.statusText.uppercased() : presentation.dateText
+    }
+
+    private func metaItems(for presentation: ReservationRowPresentation) -> [ReservationRowDetailLabelData] {
+        switch displayStyle {
+        case .standard:
+            return horizontalSizeClass == .regular
+                ? wideMetaItems(for: presentation)
+                : compactMetaItems(for: presentation)
+        case .hostBoard:
+            return hostBoardMetaItems(for: presentation)
+        }
+    }
 
     private func wideMetaItems(for presentation: ReservationRowPresentation) -> [ReservationRowDetailLabelData] {
         var items: [ReservationRowDetailLabelData] = [
@@ -472,6 +527,60 @@ struct ReservationRowView<Accessory: View>: View {
 //        if let phoneText = presentation.phoneText {
 //            items.append(ReservationRowDetailLabelData(text: phoneText, systemImage: "phone"))
 //        }
+
+        return items
+    }
+
+    private func hostBoardMetaItems(for presentation: ReservationRowPresentation) -> [ReservationRowDetailLabelData] {
+        let tableText = presentation.tableText ?? "No table"
+        var items = [
+            ReservationRowDetailLabelData(
+                text: tableText.removingTablePrefix,
+                systemImage: "table.furniture",
+                isTable: true,
+                accessibilityLabel: tableText
+            )
+        ]
+
+        if presentation.guestNotesIndicator != nil {
+            items.append(
+                ReservationRowDetailLabelData(
+                    text: "",
+                    systemImage: "note.text",
+                    accessibilityLabel: "Guest notes"
+                )
+            )
+        }
+
+        if presentation.staffNotesIndicator != nil {
+            items.append(
+                ReservationRowDetailLabelData(
+                    text: "",
+                    systemImage: "note.text.badge.plus",
+                    accessibilityLabel: "Staff notes"
+                )
+            )
+        }
+
+        if presentation.status == .needsReview {
+            items.append(
+                ReservationRowDetailLabelData(
+                    text: "",
+                    systemImage: "exclamationmark.triangle",
+                    accessibilityLabel: "Needs review"
+                )
+            )
+        }
+
+        if let insight = presentation.insight, insight.prominence != .normal {
+            items.append(
+                ReservationRowDetailLabelData(
+                    text: "",
+                    systemImage: insight.systemImage,
+                    accessibilityLabel: insight.text
+                )
+            )
+        }
 
         return items
     }
@@ -500,7 +609,40 @@ struct ReservationRowView<Accessory: View>: View {
 
     private func rowStroke(for style: ReservationRowStyle) -> some View {
         RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
-            .stroke(style.strokeColor, lineWidth: 1)
+            .stroke(displayStyle == .hostBoard ? hostRowStrokeColor(for: style) : style.strokeColor, lineWidth: 1)
+    }
+
+    private func rowBackground(for style: ReservationRowStyle) -> some View {
+        RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
+            .fill(displayStyle == .hostBoard ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(style.background))
+            .overlay {
+                if displayStyle == .hostBoard {
+                    RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
+                        .fill(hostRowTint(for: style))
+                }
+            }
+    }
+
+    private func hostRowTint(for style: ReservationRowStyle) -> Color {
+        switch style {
+        case .normal:
+            return Color.primary.opacity(0.015)
+        case .dueSoon:
+            return Color.orange.opacity(0.08)
+        case .attention:
+            return Color.red.opacity(0.08)
+        }
+    }
+
+    private func hostRowStrokeColor(for style: ReservationRowStyle) -> Color {
+        switch style {
+        case .normal:
+            return Color.primary.opacity(0.10)
+        case .dueSoon:
+            return Color.orange.opacity(0.22)
+        case .attention:
+            return TryzubColors.attentionBorder.opacity(0.55)
+        }
     }
 
 }
@@ -510,7 +652,11 @@ struct ReservationRowView<Accessory: View>: View {
 private enum ReservationRowLayout {
     static let wideTimeWidth: CGFloat = 92
     static let compactTimeWidth: CGFloat = 70
+    static let hostWideTimeWidth: CGFloat = 86
+    static let hostCompactTimeWidth: CGFloat = 72
+    static let hostTrailingContentLeadingInset: CGFloat = 10
     static let wideActionWidth: CGFloat = 108
+    static let hostWideActionWidth: CGFloat = 124
     static let wideSectionSpacing: CGFloat = 12
     static let compactSectionSpacing: CGFloat = 10
     static let minimumSpacer: CGFloat = 12
@@ -521,9 +667,10 @@ private struct ReservationRowDetailLabelData: Identifiable {
     let systemImage: String
     var isTable = false
     var allowsWrapping = false
+    var accessibilityLabel: String?
 
     var id: String {
-        "\(systemImage)-\(text)-\(isTable)-\(allowsWrapping)"
+        "\(systemImage)-\(text)-\(isTable)-\(allowsWrapping)-\(accessibilityLabel ?? "")"
     }
 }
 
@@ -544,30 +691,43 @@ private struct ReservationRowTimeSection: View {
     let eyebrow: String?
     let time: String
     let guestCountText: String
+    var showsGuestIcon = false
+    var eyebrowIsStatus = false
     let width: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(eyebrow ?? "")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
+                .font(.caption2.weight(eyebrowIsStatus ? .bold : .medium))
+                .foregroundStyle(eyebrowIsStatus ? Color.primary.opacity(0.62) : .secondary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.78)
                 .frame(height: 14, alignment: .leading)
 
             Text(time)
-                .font(.title3.weight(.medium))
+                .font(.title3.weight(eyebrowIsStatus ? .semibold : .medium))
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.82)
                 .fixedSize(horizontal: true, vertical: false)
                 .frame(height: 25, alignment: .leading)
 
-            Text(guestCountText)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
-                .frame(height: 14, alignment: .leading)
+            HStack(spacing: 4) {
+                if showsGuestIcon {
+                    Image(systemName: "person.fill")
+                        .font(.caption2.weight(.semibold))
+                        .accessibilityHidden(true)
+                }
+
+                Text(guestCountText)
+                    .font(.caption.weight(showsGuestIcon ? .bold : .medium))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .frame(height: 14, alignment: .leading)
+            .accessibilityLabel(showsGuestIcon ? "\(guestCountText) guests" : guestCountText)
         }
         .frame(width: width, alignment: .leading)
     }
@@ -804,14 +964,17 @@ private struct ReservationRowDetailLabel: View {
                 .font(.caption2.weight(.medium))
                 .frame(width: 13)
 
-            Text(item.text)
-                .font(.caption2.weight(.medium))
-                .monospacedDigit()
-                .lineLimit(item.allowsWrapping ? 2 : 1)
-                .truncationMode(.tail)
+            if !item.text.isEmpty {
+                Text(item.text)
+                    .font(.caption2.weight(.medium))
+                    .monospacedDigit()
+                    .lineLimit(item.allowsWrapping ? 2 : 1)
+                    .truncationMode(.tail)
+            }
         }
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: item.allowsWrapping)
+        .accessibilityLabel(item.accessibilityLabel ?? item.text)
     }
 }
 
@@ -825,6 +988,13 @@ private extension String {
     var nilIfBlank: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var removingTablePrefix: String {
+        if hasPrefix("Table ") {
+            return String(dropFirst("Table ".count))
+        }
+        return self
     }
 }
 

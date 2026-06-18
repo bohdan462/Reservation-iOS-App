@@ -2265,78 +2265,70 @@ private struct GuestInsightsPreviewCard: View {
     let mergedRegularity: GuestRegularityLevel?
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "person.text.rectangle")
-                .font(.headline.weight(.medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 36, height: 36)
-                .background(Color(.systemGray6), in: Circle())
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Text("Guest insight")
+                    .font(.headline.weight(.medium))
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
 
-            VStack(alignment: .leading, spacing: 5) {
+            if let profilePreview {
                 HStack(spacing: 6) {
-                    Text("Guest insight")
-                        .font(.headline.weight(.medium))
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
-
-                if let profilePreview {
-                    HStack(spacing: 6) {
-                        Text(profilePreview.title)
-                            .font(.subheadline.weight(.semibold))
-                        if profilePreview.showsUpdatingBadge {
-                            DetailPill(label: "Profile updating", systemImage: "arrow.triangle.2.circlepath", tint: .secondary)
-                        }
-                    }
-                    ForEach(Array(profilePreview.lines.enumerated()), id: \.offset) { _, line in
-                        Text(line)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if !profilePreview.badges.isEmpty {
-                        FlowLayout(spacing: 7) {
-                            ForEach(profilePreview.badges, id: \.self) { badge in
-                                DetailPill(label: badge, systemImage: "tag", tint: .secondary)
-                            }
-                        }
-                    }
-                } else {
-                    Text(presentation.historyTitle)
+                    Text(profilePreview.title)
                         .font(.subheadline.weight(.semibold))
-
-                    Text(presentation.historyDetail)
+                    if profilePreview.showsUpdatingBadge {
+                        DetailPill(label: "Profile updating", systemImage: "arrow.triangle.2.circlepath", tint: .secondary)
+                    }
+                }
+                ForEach(Array(profilePreview.lines.enumerated()), id: \.offset) { _, line in
+                    Text(line)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-
-                ForEach(Array(presentation.supplementalLines.enumerated()), id: \.offset) { _, line in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(line.title)
-                            .font(.caption.weight(.semibold))
-                        Text(line.detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                if !profilePreview.badges.isEmpty {
+                    FlowLayout(spacing: 7) {
+                        ForEach(profilePreview.badges, id: \.self) { badge in
+                            DetailPill(label: badge, systemImage: "tag", tint: .secondary)
+                        }
                     }
                 }
+            } else {
+                Text(presentation.historyTitle)
+                    .font(.subheadline.weight(.semibold))
 
-                FlowLayout(spacing: 7) {
-                    if let mergedRegularity {
-                        GuestRegularityBadge(level: mergedRegularity)
-                    }
-                    if !report.staffMentionHistory.isEmpty {
-                        DetailPill(label: "Staff notes", systemImage: "note.text", tint: .secondary)
-                    }
-                    if !report.possibleMatches.isEmpty {
-                        DetailPill(label: "Possible match", systemImage: "person.2", tint: .secondary)
-                    }
-                }
-                .lineLimit(1)
+                Text(presentation.historyDetail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+
+            ForEach(Array(presentation.supplementalLines.enumerated()), id: \.offset) { _, line in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(line.title)
+                        .font(.caption.weight(.semibold))
+                    Text(line.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            FlowLayout(spacing: 7) {
+                if let mergedRegularity {
+                    GuestRegularityBadge(level: mergedRegularity)
+                }
+                if !report.staffMentionHistory.isEmpty {
+                    DetailPill(label: "Staff notes", systemImage: "note.text", tint: .secondary)
+                }
+                if !report.possibleMatches.isEmpty {
+                    DetailPill(label: "Possible match", systemImage: "person.2", tint: .secondary)
+                }
+            }
+            .lineLimit(1)
         }
         // Flat inside DetailSectionCard — no nested background/border.
         .frame(maxWidth: .infinity, alignment: .leading)

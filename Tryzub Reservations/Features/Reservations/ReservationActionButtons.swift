@@ -118,7 +118,7 @@ enum ReservationHostAction: String, Identifiable {
                 return compact ? "Seat" : "Arrived late — seat"
             }
             if let table = reservation.assignedTableName {
-                return "Seat at \(table)"
+                return "Seat \(table)"
             }
             return compact ? rowTitle : shortTitle
         default:
@@ -133,7 +133,7 @@ enum ReservationHostAction: String, Identifiable {
                 return "Seat anyway?"
             }
             if let table = reservation.assignedTableName {
-                return "Seat at \(table)?"
+                return "Seat \(table)?"
             }
             return "Seat now?"
         case .confirmOnly:
@@ -415,6 +415,7 @@ struct ReservationActionButtons: View {
     var compact = false
     var includeSecondary = true
     var primaryFillsWidth = false
+    var compactMinHeight: CGFloat?
     var actionSurface: ReservationActionSurface?
     var isBusy = false
     let onAction: (ReservationHostAction) -> Void
@@ -588,8 +589,9 @@ struct ReservationActionButtons: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.78)
                             .fixedSize(horizontal: true, vertical: false)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, compactMinHeight == nil ? 8 : 10)
+                            .padding(.vertical, compactMinHeight == nil ? 6 : 0)
+                            .frame(minHeight: compactMinHeight)
                     } else {
                         Label(title(for: action, compact: false), systemImage: action.systemImage)
                             .labelStyle(.titleAndIcon)

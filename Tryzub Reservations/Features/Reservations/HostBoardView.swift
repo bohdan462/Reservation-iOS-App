@@ -291,7 +291,10 @@ struct HostBoardView: View {
 
             let closedPresentation = closedDayPresentation(for: snapshot)
 
-            Group {
+            ZStack {
+                TryzubColors.screenBackground
+                    .ignoresSafeArea()
+
                 // Both wide and narrow use a single outer ScrollView so the entire Host board
                 // (header + intelligence + lists) scrolls as one unified page.
                 ScrollView {
@@ -306,19 +309,20 @@ struct HostBoardView: View {
                             availableWidth: safeWidth
                         )
                     }
-                    .padding(.bottom, 12)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(.horizontal, isWideLayout ? 16 : 12)
+                    .padding(.top, isWideLayout ? 8 : 6)
+                    .padding(.bottom, ReservationLayout.scrollBottomInset + 12)
                 }
+                .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
+                .scrollIndicators(.hidden)
             }
-            .padding(.horizontal, isWideLayout ? 16 : 12)
-            .padding(.top, isWideLayout ? 8 : 6)
-            .padding(.bottom, ReservationLayout.scrollBottomInset)
-            .frame(maxWidth: 1100)
             .frame(width: safeWidth, height: safeHeight, alignment: .top)
-            .background(TryzubColors.screenBackground)
             .task(id: hostLayoutTraceID(width: safeWidth, isWideLayout: isWideLayout)) {
                 traceHostLayout(width: safeWidth, isWideLayout: isWideLayout)
             }
         }
+        .background(TryzubColors.screenBackground.ignoresSafeArea())
         .alert(
             pendingActionTitle,
             isPresented: Binding(
@@ -1606,14 +1610,10 @@ private struct HostBoardSummaryCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 0) {
-                    ForEach(Array(stats.enumerated()), id: \.element.label) { index, stat in
-                        if index > 0 {
-                            Divider().frame(height: 26).opacity(0.4)
-                                .padding(.horizontal, 10)
-                        }
+                HStack(alignment: .center, spacing: 8) {
+                    ForEach(stats) { stat in
                         statItem(stat)
                     }
                     Spacer(minLength: 0)
@@ -1657,18 +1657,18 @@ private struct HostBoardSummaryCard: View {
                 }
             }
         }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
-                .stroke(TryzubColors.border, lineWidth: 1)
+                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
         }
     }
 
     private func statItem(_ stat: HostBoardStat) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
             Text("\(stat.value)")
-                .font(.system(size: 22, weight: .semibold, design: .rounded))
+                .font(.system(size: 18, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(stat.value == 0 ? TryzubColors.mutedText : TryzubColors.primaryText)
                 .contentTransition(.numericText())
@@ -1679,7 +1679,14 @@ private struct HostBoardSummaryCard: View {
                 .foregroundStyle(TryzubColors.mutedText)
                 .lineLimit(1)
         }
-        .fixedSize()
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private func timelineLegend(label: String, value: String) -> some View {
@@ -2052,8 +2059,8 @@ private struct HomeServiceHeader: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
                 titleBlock
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     .layoutPriority(0)
@@ -2063,10 +2070,16 @@ private struct HomeServiceHeader: View {
             }
 
             ReservationServiceDateSelector(selectedDate: $selectedDate)
+                .padding(7)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.primary.opacity(0.07), lineWidth: 1)
@@ -2123,20 +2136,11 @@ private struct HomeServiceHeader: View {
 //    }
 
     private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(title)
-                .font(.title2.weight(.semibold))
+                .font(.headline.weight(.semibold))
                 .foregroundStyle(ReservationUIStyle.serviceTitleColor)
                 .lineLimit(1)
-
-            Text(compactServiceDateText)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .allowsTightening(true)
-                .contentTransition(.interpolate)
-                .animation(.snappy(duration: 0.35), value: selectedDate.reservationDateString())
 
             HStack(spacing: 6) {
                 Text(statusPresentation.primarySyncText)
@@ -2408,13 +2412,15 @@ private struct HostBoardReservationRow: View {
             capabilities: controller.capabilities,
             onTableTap: controller.capabilities.canEditReservationDetails && !controller.isNetworkDegraded
                 ? { tableAssignmentReservation = reservation }
-                : nil
+                : nil,
+            displayStyle: .hostBoard
         ) {
             ReservationActionButtons(
                 reservation: reservation,
                 capabilities: controller.capabilities,
                 compact: true,
                 includeSecondary: false,
+                compactMinHeight: 40,
                 isBusy: controller.isActionInProgress(for: reservation) || controller.isNetworkDegraded,
                 onAction: { action in
                     handle(action)
@@ -2515,16 +2521,20 @@ private struct CompactEmptyHostState: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: systemImage)
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             Text(title)
-                .font(.subheadline.weight(.medium))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-            Spacer()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

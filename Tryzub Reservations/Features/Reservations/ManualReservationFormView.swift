@@ -264,25 +264,35 @@ struct ReservationEditFormView: View {
                 : nil
         )
         .sheet(
-            isPresented: $showSaveConfirmation,
+            isPresented: saveConfirmationBinding,
             onDismiss: {
                 pendingChanges = []
             }
         ) {
-            ReservationFormConfirmationSheet(
-                title: "Save Changes",
-                subtitle: "Review the reservation updates before saving.",
-                confirmTitle: "Save Changes",
-                isProcessing: isSaving,
-                onConfirm: {
-                    Task { await saveReservation() }
-                },
-                onCancel: {
-                    pendingChanges = []
-                    showSaveConfirmation = false
+            if pendingChanges.isEmpty {
+                Text("No changes to save.")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(TryzubColors.mutedText)
+                    .padding()
+                    .onAppear {
+                        showSaveConfirmation = false
+                    }
+            } else {
+                ReservationFormConfirmationSheet(
+                    title: "Save Changes",
+                    subtitle: "Review the reservation updates before saving.",
+                    confirmTitle: "Save Changes",
+                    isProcessing: isSaving,
+                    onConfirm: {
+                        Task { await saveReservation() }
+                    },
+                    onCancel: {
+                        pendingChanges = []
+                        showSaveConfirmation = false
+                    }
+                ) {
+                    ReservationFormChangeReview(changes: pendingChanges)
                 }
-            ) {
-                ReservationFormChangeReview(changes: pendingChanges)
             }
         }
         .confirmationDialog(
@@ -300,19 +310,34 @@ struct ReservationEditFormView: View {
     }
 
     private func prepareSaveConfirmation() {
+        dismissReservationFormKeyboard(reason: "confirmation_sheet")
         guard validateRequiredFields() else { return }
         let changes = draft.changes(from: originalDraft)
         if changes.isEmpty {
+            pendingChanges = []
+            showSaveConfirmation = false
             errorMessage = "No changes to save."
             return
         }
+        errorMessage = nil
         pendingChanges = changes
-        dismissReservationFormKeyboard(reason: "confirmation_sheet")
-        Task { @MainActor in
-            await Task.yield()
-            FormTrace.event(surface: "manual_add", name: "confirmation_sheet_presented", extra: "mode=edit")
-            showSaveConfirmation = true
-        }
+        FormTrace.event(surface: "manual_add", name: "confirmation_sheet_presented", extra: "mode=edit changes=\(changes.count)")
+        showSaveConfirmation = true
+    }
+
+    private var saveConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: {
+                showSaveConfirmation && !pendingChanges.isEmpty
+            },
+            set: { isPresented in
+                if !isPresented {
+                    showSaveConfirmation = false
+                } else if !pendingChanges.isEmpty {
+                    showSaveConfirmation = true
+                }
+            }
+        )
     }
 
     private func prepareHideConfirmation() {
@@ -2076,6 +2101,14 @@ private struct ReservationFormDraft {
         ReservationFormatters.shortTime.string(from: date)
     }
 
+    private static func canonicalTime(_ date: Date) -> String {
+        ReservationFormatters.apiTime.string(from: date)
+    }
+
+    private static func normalizedPartySize(_ value: Int) -> Int {
+        min(max(value, 1), 60)
+    }
+
     private static func displayDate(_ date: Date) -> String {
         date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
     }
@@ -2106,17 +2139,33 @@ private struct ReservationFormDraft {
     func changes(from original: ReservationFormDraft) -> [ReservationFormChange] {
         var result: [ReservationFormChange] = []
 
-        func append(_ field: String, old: String, new: String) {
+        func append(_ field: String, old: String, new: String, oldDisplay: String? = nil, newDisplay: String? = nil) {
             guard old != new else { return }
-            result.append(ReservationFormChange(field: field, oldValue: old, newValue: new))
+            result.append(
+                ReservationFormChange(
+                    field: field,
+                    oldValue: oldDisplay ?? old,
+                    newValue: newDisplay ?? new
+                )
+            )
         }
 
         append("Name", old: original.guestName.trimmed, new: guestName.trimmed)
         append("Phone", old: original.phone.trimmed, new: phone.trimmed)
         append("Email", old: original.email.trimmed.nilIfBlank ?? "No email", new: email.trimmed.nilIfBlank ?? "No email")
         append("Date", old: Self.displayDate(original.reservationDate), new: Self.displayDate(reservationDate))
-        append("Time", old: Self.displayTime(original.reservationTime), new: Self.displayTime(reservationTime))
-        append("Party", old: "\(original.partySize)", new: "\(partySize)")
+        append(
+            "Time",
+            old: Self.canonicalTime(original.reservationTime),
+            new: Self.canonicalTime(reservationTime),
+            oldDisplay: Self.displayTime(original.reservationTime),
+            newDisplay: Self.displayTime(reservationTime)
+        )
+        append(
+            "Party",
+            old: "\(Self.normalizedPartySize(original.partySize))",
+            new: "\(Self.normalizedPartySize(partySize))"
+        )
         append("Status", old: original.status.displayName, new: status.displayName)
         append("Table", old: original.tableName.trimmed.nilIfBlank ?? "No table", new: tableName.trimmed.nilIfBlank ?? "No table")
         append("Guest notes", old: original.guestNotes.trimmed.nilIfBlank ?? "None", new: guestNotes.trimmed.nilIfBlank ?? "None")
