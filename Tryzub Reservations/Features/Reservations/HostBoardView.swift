@@ -458,11 +458,12 @@ struct HostBoardView: View {
         .onChange(of: controller.capabilities.canViewDeveloperDiagnostics) { _, canView in
             hostIntelligenceController.updateDeveloperDiagnosticsAccess(canView)
         }
-        .task(id: "reminder-status-\(isVisible)-\(selectedDateKey)-\(emailAutomationSettingsStore.settings.automaticReminderProofEnabled)-\(emailAutomationSettingsStore.settings.manualReminderSendEnabled)") {
+        .task(id: "reminder-status-\(isVisible)-\(selectedDateKey)-\(emailAutomationSettingsStore.settings.automaticReminderProofEnabled)-\(emailAutomationSettingsStore.settings.manualReminderSendEnabled)-\(controller.restaurantSetup.manualBatchRemindersEnabled)") {
             guard isVisible,
                   selectedDateKey == Date.reservationDateString(),
                   emailAutomationSettingsStore.settings.automaticReminderProofEnabled
-                    || emailAutomationSettingsStore.settings.manualReminderSendEnabled else { return }
+                    || emailAutomationSettingsStore.settings.manualReminderSendEnabled
+                    || controller.restaurantSetup.manualBatchRemindersEnabled else { return }
             _ = await controller.refreshReminderStatus(for: selectedDateKey)
         }
         .onChange(of: hostBoardViewStateBuildKey, initial: true) { _, _ in
@@ -1049,7 +1050,7 @@ struct HostBoardView: View {
     private var hostReminderBatchCard: some View {
         let settings = emailAutomationSettingsStore.settings
         let isToday = selectedDateKey == Date.reservationDateString()
-        if isToday && (settings.automaticReminderProofEnabled || settings.manualReminderSendEnabled) {
+        if isToday && (settings.automaticReminderProofEnabled || settings.manualReminderSendEnabled || controller.restaurantSetup.manualBatchRemindersEnabled) {
             let status = controller.lastReminderStatusByDate[selectedDateKey]
             let automation = ResolvedReminderAutomationSettings.resolving(
                 setup: controller.restaurantSetup,
@@ -1062,8 +1063,7 @@ struct HostBoardView: View {
             let eligibleCount = status?.summary.eligible ?? 0
             let hasEligibleReminders = eligibleCount > 0
             let dailyEmailLimitReached = emailUsage.hasUsageData && emailUsage.isDailyLimitReached
-            let canSendBatchReminders = settings.manualReminderSendEnabled
-                && automation.manualBatchRemindersEnabled
+            let canSendBatchReminders = automation.manualBatchRemindersEnabled
                 && hasEligibleReminders
                 && !dailyEmailLimitReached
 
@@ -1918,7 +1918,7 @@ private struct HostReminderStaffSummary {
                     title: title,
                     message: "No reminders can be sent right now.",
                     secondary: cutoffLine(skipped: skipped, leadHours: reminderLeadHours),
-                    actionLabel: nil,
+                    actionLabel: backendManualBatchEnabled ? "No reminders due" : nil,
                     severity: .info
                 )
             }
@@ -1926,7 +1926,7 @@ private struct HostReminderStaffSummary {
                 title: title,
                 message: "Guest reminders are handled for today.",
                 secondary: "No one needs a reminder right now.",
-                actionLabel: nil,
+                actionLabel: backendManualBatchEnabled ? "No reminders due" : nil,
                 severity: .ok
             )
         }
@@ -1935,7 +1935,7 @@ private struct HostReminderStaffSummary {
             title: title,
             message: "Guest reminders are handled for today.",
             secondary: "No one needs a reminder right now.",
-            actionLabel: nil,
+            actionLabel: backendManualBatchEnabled ? "No reminders due" : nil,
             severity: .ok
         )
     }

@@ -166,7 +166,37 @@ final class RestaurantSettingsStore: ObservableObject {
     /// PATCH /restaurant-setup for backend reminder, auto-confirm, and email limit fields.
     @discardableResult
     func saveRestaurantAutomationSetup(request: RestaurantSetupUpdateRequest) async throws -> RestaurantSetup {
-        try await saveRestaurantSetup(request: request)
+        traceBackendReminderSettings(event: "patch_request", request: request)
+        let patched = try await saveRestaurantSetup(request: request)
+        traceBackendReminderSettings(event: "patch_response", setup: patched)
+        let refetched = try await loadRestaurantSetup(force: true)
+        traceBackendReminderSettings(event: "forced_get_response", setup: refetched)
+        return refetched
+    }
+
+    private func traceBackendReminderSettings(
+        event: String,
+        request: RestaurantSetupUpdateRequest? = nil,
+        setup: RestaurantSetup? = nil
+    ) {
+        #if DEBUG
+        let auto = request?.automaticRemindersEnabled.map(String.init)
+            ?? setup?.automaticRemindersEnabled.description
+            ?? "nil"
+        let manual = request?.manualBatchRemindersEnabled.map(String.init)
+            ?? setup?.manualBatchRemindersEnabled.description
+            ?? "nil"
+        let lead = request?.reminderLeadHours.map(String.init)
+            ?? setup?.reminderLeadHours.description
+            ?? "nil"
+        let morning = request?.morningReminderTime
+            ?? setup?.morningReminderTime
+            ?? "nil"
+        let updatedAt = setup?.updatedAt ?? "nil"
+        print(
+            "[BACKEND_REMINDERS_TRACE] event=\(event) automatic=\(auto) manualBatch=\(manual) leadHours=\(lead) morningTime=\(morning) updatedAt=\(updatedAt)"
+        )
+        #endif
     }
 
     // MARK: - Weekly Hours

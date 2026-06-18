@@ -101,11 +101,13 @@ struct ReservationReminderBatchResponse: Codable {
         case manualBatchRemindersEnabled
         case reminderLeadHours
         case morningReminderTime
+        case settings
         case emailUsage
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let settings = try container.decodeIfPresent(ReminderAutomationSettingsPayload.self, forKey: .settings)
         success = try container.decode(Bool.self, forKey: .success)
         date = try container.decode(String.self, forKey: .date)
         mode = try container.decodeIfPresent(String.self, forKey: .mode)
@@ -116,15 +118,60 @@ struct ReservationReminderBatchResponse: Codable {
         summary = try container.decode(ReservationReminderSummaryDTO.self, forKey: .summary)
         results = try container.decodeIfPresent([ReservationReminderResultDTO].self, forKey: .results) ?? []
         diagnostics = try container.decodeIfPresent(JSONValue.self, forKey: .diagnostics)
-        automaticRemindersEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticRemindersEnabled)
-        manualBatchRemindersEnabled = try container.decodeIfPresent(Bool.self, forKey: .manualBatchRemindersEnabled)
+        automaticRemindersEnabled = try container.decodeFlexibleBoolIfPresent(forKey: .automaticRemindersEnabled)
+            ?? settings?.automaticRemindersEnabled
+        manualBatchRemindersEnabled = try container.decodeFlexibleBoolIfPresent(forKey: .manualBatchRemindersEnabled)
+            ?? settings?.manualBatchRemindersEnabled
         reminderLeadHours = try container.decodeFlexibleIntIfPresent(forKey: .reminderLeadHours)
+            ?? settings?.reminderLeadHours
         morningReminderTime = try container.decodeIfPresent(String.self, forKey: .morningReminderTime)
+            ?? settings?.morningReminderTime
         emailUsage = try container.decodeIfPresent(EmailUsageSummary.self, forKey: .emailUsage)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(success, forKey: .success)
+        try container.encode(date, forKey: .date)
+        try container.encodeIfPresent(mode, forKey: .mode)
+        try container.encodeIfPresent(targetTime, forKey: .targetTime)
+        try container.encodeIfPresent(morningBatchRan, forKey: .morningBatchRan)
+        try container.encodeIfPresent(morningBatch, forKey: .morningBatch)
+        try container.encodeIfPresent(lastBatch, forKey: .lastBatch)
+        try container.encode(summary, forKey: .summary)
+        try container.encode(results, forKey: .results)
+        try container.encodeIfPresent(diagnostics, forKey: .diagnostics)
+        try container.encodeIfPresent(automaticRemindersEnabled, forKey: .automaticRemindersEnabled)
+        try container.encodeIfPresent(manualBatchRemindersEnabled, forKey: .manualBatchRemindersEnabled)
+        try container.encodeIfPresent(reminderLeadHours, forKey: .reminderLeadHours)
+        try container.encodeIfPresent(morningReminderTime, forKey: .morningReminderTime)
+        try container.encodeIfPresent(emailUsage, forKey: .emailUsage)
     }
 }
 
 typealias ReservationReminderStatusResponse = ReservationReminderBatchResponse
+
+private struct ReminderAutomationSettingsPayload: Decodable {
+    let automaticRemindersEnabled: Bool?
+    let manualBatchRemindersEnabled: Bool?
+    let reminderLeadHours: Int?
+    let morningReminderTime: String?
+
+    enum CodingKeys: String, CodingKey {
+        case automaticRemindersEnabled
+        case manualBatchRemindersEnabled
+        case reminderLeadHours
+        case morningReminderTime
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        automaticRemindersEnabled = try container.decodeFlexibleBoolIfPresent(forKey: .automaticRemindersEnabled)
+        manualBatchRemindersEnabled = try container.decodeFlexibleBoolIfPresent(forKey: .manualBatchRemindersEnabled)
+        reminderLeadHours = try container.decodeFlexibleIntIfPresent(forKey: .reminderLeadHours)
+        morningReminderTime = try container.decodeIfPresent(String.self, forKey: .morningReminderTime)
+    }
+}
 
 struct ResolvedReminderAutomationSettings: Equatable {
     let automaticRemindersEnabled: Bool
