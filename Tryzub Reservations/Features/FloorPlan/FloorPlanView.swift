@@ -17,6 +17,7 @@ struct FloorPlanView: View {
     @State private var assignmentContext: FloorPlanAssignmentContext?
     @State private var tableAssignmentReservation: ReservationRecord?
     @State private var showLayoutSetup = false
+    @State private var showFloorMapDatePicker = false
 
     private var selectedDateKey: String {
         selectedDate.reservationDateString()
@@ -166,6 +167,18 @@ struct FloorPlanView: View {
         UIDevice.current.userInterfaceIdiom == .pad
     }
 
+    private var floorMapUnitSize: CGFloat {
+        usesWideServiceHeader ? 40 : 38
+    }
+
+    private var floorMapTopContentInset: CGFloat {
+        usesWideServiceHeader ? 68 : 56
+    }
+
+    private var floorMapTrailingContentInset: CGFloat {
+        usesWideServiceHeader ? 88 : 0
+    }
+
     private var headerCard: some View {
         Group {
             if usesWideServiceHeader {
@@ -254,13 +267,6 @@ struct FloorPlanView: View {
         Label(headerMode.badgeTitle, systemImage: "circle.fill")
             .font(.caption.weight(.semibold))
             .foregroundStyle(headerMode == .liveService ? TryzubColors.success : TryzubColors.info)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                (headerMode == .liveService ? TryzubColors.success : TryzubColors.info)
-                    .opacity(0.12)
-            )
-            .clipShape(Capsule())
     }
 
     @ViewBuilder
@@ -313,14 +319,17 @@ struct FloorPlanView: View {
         ZStack(alignment: .top) {
             FloorPlanGridView(
                 viewState: store.viewState,
-                unitSize: usesWideServiceHeader ? 48 : 44,
+                unitSize: floorMapUnitSize,
+                topContentInset: floorMapTopContentInset,
+                trailingContentInset: floorMapTrailingContentInset,
                 onTableTap: { block in
                     assignmentContext = .table(block)
                 }
             )
 
             floorMapChromeOverlay
-                .padding(10)
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
         }
         .frame(minHeight: usesWideServiceHeader ? 430 : 360)
     }
@@ -407,12 +416,15 @@ struct FloorPlanView: View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .top, spacing: 10) {
                 floorMapServicePill
+                    .allowsHitTesting(false)
                 Spacer(minLength: 12)
+                    .allowsHitTesting(false)
                 floorMapDatePill
             }
 
             VStack(alignment: .leading, spacing: 8) {
                 floorMapServicePill
+                    .allowsHitTesting(false)
                 floorMapDatePill
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -420,8 +432,8 @@ struct FloorPlanView: View {
     }
 
     private var floorMapServicePill: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
                 Image(systemName: "calendar")
                     .font(.caption.weight(.semibold))
                 Text("Service")
@@ -436,32 +448,32 @@ struct FloorPlanView: View {
             serviceHeaderFooter
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(TryzubColors.border.opacity(0.8), lineWidth: 1)
-        }
+        .padding(.vertical, 7)
+        .floorMapGlassPanel(cornerRadius: 12)
     }
 
     private var floorMapDatePill: some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        Button {
+            showFloorMapDatePicker = true
+        } label: {
+            Text(FloorPlanPresentation.displayDate(selectedDateKey))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .floorMapGlassPanel(cornerRadius: 12)
+        .popover(isPresented: $showFloorMapDatePicker, arrowEdge: .top) {
             DatePicker(
                 "Service date",
                 selection: $selectedDate,
                 displayedComponents: .date
             )
-            .labelsHidden()
-            .datePickerStyle(.compact)
-
-            serviceStatusTrailing
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(TryzubColors.border.opacity(0.8), lineWidth: 1)
+            .datePickerStyle(.graphical)
+            .padding(16)
+            .frame(minWidth: 320)
+            .presentationCompactAdaptation(.popover)
         }
     }
 
@@ -483,6 +495,28 @@ struct FloorPlanView: View {
             "[FLOOR_DATE_TRACE] selectedDate=\(selectedDateKey) viewStateDate=\(store.viewState.selectedDate) staleContentHidden=\(isShowingStaleContent) fetchDate=\(fetchDate)"
         )
         #endif
+    }
+}
+
+private extension View {
+    func floorMapGlassPanel(cornerRadius: CGFloat = 12) -> some View {
+        background {
+            Group {
+                if #available(iOS 26.0, *) {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(.clear)
+                        .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+                } else {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                }
+            }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
     }
 }
 

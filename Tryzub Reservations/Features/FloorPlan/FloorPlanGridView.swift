@@ -8,6 +8,8 @@ import SwiftUI
 struct FloorPlanGridView: View {
     let viewState: FloorPlanViewState
     let unitSize: CGFloat
+    var topContentInset: CGFloat = 0
+    var trailingContentInset: CGFloat = 0
     let onTableTap: (FloorPlanTableBlock) -> Void
 
     private var gridLineColor: Color {
@@ -35,7 +37,10 @@ struct FloorPlanGridView: View {
                 }
             }
             .frame(width: width, height: height)
-            .padding(12)
+            .padding(.top, 12 + topContentInset)
+            .padding(.leading, 12)
+            .padding(.trailing, 12 + trailingContentInset)
+            .padding(.bottom, 12)
         }
         .background(TryzubColors.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))

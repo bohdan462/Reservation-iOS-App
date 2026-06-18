@@ -77,20 +77,6 @@ struct FloorPlanUnassignedReservationCard: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
-                    if !noteChips.isEmpty {
-                        HStack(spacing: 4) {
-                            ForEach(noteChips, id: \.self) { chip in
-                                Text(chip)
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(.secondary.opacity(0.12))
-                                    .clipShape(Capsule())
-                            }
-                        }
-                    }
-
                     Label {
                         Text("Assign")
                             .font(.caption2.weight(.semibold))
@@ -105,36 +91,6 @@ struct FloorPlanUnassignedReservationCard: View {
         }
         .buttonStyle(.plain)
     }
-
-    private var noteChips: [String] {
-        var chips: [String] = []
-        let combined = [reservation.guestNotes, reservation.staffNotes]
-            .compactMap { value -> String? in
-                guard let value,
-                      !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    return nil
-                }
-                return value
-            }
-            .joined(separator: " ")
-            .lowercased()
-        if !combined.isEmpty {
-            chips.append("Note")
-        }
-        if combined.contains("deposit") || combined.contains("payment") {
-            chips.append("Deposit")
-        }
-        if combined.contains("preorder") || combined.contains("pre-order") {
-            chips.append("Preorder")
-        }
-        if combined.contains("allerg")
-            || combined.contains("gluten")
-            || combined.contains("vegan")
-            || combined.contains("vegetar") {
-            chips.append("Dietary")
-        }
-        return chips
-    }
 }
 
 private struct FloorPlanReservationChipSurface<Content: View>: View {
@@ -145,11 +101,29 @@ private struct FloorPlanReservationChipSurface<Content: View>: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(TryzubColors.border.opacity(0.8), lineWidth: 1)
+            .floorPlanGlassSurface(cornerRadius: 10)
+    }
+}
+
+private extension View {
+    func floorPlanGlassSurface(cornerRadius: CGFloat = 10) -> some View {
+        background {
+            Group {
+                if #available(iOS 26.0, *) {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(.clear)
+                        .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+                } else {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                }
             }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.05), radius: 2, y: 1)
     }
 }
 
