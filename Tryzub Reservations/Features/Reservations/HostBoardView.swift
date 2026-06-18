@@ -62,6 +62,7 @@ struct HostBoardView: View {
     /// for availability and guest intelligence scheduling.
     @StateObject private var lifecycleCoordinator = HostBoardLifecycleCoordinator()
     @State private var hostBoardHeaderCollapse: CGFloat = 0
+    @State private var isPressureExpanded = false
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
@@ -926,59 +927,83 @@ struct HostBoardView: View {
 
     @ViewBuilder
     private func hostOperationalServicePressureSection(snapshot: HostBoardSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Service pressure")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(TryzubColors.primaryText)
-                    Text(snapshot.arrivalPressure.chartSubtitle)
-                        .font(.caption2)
-                        .foregroundStyle(TryzubColors.mutedText)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: isPressureExpanded ? 10 : 0) {
+            Button {
+                withAnimation(.snappy(duration: 0.32)) {
+                    isPressureExpanded.toggle()
                 }
+            } label: {
+                HStack(alignment: .center, spacing: 10) {
+                    Image(systemName: "waveform.path.ecg")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(TryzubColors.mutedText)
+                        .frame(width: 24, height: 24)
+                        .hostBoardGlassCapsule(strokeOpacity: 0.08)
+                        .accessibilityHidden(true)
 
-                Spacer(minLength: 8)
-
-                VStack(alignment: .trailing, spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text("Peak")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(TryzubColors.mutedText)
-                        Text(snapshot.arrivalPressure.peakLegendText)
-                            .font(.caption2.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Service pressure")
+                            .font(.caption.weight(.medium))
                             .foregroundStyle(TryzubColors.primaryText)
                             .lineLimit(1)
+
+                        Text(pressureSummaryLine(for: snapshot.arrivalPressure))
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(TryzubColors.mutedText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
                     }
-                    if let next = snapshot.arrivalPressure.nextLegendText {
-                        HStack(spacing: 4) {
-                            Text("Next")
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(TryzubColors.mutedText)
-                            Text(next)
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(TryzubColors.primaryText)
-                                .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(TryzubColors.mutedText)
+                        .rotationEffect(.degrees(isPressureExpanded ? 180 : 0))
+                        .frame(width: 18, height: 18)
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(pressureAccessibilityLabel(for: snapshot.arrivalPressure))
+            .accessibilityHint(isPressureExpanded ? "Collapse service pressure chart" : "Expand service pressure chart")
+
+            if isPressureExpanded {
+                ArrivalPressureWaveChart(
+                    summary: snapshot.arrivalPressure,
+                    height: 112,
+                    isToday: snapshot.selectedDate.reservationDateString() == Date.reservationDateString(),
+                    now: snapshot.now,
+                    onOpenReservation: { remoteID in
+                        if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
+                            onOpenReservation(reservation)
                         }
                     }
-                }
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
-
-            ArrivalPressureWaveChart(
-                summary: snapshot.arrivalPressure,
-                height: 112,
-                isToday: snapshot.selectedDate.reservationDateString() == Date.reservationDateString(),
-                now: snapshot.now,
-                onOpenReservation: { remoteID in
-                    if let reservation = reservations.first(where: { $0.remoteID == remoteID }) {
-                        onOpenReservation(reservation)
-                    }
-                }
-            )
         }
         .padding(12)
         .hostBoardGlassPanel(cornerRadius: ReservationUIStyle.cardCorner, strokeOpacity: 0.12)
+    }
+
+    private func pressureSummaryLine(for arrivalPressure: ArrivalPressureSummary) -> String {
+        guard arrivalPressure.hasArrivals else {
+            return "No arrivals today"
+        }
+
+        var parts = [
+            "Peak \(arrivalPressure.peakLegendText)",
+            arrivalPressure.chartSubtitle
+        ]
+        if let next = arrivalPressure.nextLegendText {
+            parts.append("Next \(next)")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func pressureAccessibilityLabel(for arrivalPressure: ArrivalPressureSummary) -> String {
+        "Service pressure. \(pressureSummaryLine(for: arrivalPressure))"
     }
 
     @ViewBuilder
@@ -1249,7 +1274,7 @@ struct HostBoardView: View {
             liveHostIntelligenceSection
             hostFloorSetupPrompt
             if let bookingTopItem {
-                BookingLoadHostCard(item: bookingTopItem, knownOnlyNote: bookingKnownOnlyNote)
+                HostBookingLoadCompactStrip(item: bookingTopItem, knownOnlyNote: bookingKnownOnlyNote)
             }
         }
     }
@@ -1338,6 +1363,7 @@ struct HostBoardView: View {
 
         HostIntelligenceCard(
             snapshot: snapshot,
+            presentationStyle: .compactStrip,
             attentionPresentation: hostIntelligenceController.displayAttentionPresentation,
             briefingTextOverride: hostIntelligenceController.displayBriefingText,
             managerNarrative: hostIntelligenceController.displayManagerNarrative,
@@ -1348,7 +1374,7 @@ struct HostBoardView: View {
             externalPulseActive: onDeviceSupportCoordinator.phase.pulseIsActive,
             renderState: hostIntelligenceController.renderState,
             isRefreshingAttentionCard: hostIntelligenceController.isRefreshingAttentionCard,
-            onReviewTapped: useSeparatedPrompts ? { isShowingHostIntelligenceReview = true } : nil
+            onReviewTapped: { isShowingHostIntelligenceReview = true }
         ) { action in
             handleHostIntelligenceAction(action)
         }
@@ -1867,12 +1893,11 @@ private struct HostOperationalStatusPanel: View {
 
     private var statsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
                 Label("Service", systemImage: "person.3.fill")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(TryzubColors.primaryText)
-
-                Spacer(minLength: 0)
+                    .fixedSize()
 
                 availabilityStatus
             }
@@ -1901,6 +1926,7 @@ private struct HostOperationalStatusPanel: View {
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(TryzubColors.mutedText)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
 
                 if let onRefreshAvailability {
                     Button(action: onRefreshAvailability) {
@@ -1951,8 +1977,8 @@ private struct HostOperationalStatusPanel: View {
                 }
             }
 
-            Text(reminderContext?.shortStateLine ?? "No reminders due")
-                .font(.subheadline.weight(.semibold))
+            Text(reminderContext?.shortStateLine ?? "Reminders off")
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(reminderContext?.stateTint ?? TryzubColors.mutedText)
                 .lineLimit(1)
 
@@ -2963,6 +2989,45 @@ private enum ReservationPresentationTime {
         let adjustedHour = hour % 12 == 0 ? 12 : hour % 12
         let suffix = hour < 12 ? "AM" : "PM"
         return "\(adjustedHour) \(suffix)"
+    }
+}
+
+// MARK: - Booking Load Compact Strip
+
+private struct HostBookingLoadCompactStrip: View {
+    let item: BookingSuggestionViewItem
+    let knownOnlyNote: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "clock.badge.exclamationmark")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(item.severity == .veryBusy ? .red : .orange)
+                .frame(width: 22, height: 22)
+                .hostBoardGlassCapsule(strokeOpacity: 0.10)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(item.headline). \(item.loadLine).")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(TryzubColors.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+
+                Text(knownOnlyNote)
+                    .font(.caption2)
+                    .foregroundStyle(TryzubColors.mutedText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .hostBoardGlassPanel(cornerRadius: 12, strokeOpacity: 0.10)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(item.headline). \(item.loadLine). \(knownOnlyNote)")
     }
 }
 

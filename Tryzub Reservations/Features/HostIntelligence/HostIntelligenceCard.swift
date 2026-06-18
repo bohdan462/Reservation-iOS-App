@@ -7,8 +7,14 @@
 
 import SwiftUI
 
+enum HostIntelligencePresentationStyle {
+  case fullCard
+  case compactStrip
+}
+
 struct HostIntelligenceCard: View {
   let snapshot: HostDecisionSnapshot
+  var presentationStyle: HostIntelligencePresentationStyle = .fullCard
   var attentionPresentation: HostAttentionPresentation = .empty
   var briefingTextOverride: String? = nil
   var managerNarrative: ManagerNarrative? = nil
@@ -25,14 +31,56 @@ struct HostIntelligenceCard: View {
   var onActionTapped: ((HostSuggestedAction) -> Void)? = nil
 
   var body: some View {
-    if isCalmPresentation {
-      calmCard
-    } else {
-      activeCard
+    switch presentationStyle {
+    case .fullCard:
+      if isCalmPresentation {
+        calmCard
+      } else {
+        activeCard
+      }
+    case .compactStrip:
+      compactStrip
     }
   }
 
   // MARK: - Layout
+
+  private var compactStrip: some View {
+    HStack(alignment: .center, spacing: 9) {
+      HostIntelligenceMark(isActive: pulseIsActive, size: 26)
+        .accessibilityHidden(true)
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text(compactOperationalSentence)
+          .font(.caption.weight(.medium))
+          .foregroundStyle(.primary)
+          .lineLimit(2)
+          .minimumScaleFactor(0.90)
+          .fixedSize(horizontal: false, vertical: true)
+
+        if isRefreshingAttentionCard {
+          Text("Refreshing")
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+
+      HStack(spacing: 6) {
+        compactStateChip
+        compactReviewButton
+      }
+      .fixedSize(horizontal: true, vertical: false)
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
+    .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+    .hostBoardGlassPanel(cornerRadius: 16, strokeOpacity: 0.12)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("\(compactStateTitle). \(compactOperationalSentence)")
+    .background(renderTraceView)
+  }
 
   private var calmCard: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -242,6 +290,66 @@ struct HostIntelligenceCard: View {
     "Service state · pressure \(Int(snapshot.pressureScore.rounded()))/100"
   }
 
+  private var compactStateTitle: String {
+    if snapshot.briefingFacts.contains(where: {
+      $0.severity == .critical || $0.category == .overdue
+    }) {
+      return "Attention"
+    }
+
+    if !snapshot.briefingFacts.isEmpty || !snapshot.suggestedActions.isEmpty {
+      switch snapshot.serviceState {
+      case .critical: return "Very busy"
+      case .busy: return "Busy"
+      case .building, .calm: return "Attention"
+      }
+    }
+
+    switch snapshot.serviceState {
+    case .calm: return "Quiet"
+    case .building: return "Picking up"
+    case .busy: return "Busy"
+    case .critical: return "Very busy"
+    }
+  }
+
+  private var compactOperationalSentence: String {
+    if let headline = staffFacingNarrative?.headline.trimmingCharacters(in: .whitespacesAndNewlines),
+       !headline.isEmpty {
+      return compactSentence(from: headline)
+    }
+
+    let override = briefingTextOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if !override.isEmpty, !isDefaultQuietLine(override) {
+      return compactSentence(from: override)
+    }
+
+    let template = snapshot.templateBriefingText.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !template.isEmpty, !isDefaultQuietLine(template) {
+      return compactSentence(from: template)
+    }
+
+    return "Service is quiet right now."
+  }
+
+  private func compactSentence(from text: String) -> String {
+    let singleLine = text
+      .replacingOccurrences(of: "\n", with: " ")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !singleLine.isEmpty else { return "Service is quiet right now." }
+
+    let terminalCharacters = CharacterSet(charactersIn: ".!?")
+    if let end = singleLine.rangeOfCharacter(from: terminalCharacters) {
+      return String(singleLine[...end.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    return singleLine
+  }
+
+  private func isDefaultQuietLine(_ text: String) -> Bool {
+    HostStaffLanguage.areSameStaffMeaning(text, HostDecisionSnapshot.empty.templateBriefingText)
+  }
+
   @ViewBuilder
   private var narrativeBody: some View {
     if let narrative = staffFacingNarrative {
@@ -429,6 +537,189 @@ struct HostIntelligenceCard: View {
       }
       .font(.caption.weight(.semibold))
     }
+  }
+
+  private var hasCompactReviewContent: Bool {
+    onReviewTapped != nil
+      && (showOperationalReview
+        || !attentionItems.isEmpty
+        || !attentionPresentation.secondaryContext.isEmpty
+        || !snapshot.suggestedActions.isEmpty
+        || staffFacingNarrative?.hasStructuredDetail == true
+        || !compactOperationalPrompts.isEmpty)
+  }
+
+  private var compactStateChip: some View {
+    Text(compactStateTitle)
+      .font(.caption2.weight(.medium))
+      .foregroundStyle(.primary.opacity(0.76))
+      .lineLimit(1)
+      .padding(.horizontal, 7)
+      .padding(.vertical, 4)
+      .hostBoardGlassCapsule(strokeOpacity: 0.10)
+      .accessibilityHidden(true)
+  }
+
+  @ViewBuilder
+  private var compactReviewButton: some View {
+    if hasCompactReviewContent {
+      Button {
+        onReviewTapped?()
+      } label: {
+        Text("Review")
+          .font(.caption2.weight(.medium))
+          .lineLimit(1)
+          .padding(.horizontal, 7)
+          .padding(.vertical, 4)
+          .hostBoardGlassCapsule(strokeOpacity: 0.12)
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(.primary)
+      .accessibilityLabel("Review Host Intelligence details")
+    }
+  }
+}
+
+private struct HostIntelligenceMark: View {
+  let isActive: Bool
+  let size: CGFloat
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  @State private var breatheExpanded = false
+  @State private var glowLifted = false
+
+  private var breatheMin: CGFloat { isActive ? 0.94 : 0.97 }
+  private var breatheMax: CGFloat { isActive ? 1.06 : 1.03 }
+  private var breatheDuration: Double { isActive ? 1.6 : 2.2 }
+  private var ringSpeed: Double { isActive ? 32 : 16 }
+  private var glowOpacityLow: Double { isActive ? 0.22 : 0.14 }
+  private var glowOpacityHigh: Double { isActive ? 0.40 : 0.26 }
+
+  var body: some View {
+    ZStack {
+      glowLayer
+        .scaleEffect(breatheScale)
+        .opacity(glowOpacity)
+
+      HostIntelligenceMarkRing(
+        size: size,
+        isActive: isActive,
+        ringSpeed: ringSpeed,
+        reduceMotion: reduceMotion
+      )
+      .scaleEffect(breatheScale)
+
+      centerLayer
+        .scaleEffect(centerBreathScale)
+    }
+    .frame(width: size, height: size)
+    .onAppear { syncAnimations() }
+    .onChange(of: isActive) { _, _ in syncAnimations() }
+    .onChange(of: reduceMotion) { _, _ in syncAnimations() }
+  }
+
+  private var breatheScale: CGFloat {
+    reduceMotion ? 1 : (breatheExpanded ? breatheMax : breatheMin)
+  }
+
+  private var centerBreathScale: CGFloat {
+    guard !reduceMotion else { return 1 }
+    return breatheExpanded ? (isActive ? 1.04 : 1.02) : (isActive ? 0.97 : 0.99)
+  }
+
+  private var glowOpacity: Double {
+    reduceMotion ? glowOpacityLow : (glowLifted ? glowOpacityHigh : glowOpacityLow)
+  }
+
+  private var glowLayer: some View {
+    Circle()
+      .fill(
+        RadialGradient(
+          colors: [
+            Color.white.opacity(0.88),
+            Color.cyan.opacity(isActive ? 0.44 : 0.28),
+            Color.pink.opacity(isActive ? 0.18 : 0.10),
+            Color.clear
+          ],
+          center: .center,
+          startRadius: 1,
+          endRadius: size * 0.58
+        )
+      )
+      .blur(radius: 2.5)
+  }
+
+  private var centerLayer: some View {
+    Circle()
+      .fill(.ultraThinMaterial)
+      .overlay {
+        Circle()
+          .fill(
+            LinearGradient(
+              colors: [
+                Color.white.opacity(0.74),
+                Color.cyan.opacity(isActive ? 0.28 : 0.18),
+                Color.pink.opacity(isActive ? 0.18 : 0.10)
+              ],
+              startPoint: .topLeading,
+              endPoint: .bottomTrailing
+            )
+          )
+          .blendMode(.plusLighter)
+      }
+      .frame(width: size * 0.42, height: size * 0.42)
+      .shadow(color: Color.cyan.opacity(isActive ? 0.18 : 0.08), radius: 3)
+  }
+
+  private func syncAnimations() {
+    breatheExpanded = false
+    glowLifted = false
+    guard !reduceMotion else { return }
+
+    withAnimation(.easeInOut(duration: breatheDuration).repeatForever(autoreverses: true)) {
+      breatheExpanded = true
+    }
+    withAnimation(.easeInOut(duration: breatheDuration * 0.9).repeatForever(autoreverses: true)) {
+      glowLifted = true
+    }
+  }
+}
+
+/// Rotates a fixed gradient ring via `rotationEffect` only — avoids rebuilding gradients every frame.
+private struct HostIntelligenceMarkRing: View {
+  let size: CGFloat
+  let isActive: Bool
+  let ringSpeed: Double
+  let reduceMotion: Bool
+
+  var body: some View {
+    Group {
+      if reduceMotion {
+        ring
+      } else {
+        TimelineView(.animation(minimumInterval: 1.0 / 8.0)) { context in
+          ring
+            .rotationEffect(.degrees(context.date.timeIntervalSinceReferenceDate * ringSpeed))
+        }
+      }
+    }
+  }
+
+  private var ring: some View {
+    Circle()
+      .stroke(
+        AngularGradient(
+          colors: [
+            Color.white.opacity(0.70),
+            Color.cyan.opacity(isActive ? 0.58 : 0.38),
+            Color.indigo.opacity(isActive ? 0.48 : 0.30),
+            Color.pink.opacity(isActive ? 0.42 : 0.22),
+            Color.white.opacity(0.70)
+          ],
+          center: .center
+        ),
+        lineWidth: 1.1
+      )
   }
 }
 
