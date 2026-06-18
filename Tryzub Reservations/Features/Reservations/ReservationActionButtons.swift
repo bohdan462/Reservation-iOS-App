@@ -129,23 +129,15 @@ enum ReservationHostAction: String, Identifiable {
     func displayPendingTitle(for reservation: ReservationRecord) -> String {
         switch self {
         case .seat:
-            if reservation.statusValue == .noShow {
-                return "Seat anyway?"
-            }
-            if let table = reservation.assignedTableName {
-                return "Seat \(table)?"
-            }
-            return "Seat now?"
-        case .confirmOnly:
-            return "Confirm?"
+            return "Confirm"
+        case .confirmOnly, .complete:
+            return "Yes"
         case .confirmAndSendEmail:
-            return "Email?"
-        case .complete:
-            return "Complete?"
+            return "Send"
         case .cancel:
-            return "Cancel?"
+            return "Cancel"
         case .noShow:
-            return "No show?"
+            return "Mark"
         case .assignTable:
             return rowTitle
         }
@@ -417,12 +409,14 @@ struct ReservationActionButtons: View {
     var primaryFillsWidth = false
     var compactMinHeight: CGFloat?
     var actionSurface: ReservationActionSurface?
+    var hostBoardGlassActions = false
     var isBusy = false
     let onAction: (ReservationHostAction) -> Void
     var onSeatRequiresTableChoice: (() -> Void)? = nil
 
     // Two-tap safety state for quick service actions in compact rows.
     @State private var pendingInlineAction: ReservationHostAction?
+    @Namespace private var hostActionGlassNamespace
 
     private var policy: ReservationHostActionPolicy {
         ReservationHostActionPolicy(
@@ -453,7 +447,9 @@ struct ReservationActionButtons: View {
             guard let action = pendingInlineAction else { return }
             try? await Task.sleep(for: .seconds(3))
             if pendingInlineAction == action {
-                pendingInlineAction = nil
+                withAnimation(hostBoardGlassMorphAnimation) {
+                    pendingInlineAction = nil
+                }
             }
         }
     }
@@ -579,6 +575,18 @@ struct ReservationActionButtons: View {
                 .disabled(isBusy || !action.isInteractionEnabled)
                 .opacity(action.isInteractionEnabled ? 1 : 0.45)
                 .accessibilityLabel(accessibilityLabel(for: action))
+            } else if hostBoardGlassActions, compact {
+                HostBoardMorphingGlassActionButton(
+                    glassID: action.id,
+                    namespace: hostActionGlassNamespace,
+                    idleTitle: action.displayRowTitle(for: reservation, compact: true),
+                    pendingTitle: action.displayPendingTitle(for: reservation),
+                    isPending: pendingInlineAction == action,
+                    minHeight: compactMinHeight ?? 40,
+                    isEnabled: action.isInteractionEnabled && !isBusy,
+                    onTap: { handleTap(action) }
+                )
+                .accessibilityLabel(accessibilityLabel(for: action))
             } else {
                 Button {
                     handleTap(action)
@@ -633,26 +641,34 @@ struct ReservationActionButtons: View {
     // Intent: Requires a second tap for actions that can change service state quickly.
     private func handleTap(_ action: ReservationHostAction) {
         if action == .seat, !reservation.hasTableAssignment {
-            pendingInlineAction = nil
+            withAnimation(hostBoardGlassMorphAnimation) {
+                pendingInlineAction = nil
+            }
             ReservationHaptics.lightImpact()
             onSeatRequiresTableChoice?()
             return
         }
 
         guard action.needsInlineConfirmation(for: reservation) else {
-            pendingInlineAction = nil
+            withAnimation(hostBoardGlassMorphAnimation) {
+                pendingInlineAction = nil
+            }
             ReservationHaptics.lightImpact()
             onAction(action)
             return
         }
 
         if pendingInlineAction == action {
-            pendingInlineAction = nil
+            withAnimation(hostBoardGlassMorphAnimation) {
+                pendingInlineAction = nil
+            }
             ReservationHaptics.success()
             onAction(action)
         } else {
             ReservationHaptics.lightImpact()
-            pendingInlineAction = action
+            withAnimation(hostBoardGlassMorphAnimation) {
+                pendingInlineAction = action
+            }
         }
     }
 
@@ -660,8 +676,8 @@ struct ReservationActionButtons: View {
         switch action {
         case .confirmOnly:
             return pendingInlineAction == action
-                ? "Confirm reservation for \(reservation.guestName)"
-                : "Prepare to confirm reservation for \(reservation.guestName)"
+                ? "Yes, confirm reservation for \(reservation.guestName)"
+                : "Confirm reservation for \(reservation.guestName)"
         case .confirmAndSendEmail:
             return pendingInlineAction == action
                 ? "Send confirmation email for \(reservation.guestName)"
@@ -669,21 +685,29 @@ struct ReservationActionButtons: View {
         case .seat:
             if let table = reservation.assignedTableName {
                 return pendingInlineAction == action
-                    ? "Seat party at \(table)"
-                    : "Prepare to seat party at \(table)"
+                    ? "Confirm seating at \(table) for \(reservation.guestName)"
+                    : "Seat party at \(table) for \(reservation.guestName)"
             }
             return pendingInlineAction == action
-                ? "Seat party of \(reservation.partySize)"
-                : "Prepare to seat party of \(reservation.partySize)"
+                ? "Confirm seating for \(reservation.guestName)"
+                : "Seat \(reservation.guestName)"
         case .assignTable:
             return "Assign table for \(reservation.guestName)"
         case .complete:
-            return pendingInlineAction == action ? "Complete visit" : "Prepare to complete visit"
+            return pendingInlineAction == action
+                ? "Yes, complete visit for \(reservation.guestName)"
+                : "Complete visit for \(reservation.guestName)"
         case .cancel:
             return "Cancel reservation for \(reservation.guestName)"
         case .noShow:
             return "Mark no show for \(reservation.guestName)"
         }
+    }
+
+    private var hostBoardGlassMorphAnimation: Animation {
+        hostBoardGlassActions
+            ? .spring(response: 0.4, dampingFraction: 0.7)
+            : .default
     }
 }
 

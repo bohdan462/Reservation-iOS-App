@@ -1133,6 +1133,11 @@ struct ReservationServiceDateSelector: View {
     @Binding var selectedDate: Date
     var quickDayCount = 7
     var chipStyle: ReservationDateChipStyle = .standard
+    /// When true, calendar stays pinned to the trailing corner while only the chip strip scales.
+    var pinsCalendarToTrailing = false
+    var stripScale: CGFloat = 1
+
+    private var calendarReservedWidth: CGFloat { 52 }
 
     private var calendar: Calendar { .current }
 
@@ -1174,10 +1179,21 @@ struct ReservationServiceDateSelector: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            dateStrip
-                .frame(maxWidth: .infinity)
-            ReservationOpenCalendarButton(selectedDate: $selectedDate, chipStyle: chipStyle)
+        if pinsCalendarToTrailing {
+            ZStack(alignment: .trailing) {
+                dateStrip
+                    .padding(.trailing, calendarReservedWidth)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .scaleEffect(stripScale, anchor: .leading)
+
+                ReservationOpenCalendarButton(selectedDate: $selectedDate, chipStyle: chipStyle)
+            }
+        } else {
+            HStack(alignment: .center, spacing: 10) {
+                dateStrip
+                    .frame(maxWidth: .infinity)
+                ReservationOpenCalendarButton(selectedDate: $selectedDate, chipStyle: chipStyle)
+            }
         }
     }
 

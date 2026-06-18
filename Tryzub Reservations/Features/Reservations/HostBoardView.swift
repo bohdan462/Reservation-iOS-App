@@ -60,6 +60,7 @@ struct HostBoardView: View {
     /// Single lifecycle coordinator — replaces two independent .task(id:) pipelines
     /// for availability and guest intelligence scheduling.
     @StateObject private var lifecycleCoordinator = HostBoardLifecycleCoordinator()
+    @State private var hostBoardHeaderCollapse: CGFloat = 0
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
@@ -299,13 +300,14 @@ struct HostBoardView: View {
                             closedPresentation: closedPresentation,
                             isWideLayout: isWideLayout,
                             safeWidth: safeWidth,
-                            includesHeader: false
+                            includesHeader: false,
+                            tracksHeaderCollapse: true
                         )
                         .safeAreaInset(edge: .top, spacing: 0) {
                             homeServiceHeader
                                 .padding(.horizontal, 16)
-                                .padding(.top, 8)
-                                .padding(.bottom, 4)
+                                .padding(.top, HostBoardHeaderCollapse.lerp(8, 4, hostBoardHeaderCollapse))
+                                .padding(.bottom, HostBoardHeaderCollapse.lerp(4, 1, hostBoardHeaderCollapse))
                                 .background(Color.clear)
                         }
                     } else {
@@ -695,7 +697,8 @@ struct HostBoardView: View {
             onManualRefresh: onManualRefresh,
             onShowFormProblems: onShowFormProblems,
             onOpenTimeline: nil,
-            onOpenShiftReminders: { showShiftReminders = true }
+            onOpenShiftReminders: { showShiftReminders = true },
+            collapseProgress: hostBoardHeaderCollapse
         )
     }
 
@@ -705,9 +708,10 @@ struct HostBoardView: View {
         closedPresentation: ClosedDayPresentation,
         isWideLayout: Bool,
         safeWidth: CGFloat,
-        includesHeader: Bool
+        includesHeader: Bool,
+        tracksHeaderCollapse: Bool = false
     ) -> some View {
-        ScrollView {
+        let scrollView = ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 if includesHeader {
                     homeServiceHeader
@@ -732,6 +736,17 @@ struct HostBoardView: View {
         .scrollContentBackground(.hidden)
         .background(Color.clear)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+        if tracksHeaderCollapse {
+            scrollView
+                .onScrollGeometryChange(for: CGFloat.self, of: { geometry in
+                    max(0, geometry.contentOffset.y)
+                }) { _, offset in
+                    hostBoardHeaderCollapse = HostBoardHeaderCollapse.progress(forScrollOffset: offset)
+                }
+        } else {
+            scrollView
+        }
     }
 
     @ViewBuilder
@@ -2061,6 +2076,23 @@ private struct HomeAvailabilityIndicator: View {
 
 // MARK: - Home Service Header
 
+private enum HostBoardHeaderCollapse {
+    /// Full collapse completes quickly once summary content starts sliding under the sticky header.
+    static let scrollDistance: CGFloat = 48
+    static let minScale: CGFloat = 0.84
+
+    static func lerp(_ expanded: CGFloat, _ collapsed: CGFloat, _ progress: CGFloat) -> CGFloat {
+        expanded + (collapsed - expanded) * min(1, max(0, progress))
+    }
+
+    static func progress(forScrollOffset offset: CGFloat) -> CGFloat {
+        guard offset > 0 else { return 0 }
+        let normalized = offset / scrollDistance
+        // Ramp up faster at the start so shrink begins as soon as content tucks under the header.
+        return min(1, normalized * 1.15)
+    }
+}
+
 private struct HomeServiceHeader: View {
     let title: String
     @Binding var selectedDate: Date
@@ -2074,6 +2106,45 @@ private struct HomeServiceHeader: View {
     let onShowFormProblems: () -> Void
     var onOpenTimeline: (() -> Void)? = nil
     var onOpenShiftReminders: (() -> Void)? = nil
+    var collapseProgress: CGFloat = 0
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var effectiveCollapse: CGFloat {
+        reduceMotion ? 0 : min(1, max(0, collapseProgress))
+    }
+
+    private var titleFontSize: CGFloat {
+        HostBoardHeaderCollapse.lerp(17, 15, effectiveCollapse)
+    }
+
+    private var dateStripHeight: CGFloat {
+        HostBoardHeaderCollapse.lerp(46, 36, effectiveCollapse)
+    }
+
+    private var headerSpacing: CGFloat {
+        HostBoardHeaderCollapse.lerp(8, 2, effectiveCollapse)
+    }
+
+    private var horizontalPadding: CGFloat {
+        HostBoardHeaderCollapse.lerp(14, 10, effectiveCollapse)
+    }
+
+    private var verticalPadding: CGFloat {
+        HostBoardHeaderCollapse.lerp(10, 5, effectiveCollapse)
+    }
+
+    private var dateStripScale: CGFloat {
+        HostBoardHeaderCollapse.lerp(1, 0.9, effectiveCollapse)
+    }
+
+    private var showsSecondaryStatus: Bool {
+        effectiveCollapse < 0.55
+    }
+
+    private var cornerRadius: CGFloat {
+        HostBoardHeaderCollapse.lerp(14, 11, effectiveCollapse)
+    }
 
     private var compactServiceDateText: String {
         if Calendar.current.isDateInToday(selectedDate) {
@@ -2083,31 +2154,36 @@ private struct HomeServiceHeader: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 10) {
+        VStack(alignment: .leading, spacing: headerSpacing) {
+            HStack(alignment: .center, spacing: HostBoardHeaderCollapse.lerp(10, 6, effectiveCollapse)) {
                 titleBlock
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     .layoutPriority(0)
                 actionBar
                     .fixedSize()
                     .layoutPriority(1)
+                    .scaleEffect(HostBoardHeaderCollapse.lerp(1, 0.92, effectiveCollapse))
             }
 
-            ReservationServiceDateSelector(selectedDate: $selectedDate, chipStyle: .hostBoardGlass)
-                .padding(7)
-                .hostBoardGlassSurface(cornerRadius: 13)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
-                }
+            ReservationServiceDateSelector(
+                selectedDate: $selectedDate,
+                chipStyle: .hostBoardGlass,
+                pinsCalendarToTrailing: true,
+                stripScale: dateStripScale
+            )
+            .frame(height: dateStripHeight)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .hostBoardGlassSurface(cornerRadius: 14)
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, verticalPadding)
+        .hostBoardGlassSurface(cornerRadius: cornerRadius)
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
         }
+        .frame(maxHeight: HostBoardHeaderCollapse.lerp(132, 94, effectiveCollapse), alignment: .top)
+        .clipped()
+        .scaleEffect(HostBoardHeaderCollapse.lerp(1, 0.96, effectiveCollapse), anchor: .top)
+        .animation(.smooth(duration: 0.32), value: effectiveCollapse)
     }
     
 //OLD VERSION
@@ -2162,7 +2238,7 @@ private struct HomeServiceHeader: View {
     private var titleBlock: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(title)
-                .font(.headline.weight(.semibold))
+                .font(.system(size: titleFontSize, weight: .semibold))
                 .foregroundStyle(ReservationUIStyle.serviceTitleColor)
                 .lineLimit(1)
 
@@ -2182,7 +2258,7 @@ private struct HomeServiceHeader: View {
             .font(.caption.weight(.medium))
             .foregroundStyle(.secondary)
 
-            if let secondary = statusPresentation.secondaryProgressText {
+            if let secondary = statusPresentation.secondaryProgressText, showsSecondaryStatus {
                 Text(secondary)
                     .font(.caption2.weight(.medium))
                     .lineLimit(1)
@@ -2446,6 +2522,7 @@ private struct HostBoardReservationRow: View {
                 compact: true,
                 includeSecondary: false,
                 compactMinHeight: 40,
+                hostBoardGlassActions: true,
                 isBusy: controller.isActionInProgress(for: reservation) || controller.isNetworkDegraded,
                 onAction: { action in
                     handle(action)

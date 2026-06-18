@@ -637,11 +637,15 @@ private struct RestaurantPrivacyCoverView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let panelWidth = min(max(proxy.size.width - 64, 260), 460)
+        ZStack {
+            PrivacyCoverAuroraBackground()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            ZStack {
-                PrivacyGlassBackdrop()
+            PrivacyGlassBackdrop()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            GeometryReader { proxy in
+                let panelWidth = min(max(proxy.size.width - 64, 260), 460)
 
                 VStack(spacing: 18) {
                     PrivacyClockLabel()
@@ -659,6 +663,7 @@ private struct RestaurantPrivacyCoverView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal, 32)
             }
         }
@@ -699,11 +704,10 @@ private struct PrivacyGlassBackdrop: View {
             if #available(iOS 26.0, *) {
                 Rectangle()
                     .fill(.clear)
-                    .glassEffect(.regular, in: .rect)
+                    .glassEffect(.clear, in: .rect)
             } else {
                 Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .opacity(0.94)
+                    .fill(.ultraThinMaterial.opacity(0.28))
             }
         }
         .ignoresSafeArea()
@@ -844,40 +848,41 @@ private struct PrivacyWarningRow: View {
 }
 
 private extension View {
-    @ViewBuilder
     func privacyGlassPanel(cornerRadius: CGFloat = 18) -> some View {
-        if #available(iOS 26.0, *) {
-            self
-                .padding(12)
-                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
-        } else {
-            self
-                .padding(12)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+        padding(12)
+            .background {
+                Group {
+                    if #available(iOS 26.0, *) {
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(.clear)
+                            .glassEffect(.clear, in: .rect(cornerRadius: cornerRadius))
+                    } else {
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(.ultraThinMaterial.opacity(0.38))
+                    }
                 }
-        }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
     }
 }
 
 #if DEBUG
 #Preview("Restaurant Privacy Cover") {
-    ZStack {
-        Color(.systemGroupedBackground).ignoresSafeArea()
-        RestaurantPrivacyCoverView(
-            snapshot: RestaurantPrivacyCoverSnapshot(
-                pastDueCount: 3,
-                longSeatedCount: 5,
-                newCount: 0,
-                reviewCount: 0,
-                noTableCount: 3,
-                nextDueTimeText: "21:30",
-                nextDueDetailText: "In 46m"
-            ),
-            onDismiss: {}
-        )
-    }
+    RestaurantPrivacyCoverView(
+        snapshot: RestaurantPrivacyCoverSnapshot(
+            pastDueCount: 3,
+            longSeatedCount: 5,
+            newCount: 0,
+            reviewCount: 0,
+            noTableCount: 3,
+            nextDueTimeText: "21:30",
+            nextDueDetailText: "In 46m"
+        ),
+        onDismiss: {}
+    )
 }
 #endif

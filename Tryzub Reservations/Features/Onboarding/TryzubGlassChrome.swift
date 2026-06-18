@@ -108,25 +108,10 @@ extension View {
     strokeOpacity: Double = 0.08
   ) -> some View {
     background {
-      Group {
-        if #available(iOS 26.0, *) {
-          RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(.clear)
-            .glassEffect(
-              isSelected
-                ? .regular.tint(TryzubGlassChrome.hostBoardAccentBlue).interactive()
-                : .clear,
-              in: .rect(cornerRadius: cornerRadius)
-            )
-        } else {
-          RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(
-              isSelected
-                ? TryzubGlassChrome.hostBoardAccentBlue.opacity(0.90)
-                : .ultraThinMaterial.opacity(0.42)
-            )
-        }
-      }
+      hostBoardGlassChipBackground(
+        cornerRadius: cornerRadius,
+        isSelected: isSelected
+      )
     }
     .overlay {
       RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -136,6 +121,143 @@ extension View {
             : Color.primary.opacity(strokeOpacity),
           lineWidth: 1
         )
+    }
+  }
+
+  @ViewBuilder
+  private func hostBoardGlassChipBackground(
+    cornerRadius: CGFloat,
+    isSelected: Bool
+  ) -> some View {
+    let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+
+    if #available(iOS 26.0, *) {
+      shape
+        .fill(.clear)
+        .glassEffect(
+          isSelected
+            ? .regular.tint(TryzubGlassChrome.hostBoardAccentBlue).interactive()
+            : .clear,
+          in: .rect(cornerRadius: cornerRadius)
+        )
+    } else if isSelected {
+      shape.fill(TryzubGlassChrome.hostBoardAccentBlue.opacity(0.90))
+    } else {
+      shape.fill(.ultraThinMaterial.opacity(0.42))
+    }
+  }
+}
+
+// MARK: - Host Board Morphing Action Button
+
+/// Two-tap host row action. On iOS 26+, the idle glass droplet splits into a second
+/// confirm droplet via `GlassEffectContainer` + paired `glassEffectID`s (Apple liquid morph).
+struct HostBoardMorphingGlassActionButton: View {
+  let glassID: String
+  let namespace: Namespace.ID
+  let idleTitle: String
+  let pendingTitle: String
+  let isPending: Bool
+  var minHeight: CGFloat = 40
+  var isEnabled = true
+  let onTap: () -> Void
+
+  private let cornerRadius: CGFloat = 8
+  /// Blending distance for `GlassEffectContainer` — controls how far the confirm droplet peels off.
+  private let morphSpacing: CGFloat = 28
+
+  var body: some View {
+    Button(action: onTap) {
+      label
+    }
+    .buttonStyle(.plain)
+    .disabled(!isEnabled)
+    .opacity(isEnabled ? 1 : 0.45)
+  }
+
+  @ViewBuilder
+  private var label: some View {
+    if #available(iOS 26.0, *) {
+      GlassEffectContainer(spacing: morphSpacing) {
+        HStack(spacing: morphSpacing) {
+          morphingGlassLabel(
+            idleTitle,
+            tint: nil,
+            foreground: isPending ? Color.primary.opacity(0.62) : .primary
+          )
+          .glassEffectID("\(glassID)-action", in: namespace)
+
+          if isPending {
+            morphingGlassLabel(
+              pendingTitle,
+              tint: TryzubGlassChrome.hostBoardAccentBlue,
+              foreground: .white
+            )
+            .glassEffectID("\(glassID)-confirm", in: namespace)
+            .glassEffectTransition(.matchedGeometry)
+          }
+        }
+      }
+    } else {
+      HStack(spacing: isPending ? 6 : 0) {
+        legacyCapsule(title: idleTitle, isConfirm: false)
+
+        if isPending {
+          Text(":")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+
+          legacyCapsule(title: pendingTitle, isConfirm: true)
+        }
+      }
+      .animation(.easeOut(duration: 0.38), value: isPending)
+    }
+  }
+
+  private func legacyCapsule(title: String, isConfirm: Bool) -> some View {
+    Text(title)
+      .font(.caption2.weight(.semibold))
+      .lineLimit(1)
+      .minimumScaleFactor(0.78)
+      .fixedSize(horizontal: true, vertical: false)
+      .foregroundStyle(isConfirm ? Color(.systemBackground) : .primary)
+      .padding(.horizontal, 10)
+      .frame(minHeight: minHeight)
+      .background(
+        isConfirm ? Color.primary.opacity(0.82) : Color(.systemGray6),
+        in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+      )
+      .overlay {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+          .stroke(
+            isConfirm ? Color.primary.opacity(0.55) : Color.primary.opacity(0.22),
+            lineWidth: 1
+          )
+      }
+  }
+
+  @available(iOS 26.0, *)
+  @ViewBuilder
+  private func morphingGlassLabel(
+    _ title: String,
+    tint: Color?,
+    foreground: Color
+  ) -> some View {
+    let text = Text(title)
+      .font(.caption2.weight(.semibold))
+      .lineLimit(1)
+      .minimumScaleFactor(0.78)
+      .fixedSize(horizontal: true, vertical: false)
+      .foregroundStyle(foreground)
+      .padding(.horizontal, 10)
+      .frame(minHeight: minHeight)
+
+    if let tint {
+      text
+        .glassEffect(.regular.tint(tint).interactive(), in: .rect(cornerRadius: cornerRadius))
+    } else {
+      text
+        .glassEffect(.clear, in: .rect(cornerRadius: cornerRadius))
     }
   }
 }
