@@ -700,6 +700,7 @@ struct ReservationFormConfirmationSheet<Content: View>: View {
                 }
                 .padding(TryzubSpacing.screenPadding)
             }
+            .contentMargins(.bottom, 96, for: .scrollContent)
             .background(Color(.systemGroupedBackground))
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
@@ -738,7 +739,7 @@ struct ReservationFormConfirmationSheet<Content: View>: View {
                 .disabled(isProcessing)
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
 }

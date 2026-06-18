@@ -22,6 +22,7 @@ struct ManualReservationFormView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showCreateConfirmation = false
+    @State private var pendingCreateSummary: [(String, String)] = []
     @State private var intentionalConfirmationDismissalReason: String?
     @State private var didFinishIntentionally = false
 
@@ -74,10 +75,11 @@ struct ManualReservationFormView: View {
                 onCancel: {
                     intentionalConfirmationDismissalReason = "user_cancelled"
                     logManualAdd(event: "confirm_dismissed", fields: ["reason": "user_cancelled"])
+                    pendingCreateSummary = []
                     showCreateConfirmation = false
                 }
             ) {
-                ReservationFormChangeReview(createSummary: draft.createSummaryRows())
+                ReservationFormChangeReview(createSummary: pendingCreateSummary)
             }
             .interactiveDismissDisabled(isSaving)
             .onAppear {
@@ -103,15 +105,18 @@ struct ManualReservationFormView: View {
             guard oldValue, !newValue else { return }
             if let reason = intentionalConfirmationDismissalReason {
                 intentionalConfirmationDismissalReason = nil
+                pendingCreateSummary = []
                 if reason == "create_success" {
                     return
                 }
                 return
             }
+            pendingCreateSummary = []
             logManualAdd(event: "parent_reload_ignored", fields: ["reason": "confirmation_presented"])
             Task { @MainActor in
                 await Task.yield()
                 guard !didFinishIntentionally, !isSaving else { return }
+                pendingCreateSummary = draft.createSummaryRows()
                 showCreateConfirmation = true
             }
         }
@@ -123,6 +128,7 @@ struct ManualReservationFormView: View {
 
     private func prepareCreateConfirmation() {
         guard validateRequiredFields() else { return }
+        pendingCreateSummary = draft.createSummaryRows()
         dismissKeyboard()
         logManualAdd(event: "show_confirm")
         // Defer one run loop so keyboard teardown finishes before the sheet presents.
@@ -170,6 +176,7 @@ struct ManualReservationFormView: View {
             intentionalConfirmationDismissalReason = "create_success"
             didFinishIntentionally = true
             logManualAdd(event: "create_success", fields: ["reservationID": "\(createdReservation.id)"])
+            pendingCreateSummary = []
             showCreateConfirmation = false
             logManualAdd(event: "confirm_dismissed", fields: ["reason": "create_success"])
             dismiss()
@@ -226,6 +233,7 @@ struct ReservationEditFormView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showSaveConfirmation = false
+    @State private var pendingChanges: [ReservationFormChange] = []
     @State private var isShowingHideConfirmation = false
 
     init(
@@ -255,7 +263,12 @@ struct ReservationEditFormView: View {
                 ? { prepareHideConfirmation() }
                 : nil
         )
-        .sheet(isPresented: $showSaveConfirmation) {
+        .sheet(
+            isPresented: $showSaveConfirmation,
+            onDismiss: {
+                pendingChanges = []
+            }
+        ) {
             ReservationFormConfirmationSheet(
                 title: "Save Changes",
                 subtitle: "Review the reservation updates before saving.",
@@ -265,10 +278,11 @@ struct ReservationEditFormView: View {
                     Task { await saveReservation() }
                 },
                 onCancel: {
+                    pendingChanges = []
                     showSaveConfirmation = false
                 }
             ) {
-                ReservationFormChangeReview(changes: draft.changes(from: originalDraft))
+                ReservationFormChangeReview(changes: pendingChanges)
             }
         }
         .confirmationDialog(
@@ -287,10 +301,12 @@ struct ReservationEditFormView: View {
 
     private func prepareSaveConfirmation() {
         guard validateRequiredFields() else { return }
-        if draft.changes(from: originalDraft).isEmpty {
+        let changes = draft.changes(from: originalDraft)
+        if changes.isEmpty {
             errorMessage = "No changes to save."
             return
         }
+        pendingChanges = changes
         dismissReservationFormKeyboard(reason: "confirmation_sheet")
         Task { @MainActor in
             await Task.yield()
@@ -323,6 +339,7 @@ struct ReservationEditFormView: View {
         do {
             _ = try await onSave(draft.updateRequest())
             ReservationHaptics.success()
+            pendingChanges = []
             showSaveConfirmation = false
             dismiss()
         } catch {
@@ -540,9 +557,21 @@ private struct ReservationFormContent: View {
     }
 
     var body: some View {
-        ScrollView {
-            formShell
-                .padding(.bottom, ReservationLayout.scrollBottomInset)
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                formShell
+                    .padding(.bottom, ReservationLayout.scrollBottomInset + 96)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: focusedField) { _, newValue in
+                guard let newValue else { return }
+                Task { @MainActor in
+                    await Task.yield()
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        scrollProxy.scrollTo(newValue as ReservationFormField?, anchor: .center)
+                    }
+                }
+            }
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle(mode.title)
@@ -2201,6 +2230,7 @@ private struct ReservationFormTextField: View {
                 StaffFormErrorCaption(message: error)
             }
         }
+        .id(field)
     }
 
     private var styledTextField: some View {
@@ -2266,6 +2296,7 @@ private struct ReservationFormTextEditor: View {
                 }
             }
         }
+        .id(field)
     }
 
     private var styledEditor: some View {
