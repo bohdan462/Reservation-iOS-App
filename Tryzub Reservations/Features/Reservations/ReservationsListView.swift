@@ -6,6 +6,7 @@
 import SwiftData
 import SwiftUI
 import MessageUI
+import UIKit
 
 // MARK: - Root Reservation Shell
 
@@ -177,6 +178,9 @@ private struct ReservationsTabShell: View {
     @StateObject private var activityStore: ReservationActivityStore
     @StateObject private var emailAutomationSettingsStore: EmailAutomationSettingsStore
     @State private var selectedTab: ReservationsAppTab = .host
+    @State private var navigationResetToken = UUID()
+    @State private var lastStaffInteractionAt = Date()
+    @Environment(\.scenePhase) private var scenePhase
 
     let environment: AppEnvironment
     let onLogout: () -> Void
@@ -247,6 +251,7 @@ private struct ReservationsTabShell: View {
             HomeDashboardView(
                 environment: environment,
                 isActive: selectedTab == .host,
+                navigationResetToken: navigationResetToken,
                 onOpenFloorSetup: { selectedTab = .floorPlan }
             )
             .tabItem {
@@ -266,7 +271,8 @@ private struct ReservationsTabShell: View {
 
             ReservationScheduleView(
                 environment: environment,
-                isActive: selectedTab == .bookings
+                isActive: selectedTab == .bookings,
+                navigationResetToken: navigationResetToken
             )
                 .tabItem {
                     Label(ReservationsAppTab.bookings.title, systemImage: ReservationsAppTab.bookings.systemImage)
@@ -287,6 +293,11 @@ private struct ReservationsTabShell: View {
                 .tag(ReservationsAppTab.more)
         }
         .fontDesign(.rounded)
+        .background {
+            ReservationsStaffInteractionObserver {
+                noteStaffInteraction()
+            }
+        }
         .background {
             Group {
                 if selectedTab == .host {
@@ -311,6 +322,17 @@ private struct ReservationsTabShell: View {
         }
         .onChange(of: pendingReviewCount) { _, count in
             controller.setPendingReviewAttentionCount(count)
+        }
+        .onChange(of: selectedTab) { _, _ in
+            noteStaffInteraction()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                evaluateStaleNavigationReset()
+            }
+        }
+        .task {
+            await runStaleNavigationResetLoop()
         }
         .restaurantPrivacyCover {
             var snap = RestaurantPrivacyCoverDataController.snapshot(from: serviceWindowReservations)
@@ -380,6 +402,142 @@ private struct ReservationsTabShell: View {
             return 62
         }
     }
+
+    private func noteStaffInteraction() {
+        lastStaffInteractionAt = Date()
+    }
+
+    @MainActor
+    private func runStaleNavigationResetLoop() async {
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                return
+            }
+            guard scenePhase == .active else { continue }
+            evaluateStaleNavigationReset()
+        }
+    }
+
+    private func evaluateStaleNavigationReset(now: Date = Date()) {
+        guard now.timeIntervalSince(lastStaffInteractionAt) >= ReservationsStaleNavigationReset.timeout else { return }
+        guard !ReservationsPresentedInteractionProbe.hasPresentedInteraction else { return }
+
+        selectedTab = .host
+        navigationResetToken = UUID()
+        lastStaffInteractionAt = now
+    }
+}
+
+private enum ReservationsStaleNavigationReset {
+    static let timeout: TimeInterval = 5 * 60
+}
+
+private enum ReservationsPresentedInteractionProbe {
+    @MainActor
+    static var hasPresentedInteraction: Bool {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .contains { window in
+                containsPresentedController(in: window.rootViewController)
+            }
+    }
+
+    @MainActor
+    private static func containsPresentedController(in viewController: UIViewController?) -> Bool {
+        guard let viewController else { return false }
+        if viewController.presentedViewController != nil {
+            return true
+        }
+        if let navigationController = viewController as? UINavigationController,
+           containsPresentedController(in: navigationController.visibleViewController) {
+            return true
+        }
+        if let tabBarController = viewController as? UITabBarController,
+           containsPresentedController(in: tabBarController.selectedViewController) {
+            return true
+        }
+        return viewController.children.contains { child in
+            containsPresentedController(in: child)
+        }
+    }
+}
+
+private struct ReservationsStaffInteractionObserver: UIViewRepresentable {
+    let onInteraction: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onInteraction: onInteraction)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false
+        DispatchQueue.main.async {
+            context.coordinator.attach(to: view.window)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.onInteraction = onInteraction
+        DispatchQueue.main.async {
+            context.coordinator.attach(to: uiView.window)
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onInteraction: () -> Void
+        private weak var window: UIWindow?
+        private let tapGesture = UITapGestureRecognizer()
+        private let panGesture = UIPanGestureRecognizer()
+
+        init(onInteraction: @escaping () -> Void) {
+            self.onInteraction = onInteraction
+            super.init()
+            configure(tapGesture)
+            configure(panGesture)
+        }
+
+        func attach(to newWindow: UIWindow?) {
+            guard window !== newWindow else { return }
+            detach()
+            guard let newWindow else { return }
+            window = newWindow
+            newWindow.addGestureRecognizer(tapGesture)
+            newWindow.addGestureRecognizer(panGesture)
+        }
+
+        private func detach() {
+            window?.removeGestureRecognizer(tapGesture)
+            window?.removeGestureRecognizer(panGesture)
+            window = nil
+        }
+
+        private func configure(_ gesture: UIGestureRecognizer) {
+            gesture.cancelsTouchesInView = false
+            gesture.delegate = self
+            gesture.addTarget(self, action: #selector(didInteract))
+        }
+
+        @objc private func didInteract(_ gesture: UIGestureRecognizer) {
+            switch gesture.state {
+            case .began, .ended:
+                onInteraction()
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
+    }
 }
 
 // MARK: - Home Dashboard
@@ -403,11 +561,18 @@ private struct HomeDashboardView: View {
 
     let environment: AppEnvironment
     let isActive: Bool
+    let navigationResetToken: UUID
     var onOpenFloorSetup: (() -> Void)? = nil
 
-    init(environment: AppEnvironment, isActive: Bool, onOpenFloorSetup: (() -> Void)? = nil) {
+    init(
+        environment: AppEnvironment,
+        isActive: Bool,
+        navigationResetToken: UUID,
+        onOpenFloorSetup: (() -> Void)? = nil
+    ) {
         self.environment = environment
         self.isActive = isActive
+        self.navigationResetToken = navigationResetToken
         self.onOpenFloorSetup = onOpenFloorSetup
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
@@ -555,6 +720,13 @@ private struct HomeDashboardView: View {
             )
             .environmentObject(controller)
         }
+        .onChange(of: isActive) { wasActive, isNowActive in
+            guard !wasActive, isNowActive else { return }
+            resetHostToToday(clearNavigation: false)
+        }
+        .task(id: navigationResetToken) {
+            resetHostToToday(clearNavigation: true)
+        }
     }
 
     @ViewBuilder
@@ -565,6 +737,13 @@ private struct HomeDashboardView: View {
             source: "host_board",
             tab: "host"
         )
+    }
+
+    private func resetHostToToday(clearNavigation: Bool) {
+        selectedDate = Calendar.current.startOfDay(for: Date())
+        if clearNavigation {
+            navigationPath.removeAll()
+        }
     }
 
 }
@@ -1001,13 +1180,16 @@ private struct ReservationScheduleView: View {
 
     let environment: AppEnvironment
     let isActive: Bool
+    let navigationResetToken: UUID
 
     init(
         environment: AppEnvironment,
-        isActive: Bool
+        isActive: Bool,
+        navigationResetToken: UUID
     ) {
         self.environment = environment
         self.isActive = isActive
+        self.navigationResetToken = navigationResetToken
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
         let toDate = bounds.to
@@ -1412,6 +1594,9 @@ private struct ReservationScheduleView: View {
                         isCalendarPresented = false
                     }
                 )
+            }
+            .task(id: navigationResetToken) {
+                navigationPath.removeAll()
             }
         }
     }

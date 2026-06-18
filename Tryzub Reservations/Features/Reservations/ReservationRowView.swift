@@ -572,12 +572,13 @@ struct ReservationRowView<Accessory: View>: View {
             )
         }
 
-        if let insight = presentation.insight, insight.prominence != .normal {
+        if let insight = presentation.insight, insight.prominence == .dueSoon || insight.prominence == .attention {
             items.append(
                 ReservationRowDetailLabelData(
-                    text: "",
+                    text: insight.text,
                     systemImage: insight.systemImage,
-                    accessibilityLabel: insight.text
+                    accessibilityLabel: insight.text,
+                    tint: insight.tint
                 )
             )
         }
@@ -682,6 +683,7 @@ private struct ReservationRowDetailLabelData: Identifiable {
     var isTable = false
     var allowsWrapping = false
     var accessibilityLabel: String?
+    var tint: Color = .secondary
 
     var id: String {
         "\(systemImage)-\(text)-\(isTable)-\(allowsWrapping)-\(accessibilityLabel ?? "")"
@@ -986,7 +988,7 @@ private struct ReservationRowDetailLabel: View {
                     .truncationMode(.tail)
             }
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(item.tint)
         .fixedSize(horizontal: false, vertical: item.allowsWrapping)
         .accessibilityLabel(item.accessibilityLabel ?? item.text)
     }

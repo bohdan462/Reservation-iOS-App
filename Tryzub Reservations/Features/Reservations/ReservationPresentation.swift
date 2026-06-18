@@ -108,9 +108,9 @@ enum ReservationOperationalTimingState: Equatable {
             return nil
         case .dueSoon(let minutes):
             if minutes <= 5 {
-                return "Due soon"
+                return "soon"
             }
-            return "Due in \(Self.durationText(minutes: minutes))"
+            return "in \(Self.durationText(minutes: minutes))"
         case .dueNow:
             return "Due now"
         case .overdue(let minutes):
