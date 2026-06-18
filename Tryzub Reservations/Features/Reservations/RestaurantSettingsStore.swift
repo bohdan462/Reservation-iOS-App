@@ -772,62 +772,6 @@ struct RestaurantSettingsView: View {
                     SettingsHelperText("Booking window is how far ahead guests can book. Large party threshold marks reservations for review. Minimum lead time controls how soon before service online bookings are allowed.")
                 }
 
-//                SettingsCard(title: "Table Setup", systemImage: "table.furniture") {
-//                    SettingsHelperText("Tables are managed from Floor Plan → Edit Layout. Use the Floor tab to create, name, and arrange tables. The floor plan is the canonical source for all table assignment.")
-//
-//                    Button {
-//                        showLegacyTableSettings.toggle()
-//                    } label: {
-//                        HStack {
-//                            Text(showLegacyTableSettings ? "Hide legacy migration tools" : "Show legacy migration tools")
-//                                .font(.caption.weight(.semibold))
-//                                .foregroundStyle(.secondary)
-//                            Spacer(minLength: 0)
-//                            Image(systemName: showLegacyTableSettings ? "chevron.up" : "chevron.down")
-//                                .font(.caption2)
-//                                .foregroundStyle(.tertiary)
-//                        }
-//                    }
-//                    .buttonStyle(.plain)
-//
-//                    if showLegacyTableSettings {
-//                        VStack(alignment: .leading, spacing: 10) {
-//                            SettingsHelperText("These fields are migration/fallback only. They do not affect table assignment when a Floor Plan layout exists.")
-//                                .foregroundStyle(.orange)
-//
-//                            SettingsTextEditor(
-//                                title: "Fallback chip names (legacy)",
-//                                text: $tableOptionsRawValue,
-//                                minHeight: 60
-//                            )
-//
-//                            SettingsTextEditor(
-//                                title: "Import capacity text (legacy)",
-//                                text: $tableCapacityRawValue,
-//                                placeholder: HostTableCapacityTextParser.formattedExample(),
-//                                minHeight: 60
-//                            )
-//                            SettingsHelperText("Format: Name: Capacity — one per line. Example: Bar: 4")
-//
-//                            if let tableCapacityValidationMessage {
-//                                Text(tableCapacityValidationMessage)
-//                                    .font(.caption.weight(.medium))
-//                                    .foregroundStyle(.orange)
-//                            }
-//
-//                            if !tableCapacitySummaryLines.isEmpty {
-//                                VStack(alignment: .leading, spacing: 4) {
-//                                    ForEach(tableCapacitySummaryLines, id: \.self) { line in
-//                                        Text(line)
-//                                            .font(.caption)
-//                                            .foregroundStyle(.secondary)
-//                                    }
-//                                }
-//                            }
-//                        }
-//                    }
-//                }
-
                 SettingsCard(title: "Email Identity", systemImage: "envelope") {
                     SettingsTextField(title: "Call-in placeholder email", text: $draft.callInPlaceholderEmail)
                         .keyboardType(.emailAddress)
