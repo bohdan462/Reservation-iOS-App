@@ -20,6 +20,10 @@ actor LocalModelGuestMessageDraftWriter: GuestMessageDraftWriting {
     func draftMessage(from packet: GuestMessageDraftPacket) async -> GuestMessageDraft {
         let template = GuestMessageDraftTemplateWriter.draft(from: packet)
 
+        guard !packet.kind.usesDeterministicOperationalTemplate else {
+            return template
+        }
+
         guard HostLocalModelRuntimeFactory.isRuntimeIntegrated else {
             return template
         }

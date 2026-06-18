@@ -12,6 +12,7 @@ import UIKit
 enum GuestTextMessageKind: String, Equatable {
     case confirmation
     case tableDue
+    case cancellation
 }
 
 struct GuestTextMessageDraft: Identifiable, Equatable {
@@ -59,7 +60,7 @@ enum ManualTextMessageService {
 
     static func reminderBody(reservation: ReservationRecord) -> String {
         let timeLine = ManualEmailDraftService.emailTimeLine(for: reservation)
-        return "Tryzub reminder: your reservation is today at \(timeLine) for \(reservation.partySize) guest\(reservation.partySize == 1 ? "" : "s"). Plans change — no problem. For changes, call during business hours or request another time: \(ReservationEmailWorkflow.bookTableURL.absoluteString)"
+        return "Hi \(guestFirstName(from: reservation.guestName)), this is a reminder for your Tryzub reservation today at \(timeLine) for \(partyLabel(reservation.partySize)). Changes? Call \(ReservationEmailWorkflow.restaurantPhone) or book another time: \(ReservationEmailWorkflow.bookTableURL.absoluteString)"
     }
 
     static func tableDueBody(
@@ -67,14 +68,24 @@ enum ManualTextMessageService {
         tableName: String? = nil
     ) -> String {
         let firstName = guestFirstName(from: guestName)
-        if let tableName = tableName?.trimmedNonEmpty {
-            return "Hi \(firstName), your table (\(tableName)) at \(ReservationEmailWorkflow.restaurantName) is ready. Please check in with the host. Questions? \(ReservationEmailWorkflow.restaurantPhone)"
-        }
-        return "Hi \(firstName), your table at \(ReservationEmailWorkflow.restaurantName) is ready. Please check in with the host. Questions? \(ReservationEmailWorkflow.restaurantPhone)"
+        return "Hi \(firstName), your table is ready at \(ReservationEmailWorkflow.restaurantName). Please check in with the host. Questions? \(ReservationEmailWorkflow.restaurantPhone)"
     }
 
     static func tableDueBody(reservation: ReservationRecord) -> String {
         tableDueBody(guestName: reservation.guestName, tableName: reservation.tableName)
+    }
+
+    static func cancellationBody(reservation: ReservationRecord) -> String {
+        let firstName = guestFirstName(from: reservation.guestName)
+        let dateLine = ManualEmailDraftService.emailDateLine(for: reservation)
+        let timeLine = ManualEmailDraftService.emailTimeLine(for: reservation)
+        let bookingURL = ReservationEmailWorkflow.bookTableURL.absoluteString
+
+        if !dateLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !timeLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Hi \(firstName), your Tryzub reservation for \(dateLine) at \(timeLine) has been cancelled. You’re welcome to book again: \(bookingURL)"
+        }
+        return "Hi \(firstName), your Tryzub reservation has been cancelled. You’re welcome to book again: \(bookingURL)"
     }
 
     static func body(for kind: GuestTextMessageKind, reservation: ReservationRecord) -> String {
@@ -83,6 +94,8 @@ enum ManualTextMessageService {
             return confirmationBody(reservation: reservation)
         case .tableDue:
             return tableDueBody(reservation: reservation)
+        case .cancellation:
+            return cancellationBody(reservation: reservation)
         }
     }
 
@@ -90,6 +103,10 @@ enum ManualTextMessageService {
         let trimmed = guestName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let first = trimmed.split(separator: " ").first else { return "there" }
         return String(first)
+    }
+
+    private static func partyLabel(_ partySize: Int) -> String {
+        "\(partySize) guest\(partySize == 1 ? "" : "s")"
     }
 
     private static let longDateFormatter: DateFormatter = {

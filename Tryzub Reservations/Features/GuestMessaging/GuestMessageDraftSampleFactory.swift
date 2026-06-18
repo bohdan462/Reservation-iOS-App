@@ -15,6 +15,7 @@ enum GuestMessageDraftSampleFactory {
         case reminder
         case tableReady
         case tableReadyNoTable
+        case cancellation
         case largeParty
         case validWithRestaurantPhone
         case unsafeGuestPhone
@@ -41,6 +42,8 @@ enum GuestMessageDraftSampleFactory {
             return basePacket(kind: .tableReady, firstName: "Iryna", partySize: 3, tableName: "7")
         case .tableReadyNoTable:
             return basePacket(kind: .tableReady, firstName: "Iryna", partySize: 3, tableName: nil)
+        case .cancellation:
+            return basePacket(kind: .cancellation, firstName: "Mark", partySize: 2, tableName: nil)
         case .largeParty:
             return basePacket(kind: .largePartyConfirmation, firstName: "Alex", partySize: 10, tableName: nil)
         case .validWithRestaurantPhone,

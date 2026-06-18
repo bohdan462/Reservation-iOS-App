@@ -19,6 +19,8 @@ enum GuestMessageDraftTemplateWriter {
             return largePartyDraft(from: packet)
         case .tableReady:
             return tableReadyDraft(from: packet)
+        case .cancellation:
+            return cancellationDraft(from: packet)
         }
     }
 
@@ -59,7 +61,7 @@ enum GuestMessageDraftTemplateWriter {
         This is a reminder for your reservation at \(ReservationEmailWorkflow.restaurantName) today.
         """.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let sms = "Tryzub reminder: your reservation is today at \(packet.reservationTimeDisplay) for \(packet.partySize) guest\(packet.partySize == 1 ? "" : "s"). Plans change — no problem. For changes, call during business hours or request another time: \(ReservationEmailWorkflow.bookTableURL.absoluteString)"
+        let sms = "\(greeting) this is a reminder for your Tryzub reservation today at \(packet.reservationTimeDisplay) for \(partyLabel(packet.partySize)). Changes? Call \(ReservationEmailWorkflow.restaurantPhone) or book another time: \(ReservationEmailWorkflow.bookTableURL.absoluteString)"
 
         return GuestMessageDraft(
             emailSubject: subject,
@@ -139,16 +141,41 @@ enum GuestMessageDraftTemplateWriter {
         \(contactFooter(for: packet))
         """.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let tableSMS = "your table is ready"
-        let sms = compactSMS(
-            for: packet,
-            core: "\(tableSMS) at \(restaurant). Please check in with the host."
-        )
+        let sms = "\(greeting) your table is ready at \(restaurant). Please check in with the host. Questions? \(ReservationEmailWorkflow.restaurantPhone)"
 
         return GuestMessageDraft(
             emailSubject: subject,
             emailBody: body,
             shortMessageBody: sms,
+            safetyNote: nil,
+            blockedReason: nil,
+            source: .template
+        )
+    }
+
+    private static func cancellationDraft(from packet: GuestMessageDraftPacket) -> GuestMessageDraft {
+        let greeting = greetingLine(for: packet)
+        let subject = "Your Tryzub reservation has been cancelled"
+        let body = """
+        \(greeting)
+
+        Your reservation at \(ReservationEmailWorkflow.restaurantName) has been cancelled.
+
+        We’re sorry we won’t see you this time. You’re welcome to book again when another time works.
+        """.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let bookingURL = ReservationEmailWorkflow.bookTableURL.absoluteString
+        let sms: String
+        if hasReservationDateTime(packet) {
+            sms = "\(greeting) your Tryzub reservation for \(packet.reservationDateDisplay) at \(packet.reservationTimeDisplay) has been cancelled. You’re welcome to book again: \(bookingURL)"
+        } else {
+            sms = "\(greeting) your Tryzub reservation has been cancelled. You’re welcome to book again: \(bookingURL)"
+        }
+
+        return GuestMessageDraft(
+            emailSubject: subject,
+            emailBody: body,
+            shortMessageBody: String(sms.prefix(GuestMessageDraftValidator.maximumShortMessageLength)),
             safetyNote: nil,
             blockedReason: nil,
             source: .template
@@ -196,5 +223,14 @@ enum GuestMessageDraftTemplateWriter {
             message += " Questions? \(phone)"
         }
         return String(message.prefix(GuestMessageDraftValidator.maximumShortMessageLength))
+    }
+
+    private static func partyLabel(_ partySize: Int) -> String {
+        "\(partySize) guest\(partySize == 1 ? "" : "s")"
+    }
+
+    private static func hasReservationDateTime(_ packet: GuestMessageDraftPacket) -> Bool {
+        !packet.reservationDateDisplay.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !packet.reservationTimeDisplay.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }

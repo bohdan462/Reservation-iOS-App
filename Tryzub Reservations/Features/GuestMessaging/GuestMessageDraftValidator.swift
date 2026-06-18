@@ -38,7 +38,11 @@ enum GuestMessageDraftValidator {
         }
 
         for phrase in statusMutationPhrases where corpus.contains(phrase) {
-            return .blocked("Draft claims the reservation status changed.")
+            if packet.kind == .cancellation, cancellationStatusPhrases.contains(phrase) {
+                continue
+            } else {
+                return .blocked("Draft claims the reservation status changed.")
+            }
         }
 
         for phrase in internalPhrases where corpus.contains(phrase) {
@@ -109,6 +113,13 @@ enum GuestMessageDraftValidator {
         "have been seated",
         "status changed",
         "reservation changed",
+    ]
+
+    private static let cancellationStatusPhrases = [
+        "has been cancelled",
+        "have been cancelled",
+        "has been canceled",
+        "have been canceled",
     ]
 
     private static let internalPhrases = [

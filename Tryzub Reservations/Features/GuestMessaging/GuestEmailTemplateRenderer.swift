@@ -13,6 +13,8 @@ import Foundation
 enum GuestEmailTemplateKind: String, Equatable {
     case confirmation
     case reminder
+    case tableReady
+    case cancellation
     case manualQuestion
     case custom
 
@@ -22,6 +24,10 @@ enum GuestEmailTemplateKind: String, Equatable {
             return "Reservation Confirmed"
         case .reminder:
             return "Reservation Reminder"
+        case .tableReady:
+            return "Your Table Is Ready"
+        case .cancellation:
+            return "Reservation Cancelled"
         case .manualQuestion, .custom:
             return "Message from Tryzub Ukrainian Kitchen"
         }
@@ -33,6 +39,10 @@ enum GuestEmailTemplateKind: String, Equatable {
             return "Your Tryzub reservation is confirmed"
         case .reminder:
             return "Reminder: your Tryzub reservation today"
+        case .tableReady:
+            return "Your table is ready — Tryzub Ukrainian Kitchen"
+        case .cancellation:
+            return "Your Tryzub reservation has been cancelled"
         case .manualQuestion, .custom:
             return "Message from \(ReservationEmailWorkflow.restaurantName)"
         }
@@ -45,7 +55,7 @@ enum GuestEmailTemplateKind: String, Equatable {
             return .confirmation
         case .reminder:
             return .reminder
-        case .manualQuestion, .custom:
+        case .tableReady, .cancellation, .manualQuestion, .custom:
             return nil
         }
     }
@@ -81,6 +91,24 @@ struct GuestEmailRenderInput: Equatable {
         base(reservation: reservation, kind: .reminder, manageLinkURL: manageLinkURL, linkExpiresAt: linkExpiresAt)
     }
 
+    static func tableReady(
+        reservation: ReservationRecord,
+        subjectOverride: String? = nil,
+        customPlainMessage: String? = nil
+    ) -> GuestEmailRenderInput {
+        let input = base(reservation: reservation, kind: .tableReady, manageLinkURL: nil, linkExpiresAt: nil)
+        return input.replacing(subjectOverride: subjectOverride, customPlainMessage: customPlainMessage)
+    }
+
+    static func cancellation(
+        reservation: ReservationRecord,
+        subjectOverride: String? = nil,
+        customPlainMessage: String? = nil
+    ) -> GuestEmailRenderInput {
+        let input = base(reservation: reservation, kind: .cancellation, manageLinkURL: nil, linkExpiresAt: nil)
+        return input.replacing(subjectOverride: subjectOverride, customPlainMessage: customPlainMessage)
+    }
+
     static func manual(
         reservation: ReservationRecord,
         customPlainMessage: String,
@@ -102,6 +130,24 @@ struct GuestEmailRenderInput: Equatable {
             partySize: input.partySize,
             manageLinkURL: manageLinkURL,
             linkExpiresAt: nil,
+            customPlainMessage: customPlainMessage,
+            subjectOverride: subjectOverride
+        )
+    }
+
+    func replacing(
+        subjectOverride: String?,
+        customPlainMessage: String?
+    ) -> GuestEmailRenderInput {
+        GuestEmailRenderInput(
+            kind: kind,
+            reservationID: reservationID,
+            guestFirstName: guestFirstName,
+            dateLine: dateLine,
+            timeLine: timeLine,
+            partySize: partySize,
+            manageLinkURL: manageLinkURL,
+            linkExpiresAt: linkExpiresAt,
             customPlainMessage: customPlainMessage,
             subjectOverride: subjectOverride
         )
@@ -145,7 +191,7 @@ enum GuestEmailTemplateRenderer {
         let intro = introHTML(for: input)
         let reservationCard = reservationCardHTML(dateLine: dateLine, timeLine: timeLine, partySize: input.partySize)
         let actionPrompt = actionPromptHTML(for: input.kind)
-        let actionButtons = actionButtonsHTML(manageURL: input.manageLinkURL)
+        let actionButtons = actionButtonsHTML(for: input.kind, manageURL: input.manageLinkURL)
         let footer = footerHTML
         let policiesURL = htmlAttributeEscape(ReservationEmailWorkflow.reservationPoliciesURL.absoluteString)
         let headerTitle = htmlEscape(input.kind.headerTitle)
@@ -158,20 +204,20 @@ enum GuestEmailTemplateRenderer {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         </head>
-        <body style="margin:0;padding:0;background-color:#f3efe6;font-family:Georgia,'Times New Roman',serif;">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f3efe6;padding:18px 12px;">
+        <body style="margin:0;padding:0;background-color:#f3efe6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f3efe6;padding:24px 12px;">
         <tr>
         <td align="center">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e4ddd1;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid #e4ddd1;">
         <tr>
-        <td style="background:#1f3d2b;padding:22px 26px;text-align:center;">
+        <td style="background:#1f3d2b;padding:24px 28px;text-align:center;">
         <p style="margin:0;color:#d8c9a8;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">\(restaurantName)</p>
         <h1 style="margin:9px 0 0;color:#ffffff;font-size:23px;line-height:1.2;font-weight:650;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">\(headerTitle)</h1>
         </td>
         </tr>
         <tr>
-        <td style="padding:24px 26px 20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222222;font-size:15px;line-height:1.5;">
-        <p style="margin:0 0 12px;">Dear \(firstName),</p>
+        <td style="padding:24px 28px 22px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222222;font-size:15px;line-height:1.6;">
+        <p style="margin:0 0 12px;">Hi \(firstName),</p>
         \(intro)
         \(reservationCard)
         \(actionPrompt)
@@ -180,7 +226,7 @@ enum GuestEmailTemplateRenderer {
         </td>
         </tr>
         <tr>
-        <td style="padding:14px 26px 22px;border-top:1px solid #ece8e1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:11px;line-height:1.45;color:#8a8378;text-align:center;">
+        <td style="padding:14px 28px 22px;border-top:1px solid #ece8e1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:11px;line-height:1.45;color:#8a8378;text-align:center;">
         <p style="margin:0;"><a href="\(policiesURL)" style="color:#1f6b3a;text-decoration:underline;">Reservation policies</a></p>
         </td>
         </tr>
@@ -196,7 +242,7 @@ enum GuestEmailTemplateRenderer {
     static func renderPlain(_ input: GuestEmailRenderInput) -> String {
         let intro = introPlain(for: input)
         var lines = [
-            "Dear \(input.guestFirstName),",
+            "Hi \(input.guestFirstName),",
             "",
             intro,
             "",
@@ -212,8 +258,13 @@ enum GuestEmailTemplateRenderer {
         }
 
         lines.append("")
-        lines.append("Plans change — no problem.")
-        lines.append(ReservationEmailWorkflow.bookTableURL.absoluteString)
+        if input.kind == .cancellation {
+            lines.append("Book another table:")
+            lines.append(ReservationEmailWorkflow.bookTableURL.absoluteString)
+        } else if input.kind == .confirmation || input.kind == .reminder {
+            lines.append("Plans change — no problem.")
+            lines.append(ReservationEmailWorkflow.bookTableURL.absoluteString)
+        }
         lines.append("For questions, email \(ReservationEmailWorkflow.guestContactEmail) or call us.")
         lines.append("")
         lines.append(ReservationEmailWorkflow.restaurantAddressLine)
@@ -242,27 +293,44 @@ enum GuestEmailTemplateRenderer {
         """
     }
 
-    private static func actionButtonsHTML(manageURL: String?) -> String {
+    private static func actionButtonsHTML(for kind: GuestEmailTemplateKind, manageURL: String?) -> String {
+        guard kind == .confirmation || kind == .reminder || kind == .cancellation else { return "" }
+
         let bookURL = htmlAttributeEscape(ReservationEmailWorkflow.bookTableURL.absoluteString)
-        let manageButton: String
-        if let url = manageURL?.nilIfBlank {
+        let primaryButton: String
+        if kind == .cancellation {
+            primaryButton = """
+            <td align="center" style="padding:0 4px 8px;">
+            <a href="\(bookURL)" style="display:inline-block;min-width:150px;padding:12px 18px;background-color:#1f6b3a;color:#ffffff;text-decoration:none;border-radius:999px;font-size:14px;font-weight:700;">Book another table</a>
+            </td>
+            """
+        } else if let url = manageURL?.nilIfBlank {
             let linkURL = htmlAttributeEscape(url)
-            manageButton = """
+            primaryButton = """
             <td align="center" style="padding:0 4px 8px;">
             <a href="\(linkURL)" style="display:inline-block;min-width:150px;padding:12px 18px;background-color:#1f6b3a;color:#ffffff;text-decoration:none;border-radius:999px;font-size:14px;font-weight:700;">Review Reservation</a>
             </td>
             """
         } else {
-            manageButton = ""
+            primaryButton = ""
+        }
+
+        let secondaryButton: String
+        if kind == .cancellation {
+            secondaryButton = ""
+        } else {
+            secondaryButton = """
+            <td align="center" style="padding:0 4px 8px;">
+            <a href="\(bookURL)" style="display:inline-block;min-width:150px;padding:11px 16px;border:1px solid #1f6b3a;color:#1f6b3a;text-decoration:none;border-radius:999px;font-size:13px;font-weight:700;">Request Different Time</a>
+            </td>
+            """
         }
 
         return """
         <table role="presentation" cellspacing="0" cellpadding="0" align="center" style="margin:0 auto 18px;">
         <tr>
-        \(manageButton)
-        <td align="center" style="padding:0 4px 8px;">
-        <a href="\(bookURL)" style="display:inline-block;min-width:150px;padding:11px 16px;border:1px solid #1f6b3a;color:#1f6b3a;text-decoration:none;border-radius:999px;font-size:13px;font-weight:700;">Request Different Time</a>
-        </td>
+        \(primaryButton)
+        \(secondaryButton)
         </tr>
         </table>
         """
@@ -282,9 +350,9 @@ enum GuestEmailTemplateRenderer {
 
     private static func reservationCardHTML(dateLine: String, timeLine: String, partySize: Int) -> String {
         """
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8f5ef;border:1px solid #ece4d7;border-radius:10px;margin:0 0 18px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8f5ef;border:1px solid #ece4d7;border-radius:20px;margin:0 0 18px;">
         <tr>
-        <td style="padding:15px 16px 6px;">
+        <td style="padding:20px 22px;">
         <p style="margin:0 0 8px;font-size:11px;color:#7a7368;letter-spacing:0.1em;text-transform:uppercase;">Your reservation</p>
         <p style="margin:0;font-size:18px;line-height:1.25;font-weight:700;color:#1f1f1f;">\(dateLine)</p>
         <p style="margin:5px 0 0;font-size:18px;line-height:1.25;font-weight:700;color:#1f1f1f;">\(timeLine)</p>
@@ -308,6 +376,15 @@ enum GuestEmailTemplateRenderer {
             return """
             <p style="margin:0 0 16px;">This is a reminder for your reservation at <strong>\(htmlEscape(ReservationEmailWorkflow.restaurantName))</strong> today.</p>
             """
+        case .tableReady:
+            return """
+            <p style="margin:0 0 16px;">Your table is ready. Please check in with the host when you arrive.</p>
+            """
+        case .cancellation:
+            return """
+            <p style="margin:0 0 12px;">Your reservation at <strong>\(htmlEscape(ReservationEmailWorkflow.restaurantName))</strong> has been cancelled.</p>
+            <p style="margin:0 0 16px;">We’re sorry we won’t see you this time. You’re welcome to book again when another time works.</p>
+            """
         case .manualQuestion, .custom:
             return """
             <p style="margin:0 0 16px;">We wanted to follow up about your reservation at <strong>\(htmlEscape(ReservationEmailWorkflow.restaurantName))</strong>.</p>
@@ -324,6 +401,10 @@ enum GuestEmailTemplateRenderer {
             return "Your reservation at \(ReservationEmailWorkflow.restaurantName) is confirmed. We look forward to welcoming you."
         case .reminder:
             return "This is a reminder for your reservation at \(ReservationEmailWorkflow.restaurantName) today."
+        case .tableReady:
+            return "Your table is ready. Please check in with the host when you arrive."
+        case .cancellation:
+            return "Your reservation at \(ReservationEmailWorkflow.restaurantName) has been cancelled.\n\nWe’re sorry we won’t see you this time. You’re welcome to book again when another time works."
         case .manualQuestion, .custom:
             return "We wanted to follow up about your reservation at \(ReservationEmailWorkflow.restaurantName)."
         }
@@ -405,7 +486,7 @@ enum GuestEmailTemplateRenderer {
             type: input.kind,
             reservationID: input.reservationID,
             privateLink: input.manageLinkURL != nil,
-            rescheduleLink: true
+            rescheduleLink: input.kind == .confirmation || input.kind == .reminder || input.kind == .cancellation
         )
         GuestCommunicationTrace.emailPrivacy(
             reservationID: input.reservationID,

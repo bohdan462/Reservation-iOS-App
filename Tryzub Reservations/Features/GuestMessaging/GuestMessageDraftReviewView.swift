@@ -96,6 +96,7 @@ struct GuestMessageDraftActionsSection: View {
 // MARK: - Review sheet
 
 struct GuestMessageDraftReviewView: View {
+    let reservation: ReservationRecord
     let reservationID: Int
     let kind: GuestMessageDraftKind
     let draft: GuestMessageDraft
@@ -120,8 +121,23 @@ struct GuestMessageDraftReviewView: View {
         draft.source == .localModel
     }
 
+    private var usesPlainEmailFallback: Bool {
+        canSendEmail && !GuestConfirmationMailPresenter.canSendMail()
+    }
+
     private var screenTitle: String {
-        kind == .reminder ? "Review reminder" : "Review message"
+        switch kind {
+        case .confirmation:
+            return "Review confirmation"
+        case .reminder:
+            return "Review reminder"
+        case .tableReady:
+            return "Review table ready"
+        case .cancellation:
+            return "Review cancellation"
+        case .clarificationRequest, .largePartyConfirmation:
+            return "Review message"
+        }
     }
 
     var body: some View {
@@ -138,17 +154,24 @@ struct GuestMessageDraftReviewView: View {
                         reviewBanner(title: "Draft blocked", message: reason, tint: .orange)
                     }
 
+                    reservationDetailsBlock
                     editableField(title: "Subject", text: $editedSubject, axis: false)
                     editableField(title: "Email message", text: $editedEmailBody, axis: true)
                     editableField(title: "Text message", text: $editedTextBody, axis: true)
-
-                    actionButtons
                 }
                 .padding(16)
+                .padding(.bottom, 124)
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle(screenTitle)
             .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .bottom) {
+                actionButtons
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 12)
+                    .background(.regularMaterial)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close", action: onDismiss)
@@ -177,7 +200,9 @@ struct GuestMessageDraftReviewView: View {
         switch kind {
         case .confirmation: return "confirmation"
         case .reminder: return "reminder"
-        case .clarificationRequest, .largePartyConfirmation, .tableReady: return "manualQuestion"
+        case .tableReady: return "tableReady"
+        case .cancellation: return "cancellation"
+        case .clarificationRequest, .largePartyConfirmation: return "manualQuestion"
         }
     }
 
@@ -203,14 +228,23 @@ struct GuestMessageDraftReviewView: View {
 
     private var actionButtons: some View {
         VStack(spacing: 10) {
-            Button {
-                onSendEmail(approvedDraft())
-            } label: {
-                Label("Open Email", systemImage: "envelope.fill")
-                    .frame(maxWidth: .infinity)
+            VStack(alignment: .leading, spacing: 5) {
+                Button {
+                    onSendEmail(approvedDraft())
+                } label: {
+                    Label("Open Email", systemImage: "envelope.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(sendDisabled || !canSendEmail)
+
+                if usesPlainEmailFallback {
+                    Text("Mail is not configured, so this opens a plain email fallback when available.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(sendDisabled || !canSendEmail)
 
             Button {
                 onSendText(approvedDraft())
@@ -241,6 +275,49 @@ struct GuestMessageDraftReviewView: View {
                 .disabled(sendDisabled)
             }
         }
+    }
+
+    private var reservationDetailsBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Reservation details", systemImage: "calendar.badge.clock")
+                .font(.subheadline.weight(.semibold))
+
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 10),
+                    GridItem(.flexible(), spacing: 10)
+                ],
+                alignment: .leading,
+                spacing: 10
+            ) {
+                metadataItem("Guest", reservation.guestName)
+                metadataItem("Date", ManualEmailDraftService.emailDateLine(for: reservation))
+                metadataItem("Time", ManualEmailDraftService.emailTimeLine(for: reservation))
+                metadataItem("Party", "\(reservation.partySize) guest\(reservation.partySize == 1 ? "" : "s")")
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+    }
+
+    private func metadataItem(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            Text(value)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder

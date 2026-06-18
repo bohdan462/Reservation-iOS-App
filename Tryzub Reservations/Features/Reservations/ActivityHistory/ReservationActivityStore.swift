@@ -158,6 +158,20 @@ final class ReservationActivityStore: ObservableObject {
         }
     }
 
+    func hasBackendAutoConfirmEvidence(for reservationID: Int, serviceDateKey: String) -> Bool {
+        if hasBackendAutoConfirmEvidence(for: reservationID) {
+            return true
+        }
+        guard let items = feedCache[serviceDateKey]?.items else { return false }
+        return items.contains { item in
+            item.reservationId == reservationID
+                && ReservationActivityEvidence.isBackendAutoConfirmed(
+                    eventType: item.eventType,
+                    source: item.source
+                )
+        }
+    }
+
     func reservationPagination(for reservationID: Int) -> (page: Int, totalPages: Int, total: Int)? {
         guard let cache = reservationCache[reservationID] else { return nil }
         return (cache.page, cache.totalPages, cache.total)

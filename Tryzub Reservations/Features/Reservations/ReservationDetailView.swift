@@ -391,6 +391,7 @@ struct ReservationDetailView: View {
         }
         .sheet(item: $draftReviewContext) { context in
             GuestMessageDraftReviewView(
+                reservation: reservation,
                 reservationID: reservation.remoteID,
                 kind: context.kind,
                 draft: context.draft,
@@ -674,6 +675,9 @@ struct ReservationDetailView: View {
             onCopyConfirmationDraft: showsDeveloperGuestTools && canShowManualConfirmationFallback && guestManageLink != nil
                 ? { copyGuestConfirmationDraft() }
                 : nil,
+            onSendCancellationMessage: canShowCancellationMessageDraft
+                ? { generateGuestMessageDraft(kind: .cancellation) }
+                : nil,
             onHideWrongEntry: reservation.canSoftHideAsWrongEntry && !reservation.isHidden
                 ? { isShowingHideWrongEntryConfirmation = true }
                 : nil,
@@ -696,6 +700,10 @@ struct ReservationDetailView: View {
             && reservation.statusValue != .completed
             && reservation.statusValue != .cancelled
             && reservation.statusValue != .noShow
+    }
+
+    private var canShowCancellationMessageDraft: Bool {
+        !reservation.isHidden && reservation.statusValue == .cancelled
     }
 
     private var draftMessageCard: some View {
@@ -2480,6 +2488,7 @@ private struct DetailActionBar: View {
     let onGenerateGuestManageLink: (() -> Void)?
     let onCopyGuestManageLink: (() -> Void)?
     let onCopyConfirmationDraft: (() -> Void)?
+    let onSendCancellationMessage: (() -> Void)?
     let onHideWrongEntry: (() -> Void)?
     let onRestoreHidden: (() -> Void)?
 
@@ -2602,7 +2611,19 @@ private struct DetailActionBar: View {
             }
 
             if !policy.detailSecondaryActions.isEmpty,
-               hasAdminActions {
+               hasGuestMessageActions || hasAdminActions {
+                Divider()
+            }
+
+            if let onSendCancellationMessage {
+                Button {
+                    onSendCancellationMessage()
+                } label: {
+                    Label("Send cancellation message", systemImage: "text.bubble")
+                }
+            }
+
+            if hasGuestMessageActions, hasAdminActions {
                 Divider()
             }
 
@@ -2684,7 +2705,11 @@ private struct DetailActionBar: View {
     }
 
     private var showsMoreMenu: Bool {
-        !policy.detailSecondaryActions.isEmpty || hasAdminActions
+        !policy.detailSecondaryActions.isEmpty || hasGuestMessageActions || hasAdminActions
+    }
+
+    private var hasGuestMessageActions: Bool {
+        onSendCancellationMessage != nil
     }
 
     private var hasAdminActions: Bool {

@@ -55,6 +55,16 @@ final class GuestMessageDraftService: ObservableObject {
         )
 
         let templateFallback = GuestMessageDraftTemplateWriter.draft(from: packet)
+        if kind.usesDeterministicOperationalTemplate {
+            HostProductionTrace.guestDraftContext(
+                remoteID: reservation.remoteID,
+                kind: kind,
+                occasion: packet.occasion,
+                source: "template"
+            )
+            return templateFallback
+        }
+
         let draft = await writer.draftMessage(from: packet)
 
         switch GuestMessageDraftValidator.validate(draft, packet: packet) {

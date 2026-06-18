@@ -327,6 +327,7 @@ struct ReservationRowView<Accessory: View>: View {
     var capabilities: AppCapabilities?
     var onTableTap: (() -> Void)?
     var displayStyle: ReservationRowDisplayStyle = .standard
+    var showsAutoConfirmedAdornment = false
 
     @ViewBuilder let accessory: () -> Accessory
 
@@ -344,6 +345,7 @@ struct ReservationRowView<Accessory: View>: View {
         capabilities: AppCapabilities? = nil,
         onTableTap: (() -> Void)? = nil,
         displayStyle: ReservationRowDisplayStyle = .standard,
+        showsAutoConfirmedAdornment: Bool = false,
         @ViewBuilder accessory: @escaping () -> Accessory
     ) {
         self.reservation = reservation
@@ -356,6 +358,7 @@ struct ReservationRowView<Accessory: View>: View {
         self.capabilities = capabilities
         self.onTableTap = onTableTap
         self.displayStyle = displayStyle
+        self.showsAutoConfirmedAdornment = showsAutoConfirmedAdornment
         self.accessory = accessory
     }
 
@@ -389,6 +392,7 @@ struct ReservationRowView<Accessory: View>: View {
                 guestCountText: timeGuestCountText(for: presentation),
                 showsGuestIcon: displayStyle == .hostBoard,
                 eyebrowIsStatus: displayStyle == .hostBoard,
+                showsAutoConfirmedIcon: showsHostAutoConfirmedIcon(for: presentation),
                 width: timeColumnWidth
             )
 
@@ -433,6 +437,7 @@ struct ReservationRowView<Accessory: View>: View {
                 guestCountText: timeGuestCountText(for: presentation),
                 showsGuestIcon: displayStyle == .hostBoard,
                 eyebrowIsStatus: displayStyle == .hostBoard,
+                showsAutoConfirmedIcon: showsHostAutoConfirmedIcon(for: presentation),
                 width: timeColumnWidth
             )
 
@@ -497,6 +502,12 @@ struct ReservationRowView<Accessory: View>: View {
 
     private func timeEyebrow(for presentation: ReservationRowPresentation) -> String? {
         displayStyle == .hostBoard ? presentation.statusText.uppercased() : presentation.dateText
+    }
+
+    private func showsHostAutoConfirmedIcon(for presentation: ReservationRowPresentation) -> Bool {
+        displayStyle == .hostBoard
+            && presentation.status == .confirmed
+            && showsAutoConfirmedAdornment
     }
 
     private func metaItems(for presentation: ReservationRowPresentation) -> [ReservationRowDetailLabelData] {
@@ -709,16 +720,23 @@ private struct ReservationRowTimeSection: View {
     let guestCountText: String
     var showsGuestIcon = false
     var eyebrowIsStatus = false
+    var showsAutoConfirmedIcon = false
     let width: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(eyebrow ?? "")
-                .font(.caption2.weight(eyebrowIsStatus ? .bold : .medium))
-                .foregroundStyle(eyebrowIsStatus ? Color.primary.opacity(0.62) : .secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .frame(height: 14, alignment: .leading)
+            HStack(spacing: 3) {
+                Text(eyebrow ?? "")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+
+                if showsAutoConfirmedIcon {
+                    BackendAutoConfirmedIcon()
+                }
+            }
+            .font(.caption2.weight(eyebrowIsStatus ? .bold : .medium))
+            .foregroundStyle(eyebrowIsStatus ? Color.primary.opacity(0.62) : .secondary)
+            .frame(height: 14, alignment: .leading)
 
             Text(time)
                 .font(.title3.weight(eyebrowIsStatus ? .semibold : .medium))
@@ -956,6 +974,15 @@ struct AutoConfirmedBadge: View {
             horizontalPadding: 8
         )
         .font(.caption2.weight(.medium))
+    }
+}
+
+struct BackendAutoConfirmedIcon: View {
+    var body: some View {
+        Image(systemName: "sparkles")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(Color.secondary)
+            .accessibilityLabel("Auto-confirmed")
     }
 }
 

@@ -89,6 +89,8 @@ enum GuestMessageDraftPacketBuilder {
             hints.append("Ask guest to confirm party size and arrival time.")
         case .tableReady:
             hints.append("Table-ready notice only; guest should check in with the host.")
+        case .cancellation:
+            hints.append("Cancellation notice only; include the booking link for a future reservation.")
         }
 
         return hints

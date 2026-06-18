@@ -28,6 +28,7 @@ enum GuestMessageDraftPromptBuilder {
         - Do not mention internal notes, staff notes, backend systems, or evidence.
         - Do not say the message was sent or that the reservation status changed.
         - Do not say the reservation is confirmed unless kind is "confirmation".
+        - For kind "cancellation": you may say the reservation has been cancelled and should include the booking link.
         - Do not include guest email or guest phone numbers. Restaurant contact details provided in the packet (phone, address, manage URL) may be included when useful. Do not invent any contact details.
         - For kind "tableReady" (staff-triggered): you may say the table is ready; do not invent a table number if tableName is missing.
         - For other kinds: do not say the table is ready.

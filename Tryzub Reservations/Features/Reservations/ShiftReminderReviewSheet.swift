@@ -559,6 +559,13 @@ private struct ShiftReminderMessageReviewSheet: View {
                     .padding(.vertical, 2)
                 }
 
+                Section("Reservation details") {
+                    LabeledContent("Guest", value: reservation.guestName)
+                    LabeledContent("Date", value: ManualEmailDraftService.emailDateLine(for: reservation))
+                    LabeledContent("Time", value: ManualEmailDraftService.emailTimeLine(for: reservation))
+                    LabeledContent("Party", value: "\(reservation.partySize) guest\(reservation.partySize == 1 ? "" : "s")")
+                }
+
                 if channel == .email {
                     Section("Subject") {
                         TextField("Subject", text: $editedSubject)
@@ -575,7 +582,7 @@ private struct ShiftReminderMessageReviewSheet: View {
                     Text(channel == .email ? "Email message" : "Text message")
                 } footer: {
                     if channel == .email {
-                        Text("Composer uses the styled Tryzub email.")
+                        Text(GuestConfirmationMailPresenter.canSendMail() ? "Composer uses the styled Tryzub email." : "Mail is not configured, so the fallback opens a plain email draft when available.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

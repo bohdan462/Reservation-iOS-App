@@ -15,6 +15,7 @@ enum GuestMessageDraftKind: String, Codable, CaseIterable, Equatable {
     case clarificationRequest
     case largePartyConfirmation
     case tableReady
+    case cancellation
 
     var staffLabel: String {
         switch self {
@@ -28,6 +29,8 @@ enum GuestMessageDraftKind: String, Codable, CaseIterable, Equatable {
             return "Large party"
         case .tableReady:
             return "Table ready"
+        case .cancellation:
+            return "Cancellation"
         }
     }
 
@@ -146,13 +149,26 @@ extension GuestMessageDraftKind {
             return .confirmation
         case .reminder:
             return .reminder
-        case .clarificationRequest, .largePartyConfirmation, .tableReady:
+        case .tableReady:
+            return .tableReady
+        case .cancellation:
+            return .cancellation
+        case .clarificationRequest, .largePartyConfirmation:
             return .manualQuestion
         }
     }
 
     var supportsBackendManualEmailLog: Bool {
         emailTemplateKind.backendLogEmailType != nil
+    }
+
+    var usesDeterministicOperationalTemplate: Bool {
+        switch self {
+        case .confirmation, .reminder, .tableReady, .cancellation:
+            return true
+        case .clarificationRequest, .largePartyConfirmation:
+            return false
+        }
     }
 }
 
