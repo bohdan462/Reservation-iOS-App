@@ -291,38 +291,39 @@ struct HostBoardView: View {
 
             let closedPresentation = closedDayPresentation(for: snapshot)
 
-            ZStack {
-                TryzubColors.screenBackground
-                    .ignoresSafeArea()
-
-                // Both wide and narrow use a single outer ScrollView so the entire Host board
-                // (header + intelligence + lists) scrolls as one unified page.
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        homeServiceHeader
-                        onDeviceSupportStatusBanner
-
-                        closedOrOperationalBody(
+            TryzubHostBoardCanvas {
+                Group {
+                    if isTablet {
+                        hostBoardScrollView(
                             snapshot: snapshot,
                             closedPresentation: closedPresentation,
                             isWideLayout: isWideLayout,
-                            availableWidth: safeWidth
+                            safeWidth: safeWidth,
+                            includesHeader: false
+                        )
+                        .safeAreaInset(edge: .top, spacing: 0) {
+                            homeServiceHeader
+                                .padding(.horizontal, 16)
+                                .padding(.top, 8)
+                                .padding(.bottom, 4)
+                                .background(Color.clear)
+                        }
+                    } else {
+                        hostBoardScrollView(
+                            snapshot: snapshot,
+                            closedPresentation: closedPresentation,
+                            isWideLayout: isWideLayout,
+                            safeWidth: safeWidth,
+                            includesHeader: true
                         )
                     }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(.horizontal, isWideLayout ? 16 : 12)
-                    .padding(.top, isWideLayout ? 8 : 6)
-                    .padding(.bottom, ReservationLayout.scrollBottomInset + 12)
                 }
-                .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
-                .scrollIndicators(.hidden)
             }
             .frame(width: safeWidth, height: safeHeight, alignment: .top)
             .task(id: hostLayoutTraceID(width: safeWidth, isWideLayout: isWideLayout)) {
                 traceHostLayout(width: safeWidth, isWideLayout: isWideLayout)
             }
         }
-        .background(TryzubColors.screenBackground.ignoresSafeArea())
         .alert(
             pendingActionTitle,
             isPresented: Binding(
@@ -699,6 +700,41 @@ struct HostBoardView: View {
     }
 
     @ViewBuilder
+    private func hostBoardScrollView(
+        snapshot: HostBoardSnapshot,
+        closedPresentation: ClosedDayPresentation,
+        isWideLayout: Bool,
+        safeWidth: CGFloat,
+        includesHeader: Bool
+    ) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                if includesHeader {
+                    homeServiceHeader
+                }
+
+                onDeviceSupportStatusBanner
+
+                closedOrOperationalBody(
+                    snapshot: snapshot,
+                    closedPresentation: closedPresentation,
+                    isWideLayout: isWideLayout,
+                    availableWidth: safeWidth
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.horizontal, isWideLayout ? 16 : 12)
+            .padding(.top, includesHeader ? (isWideLayout ? 8 : 6) : 4)
+            .padding(.bottom, ReservationLayout.scrollBottomInset + 12)
+        }
+        .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
+        .scrollIndicators(.hidden)
+        .scrollContentBackground(.hidden)
+        .background(Color.clear)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
     private func closedOrOperationalBody(
         snapshot: HostBoardSnapshot,
         closedPresentation: ClosedDayPresentation,
@@ -781,7 +817,7 @@ struct HostBoardView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .hostBoardGlassPanel(cornerRadius: 12)
     }
 
     @ViewBuilder
@@ -884,11 +920,7 @@ struct HostBoardView: View {
             )
         }
         .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
-                .stroke(TryzubColors.border, lineWidth: 1)
-        }
+        .hostBoardGlassPanel(cornerRadius: ReservationUIStyle.cardCorner, strokeOpacity: 0.12)
     }
 
     @ViewBuilder
@@ -1658,11 +1690,7 @@ private struct HostBoardSummaryCard: View {
             }
         }
         .padding(10)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
-                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-        }
+        .hostBoardGlassPanel(cornerRadius: ReservationUIStyle.cardCorner)
     }
 
     private func statItem(_ stat: HostBoardStat) -> some View {
@@ -1681,11 +1709,7 @@ private struct HostBoardSummaryCard: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay {
-            Capsule()
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
+        .hostBoardGlassCapsule()
         .fixedSize(horizontal: true, vertical: false)
     }
 
@@ -1781,7 +1805,7 @@ private struct HostReminderBatchCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .hostBoardGlassPanel(cornerRadius: 12)
     }
 }
 
@@ -1935,7 +1959,7 @@ private struct HomeAvailabilityIndicator: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(isClosed ? .red : .secondary)
                 .frame(width: 28, height: 28)
-                .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .hostBoardGlassSurface(cornerRadius: 8)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(isClosed ? "Reservations closed today" : "Today availability")
@@ -1963,7 +1987,11 @@ private struct HomeAvailabilityIndicator: View {
             .disabled(isLoading)
         }
         .padding(10)
-        .background(backgroundColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .hostBoardGlassSurface(cornerRadius: 10)
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isClosed ? Color.red.opacity(0.07) : Color.clear)
+        }
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(isClosed ? Color.red.opacity(0.18) : Color.primary.opacity(0.08), lineWidth: 1)
@@ -1978,10 +2006,6 @@ private struct HomeAvailabilityIndicator: View {
             return !slots.isOpen
         }
         return false
-    }
-
-    private var backgroundColor: Color {
-        isClosed ? Color(.systemRed).opacity(0.08) : Color(.secondarySystemGroupedBackground)
     }
 
     private var summaryText: String {
@@ -2069,20 +2093,20 @@ private struct HomeServiceHeader: View {
                     .layoutPriority(1)
             }
 
-            ReservationServiceDateSelector(selectedDate: $selectedDate)
+            ReservationServiceDateSelector(selectedDate: $selectedDate, chipStyle: .hostBoardGlass)
                 .padding(7)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .hostBoardGlassSurface(cornerRadius: 13)
                 .overlay {
                     RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                        .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
                 }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .hostBoardGlassSurface(cornerRadius: 14)
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
         }
     }
     
@@ -2272,6 +2296,8 @@ private struct HostBoardColumn: View {
                         .padding(.bottom, 12)
                 }
                 .scrollIndicators(.hidden)
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
                 .frame(maxHeight: .infinity, alignment: .top)
             } else {
                 columnContent
@@ -2322,9 +2348,6 @@ private struct HomeReservationsPanel: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Reservations")
                         .font(.headline.weight(.medium))
-                    Text("\(snapshot.upcoming.count) active for selected date")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 Spacer()
@@ -2336,6 +2359,8 @@ private struct HomeReservationsPanel: View {
                         .padding(.bottom, 12)
                 }
                 .scrollIndicators(.hidden)
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
                 .frame(maxHeight: .infinity, alignment: .top)
             } else {
                 reservationsContent
@@ -2529,11 +2554,7 @@ private struct CompactEmptyHostState: View {
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 9)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay {
-            Capsule()
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
+        .hostBoardGlassCapsule()
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -2566,6 +2587,6 @@ private struct HostFloorSetupPromptCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+        .hostBoardGlassPanel(cornerRadius: 12)
     }
 }

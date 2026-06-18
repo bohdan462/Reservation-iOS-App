@@ -287,7 +287,16 @@ private struct ReservationsTabShell: View {
                 .tag(ReservationsAppTab.more)
         }
         .fontDesign(.rounded)
-        .background(TryzubColors.screenBackground.ignoresSafeArea())
+        .background {
+            Group {
+                if selectedTab == .host {
+                    Color(.systemBackground)
+                } else {
+                    TryzubColors.screenBackground
+                }
+            }
+            .ignoresSafeArea()
+        }
         .overlay(alignment: .topTrailing) {
             AppNoticeOverlay(
                 notices: visibleNotices,

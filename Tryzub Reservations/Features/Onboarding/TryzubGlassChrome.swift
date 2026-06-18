@@ -10,6 +10,134 @@ import SwiftUI
 enum TryzubGlassChrome {
   static let surfaceCorner: CGFloat = 18
   static let surfaceStrokeOpacity: Double = 0.08
+  static let hostBoardAccentBlue = Color(.systemBlue)
+}
+
+// MARK: - Host Board Canvas
+
+struct TryzubHostBoardCanvas<Content: View>: View {
+  @ViewBuilder var content: () -> Content
+
+  var body: some View {
+    ZStack {
+      hostBoardAtmosphere
+      content()
+    }
+  }
+
+  private var hostBoardAtmosphere: some View {
+    ZStack {
+      Color(.systemBackground)
+        .ignoresSafeArea()
+
+      Circle()
+        .fill(Color.accentColor.opacity(0.10))
+        .frame(width: 360, height: 360)
+        .blur(radius: 95)
+        .offset(x: -130, y: -300)
+
+      Circle()
+        .fill(Color.blue.opacity(0.06))
+        .frame(width: 300, height: 300)
+        .blur(radius: 80)
+        .offset(x: 150, y: 240)
+
+      Circle()
+        .fill(Color.accentColor.opacity(0.05))
+        .frame(width: 220, height: 220)
+        .blur(radius: 60)
+        .offset(x: -60, y: 400)
+    }
+  }
+}
+
+// MARK: - Host Board Glass Surfaces
+
+extension View {
+  /// Liquid glass fill (iOS 26+) with a light material fallback. No stroke.
+  func hostBoardGlassSurface(cornerRadius: CGFloat = 14) -> some View {
+    background {
+      Group {
+        if #available(iOS 26.0, *) {
+          RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(.clear)
+            .glassEffect(.clear, in: .rect(cornerRadius: cornerRadius))
+        } else {
+          RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(.ultraThinMaterial.opacity(0.42))
+        }
+      }
+    }
+  }
+
+  func hostBoardGlassPanel(
+    cornerRadius: CGFloat = 14,
+    strokeOpacity: Double = TryzubGlassChrome.surfaceStrokeOpacity
+  ) -> some View {
+    hostBoardGlassSurface(cornerRadius: cornerRadius)
+      .overlay {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+          .strokeBorder(Color.primary.opacity(strokeOpacity), lineWidth: 1)
+      }
+      .shadow(color: .black.opacity(0.05), radius: 3, y: 1)
+  }
+
+  func hostBoardGlassCapsule(strokeOpacity: Double = 0.08) -> some View {
+    background {
+      Group {
+        if #available(iOS 26.0, *) {
+          Capsule()
+            .fill(.clear)
+            .glassEffect(.clear, in: .capsule)
+        } else {
+          Capsule()
+            .fill(.ultraThinMaterial.opacity(0.42))
+        }
+      }
+    }
+    .overlay {
+      Capsule()
+        .strokeBorder(Color.primary.opacity(strokeOpacity), lineWidth: 1)
+    }
+  }
+
+  /// Host Board date chips and compact controls — clear glass when idle, Apple blue liquid glass when selected.
+  func hostBoardGlassChip(
+    cornerRadius: CGFloat,
+    isSelected: Bool,
+    strokeOpacity: Double = 0.08
+  ) -> some View {
+    background {
+      Group {
+        if #available(iOS 26.0, *) {
+          RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(.clear)
+            .glassEffect(
+              isSelected
+                ? .regular.tint(TryzubGlassChrome.hostBoardAccentBlue).interactive()
+                : .clear,
+              in: .rect(cornerRadius: cornerRadius)
+            )
+        } else {
+          RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(
+              isSelected
+                ? TryzubGlassChrome.hostBoardAccentBlue.opacity(0.90)
+                : .ultraThinMaterial.opacity(0.42)
+            )
+        }
+      }
+    }
+    .overlay {
+      RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        .strokeBorder(
+          isSelected
+            ? TryzubGlassChrome.hostBoardAccentBlue.opacity(0.38)
+            : Color.primary.opacity(strokeOpacity),
+          lineWidth: 1
+        )
+    }
+  }
 }
 
 struct TryzubGroupedCanvas<Content: View>: View {

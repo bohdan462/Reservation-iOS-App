@@ -772,6 +772,11 @@ enum ReservationUIStyle {
     static let cancelColor = TryzubColors.destructiveText
 }
 
+enum ReservationDateChipStyle: Equatable {
+    case standard
+    case hostBoardGlass
+}
+
 // MARK: - Shared Components
 
 struct TryzubSectionCard<Content: View>: View {
@@ -1043,8 +1048,35 @@ struct ReservationChoiceChip: View {
     var minHeight: CGFloat = 40
     var fillsWidth = true
     var selectedColor: Color = ReservationUIStyle.selectedControlColor
+    var style: ReservationDateChipStyle = .standard
 
     var body: some View {
+        Group {
+            if style == .hostBoardGlass {
+                chipContent
+                    .foregroundStyle(isSelected ? Color.white : Color.primary)
+                    .hostBoardGlassChip(
+                        cornerRadius: ReservationUIStyle.controlCorner,
+                        isSelected: isSelected
+                    )
+            } else {
+                chipContent
+                    .foregroundStyle(isSelected ? Color.white : .primary)
+                    .background(
+                        isSelected ? selectedColor : Color(.tertiarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                            .stroke(Color.primary.opacity(isSelected ? 0 : 0.10), lineWidth: 1)
+                    }
+            }
+        }
+        .scaleEffect(isSelected ? 1 : 0.96)
+        .animation(.snappy(duration: 0.32), value: isSelected)
+    }
+
+    private var chipContent: some View {
         VStack(spacing: 2) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
@@ -1056,20 +1088,12 @@ struct ReservationChoiceChip: View {
                     .font(.caption.weight(.medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
-                    .foregroundStyle(isSelected ? Color.white.opacity(0.82) : .secondary)
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.82) : Color.secondary)
             }
         }
-        .foregroundStyle(isSelected ? Color.white : .primary)
         .frame(maxWidth: fillsWidth ? .infinity : nil, minHeight: minHeight)
         .frame(minWidth: minWidth)
         .padding(.horizontal, 12)
-        .background(isSelected ? selectedColor : Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                .stroke(Color.primary.opacity(isSelected ? 0 : 0.10), lineWidth: 1)
-        }
-        .scaleEffect(isSelected ? 1 : 0.96)
-        .animation(.snappy(duration: 0.32), value: isSelected)
     }
 }
 
@@ -1108,6 +1132,7 @@ struct ReservationSecondaryActionButton: View {
 struct ReservationServiceDateSelector: View {
     @Binding var selectedDate: Date
     var quickDayCount = 7
+    var chipStyle: ReservationDateChipStyle = .standard
 
     private var calendar: Calendar { .current }
 
@@ -1152,7 +1177,7 @@ struct ReservationServiceDateSelector: View {
         HStack(alignment: .center, spacing: 10) {
             dateStrip
                 .frame(maxWidth: .infinity)
-            ReservationOpenCalendarButton(selectedDate: $selectedDate)
+            ReservationOpenCalendarButton(selectedDate: $selectedDate, chipStyle: chipStyle)
         }
     }
 
@@ -1166,6 +1191,7 @@ struct ReservationServiceDateSelector: View {
             selectedDate: $selectedDate,
             selectedDateKey: selectedDateKey,
             displayDatesIdentity: displayDatesIdentity,
+            chipStyle: chipStyle,
             chipTitle: chipTitle(for:),
             chipSubtitle: chipSubtitle(for:)
         )
@@ -1193,6 +1219,7 @@ private struct ReservationServiceDateStrip: View {
     @Binding var selectedDate: Date
     let selectedDateKey: String
     let displayDatesIdentity: String
+    var chipStyle: ReservationDateChipStyle = .standard
     let chipTitle: (Date) -> String
     let chipSubtitle: (Date) -> String?
 
@@ -1213,6 +1240,8 @@ private struct ReservationServiceDateStrip: View {
             }
             .scrollTargetBehavior(.viewAligned)
             .scrollBounceBehavior(.basedOnSize)
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
             .onAppear {
                 scrollToSelected(using: proxy, animated: false)
             }
@@ -1261,7 +1290,8 @@ private struct ReservationServiceDateStrip: View {
                 isSelected: calendar.isDate(selectedDate, inSameDayAs: date),
                 minWidth: 56,
                 minHeight: 40,
-                fillsWidth: false
+                fillsWidth: false,
+                style: chipStyle
             )
         }
         .buttonStyle(.plain)
@@ -1373,6 +1403,7 @@ struct ReservationOptionalDateFilter: View {
 struct ReservationOpenCalendarButton: View {
     @Binding var selectedDate: Date
     var title = ""
+    var chipStyle: ReservationDateChipStyle = .standard
     @State private var showsCalendarPicker = false
 
     var body: some View {
@@ -1390,7 +1421,7 @@ struct ReservationOpenCalendarButton: View {
 //                .foregroundStyle(.primary.opacity(0.78))
                 
         }
-        .buttonStyle(ReservationHeaderIconButtonStyle())
+        .buttonStyle(ReservationHeaderIconButtonStyle(chipStyle: chipStyle))
         .popover(isPresented: $showsCalendarPicker) {
             DatePicker("Service date", selection: $selectedDate, displayedComponents: .date)
                 .datePickerStyle(.graphical)
@@ -1699,14 +1730,27 @@ struct BottomSafeActionBar<Content: View>: View {
 }
 
 struct ReservationHeaderIconButtonStyle: ButtonStyle {
+    var chipStyle: ReservationDateChipStyle = .standard
+
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(.primary.opacity(0.78))
-            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+        Group {
+            if chipStyle == .hostBoardGlass {
+                configuration.label
+                    .foregroundStyle(Color.primary.opacity(0.88))
+                    .hostBoardGlassChip(
+                        cornerRadius: ReservationUIStyle.controlCorner,
+                        isSelected: false
+                    )
+            } else {
+                configuration.label
+                    .foregroundStyle(.primary.opacity(0.78))
+                    .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                            .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                    }
             }
-            .opacity(configuration.isPressed ? 0.72 : 1)
+        }
+        .opacity(configuration.isPressed ? 0.72 : 1)
     }
 }

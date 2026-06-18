@@ -612,15 +612,29 @@ struct ReservationRowView<Accessory: View>: View {
             .stroke(displayStyle == .hostBoard ? hostRowStrokeColor(for: style) : style.strokeColor, lineWidth: 1)
     }
 
+    @ViewBuilder
     private func rowBackground(for style: ReservationRowStyle) -> some View {
-        RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
-            .fill(displayStyle == .hostBoard ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(style.background))
-            .overlay {
-                if displayStyle == .hostBoard {
-                    RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
-                        .fill(hostRowTint(for: style))
+        let corner = ReservationUIStyle.cardCorner
+        let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
+
+        if displayStyle == .hostBoard {
+            shape
+                .fill(hostRowTint(for: style))
+                .background {
+                    Group {
+                        if #available(iOS 26.0, *) {
+                            shape
+                                .fill(.clear)
+                                .glassEffect(.clear, in: .rect(cornerRadius: corner))
+                        } else {
+                            shape
+                                .fill(.ultraThinMaterial.opacity(0.42))
+                        }
+                    }
                 }
-            }
+        } else {
+            shape.fill(style.background)
+        }
     }
 
     private func hostRowTint(for style: ReservationRowStyle) -> Color {
