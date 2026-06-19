@@ -9,6 +9,7 @@ import SwiftUI
 
 struct HostIntelligenceReviewView: View {
   let snapshot: HostDecisionSnapshot
+  var reservations: [ReservationRecord] = []
   let operationalPrompts: [HostOperationalBriefingPrompt]
   let briefingText: String
   let briefingSource: HostBriefingWriterSource?
@@ -26,6 +27,7 @@ struct HostIntelligenceReviewView: View {
         busyTimesSection
         floorTableIssuesSection
         whyThisMattersSection
+        afterServiceSummarySection
       }
       .padding()
     }
@@ -190,6 +192,23 @@ struct HostIntelligenceReviewView: View {
         }
       }
       .reviewCardStyle()
+    }
+  }
+
+  @ViewBuilder
+  private var afterServiceSummarySection: some View {
+    if let summary = afterServiceSummary {
+      reviewSection("After-service summary") {
+        VStack(alignment: .leading, spacing: 8) {
+          ForEach(summary, id: \.self) { line in
+            Text(line)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
+        .reviewCardStyle()
+      }
     }
   }
 
@@ -525,6 +544,33 @@ struct HostIntelligenceReviewView: View {
       lines.append("Current reservations do not show a staff action that needs attention.")
     }
     return lines.stableUnique()
+  }
+
+  private var afterServiceSummary: [String]? {
+    let visible = reservations.filter { !$0.isHidden }
+    guard !visible.isEmpty, visible.allSatisfy({ !$0.isExpectedGuest }) else { return nil }
+    let completed = visible.filter { $0.statusValue == .completed }.count
+    let cancelled = visible.filter { $0.statusValue == .cancelled }.count
+    let noShows = visible.filter { $0.statusValue == .noShow }.count
+    let guests = visible
+      .filter { $0.statusValue != .cancelled && $0.statusValue != .noShow }
+      .reduce(0) { $0 + max(0, $1.partySize) }
+    let noteCount = visible.filter { $0.hasGuestNotes || $0.hasStaffNotes }.count
+    let noTableCompleted = visible.filter { $0.statusValue == .completed && !$0.hasTableAssignment }.count
+    var lines = [
+      "\(visible.count) reservations · \(guests) expected guests.",
+      "\(completed) completed · \(cancelled) cancelled · \(noShows) no-show."
+    ]
+    if noteCount > 0 {
+      lines.append("\(noteCount) \(noteCount == 1 ? "reservation had" : "reservations had") guest or staff notes.")
+    }
+    if noTableCompleted > 0 {
+      lines.append("\(noTableCompleted) completed \(noTableCompleted == 1 ? "reservation never had" : "reservations never had") a table picked.")
+    }
+    if let busiest = busySlotPressures.first {
+      lines.append("Busiest window: \(displaySlotTime(busiest.slotTime)) · \(busiest.guestCount) guests.")
+    }
+    return lines
   }
 
   private var dedupedReviewFacts: [HostBriefingFact] {

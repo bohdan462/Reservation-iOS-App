@@ -43,7 +43,7 @@ struct HostBoardView: View {
     @State private var pendingAction: ReservationPendingAction?
     @State private var showBackendReminderConfirmation = false
     @State private var clockTick = Date()
-    @State private var boardSnapshot: HostBoardSnapshot?
+    @State private var boardSnapshotsByDateKey: [String: HostBoardSnapshot] = [:]
     /// Last known non-zero reservation count per date key, used to suppress
     /// transient 0-reservation snapshots during tab/visibility transitions.
     @State private var stableCountByDate: [String: Int] = [:]
@@ -144,11 +144,62 @@ struct HostBoardView: View {
     }
 
     private var currentDateBoardSnapshot: HostBoardSnapshot? {
-        guard let boardSnapshot,
-              boardSnapshot.selectedDate.reservationDateString() == selectedDateKey else {
+        guard let snapshot = boardSnapshotsByDateKey[selectedDateKey],
+              snapshot.selectedDate.reservationDateString() == selectedDateKey else {
             return nil
         }
-        return boardSnapshot
+        return snapshot
+    }
+
+    private var showsReservationLoadingPlaceholder: Bool {
+        reservations.isEmpty
+            && (stableCountByDate[selectedDateKey] ?? 0) > 0
+            && currentDateBoardSnapshot == nil
+    }
+
+    private func boardSnapshotRenderContext(
+        serviceDensityBounds: (open: Date?, close: Date?)
+    ) -> (snapshot: HostBoardSnapshot, source: HostBoardSnapshotRenderSource) {
+        if let cached = currentDateBoardSnapshot {
+            traceHostBoardBodyRender(
+                source: .cached,
+                snapshot: cached,
+                reservationsCount: reservations.count
+            )
+            return (cached, .cached)
+        }
+
+        if showsReservationLoadingPlaceholder {
+            let loadingSnapshot = HostBoardSnapshot(
+                reservations: [],
+                selectedDate: selectedDate,
+                now: clockTick,
+                serviceOpen: serviceDensityBounds.open,
+                serviceClose: serviceDensityBounds.close,
+                largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
+            )
+            traceHostBoardBodyRender(
+                source: .loading,
+                snapshot: loadingSnapshot,
+                reservationsCount: reservations.count
+            )
+            return (loadingSnapshot, .loading)
+        }
+
+        let fallback = HostBoardSnapshot(
+            reservations: reservations,
+            selectedDate: selectedDate,
+            now: clockTick,
+            serviceOpen: serviceDensityBounds.open,
+            serviceClose: serviceDensityBounds.close,
+            largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
+        )
+        traceHostBoardBodyRender(
+            source: .fallback,
+            snapshot: fallback,
+            reservationsCount: reservations.count
+        )
+        return (fallback, .fallback)
     }
 
     private var activityFeedGuestNames: [Int: String] {
@@ -299,14 +350,10 @@ struct HostBoardView: View {
             let safeHeight = proxy.size.height.tryzubFinitePositiveLayoutValue
             let isTablet = UIDevice.current.userInterfaceIdiom == .pad
             let isWideLayout = isTablet || safeWidth >= 1100
-            let snapshot = currentDateBoardSnapshot ?? HostBoardSnapshot(
-                reservations: reservations,
-                selectedDate: selectedDate,
-                now: clockTick,
-                serviceOpen: serviceDensityBounds.open,
-                serviceClose: serviceDensityBounds.close,
-                largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
-            )
+            let densityBounds = serviceDensityBounds
+            let renderContext = boardSnapshotRenderContext(serviceDensityBounds: densityBounds)
+            let snapshot = renderContext.snapshot
+            let showsReservationLoading = renderContext.source == .loading
 
             let closedPresentation = closedDayPresentation(for: snapshot)
 
@@ -319,7 +366,8 @@ struct HostBoardView: View {
                             isWideLayout: isWideLayout,
                             safeWidth: safeWidth,
                             includesHeader: false,
-                            tracksHeaderCollapse: true
+                            tracksHeaderCollapse: true,
+                            showsReservationLoadingPlaceholder: showsReservationLoading
                         )
                         .safeAreaInset(edge: .top, spacing: 0) {
                             homeServiceHeader
@@ -334,7 +382,8 @@ struct HostBoardView: View {
                             closedPresentation: closedPresentation,
                             isWideLayout: isWideLayout,
                             safeWidth: safeWidth,
-                            includesHeader: true
+                            includesHeader: true,
+                            showsReservationLoadingPlaceholder: showsReservationLoading
                         )
                     }
                 }
@@ -422,8 +471,8 @@ struct HostBoardView: View {
             )
             let incomingCount = reservations.count
             let lastStableCount = stableCountByDate[selectedDateKey] ?? 0
-            let cachedSnapshotDateKey = boardSnapshot?.selectedDate.reservationDateString()
-            let cachedMatchesSelectedDate = cachedSnapshotDateKey == selectedDateKey
+            let cachedSnapshot = boardSnapshotsByDateKey[selectedDateKey]
+            let cachedMatchesSelectedDate = cachedSnapshot?.selectedDate.reservationDateString() == selectedDateKey
 
             // Snapshot preservation: if the incoming count is 0 but this date previously
             // had reservations, do not overwrite the stable snapshot. This guards against
@@ -438,21 +487,22 @@ struct HostBoardView: View {
                     preserve: true,
                     reason: "untrusted_empty"
                 )
-                // Preserve: keep the existing snapshot, do not publish empty.
+                traceHostBoardSnapshotSkipEmpty(
+                    date: selectedDateKey,
+                    lastStableCount: lastStableCount
+                )
                 return
             }
-
-            #if DEBUG
-            if incomingCount == 0, lastStableCount > 0, let cachedSnapshotDateKey, !cachedMatchesSelectedDate {
-                print("[HOST_BOARD] skipped stale snapshot preserve old=\(cachedSnapshotDateKey) new=\(selectedDateKey)")
-            }
-            #endif
 
             // Commit the snapshot and update stable count.
             if incomingCount > 0 {
                 stableCountByDate[selectedDateKey] = incomingCount
             }
-            boardSnapshot = built
+            boardSnapshotsByDateKey[selectedDateKey] = built
+            traceHostBoardSnapshotPublish(
+                date: selectedDateKey,
+                count: built.upcoming.count + built.seated.count
+            )
             let preserveReason = incomingCount > 0 ? "has_data" : "trusted_empty"
             MultiDeviceSyncTrace.hostSnapshotPreserve(
                 date: selectedDateKey,
@@ -473,13 +523,6 @@ struct HostBoardView: View {
             )
         }
         .onChange(of: selectedDateKey) { _, dateKey in
-            if let cachedSnapshotDateKey = boardSnapshot?.selectedDate.reservationDateString(),
-               cachedSnapshotDateKey != dateKey {
-                #if DEBUG
-                print("[HOST_BOARD] cleared stale snapshot old=\(cachedSnapshotDateKey) new=\(dateKey)")
-                #endif
-                boardSnapshot = nil
-            }
             controller.noteHostBoardSelectedDate(dateKey)
         }
         .onAppear {
@@ -618,7 +661,10 @@ struct HostBoardView: View {
         return pendingAction.action.dialogTitle(for: pendingAction.reservation)
     }
 
-    private func wideBoard(snapshot: HostBoardSnapshot) -> some View {
+    private func wideBoard(
+        snapshot: HostBoardSnapshot,
+        showsReservationLoadingPlaceholder: Bool = false
+    ) -> some View {
         HStack(alignment: .top, spacing: 16) {
             HostBoardColumn(
                 title: "Seated",
@@ -638,6 +684,7 @@ struct HostBoardView: View {
                 snapshot: snapshot,
                 referenceNow: snapshot.now,
                 scrollsInternally: false,
+                showsReservationLoadingPlaceholder: showsReservationLoadingPlaceholder,
                 environment: environment,
                 onAction: handleAction,
                 onOpenReservation: onOpenReservation
@@ -753,7 +800,8 @@ struct HostBoardView: View {
         isWideLayout: Bool,
         safeWidth: CGFloat,
         includesHeader: Bool,
-        tracksHeaderCollapse: Bool = false
+        tracksHeaderCollapse: Bool = false,
+        showsReservationLoadingPlaceholder: Bool = false
     ) -> some View {
         let scrollView = ScrollView {
             VStack(alignment: .leading, spacing: 8) {
@@ -767,7 +815,8 @@ struct HostBoardView: View {
                     snapshot: snapshot,
                     closedPresentation: closedPresentation,
                     isWideLayout: isWideLayout,
-                    availableWidth: safeWidth
+                    availableWidth: safeWidth,
+                    showsReservationLoadingPlaceholder: showsReservationLoadingPlaceholder
                 )
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -798,7 +847,8 @@ struct HostBoardView: View {
         snapshot: HostBoardSnapshot,
         closedPresentation: ClosedDayPresentation,
         isWideLayout: Bool,
-        availableWidth: CGFloat
+        availableWidth: CGFloat,
+        showsReservationLoadingPlaceholder: Bool = false
     ) -> some View {
         switch closedPresentation {
         case .closedEmpty:
@@ -851,9 +901,15 @@ struct HostBoardView: View {
                 hostIntelligenceSection
 
                 if isWideLayout {
-                    wideBoard(snapshot: snapshot)
+                    wideBoard(
+                        snapshot: snapshot,
+                        showsReservationLoadingPlaceholder: showsReservationLoadingPlaceholder
+                    )
                 } else {
-                    phoneLists(snapshot: snapshot)
+                    phoneLists(
+                        snapshot: snapshot,
+                        showsReservationLoadingPlaceholder: showsReservationLoadingPlaceholder
+                    )
                 }
             }
             .animation(.snappy(duration: 0.32), value: isPressureExpanded)
@@ -1136,6 +1192,18 @@ struct HostBoardView: View {
         return nil
     }
 
+    private var hostIntelligenceReminderInlineContext: HostIntelligenceReminderInlineContext? {
+        guard let context = hostReminderPanelContext else { return nil }
+        return HostIntelligenceReminderInlineContext(
+            dueCount: context.status?.summary.eligible ?? 0,
+            skippedCount: context.status?.summary.skipped ?? 0,
+            failedCount: context.status?.summary.failed ?? 0,
+            isSending: context.isSending,
+            dailyLimitReached: context.dailyEmailLimitReached,
+            leadHours: context.reminderLeadHours
+        )
+    }
+
     /// Stamp for the cached Service Briefing rebuild. Includes the clock minute so
     /// mode transitions (e.g. crossing close time) are picked up, plus the snapshot
     /// generation so reservation/status changes refresh it. All inputs are in-memory.
@@ -1315,6 +1383,9 @@ struct HostBoardView: View {
 
         HostIntelligenceCard(
             snapshot: snapshot,
+            reservations: reservations,
+            knownReservations: allKnownReservations,
+            reminderInlineContext: hostIntelligenceReminderInlineContext,
             presentationStyle: .compactStrip,
             attentionPresentation: hostIntelligenceController.displayAttentionPresentation,
             briefingTextOverride: hostIntelligenceController.displayBriefingText,
@@ -1334,6 +1405,7 @@ struct HostBoardView: View {
             NavigationStack {
                 HostIntelligenceReviewView(
                     snapshot: snapshot,
+                    reservations: reservations,
                     operationalPrompts: expandedPrompts,
                     briefingText: hostIntelligenceController.displayBriefingText,
                     briefingSource: hostIntelligenceController.briefingSource
@@ -1388,7 +1460,10 @@ struct HostBoardView: View {
         onOpenReservation(reservation)
     }
 
-    private func phoneLists(snapshot: HostBoardSnapshot) -> some View {
+    private func phoneLists(
+        snapshot: HostBoardSnapshot,
+        showsReservationLoadingPlaceholder: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HostBoardColumn(
                 title: "Seated",
@@ -1407,6 +1482,7 @@ struct HostBoardView: View {
                 snapshot: snapshot,
                 referenceNow: snapshot.now,
                 scrollsInternally: false,
+                showsReservationLoadingPlaceholder: showsReservationLoadingPlaceholder,
                 environment: environment,
                 onAction: handleAction,
                 onOpenReservation: onOpenReservation
@@ -1561,6 +1637,41 @@ struct HostBoardView: View {
         }
     }
 
+    private func traceHostBoardBodyRender(
+        source: HostBoardSnapshotRenderSource,
+        snapshot: HostBoardSnapshot,
+        reservationsCount: Int
+    ) {
+        #if DEBUG
+        let snapshotCount = snapshot.upcoming.count + snapshot.seated.count
+        print(
+            "[HOST_ROWS_TRACE] event=body_render date=\(selectedDateKey) source=\(source.rawValue) reservations=\(reservationsCount) snapshotCount=\(snapshotCount)"
+        )
+        #endif
+    }
+
+    private func traceHostBoardSnapshotPublish(date: String, count: Int) {
+        #if DEBUG
+        print("[HOST_ROWS_TRACE] event=snapshot_publish date=\(date) count=\(count)")
+        #endif
+    }
+
+    private func traceHostBoardSnapshotSkipEmpty(date: String, lastStableCount: Int) {
+        #if DEBUG
+        print(
+            "[HOST_ROWS_TRACE] event=snapshot_skip_empty date=\(date) lastStable=\(lastStableCount)"
+        )
+        #endif
+    }
+
+}
+
+// MARK: - Host Board Snapshot Render Source
+
+private enum HostBoardSnapshotRenderSource: String {
+    case cached
+    case fallback
+    case loading
 }
 
 // MARK: - Pending Host Action

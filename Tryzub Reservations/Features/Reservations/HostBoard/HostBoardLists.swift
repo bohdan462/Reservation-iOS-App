@@ -25,6 +25,40 @@ struct CompactEmptyHostState: View {
     }
 }
 
+struct HostBoardReservationsLoadingState: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Loading reservations…")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .hostBoardGlassCapsule()
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+enum HostBoardListTrace {
+    #if DEBUG
+    static func logDuplicateRemoteIDs(_ reservations: [ReservationRecord], context: String) {
+        let ids = reservations.map(\.remoteID)
+        guard ids.count != Set(ids).count else { return }
+        let duplicates = Dictionary(grouping: ids, by: { $0 })
+            .filter { $1.count > 1 }
+            .map(\.key)
+            .sorted()
+        print(
+            "[HOST_ROWS_TRACE] event=duplicate_remote_ids context=\(context) duplicates=\(duplicates.map(String.init).joined(separator: ","))"
+        )
+    }
+    #else
+    static func logDuplicateRemoteIDs(_ reservations: [ReservationRecord], context: String) {}
+    #endif
+}
+
 struct HostBoardColumn: View {
     let title: String
     let subtitle: String
@@ -33,6 +67,7 @@ struct HostBoardColumn: View {
     let emptySystemImage: String
     var scrollsInternally = true
     var referenceNow = Date()
+    var showsReservationLoadingPlaceholder = false
     let environment: AppEnvironment
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
     let onOpenReservation: (ReservationRecord) -> Void
@@ -77,7 +112,7 @@ struct HostBoardColumn: View {
             CompactEmptyHostState(title: emptyTitle, systemImage: emptySystemImage)
         } else {
             LazyVStack(spacing: 8) {
-                ForEach(reservations) { reservation in
+                ForEach(reservations, id: \.remoteID) { reservation in
                     HostBoardReservationRow(
                         reservation: reservation,
                         referenceNow: referenceNow,
@@ -87,6 +122,12 @@ struct HostBoardColumn: View {
                     )
                 }
             }
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+            .onAppear {
+                HostBoardListTrace.logDuplicateRemoteIDs(reservations, context: "HostBoardColumn")
+            }
         }
     }
 }
@@ -95,12 +136,13 @@ struct HomeReservationsPanel: View {
     let snapshot: HostBoardSnapshot
     var referenceNow = Date()
     var scrollsInternally = true
+    var showsReservationLoadingPlaceholder = false
     let environment: AppEnvironment
     let onAction: (ReservationHostAction, ReservationRecord) -> Void
     let onOpenReservation: (ReservationRecord) -> Void
 
     private var hourSections: [ReservationHourSection] {
-        ReservationRecord.hourSections(from: snapshot.upcoming)
+        ReservationRecord.hourSections(from: snapshot.upcoming, now: snapshot.now)
     }
 
     var body: some View {
@@ -136,7 +178,9 @@ struct HomeReservationsPanel: View {
 
     @ViewBuilder
     private var reservationsContent: some View {
-        if hourSections.isEmpty {
+        if showsReservationLoadingPlaceholder, hourSections.isEmpty {
+            HostBoardReservationsLoadingState()
+        } else if hourSections.isEmpty {
             CompactEmptyHostState(
                 title: "No active reservations",
                 systemImage: "calendar.badge.checkmark"
@@ -155,7 +199,7 @@ struct HomeReservationsPanel: View {
                         }
 
                         LazyVStack(spacing: 8) {
-                            ForEach(section.reservations) { reservation in
+                            ForEach(section.reservations, id: \.remoteID) { reservation in
                                 HostBoardReservationRow(
                                     reservation: reservation,
                                     referenceNow: referenceNow,
@@ -165,8 +209,18 @@ struct HomeReservationsPanel: View {
                                 )
                             }
                         }
+                        .transaction { transaction in
+                            transaction.animation = nil
+                        }
                     }
                 }
+            }
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+            .onAppear {
+                let rows = hourSections.flatMap(\.reservations)
+                HostBoardListTrace.logDuplicateRemoteIDs(rows, context: "HomeReservationsPanel")
             }
         }
     }

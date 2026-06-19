@@ -14,6 +14,9 @@ enum HostIntelligencePresentationStyle {
 
 struct HostIntelligenceCard: View {
   let snapshot: HostDecisionSnapshot
+  var reservations: [ReservationRecord] = []
+  var knownReservations: [ReservationRecord] = []
+  var reminderInlineContext: HostIntelligenceReminderInlineContext? = nil
   var presentationStyle: HostIntelligencePresentationStyle = .fullCard
   var attentionPresentation: HostAttentionPresentation = .empty
   var briefingTextOverride: String? = nil
@@ -46,33 +49,37 @@ struct HostIntelligenceCard: View {
   // MARK: - Layout
 
   private var compactStrip: some View {
-    HStack(alignment: .center, spacing: 9) {
-      HostIntelligenceMark(isActive: pulseIsActive, size: 26)
-        .accessibilityHidden(true)
+    VStack(alignment: .leading, spacing: 7) {
+      HStack(alignment: .center, spacing: 9) {
+        HostIntelligenceMark(isActive: pulseIsActive, size: 26)
+          .accessibilityHidden(true)
 
-      VStack(alignment: .leading, spacing: 2) {
-        Text(compactOperationalSentence)
-          .font(.caption.weight(.medium))
-          .foregroundStyle(.primary)
-          .lineLimit(2)
-          .minimumScaleFactor(0.90)
-          .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 2) {
+          Text(compactOperationalSentence)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+            .minimumScaleFactor(0.90)
+            .fixedSize(horizontal: false, vertical: true)
 
-        if isRefreshingAttentionCard {
-          Text("Refreshing")
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-            .lineLimit(1)
+          if isRefreshingAttentionCard {
+            Text("Refreshing")
+              .font(.caption2)
+              .foregroundStyle(.tertiary)
+              .lineLimit(1)
+          }
         }
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
 
-      HStack(spacing: 6) {
-        compactStateChip
-        compactPrimaryActionChip
-        compactReviewButton
+        HStack(spacing: 6) {
+          compactStateChip
+          compactPrimaryActionChip
+          compactReviewButton
+        }
+        .fixedSize(horizontal: true, vertical: false)
       }
-      .fixedSize(horizontal: true, vertical: false)
+
+      compactInlineLane
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
@@ -315,6 +322,14 @@ struct HostIntelligenceCard: View {
   }
 
   private var compactOperationalSentence: String {
+    if let deterministicHeadline = HostIntelligenceInlineItemBuilder.headline(
+      snapshot: snapshot,
+      reservations: reservations,
+      items: inlineItems
+    ) {
+      return compactSentence(from: deterministicHeadline)
+    }
+
     if let headline = staffFacingNarrative?.headline.trimmingCharacters(in: .whitespacesAndNewlines),
        !headline.isEmpty {
       return compactSentence(from: headline)
@@ -476,6 +491,27 @@ struct HostIntelligenceCard: View {
       + snapshot.seatedTimingSignals.count
   }
 
+  private var inlineItems: [HostIntelligenceInlineItem] {
+    HostIntelligenceInlineItemBuilder.build(
+      snapshot: snapshot,
+      reservations: reservations,
+      knownReservations: knownReservations,
+      reminderContext: reminderInlineContext
+    )
+  }
+
+  private var visibleInlineItems: [HostIntelligenceInlineItem] {
+    HostIntelligenceInlineItemBuilder.visibleItems(
+      from: inlineItems,
+      maxVisible: 4,
+      includeMoreItem: onReviewTapped != nil
+    )
+  }
+
+  private var animatedPrimaryInlineItemID: String? {
+    visibleInlineItems.first(where: isPrimaryInlineCandidate)?.id
+  }
+
   private var compactPrimaryAction: HostSuggestedAction? {
     guard let action = HostIntelligenceActionLabelPolicy.primaryAction(
       from: attentionPresentation,
@@ -495,6 +531,7 @@ struct HostIntelligenceCard: View {
     [
       cardRenderSource,
       "\(attentionItems.count)",
+      "\(visibleInlineItems.count)",
       "\(attentionPresentation.secondaryContext.count)",
       attentionPresentation.presentationFingerprint,
       displayBriefingText
@@ -574,6 +611,158 @@ struct HostIntelligenceCard: View {
       .padding(.vertical, 4)
       .hostBoardGlassCapsule(strokeOpacity: 0.10)
       .accessibilityHidden(true)
+  }
+
+  @ViewBuilder
+  private var compactInlineLane: some View {
+    if !visibleInlineItems.isEmpty {
+      FlowLayout(spacing: 7) {
+        ForEach(visibleInlineItems) { item in
+          compactInlineItem(item)
+        }
+      }
+      .padding(.top, 1)
+      .accessibilityElement(children: .contain)
+    }
+  }
+
+  @ViewBuilder
+  private func compactInlineItem(_ item: HostIntelligenceInlineItem) -> some View {
+    let role = inlineVisualRole(for: item)
+    let animateBorder = item.id == animatedPrimaryInlineItemID
+    if item.opensReview, onReviewTapped != nil {
+      Button {
+        onReviewTapped?()
+      } label: {
+        compactInlineItemContent(item, role: role, animateBorder: animateBorder)
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("\(item.title). \(item.detail)")
+    } else if let action = item.action, onActionTapped != nil {
+      Button {
+        if action.kind == .closeSlot {
+          onReviewTapped?()
+        } else {
+          onActionTapped?(action)
+        }
+      } label: {
+        compactInlineItemContent(item, role: role, animateBorder: animateBorder)
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("\(item.title). \(item.detail)")
+    } else {
+      compactInlineItemContent(item, role: role, animateBorder: animateBorder)
+    }
+  }
+
+  private func compactInlineItemContent(
+    _ item: HostIntelligenceInlineItem,
+    role: HostIntelligenceInlineVisualRole,
+    animateBorder: Bool
+  ) -> some View {
+    let tint = inlineTint(for: item)
+    return HStack(spacing: 5) {
+      Image(systemName: inlineIconName(for: item))
+        .font(.caption2.weight(role == .primaryAction ? .bold : .semibold))
+        .foregroundStyle(tint.opacity(role == .info ? 0.66 : 0.86))
+        .frame(width: 12, height: 12)
+        .accessibilityHidden(true)
+      Text(item.title)
+        .font(.caption2.weight(role == .info ? .medium : .semibold))
+        .foregroundStyle(role == .info ? .secondary : .primary)
+        .lineLimit(1)
+      if !item.detail.isEmpty {
+        Text(item.detail)
+          .font(.caption2.weight(.medium))
+          .foregroundStyle(role == .primaryAction ? Color.primary.opacity(0.74) : Color.secondary)
+          .lineLimit(1)
+      }
+    }
+    .hostIntelligenceInlineChipChrome(
+      role: role,
+      tint: tint,
+      animateBorder: animateBorder
+    )
+  }
+
+  private func inlineVisualRole(for item: HostIntelligenceInlineItem) -> HostIntelligenceInlineVisualRole {
+    if item.id == animatedPrimaryInlineItemID {
+      return .primaryAction
+    }
+    if item.action != nil || item.opensReview {
+      switch item.kind {
+      case .nextGuest, .returningGuest, .calm:
+        return .info
+      default:
+        return .secondaryAction
+      }
+    }
+    return .info
+  }
+
+  private func isPrimaryInlineCandidate(_ item: HostIntelligenceInlineItem) -> Bool {
+    switch item.kind {
+    case .allergy, .accessibility, .guestNote, .noTable, .possibleCorrection, .serviceSummary, .cleanup:
+      return true
+    case .reminder:
+      return item.priority <= 26
+    case .seatedTooLong:
+      return true
+    case .busyTime:
+      return item.priority <= 30
+    case .nextGuest, .returningGuest, .occasion, .tableSuggestion, .calm:
+      return false
+    }
+  }
+
+  private func inlineIconName(for item: HostIntelligenceInlineItem) -> String {
+    switch item.kind {
+    case .allergy:
+      return "exclamationmark.triangle.fill"
+    case .accessibility:
+      return "figure.roll"
+    case .guestNote:
+      return "note.text"
+    case .occasion:
+      return "sparkles"
+    case .noTable:
+      return "tablecells"
+    case .busyTime:
+      return "clock"
+    case .possibleCorrection:
+      return "arrow.triangle.2.circlepath"
+    case .reminder:
+      return "bell"
+    case .seatedTooLong:
+      return "timer"
+    case .serviceSummary:
+      return "doc.text"
+    case .returningGuest:
+      return "person.crop.circle.badge.checkmark"
+    case .nextGuest:
+      return "person.fill"
+    case .tableSuggestion:
+      return "rectangle.split.2x1"
+    case .cleanup:
+      return "checklist"
+    case .calm:
+      return "ellipsis"
+    }
+  }
+
+  private func inlineTint(for item: HostIntelligenceInlineItem) -> Color {
+    switch item.kind {
+    case .allergy, .accessibility:
+      return .red
+    case .guestNote, .occasion, .possibleCorrection, .reminder:
+      return TryzubColors.warning
+    case .noTable, .seatedTooLong, .cleanup:
+      return TryzubColors.info
+    case .busyTime:
+      return TryzubColors.warning
+    case .returningGuest, .nextGuest, .serviceSummary, .tableSuggestion, .calm:
+      return TryzubColors.mutedText
+    }
   }
 
   @ViewBuilder
