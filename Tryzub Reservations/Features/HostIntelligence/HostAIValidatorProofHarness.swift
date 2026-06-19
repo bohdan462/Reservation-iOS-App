@@ -220,6 +220,70 @@ enum HostAIValidatorProofHarness {
             hostPacket: calmPacket,
             fallback: guestNameFallback
         )
+
+        let quietGrounding = HostServiceGroundingSummary(
+            activeReservationCount: 1,
+            expectedGuestCount: 4,
+            effectiveNoTableCount: 0,
+            allRelevantReservationsHaveTables: true,
+            isQuietService: true,
+            deterministicSummary: "Quiet service. Annie Zak is confirmed for 6:00 PM, 4 guests, table A1 assigned. Nothing needs attention right now.",
+            activeReservationIDs: [42]
+        )
+        var quietNarrativePacket = emptyNarrativePacket
+        quietNarrativePacket.serviceGrounding = quietGrounding
+        let quietHostPacket = HostLLMPacket(
+            generatedAtDescription: calmPacket.generatedAtDescription,
+            serviceState: calmPacket.serviceState,
+            pressureScore: calmPacket.pressureScore,
+            topFacts: calmPacket.topFacts,
+            forbiddenBehaviors: calmPacket.forbiddenBehaviors,
+            writingRules: calmPacket.writingRules,
+            serviceGrounding: quietGrounding
+        )
+        let quietFallback = ManagerNarrative(
+            headline: quietGrounding.deterministicSummary,
+            whyItMatters: nil,
+            checkNext: nil,
+            source: .template,
+            failedReason: nil
+        )
+
+        expect(
+            scenario: "ai1_grounded_quiet_summary_passes",
+            shouldPass: true,
+            candidate: quietFallback,
+            packet: quietNarrativePacket,
+            hostPacket: quietHostPacket,
+            fallback: quietFallback
+        )
+
+        expect(
+            scenario: "ai1_quiet_pressure_claim_blocked",
+            shouldPass: false,
+            candidate: oneLine("Pressure builds toward 6:00 PM with 1 reservation."),
+            packet: quietNarrativePacket,
+            hostPacket: quietHostPacket,
+            fallback: quietFallback
+        )
+
+        expect(
+            scenario: "ai1_false_no_table_claim_blocked",
+            shouldPass: false,
+            candidate: oneLine("Annie Zak still needs a table in the peak window."),
+            packet: quietNarrativePacket,
+            hostPacket: quietHostPacket,
+            fallback: quietFallback
+        )
+
+        expect(
+            scenario: "ai1_wrong_count_blocked",
+            shouldPass: false,
+            candidate: oneLine("2 reservations need review before service."),
+            packet: quietNarrativePacket,
+            hostPacket: quietHostPacket,
+            fallback: quietFallback
+        )
     }
 
     // MARK: - Helpers

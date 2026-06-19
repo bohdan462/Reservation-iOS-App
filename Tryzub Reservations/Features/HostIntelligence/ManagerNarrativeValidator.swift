@@ -362,17 +362,27 @@ enum ManagerNarrativeValidator {
       )
     }
 
-    if containsLeakedModelLabels(in: narrative) {
-      return ManagerNarrativeValidationResult(
-        isValid: false,
-        reason: "mentions_model_or_backend"
-      )
-    }
+	    if containsLeakedModelLabels(in: narrative) {
+	      return ManagerNarrativeValidationResult(
+	        isValid: false,
+	        reason: "mentions_model_or_backend"
+	      )
+	    }
 
-    for field in [headline, narrative.whyItMatters, narrative.checkNext].compactMap({ $0 }) {
-      if let failure = validateOperationalClaims(field, packet: packet, hostPacket: hostPacket) {
-        return failure
+    if narrative.compactBriefingText == packet.serviceGrounding?.deterministicSummary {
+      return ManagerNarrativeValidationResult(isValid: true, reason: nil)
+    }
+	
+	    for field in [headline, narrative.whyItMatters, narrative.checkNext].compactMap({ $0 }) {
+      if let reason = HostBriefingWriterValidator.groundingFailureReason(
+        for: field,
+        grounding: packet.serviceGrounding
+      ) {
+        return ManagerNarrativeValidationResult(isValid: false, reason: reason)
       }
+	      if let failure = validateOperationalClaims(field, packet: packet, hostPacket: hostPacket) {
+	        return failure
+	      }
       if let failure = validateHospitalityAndPromises(field) {
         return failure
       }

@@ -456,6 +456,22 @@ final class FloorPlanStore: ObservableObject {
         return []
     }
 
+    func effectiveTableAssignments(for date: String) -> [EffectiveReservationTableAssignment] {
+        guard let response = cacheByDate[date] else { return [] }
+        return response.assignments.compactMap { assignment in
+            guard !assignment.tableKeys.isEmpty else { return nil }
+            let label = assignment.tableLabel?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let fallback = assignment.tableKeys.joined(separator: " + ")
+            let resolvedLabel = label?.isEmpty == false ? (label ?? fallback) : fallback
+            guard !resolvedLabel.isEmpty else { return nil }
+            return EffectiveReservationTableAssignment(
+                reservationID: assignment.reservationId,
+                tableLabel: resolvedLabel
+            )
+        }
+    }
+
     func floorSourceStatus(
         for date: String,
         allowsLegacyFallback: Bool = false,
@@ -517,25 +533,30 @@ final class FloorPlanStore: ObservableObject {
         allowsLegacyFallback: Bool = false,
         localActiveTableCount: Int = 0
     ) -> String {
+        let assignmentStamp = ReservationTableTruth.assignmentFingerprint(
+            from: effectiveTableAssignments(for: date)
+        )
         let source = floorSourceStatus(
             for: date,
             allowsLegacyFallback: allowsLegacyFallback,
             localActiveTableCount: localActiveTableCount
         )
+        let layoutBase: String
         switch source {
         case .backend:
             let tables = backendTables(for: date)
             let activeCount = tables.filter(\.isActive).count
-            return "backend-\(tables.count)-\(activeCount)"
+            layoutBase = "backend-\(tables.count)-\(activeCount)"
         case .legacyFallback:
-            return "legacy-\(localActiveTableCount)"
+            layoutBase = "legacy-\(localActiveTableCount)"
         case .pendingBackend:
-            return "pending"
+            layoutBase = "pending"
         case .notConfigured:
-            return "not-configured"
+            layoutBase = "not-configured"
         case .unavailable:
-            return "unavailable"
+            layoutBase = "unavailable"
         }
+        return "\(layoutBase)|\(assignmentStamp)"
     }
 
     /// Typed capacity summary with explicit floor source (never silent local fallback).

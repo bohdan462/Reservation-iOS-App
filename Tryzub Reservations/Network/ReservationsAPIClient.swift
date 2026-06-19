@@ -476,6 +476,7 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
     private let baseURL: URL
     private let username: String
     private let applicationPassword: String
+    private let authRole: AppUserRole?
     private let session: URLSession
     private let requestSerializer = ReservationAPIRequestSerializer()
 
@@ -526,11 +527,13 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
     init(baseURL: URL,
          username: String,
          applicationPassword: String,
+         role: AppUserRole? = nil,
          session: URLSession = ReservationsAPIClient.defaultSession) {
         
         self.baseURL = baseURL
         self.username = username
         self.applicationPassword = applicationPassword
+        self.authRole = role
         self.session = session
     }
 
@@ -1769,6 +1772,12 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
     ) async throws -> (Data, URLResponse) {
         if requiresAuth {
             try ensureProtectedCredentials()
+            AppAuthTrace.request(
+                route: request.url?.path ?? "<unknown>",
+                role: authRole,
+                username: username,
+                authHeaderPresent: request.value(forHTTPHeaderField: "Authorization") != nil
+            )
         }
 
         var attempt = 0

@@ -236,6 +236,25 @@ struct HostLLMPacket: Codable, Equatable {
     let topFacts: [HostLLMFact]
     let forbiddenBehaviors: [String]
     let writingRules: [String]
+    let serviceGrounding: HostServiceGroundingSummary?
+
+    init(
+        generatedAtDescription: String,
+        serviceState: HostServiceState,
+        pressureScore: Double,
+        topFacts: [HostLLMFact],
+        forbiddenBehaviors: [String],
+        writingRules: [String],
+        serviceGrounding: HostServiceGroundingSummary? = nil
+    ) {
+        self.generatedAtDescription = generatedAtDescription
+        self.serviceState = serviceState
+        self.pressureScore = pressureScore
+        self.topFacts = topFacts
+        self.forbiddenBehaviors = forbiddenBehaviors
+        self.writingRules = writingRules
+        self.serviceGrounding = serviceGrounding
+    }
 
     var hasMeaningfulBriefingFacts: Bool {
         !topFacts.isEmpty
@@ -265,7 +284,16 @@ struct HostLLMPacket: Codable, Equatable {
             ].joined(separator: "|")
         }
         let factsKey = factParts.joined(separator: ";")
-        return "\(serviceState.rawValue)|\(roundedPressure)|\(factsKey)"
+        let groundingKey = serviceGrounding.map {
+            [
+                "\($0.activeReservationCount)",
+                "\($0.expectedGuestCount)",
+                "\($0.effectiveNoTableCount)",
+                $0.deterministicSummary,
+                $0.activeReservationIDs.map(String.init).joined(separator: ",")
+            ].joined(separator: "|")
+        } ?? "grounding-none"
+        return "\(serviceState.rawValue)|\(roundedPressure)|\(factsKey)|\(groundingKey)"
     }
 
     static var empty: HostLLMPacket {
@@ -289,7 +317,8 @@ struct HostLLMPacket: Codable, Equatable {
                 "Lead with the highest-severity operational issue.",
                 "Use review/check table-plan language; never say a table was assigned.",
                 "One manual review action at most, only when suggested review adds value."
-            ]
+            ],
+            serviceGrounding: nil
         )
     }
 }
@@ -334,6 +363,7 @@ struct HostDecisionSnapshot: Codable, Equatable {
     let templateBriefingText: String
     let llmPacket: HostLLMPacket
     let arrivalPressureFacts: ArrivalPressureManagerFacts?
+    let serviceGrounding: HostServiceGroundingSummary
 
     static var empty: HostDecisionSnapshot {
         HostDecisionSnapshot(
@@ -349,7 +379,8 @@ struct HostDecisionSnapshot: Codable, Equatable {
             bookingDecisions: [],
             templateBriefingText: "Nothing needs attention right now.",
             llmPacket: .empty,
-            arrivalPressureFacts: nil
+            arrivalPressureFacts: nil,
+            serviceGrounding: .empty
         )
     }
 
@@ -361,6 +392,80 @@ struct HostDecisionSnapshot: Codable, Equatable {
         briefingFacts.contains { $0.id.hasPrefix("no-table-due-soon-") }
             || suggestedActions.contains { $0.id.hasPrefix("assign-table-") }
     }
+}
+
+// MARK: - Grounding & Table Truth
+
+struct EffectiveReservationTableAssignment: Codable, Equatable {
+    let reservationID: Int
+    let tableLabel: String
+}
+
+enum ReservationTableTruth {
+    static func assignmentsByReservationID(
+        _ assignments: [EffectiveReservationTableAssignment]
+    ) -> [Int: String] {
+        Dictionary(uniqueKeysWithValues: assignments.map { ($0.reservationID, $0.tableLabel) })
+    }
+
+    static func effectiveTableLabel(
+        for reservation: ReservationRecord,
+        assignmentsByReservationID: [Int: String] = [:]
+    ) -> String? {
+        if let tableName = reservation.assignedTableName {
+            return tableName
+        }
+        let assignment = assignmentsByReservationID[reservation.remoteID]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let assignment, !assignment.isEmpty else { return nil }
+        return assignment
+    }
+
+    static func hasEffectiveTableAssignment(
+        for reservation: ReservationRecord,
+        assignmentsByReservationID: [Int: String] = [:]
+    ) -> Bool {
+        effectiveTableLabel(
+            for: reservation,
+            assignmentsByReservationID: assignmentsByReservationID
+        ) != nil
+    }
+
+    /// Stable, sorted fingerprint for floor-plan assignment truth (reservation ID + table label only).
+    static func assignmentFingerprint(
+        from assignments: [EffectiveReservationTableAssignment]
+    ) -> String {
+        let parts = assignments
+            .sorted { $0.reservationID < $1.reservationID }
+            .compactMap { assignment -> String? in
+                let label = assignment.tableLabel
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !label.isEmpty else { return nil }
+                return "\(assignment.reservationID)=\(label)"
+            }
+        guard !parts.isEmpty else { return "assignments:none" }
+        return "assignments:" + parts.joined(separator: "|")
+    }
+}
+
+struct HostServiceGroundingSummary: Codable, Equatable {
+    let activeReservationCount: Int
+    let expectedGuestCount: Int
+    let effectiveNoTableCount: Int
+    let allRelevantReservationsHaveTables: Bool
+    let isQuietService: Bool
+    let deterministicSummary: String
+    let activeReservationIDs: [Int]
+
+    static let empty = HostServiceGroundingSummary(
+        activeReservationCount: 0,
+        expectedGuestCount: 0,
+        effectiveNoTableCount: 0,
+        allRelevantReservationsHaveTables: true,
+        isQuietService: true,
+        deterministicSummary: "No reservations for today yet. Nothing to check.",
+        activeReservationIDs: []
+    )
 }
 
 // MARK: - Briefing Writer
@@ -655,6 +760,8 @@ struct HostEngineInput {
     let allKnownReservations: [ReservationRecord]
     /// Active backend floor tables from GET /floor-plan when `floorTableSource == .backend`.
     let backendFloorTables: [RestaurantTableDTO]
+    /// Read-only backend floor-plan table assignments keyed later by reservation ID.
+    let effectiveTableAssignments: [EffectiveReservationTableAssignment]
     /// Explicit floor inventory provenance — never infer from empty backend tables alone.
     let floorTableSource: HostFloorTableSource
     /// Backend guest intelligence summaries for the selected service date, keyed by reservation ID.
@@ -674,6 +781,7 @@ struct HostEngineInput {
         tableConfigs: [RestaurantTableConfig],
         allKnownReservations: [ReservationRecord],
         backendFloorTables: [RestaurantTableDTO] = [],
+        effectiveTableAssignments: [EffectiveReservationTableAssignment] = [],
         floorTableSource: HostFloorTableSource = .pendingBackend,
         guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO] = [:],
         guestProfilePacksByReservationID: [Int: GuestIntelligenceProfilePackDTO] = [:]
@@ -689,6 +797,7 @@ struct HostEngineInput {
         self.tableConfigs = tableConfigs
         self.allKnownReservations = allKnownReservations
         self.backendFloorTables = backendFloorTables
+        self.effectiveTableAssignments = effectiveTableAssignments
         self.floorTableSource = floorTableSource
         self.guestIntelligenceSummariesByReservationID = guestIntelligenceSummariesByReservationID
         self.guestProfilePacksByReservationID = guestProfilePacksByReservationID

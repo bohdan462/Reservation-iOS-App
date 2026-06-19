@@ -15,27 +15,45 @@ enum HostOperationalNoTableSoonSupport {
   static func qualifyingReservations(
     in reservations: [ReservationRecord],
     selectedDate: Date,
-    now: Date
+    now: Date,
+    assignmentsByReservationID: [Int: String] = [:]
   ) -> [ReservationRecord] {
     guard isToday(selectedDate, now: now) else { return [] }
 
     let selectedDateKey = selectedDate.reservationDateString()
     return reservations.filter { reservation in
       reservation.reservationDate == selectedDateKey
-        && qualifies(reservation: reservation, now: now)
+        && qualifies(
+          reservation: reservation,
+          now: now,
+          assignmentsByReservationID: assignmentsByReservationID
+        )
     }
   }
 
   static func firstQualifyingReservation(
     in reservations: [ReservationRecord],
     selectedDate: Date,
-    now: Date
+    now: Date,
+    assignmentsByReservationID: [Int: String] = [:]
   ) -> ReservationRecord? {
-    qualifyingReservations(in: reservations, selectedDate: selectedDate, now: now).first
+    qualifyingReservations(
+      in: reservations,
+      selectedDate: selectedDate,
+      now: now,
+      assignmentsByReservationID: assignmentsByReservationID
+    ).first
   }
 
-  static func qualifies(reservation: ReservationRecord, now: Date) -> Bool {
-    guard reservationNeedsTableAttention(reservation) else { return false }
+  static func qualifies(
+    reservation: ReservationRecord,
+    now: Date,
+    assignmentsByReservationID: [Int: String] = [:]
+  ) -> Bool {
+    guard reservationNeedsTableAttention(
+      reservation,
+      assignmentsByReservationID: assignmentsByReservationID
+    ) else { return false }
     guard let serviceDate = reservation.serviceDateTime else { return false }
 
     let minutesUntil = serviceDate.timeIntervalSince(now) / 60
@@ -45,8 +63,17 @@ enum HostOperationalNoTableSoonSupport {
     return minutesUntil <= Double(windowMinutes)
   }
 
-  static func reservationNeedsTableAttention(_ reservation: ReservationRecord) -> Bool {
-    guard reservation.isOpenWork, !reservation.hasTableAssignment else { return false }
+  static func reservationNeedsTableAttention(
+    _ reservation: ReservationRecord,
+    assignmentsByReservationID: [Int: String] = [:]
+  ) -> Bool {
+    guard reservation.isOpenWork,
+          !ReservationTableTruth.hasEffectiveTableAssignment(
+            for: reservation,
+            assignmentsByReservationID: assignmentsByReservationID
+          ) else {
+      return false
+    }
     switch reservation.statusValue {
     case .new, .needsReview, .confirmed:
       return true

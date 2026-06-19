@@ -281,7 +281,8 @@ struct HostBoardView: View {
     }
 
     private var boardSnapshotBuildKey: String {
-        "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceOperationalMinuteStamp)-\(hostTableConfigStore.tableConfigFingerprint)"
+        let options = hostFloorLegacyOptions
+        return "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceOperationalMinuteStamp)-\(hostTableConfigStore.tableConfigFingerprint)-\(floorPlanStore.layoutFingerprint(for: selectedDateKey, allowsLegacyFallback: options.allowsFallback, localActiveTableCount: options.localActiveTableCount))"
     }
 
     var body: some View {
@@ -408,7 +409,8 @@ struct HostBoardView: View {
                 now: clockTick,
                 serviceOpen: densityBounds.open,
                 serviceClose: densityBounds.close,
-                largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
+                largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold,
+                effectiveTableAssignments: floorPlanStore.effectiveTableAssignments(for: selectedDateKey)
             )
             let incomingCount = reservations.count
             let lastStableCount = stableCountByDate[selectedDateKey] ?? 0
@@ -815,16 +817,18 @@ struct HostBoardView: View {
         case .open:
             let usesWideStatusPanel = horizontalSizeClass == .regular && availableWidth >= 760
 
-            hostIntelligenceSection
-            hostOperationalStatusPanel(snapshot: snapshot, isWideLayout: usesWideStatusPanel)
+            VStack(alignment: .leading, spacing: 8) {
+                hostOperationalStatusPanel(snapshot: snapshot, isWideLayout: usesWideStatusPanel)
+                hostOperationalServicePressureSection(snapshot: snapshot)
+                hostIntelligenceSection
 
-            if isWideLayout {
-                wideBoard(snapshot: snapshot)
-            } else {
-                phoneLists(snapshot: snapshot)
+                if isWideLayout {
+                    wideBoard(snapshot: snapshot)
+                } else {
+                    phoneLists(snapshot: snapshot)
+                }
             }
-
-            hostOperationalServicePressureSection(snapshot: snapshot)
+            .animation(.snappy(duration: 0.32), value: isPressureExpanded)
         }
     }
 
@@ -959,6 +963,7 @@ struct HostBoardView: View {
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(TryzubColors.mutedText)
                         .rotationEffect(.degrees(isPressureExpanded ? 180 : 0))
+                        .animation(.snappy(duration: 0.32), value: isPressureExpanded)
                         .frame(width: 18, height: 18)
                         .accessibilityHidden(true)
                 }
@@ -980,9 +985,15 @@ struct HostBoardView: View {
                         }
                     }
                 )
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity.combined(with: .move(edge: .top)),
+                        removal: .opacity.combined(with: .move(edge: .top))
+                    )
+                )
             }
         }
+        .clipped()
         .padding(12)
         .hostBoardGlassPanel(cornerRadius: ReservationUIStyle.cardCorner, strokeOpacity: 0.12)
     }
@@ -1340,6 +1351,7 @@ struct HostBoardView: View {
             tableConfigs: resolved.tableConfigs,
             allKnownReservations: allKnownReservations.isEmpty ? reservations : allKnownReservations,
             backendFloorTables: resolved.backendFloorTables,
+            effectiveTableAssignments: floorPlanStore.effectiveTableAssignments(for: selectedDateKey),
             floorTableSource: source,
             guestIntelligenceSummariesByReservationID: guestIntelligenceStore.summariesByReservationID(
                 for: selectedDateKey
@@ -1634,10 +1646,14 @@ private struct HostBoardSnapshot {
         now: Date,
         serviceOpen: Date? = nil,
         serviceClose: Date? = nil,
-        largePartyThreshold: Int = 7
+        largePartyThreshold: Int = 7,
+        effectiveTableAssignments: [EffectiveReservationTableAssignment] = []
     ) {
         self.selectedDate = selectedDate
         self.now = now
+        let effectiveTablesByReservationID = ReservationTableTruth.assignmentsByReservationID(
+            effectiveTableAssignments
+        )
         upcoming = ReservationRecord.sortedForHostBoard(
             reservations.filter {
                 $0.statusValue == .new || $0.statusValue == .needsReview || $0.statusValue == .confirmed
@@ -1649,7 +1665,12 @@ private struct HostBoardSnapshot {
         )
         needsReview = upcoming.filter { $0.statusValue == .needsReview }
         newReservations = upcoming.filter { $0.statusValue == .new }
-        noTableCount = upcoming.filter { !$0.hasTableAssignment }.count
+        noTableCount = upcoming.filter {
+            !ReservationTableTruth.hasEffectiveTableAssignment(
+                for: $0,
+                assignmentsByReservationID: effectiveTablesByReservationID
+            )
+        }.count
         expectedGuestCount = upcoming.reduce(0) { $0 + $1.partySize } + seated.reduce(0) { $0 + $1.partySize }
 
         let isToday = selectedDate.reservationDateString() == Date.reservationDateString()
@@ -1665,7 +1686,8 @@ private struct HostBoardSnapshot {
             serviceOpen: serviceOpen,
             serviceClose: serviceClose,
             now: now,
-            largePartyThreshold: largePartyThreshold
+            largePartyThreshold: largePartyThreshold,
+            effectiveTableAssignments: effectiveTableAssignments
         )
         peakTimeText = arrivalPressure.peakLegendText
         nextReservationText = arrivalPressure.nextLegendText

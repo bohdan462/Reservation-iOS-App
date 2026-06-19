@@ -220,6 +220,22 @@ enum ReservationAPIError: Error, LocalizedError {
         diagnostics?.developerSummary
     }
 
+    var httpStatusCode: Int? {
+        switch self {
+        case .unauthorized(let diagnostics):
+            return diagnostics?.statusCode ?? 401
+        case .serverError(let statusCode, _):
+            return statusCode
+        case .wordpressError(_, _, let statusCode, _):
+            return statusCode
+        case .invalidResponse(let diagnostics),
+             .decodingFailure(_, let diagnostics):
+            return diagnostics?.statusCode
+        case .invalidURL, .cancelled, .networkFailure, .missingCredentials:
+            return nil
+        }
+    }
+
     var logValue: String {
         switch self {
         case .invalidURL:

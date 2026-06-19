@@ -30,7 +30,8 @@ enum TryzubHostSummaryIntentService {
         let client = ReservationsAPIClient(
             baseURL: apiBaseURL,
             username: credentials.username,
-            applicationPassword: credentials.applicationPassword
+            applicationPassword: credentials.applicationPassword,
+            role: session.role
         )
         let builder = SpokenHostSummaryBuilder()
 
@@ -61,8 +62,9 @@ enum TryzubHostSummaryIntentService {
     }
 
     private static func loadSavedSession() -> (credentials: AppCredentials?, role: AppUserRole?) {
-        let credentialStore = AppCredentialStore()
         let roleStore = AppRoleStore()
+        let credentialStore = AppCredentialStore()
+        credentialStore.reload(for: roleStore.selectedRole)
         return (credentialStore.credentials, roleStore.selectedRole)
     }
 

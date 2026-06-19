@@ -33,12 +33,14 @@ struct HostIntelligenceEngine {
     )
 
     let noTableReservations = findReservationsWithoutTables(
-      reservations: activeReservations
+      reservations: activeReservations,
+      assignmentsByReservationID: context.effectiveTableAssignmentsByReservationID
     )
     let noTableDueSoon = findOperationalNoTableSoon(
       reservations: activeReservations,
       selectedDate: context.selectedDate,
-      now: context.now
+      now: context.now,
+      assignmentsByReservationID: context.effectiveTableAssignmentsByReservationID
     )
 
     var briefingFacts = slotPressures.flatMap(\.facts)
@@ -241,18 +243,6 @@ struct HostIntelligenceEngine {
       }.count
     )
     let serviceState = classifyServiceState(pressureScore: pressureScore)
-    let templateBriefingText = briefingService.buildTemplateBriefingFallback(
-      from: rankedFacts,
-      serviceState: serviceState
-    )
-    let llmPacket = buildLLMPacket(
-      facts: rankedFacts,
-      serviceState: serviceState,
-      pressureScore: pressureScore,
-      generatedAt: context.now,
-      settings: context.settings
-    )
-
     let returningIDs = Set(
       guestSignals.filter { $0.kind == .regularGuest }.map(\.reservationID)
     )
@@ -264,7 +254,27 @@ struct HostIntelligenceEngine {
       serviceClose: serviceBounds.close,
       now: context.now,
       largePartyThreshold: context.settings.largePartyThreshold,
-      returningGuestReservationIDs: returningIDs
+      returningGuestReservationIDs: returningIDs,
+      effectiveTableAssignments: input.effectiveTableAssignments
+    )
+    let serviceGrounding = buildServiceGroundingSummary(
+      reservations: activeReservations,
+      context: context,
+      rankedFacts: rankedFacts
+    )
+    let templateBriefingText = serviceGrounding.isQuietService
+      ? serviceGrounding.deterministicSummary
+      : briefingService.buildTemplateBriefingFallback(
+        from: rankedFacts,
+        serviceState: serviceState
+      )
+    let llmPacket = buildLLMPacket(
+      facts: rankedFacts,
+      serviceState: serviceState,
+      pressureScore: pressureScore,
+      generatedAt: context.now,
+      settings: context.settings,
+      serviceGrounding: serviceGrounding
     )
 
     return HostDecisionSnapshot(
@@ -286,7 +296,8 @@ struct HostIntelligenceEngine {
       bookingDecisions: bookingIntelligence.decisions,
       templateBriefingText: templateBriefingText,
       llmPacket: llmPacket,
-      arrivalPressureFacts: arrivalPressure.managerFacts
+      arrivalPressureFacts: arrivalPressure.managerFacts,
+      serviceGrounding: serviceGrounding
     )
   }
 
@@ -331,6 +342,7 @@ struct HostIntelligenceEngine {
     let localSeatedAtByReservationID: [Int: Date]
     let settings: HostIntelligenceSettings
     let tableConfigs: [RestaurantTableConfig]
+    let effectiveTableAssignmentsByReservationID: [Int: String]
     let allKnownReservations: [ReservationRecord]
     let guestIntelligenceSummariesByReservationID: [Int: GuestIntelligenceSummaryDTO]
     let guestProfilePacksByReservationID: [Int: GuestIntelligenceProfilePackDTO]
@@ -366,6 +378,9 @@ struct HostIntelligenceEngine {
       localSeatedAtByReservationID: input.localSeatedAtByReservationID,
       settings: input.settings,
       tableConfigs: effectiveTableConfigs,
+      effectiveTableAssignmentsByReservationID: ReservationTableTruth.assignmentsByReservationID(
+        input.effectiveTableAssignments
+      ),
       allKnownReservations: input.allKnownReservations,
       guestIntelligenceSummariesByReservationID: input.guestIntelligenceSummariesByReservationID,
       guestProfilePacksByReservationID: input.guestProfilePacksByReservationID
@@ -620,20 +635,29 @@ struct HostIntelligenceEngine {
   // MARK: - Table Assignment
 
   private func findReservationsWithoutTables(
-    reservations: [ReservationRecord]
+    reservations: [ReservationRecord],
+    assignmentsByReservationID: [Int: String]
   ) -> [ReservationRecord] {
-    reservations.filter { $0.isOpenWork && !$0.hasTableAssignment }
+    reservations.filter {
+      $0.isOpenWork
+        && !ReservationTableTruth.hasEffectiveTableAssignment(
+          for: $0,
+          assignmentsByReservationID: assignmentsByReservationID
+        )
+    }
   }
 
   private func findOperationalNoTableSoon(
     reservations: [ReservationRecord],
     selectedDate: Date,
-    now: Date
+    now: Date,
+    assignmentsByReservationID: [Int: String]
   ) -> [ReservationRecord] {
     HostOperationalNoTableSoonSupport.qualifyingReservations(
       in: reservations,
       selectedDate: selectedDate,
-      now: now
+      now: now,
+      assignmentsByReservationID: assignmentsByReservationID
     )
   }
 
@@ -1024,7 +1048,11 @@ struct HostIntelligenceEngine {
         $0.partySize >= context.settings.largePartyThreshold
       }.count
       let noTableCount = reservations.filter {
-        $0.isOpenWork && !$0.hasTableAssignment
+        $0.isOpenWork
+          && !ReservationTableTruth.hasEffectiveTableAssignment(
+            for: $0,
+            assignmentsByReservationID: context.effectiveTableAssignmentsByReservationID
+          )
       }.count
       let projected = calculateProjectedSeatedGuestsAtSlot(
         slot: slot,
@@ -1402,7 +1430,11 @@ struct HostIntelligenceEngine {
 
     for reservation in reservations where reservation.isExpectedGuest {
       guard reservation.partySize >= context.settings.largePartyThreshold else { continue }
-      if reservation.isOpenWork && !reservation.hasTableAssignment {
+      if reservation.isOpenWork,
+         !ReservationTableTruth.hasEffectiveTableAssignment(
+          for: reservation,
+          assignmentsByReservationID: context.effectiveTableAssignmentsByReservationID
+         ) {
         continue
       }
       let options = HostTableIntelligenceSupport.bestTableFitOptions(
@@ -1670,15 +1702,144 @@ struct HostIntelligenceEngine {
     return .calm
   }
 
+  private func buildServiceGroundingSummary(
+    reservations: [ReservationRecord],
+    context: ServiceDayContext,
+    rankedFacts: [HostBriefingFact]
+  ) -> HostServiceGroundingSummary {
+    let active = ReservationRecord.sortedChronologically(
+      reservations.filter { !$0.isHidden && $0.isExpectedGuest }
+    )
+    let expectedGuests = active.reduce(0) { $0 + $1.partySize }
+    let noTableCount = active.filter {
+      $0.isOpenWork
+        && !ReservationTableTruth.hasEffectiveTableAssignment(
+          for: $0,
+          assignmentsByReservationID: context.effectiveTableAssignmentsByReservationID
+        )
+    }.count
+    let hasSeriousFacts = rankedFacts.contains { fact in
+      if fact.severity == .critical { return true }
+      if fact.category == .overdue { return true }
+      if fact.severity == .warning,
+         fact.category != .table,
+         fact.category != .arrivalWave {
+        return true
+      }
+      return false
+    }
+
+    if active.isEmpty {
+      return HostServiceGroundingSummary(
+        activeReservationCount: 0,
+        expectedGuestCount: 0,
+        effectiveNoTableCount: 0,
+        allRelevantReservationsHaveTables: true,
+        isQuietService: true,
+        deterministicSummary: "No reservations for today yet. Nothing to check.",
+        activeReservationIDs: []
+      )
+    }
+
+    if active.count == 1, let reservation = active.first, expectedGuests <= 6, !hasSeriousFacts {
+      let summary = quietSingleReservationSummary(
+        reservation,
+        assignmentsByReservationID: context.effectiveTableAssignmentsByReservationID
+      )
+      return HostServiceGroundingSummary(
+        activeReservationCount: active.count,
+        expectedGuestCount: expectedGuests,
+        effectiveNoTableCount: noTableCount,
+        allRelevantReservationsHaveTables: noTableCount == 0,
+        isQuietService: true,
+        deterministicSummary: summary,
+        activeReservationIDs: active.map(\.remoteID)
+      )
+    }
+
+    let busySummary = busyGroundingSummary(
+      reservations: active,
+      expectedGuests: expectedGuests,
+      noTableCount: noTableCount
+    )
+    let isQuiet = active.count <= 1 && expectedGuests <= 6 && !hasSeriousFacts
+    return HostServiceGroundingSummary(
+      activeReservationCount: active.count,
+      expectedGuestCount: expectedGuests,
+      effectiveNoTableCount: noTableCount,
+      allRelevantReservationsHaveTables: noTableCount == 0,
+      isQuietService: isQuiet,
+      deterministicSummary: busySummary,
+      activeReservationIDs: active.map(\.remoteID)
+    )
+  }
+
+  private func quietSingleReservationSummary(
+    _ reservation: ReservationRecord,
+    assignmentsByReservationID: [Int: String]
+  ) -> String {
+    if reservation.statusValue == .new || reservation.statusValue == .needsReview {
+      return "1 reservation needs review before service."
+    }
+
+    let party = reservation.partySize == 1 ? "1 guest" : "\(reservation.partySize) guests"
+    let lead: String
+    if reservation.statusValue == .seated {
+      lead = "Quiet service. \(reservation.guestName) is seated, \(party)."
+    } else {
+      lead = "Quiet service. \(reservation.guestName) is confirmed for \(reservation.displayTime), \(party)"
+    }
+
+    if reservation.hasGuestNotes || reservation.hasStaffNotes {
+      return "\(lead). Check the guest note before arrival."
+    }
+
+    if let table = ReservationTableTruth.effectiveTableLabel(
+      for: reservation,
+      assignmentsByReservationID: assignmentsByReservationID
+    ) {
+      return "\(lead), table \(table) assigned. Nothing needs attention right now."
+    }
+
+    return "\(lead). No table picked yet."
+  }
+
+  private func busyGroundingSummary(
+    reservations: [ReservationRecord],
+    expectedGuests: Int,
+    noTableCount: Int
+  ) -> String {
+    let reservationCount = reservations.count
+    let reservationLabel = reservationCount == 1 ? "1 reservation" : "\(reservationCount) reservations"
+    let guestLabel = expectedGuests == 1 ? "1 guest" : "\(expectedGuests) guests"
+    let time = reservations.first?.displayTime ?? "service"
+    var summary = "Busy around \(time): \(reservationLabel), \(guestLabel)."
+    if noTableCount > 0 {
+      let noTableLabel = noTableCount == 1 ? "1 still needs a table." : "\(noTableCount) still need tables."
+      summary += " \(noTableLabel)"
+    }
+    return summary
+  }
+
   private func buildLLMPacket(
     facts: [HostBriefingFact],
     serviceState: HostServiceState,
     pressureScore: Double,
     generatedAt: Date,
-    settings: HostIntelligenceSettings
+    settings: HostIntelligenceSettings,
+    serviceGrounding: HostServiceGroundingSummary
   ) -> HostLLMPacket {
     guard settings.includeLLMPacket else {
-      return .empty
+      let empty = HostLLMPacket.empty
+      return HostLLMPacket(
+        generatedAtDescription: empty.generatedAtDescription,
+        serviceState: empty.serviceState,
+        pressureScore: empty.pressureScore,
+        topFacts: empty.topFacts,
+        forbiddenBehaviors: empty.forbiddenBehaviors,
+        writingRules: empty.writingRules,
+        serviceGrounding: serviceGrounding
+      )
     }
 
     let topFacts = briefingService.rankHostFacts(facts).prefix(5).compactMap {
@@ -1692,7 +1853,8 @@ struct HostIntelligenceEngine {
       pressureScore: pressureScore,
       topFacts: topFacts,
       forbiddenBehaviors: empty.forbiddenBehaviors,
-      writingRules: empty.writingRules
+      writingRules: empty.writingRules,
+      serviceGrounding: serviceGrounding
     )
   }
 

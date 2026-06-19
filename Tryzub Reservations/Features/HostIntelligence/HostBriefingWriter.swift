@@ -640,7 +640,11 @@ enum HostBriefingWriterValidator {
     "Briefing says no action is needed despite packet facts.",
     "Briefing suggests unsupported guest contact.",
     "Briefing gives unsafe special-occasion instruction.",
-    "Briefing exposes internal system or model language."
+    "Briefing exposes internal system or model language.",
+    "Briefing uses pressure language for quiet service.",
+    "Briefing claims a table is missing when effective table is assigned.",
+    "Briefing claims table assigned when effective table is missing.",
+    "Briefing uses the wrong reservation count."
   ]
 
   private static let metaPhrases = [
@@ -658,6 +662,28 @@ enum HostBriefingWriterValidator {
     "approved facts",
     "writing rules",
     "forbidden behavior"
+  ]
+
+  private static let noTableClaimPhrases = [
+    "needs table",
+    "needs a table",
+    "need tables",
+    "no table",
+    "without table",
+    "without tables",
+    "no table picked",
+    "still need tables",
+    "still needs a table"
+  ]
+
+  private static let quietBlockedPressurePhrases = [
+    "pressure builds",
+    "arrival pressure",
+    "peak window",
+    "wave",
+    "capacity pressure",
+    "critical slot",
+    "optimize"
   ]
 
   private static let unsafeSpecialOccasionPhrases = [
@@ -757,6 +783,14 @@ enum HostBriefingWriterValidator {
       )
     }
 
+    if let reason = groundingFailureReason(for: trimmed, grounding: packet.serviceGrounding) {
+      return HostBriefingValidationResult(isValid: false, reason: reason)
+    }
+
+    if trimmed == packet.serviceGrounding?.deterministicSummary {
+      return HostBriefingValidationResult(isValid: true, reason: nil)
+    }
+
     let sentenceCount = trimmed
       .split(whereSeparator: { ".!?".contains($0) })
       .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -820,6 +854,41 @@ enum HostBriefingWriterValidator {
     }
 
     return HostBriefingValidationResult(isValid: true, reason: nil)
+  }
+
+  static func groundingFailureReason(
+    for text: String,
+    grounding: HostServiceGroundingSummary?
+  ) -> String? {
+    guard let grounding else { return nil }
+    let lower = text.lowercased()
+
+    if grounding.isQuietService,
+       quietBlockedPressurePhrases.contains(where: { lower.contains($0) }) {
+      return "Briefing uses pressure language for quiet service."
+    }
+
+    if grounding.allRelevantReservationsHaveTables,
+       noTableClaimPhrases.contains(where: { lower.contains($0) }) {
+      return "Briefing claims a table is missing when effective table is assigned."
+    }
+
+    if grounding.effectiveNoTableCount > 0,
+       lower.contains("table assigned") {
+      return "Briefing claims table assigned when effective table is missing."
+    }
+
+    if grounding.activeReservationCount == 1,
+       lower.range(of: #"(?<!\d)[2-9]\s+reservations\b"#, options: .regularExpression) != nil {
+      return "Briefing uses the wrong reservation count."
+    }
+
+    if grounding.activeReservationCount != 1,
+       lower.contains("1 reservation") {
+      return "Briefing uses the wrong reservation count."
+    }
+
+    return nil
   }
 
   static func isSemanticFailureReason(_ reason: String?) -> Bool {

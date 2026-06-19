@@ -85,6 +85,7 @@ private struct AppRootView: View {
         }
         .animation(.easeInOut(duration: 0.45), value: productIntroStore.hasCompletedIntro)
         .task {
+            credentialStore.reload(for: roleStore.selectedRole)
             syncReservationSessionIfPossible()
         }
         .onChange(of: credentialStore.credentials) { _, credentials in
@@ -95,7 +96,8 @@ private struct AppRootView: View {
                 syncReservationSessionIfPossible()
             }
         }
-        .onChange(of: roleStore.selectedRole) { _, _ in
+        .onChange(of: roleStore.selectedRole) { _, role in
+            credentialStore.reload(for: role)
             syncReservationSessionIfPossible()
         }
     }
@@ -112,7 +114,8 @@ private struct AppRootView: View {
             apiClient: ReservationsAPIClient(
                 baseURL: tryzubAPIBaseURL,
                 username: credentials.username,
-                applicationPassword: credentials.applicationPassword
+                applicationPassword: credentials.applicationPassword,
+                role: role
             ),
             role: role,
             username: credentials.username
@@ -120,9 +123,10 @@ private struct AppRootView: View {
     }
 
     private func logout() {
+        let role = roleStore.selectedRole
         reservationSession.reset()
         roleStore.clear()
-        credentialStore.reset()
+        credentialStore.reset(for: role)
     }
 }
 
@@ -270,20 +274,26 @@ private struct AppLoginView: View {
             let client = ReservationsAPIClient(
                 baseURL: tryzubAPIBaseURL,
                 username: trimmedUsername,
-                applicationPassword: trimmedPassword
+                applicationPassword: trimmedPassword,
+                role: role
             )
             _ = try await client.fetchRestaurantSetup(reason: .login)
 
             let saved = credentialStore.save(
                 username: trimmedUsername,
-                applicationPassword: trimmedPassword
+                applicationPassword: trimmedPassword,
+                for: role
             )
             if !saved {
                 errorMessage = credentialStore.errorMessage ?? "Could not sign in. Check the username and application password."
+                AppAuthTrace.validationResult(role: role, status: nil, result: "failure")
                 return
             }
             roleStore.select(role)
+            AppAuthTrace.validationResult(role: role, status: 200, result: "success")
         } catch {
+            let status = (error as? ReservationAPIError)?.httpStatusCode
+            AppAuthTrace.validationResult(role: role, status: status, result: "failure")
             errorMessage = loginMessage(for: error)
         }
     }

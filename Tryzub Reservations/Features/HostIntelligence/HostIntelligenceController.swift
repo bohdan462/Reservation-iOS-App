@@ -188,6 +188,7 @@ final class HostIntelligenceController: ObservableObject {
       tableConfigs: input.tableConfigs,
       allKnownReservations: input.allKnownReservations,
       backendFloorTables: input.backendFloorTables,
+      effectiveTableAssignments: input.effectiveTableAssignments,
       floorTableSource: input.floorTableSource,
       guestIntelligenceSummariesByReservationID: input.guestIntelligenceSummariesByReservationID,
       guestProfilePacksByReservationID: input.guestProfilePacksByReservationID

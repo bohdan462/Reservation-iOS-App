@@ -50,16 +50,20 @@ struct ArrivalPressureReservationItem: Identifiable, Equatable {
 
   var id: Int { remoteID }
 
-  init(reservation: ReservationRecord, isReturningGuest: Bool = false) {
+  init(
+    reservation: ReservationRecord,
+    effectiveTableLabel: String? = nil,
+    isReturningGuest: Bool = false
+  ) {
     remoteID = reservation.remoteID
     guestName = reservation.guestName
     displayTime = reservation.displayTime
     partySize = reservation.partySize
     status = reservation.statusValue
-    tableName = reservation.assignedTableName
+    tableName = effectiveTableLabel ?? reservation.assignedTableName
     hasGuestNotes = reservation.hasGuestNotes
     needsReview = reservation.statusValue == .needsReview || reservation.statusValue == .new
-    hasNoTable = !reservation.hasTableAssignment
+    hasNoTable = tableName == nil
     isSeated = reservation.statusValue == .seated
     self.isReturningGuest = isReturningGuest
   }

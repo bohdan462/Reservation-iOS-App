@@ -46,6 +46,7 @@ struct ManagerNarrativePacket: Codable, Equatable {
     var presentationFingerprint: String?
     var modelEligibleReason: String?
     var presentationThemes: [String] = []
+    var serviceGrounding: HostServiceGroundingSummary?
 }
 
 struct ManagerNarrative: Equatable {
@@ -179,6 +180,7 @@ enum ManagerNarrativePacketBuilder {
     packet.presentationFingerprint = activePresentation.presentationFingerprint
     packet.modelEligibleReason = activePresentation.modelEligibleReason
     packet.presentationThemes = activePresentation.themes
+    packet.serviceGrounding = snapshot.serviceGrounding
     return packet
   }
 
@@ -221,56 +223,95 @@ enum ManagerNarrativeTemplateBuilder {
     from snapshot: HostDecisionSnapshot,
     presentation: HostAttentionPresentation? = nil
   ) -> ManagerNarrative {
-    if let presentation, presentation.hasVisibleContent {
-      return ManagerNarrative(
-        headline: punctuate(presentation.headline),
-        whyItMatters: presentation.summary.map(punctuate),
+	    if let presentation, presentation.hasVisibleContent {
+	      return ManagerNarrative(
+	        headline: punctuate(presentation.headline),
+	        whyItMatters: presentation.summary.map(punctuate),
         checkNext: presentation.primaryItems.first?.actionTitle,
+        source: .template,
+	        failedReason: nil
+	      )
+	    }
+
+    if snapshot.serviceGrounding.isQuietService {
+      return ManagerNarrative(
+        headline: punctuate(snapshot.serviceGrounding.deterministicSummary),
+        whyItMatters: nil,
+        checkNext: nil,
         source: .template,
         failedReason: nil
       )
     }
-
-    let ranked = HostBriefingService().rankHostFacts(snapshot.briefingFacts)
+	
+	    let ranked = HostBriefingService().rankHostFacts(snapshot.briefingFacts)
     let headline = headlineLine(from: ranked, snapshot: snapshot)
     let whyItMatters = whyLine(from: ranked, snapshot: snapshot, headline: headline)
     let checkNext = checkLine(from: snapshot, headline: headline)
 
-    return ManagerNarrative(
-      headline: headline,
-      whyItMatters: whyItMatters,
-      checkNext: checkNext,
-      source: .template,
-      failedReason: nil
-    )
-  }
+    let narrative = ManagerNarrative(
+	      headline: headline,
+	      whyItMatters: whyItMatters,
+	      checkNext: checkNext,
+	      source: .template,
+	      failedReason: nil
+	    )
+    if let reason = HostBriefingWriterValidator.groundingFailureReason(
+      for: narrative.compactBriefingText,
+      grounding: snapshot.serviceGrounding
+    ), !reason.isEmpty {
+      return ManagerNarrative(
+        headline: punctuate(snapshot.serviceGrounding.deterministicSummary),
+        whyItMatters: nil,
+        checkNext: nil,
+        source: .template,
+        failedReason: reason
+      )
+    }
+    return narrative
+	  }
 
-  private static func pressureHeadline(from facts: ArrivalPressureManagerFacts) -> String? {
-    guard facts.peakGuestCount > 0 || facts.peakReservationCount > 0 else { return nil }
-    var parts: [String] = []
-    if let peak = facts.peakWindow {
-      parts.append("Pressure builds toward \(peak)")
-    } else {
-      parts.append("Arrival pressure is \(facts.pressureLevel)")
+	  private static func pressureHeadline(from facts: ArrivalPressureManagerFacts) -> String? {
+	    guard facts.peakGuestCount > 0 || facts.peakReservationCount > 0 else { return nil }
+    guard facts.peakReservationCount >= 2
+        || facts.peakGuestCount > 6
+        || facts.noTableInPeakCount >= 2 else {
+      return nil
     }
-    if facts.peakReservationCount > 0 {
-      let res = facts.peakReservationCount == 1 ? "1 reservation" : "\(facts.peakReservationCount) reservations"
-      parts.append(res)
+	    var parts: [String] = []
+	    if let peak = facts.peakWindow {
+	      parts.append("Busy around \(startTimeLabel(from: peak))")
+	    } else {
+	      parts.append("Service is \(facts.pressureLevel)")
+	    }
+	    if facts.peakReservationCount > 0 {
+	      let res = facts.peakReservationCount == 1 ? "1 reservation" : "\(facts.peakReservationCount) reservations"
+	      parts.append(res)
+	    }
+    if facts.peakGuestCount > 0 {
+      let guests = facts.peakGuestCount == 1 ? "1 guest" : "\(facts.peakGuestCount) guests"
+      parts.append(guests)
     }
-    if facts.noTableInPeakCount > 0 {
-      parts.append("\(facts.noTableInPeakCount) still need tables in the peak window")
-    }
-    return punctuate(parts.joined(separator: ", "))
-  }
+	    if facts.noTableInPeakCount > 0 {
+	      let tableLine = facts.noTableInPeakCount == 1
+          ? "1 still needs a table"
+          : "\(facts.noTableInPeakCount) still need tables"
+	      parts.append(tableLine)
+	    }
+	    return punctuate(parts.joined(separator: ", "))
+	  }
 
   private static func headlineLine(
     from rankedFacts: [HostBriefingFact],
     snapshot: HostDecisionSnapshot
-  ) -> String {
-    if let pressure = snapshot.arrivalPressureFacts,
-       let pressureLine = pressureHeadline(from: pressure),
-       snapshot.arrivalPressureFacts?.pressureLevel != ArrivalPressureLevel.calm.displayName
-           || rankedFacts.isEmpty {
+	  ) -> String {
+    if snapshot.serviceGrounding.isQuietService {
+      return punctuate(snapshot.serviceGrounding.deterministicSummary)
+    }
+
+	    if let pressure = snapshot.arrivalPressureFacts,
+	       let pressureLine = pressureHeadline(from: pressure),
+	       snapshot.arrivalPressureFacts?.pressureLevel != ArrivalPressureLevel.calm.displayName
+	           || rankedFacts.isEmpty {
       if rankedFacts.isEmpty || rankedFacts.first?.severity == .info {
         return pressureLine
       }
@@ -288,7 +329,14 @@ enum ManagerNarrativeTemplateBuilder {
        !HostStaffLanguage.isGenericCheckLine(firstSentence) {
       return punctuate(firstSentence)
     }
-    return briefing
+	    return briefing
+	  }
+
+  private static func startTimeLabel(from window: String) -> String {
+    window
+      .components(separatedBy: "–")
+      .first?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? window
   }
 
   private static func whyLine(

@@ -22,9 +22,13 @@ enum ArrivalPressureEngine {
     now: Date = Date(),
     largePartyThreshold: Int = 7,
     returningGuestReservationIDs: Set<Int> = [],
+    effectiveTableAssignments: [EffectiveReservationTableAssignment] = [],
     calendar: Calendar = .current
   ) -> ArrivalPressureSummary {
     let active = reservations.filter { $0.isExpectedGuest && !$0.isHidden }
+    let effectiveTablesByReservationID = ReservationTableTruth.assignmentsByReservationID(
+      effectiveTableAssignments
+    )
     let isToday = selectedDate.reservationDateString() == Date.reservationDateString()
 
     guard let range = resolveBucketRange(
@@ -64,7 +68,12 @@ enum ArrivalPressureEngine {
         reservationCount: items.count,
         guestCount: items.reduce(0) { $0 + $1.partySize },
         largePartyCount: items.filter { $0.partySize >= largePartyThreshold }.count,
-        noTableCount: items.filter { !$0.hasTableAssignment }.count,
+        noTableCount: items.filter {
+          !ReservationTableTruth.hasEffectiveTableAssignment(
+            for: $0,
+            assignmentsByReservationID: effectiveTablesByReservationID
+          )
+        }.count,
         needsReviewCount: items.filter {
           $0.statusValue == .needsReview || $0.statusValue == .new
         }.count
@@ -99,8 +108,13 @@ enum ArrivalPressureEngine {
       let items = bucketReservations[bucketStart] ?? []
       let guestCount = items.reduce(0) { $0 + $1.partySize }
       let reservationItems = items.map {
-        ArrivalPressureReservationItem(
+        let tableLabel = ReservationTableTruth.effectiveTableLabel(
+          for: $0,
+          assignmentsByReservationID: effectiveTablesByReservationID
+        )
+        return ArrivalPressureReservationItem(
           reservation: $0,
+          effectiveTableLabel: tableLabel,
           isReturningGuest: returningGuestReservationIDs.contains($0.remoteID)
         )
       }
@@ -114,7 +128,12 @@ enum ArrivalPressureEngine {
         reservationCount: items.count,
         guestCount: guestCount,
         largePartyCount: items.filter { $0.partySize >= largePartyThreshold }.count,
-        noTableCount: items.filter { !$0.hasTableAssignment }.count,
+        noTableCount: items.filter {
+          !ReservationTableTruth.hasEffectiveTableAssignment(
+            for: $0,
+            assignmentsByReservationID: effectiveTablesByReservationID
+          )
+        }.count,
         needsReviewCount: items.filter {
           $0.statusValue == .needsReview || $0.statusValue == .new
         }.count,
@@ -206,7 +225,7 @@ enum ArrivalPressureEngine {
     guard let first = upcoming.first else { return nil }
 
     // Group adjacent busy buckets (within 30 min) into waves
-    var waveStart = first.startTime
+    let waveStart = first.startTime
     var waveBuckets: [ArrivalPressureBucket] = [first]
 
     for bucket in upcoming.dropFirst() {
@@ -218,16 +237,16 @@ enum ArrivalPressureEngine {
       }
     }
 
-    if waveBuckets.count >= 2 || (waveBuckets.first?.guestCount ?? 0) >= 4 {
+    if waveBuckets.count >= 2 {
       return waveStart
     }
 
-    // Single busy bucket — still a wave if pressure is meaningful
-    if let solo = waveBuckets.first, solo.guestCount >= 3 || solo.reservationCount >= 2 {
+    // Single busy bucket — still a wave only for genuinely high pressure.
+    if let solo = waveBuckets.first, solo.guestCount > 6 || solo.reservationCount >= 2 {
       return solo.startTime
     }
 
-    return first.startTime
+    return nil
   }
 
   private static func classifyPressureLevel(
@@ -244,7 +263,7 @@ enum ArrivalPressureEngine {
     if peakGuests >= 8 || peakReservations >= 3 || peak.noTableCount >= 2 {
       return .busy
     }
-    if peakGuests >= 4 || peakReservations >= 2 {
+    if peakGuests > 6 || peakReservations >= 2 {
       return .building
     }
     return .calm
@@ -289,7 +308,14 @@ enum ArrivalPressureEngine {
       let guestLabel = peak.guestCount == 1 ? "1 guest" : "\(peak.guestCount) guests"
       parts.append("Peak around \(peak.displayTime) with \(resLabel) / \(guestLabel)")
       if peak.noTableCount > 0 {
-        parts.append("\(peak.noTableCount) still need tables in the peak window")
+        if peak.reservationCount <= 1 {
+          parts.append("No table picked yet")
+        } else {
+          let tableLine = peak.noTableCount == 1
+            ? "1 still needs a table"
+            : "\(peak.noTableCount) still need tables"
+          parts.append(tableLine)
+        }
       }
       if let next = nextWave, next != peak.displayTime {
         parts.append("next wave starts \(next)")
