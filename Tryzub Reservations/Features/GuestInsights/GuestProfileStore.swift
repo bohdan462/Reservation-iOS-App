@@ -105,6 +105,14 @@ final class GuestProfileStore: ObservableObject {
         cachedEntry(forGuestKey: guestKey)?.profile
     }
 
+    func cachedFullProfile(byReservationID reservationID: Int) -> GuestFullProfile? {
+        cachedProfile(byReservationID: reservationID)?.fullProfile
+    }
+
+    func cachedFullProfile(guestKey: String) -> GuestFullProfile? {
+        cachedProfile(guestKey: guestKey)?.fullProfile
+    }
+
     func loadProfiles(
         query: String?,
         filter: GuestProfileFilter?,

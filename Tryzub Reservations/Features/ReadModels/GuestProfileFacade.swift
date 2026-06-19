@@ -79,6 +79,15 @@ final class GuestProfileFacade: ObservableObject {
                     extra: "reservation=\(reservationID) generation=\(currentGeneration) stale=\(aggregate.stale == true)"
                 )
                 requestRebuild(reason: "aggregate_profile_loaded", generation: currentGeneration)
+
+                // Aggregate counts do not include dated visit/note rows. Load the existing
+                // read-only reservation profile pack too so Guest history can show evidence.
+                await store.loadProfile(
+                    reservationID: reservationID,
+                    dateKey: dateKey
+                )
+                guard currentGeneration == generation else { return }
+                requestRebuild(reason: "visit_preview_loaded", generation: currentGeneration)
                 return
             }
 

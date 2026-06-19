@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum ReservationStatus: String, Codable, CaseIterable, Identifiable {
+enum ReservationStatus: String, Codable, CaseIterable, Identifiable, Hashable {
     case new
     case needsReview = "needs_review"
     case confirmed

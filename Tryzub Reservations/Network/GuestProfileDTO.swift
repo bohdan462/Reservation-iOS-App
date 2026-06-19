@@ -36,12 +36,21 @@ struct GuestProfileDTO: Decodable, Identifiable, Equatable {
     let lastBookedAt: String?
     let totalReservations: Int?
     let cleanVisitCount: Int?
+    let cleanPastVisitCount: Int?
+    let totalBookingCount: Int?
     let completedCount: Int?
     let confirmedCount: Int?
     let cancelledCount: Int?
     let noShowCount: Int?
     let needsReviewCount: Int?
     let upcomingCount: Int?
+    let duplicateOrCorrectionCount: Int?
+    let lastCleanVisitDate: String?
+    let lastCleanVisitId: Int?
+    let guestNotesCount: Int?
+    let staffNotesCount: Int?
+    let bookingHistory: [GuestHistoryRowDTO]?
+    let notesHistory: [GuestNoteHistoryItemDTO]?
     let usualPartySize: Int?
     let averagePartySize: Double?
     let largestPartySize: Int?
@@ -77,6 +86,13 @@ struct GuestProfileDTO: Decodable, Identifiable, Equatable {
             .filter { !$0.isEmpty }
             .joined(separator: "|")
         return joined.isEmpty ? "guest-profile-empty" : joined
+    }
+
+    var fullProfile: GuestFullProfile {
+        GuestFullProfile(
+            bookingHistory: bookingHistory ?? [],
+            notesHistory: notesHistory ?? []
+        )
     }
 }
 

@@ -105,6 +105,10 @@ final class GuestIntelligenceStore: ObservableObject {
         profilePackByReservationID[reservationID]
     }
 
+    func fullProfile(for reservationID: Int) -> GuestFullProfile? {
+        profilePack(for: reservationID)?.fullProfile
+    }
+
     func matchedVisitPreview(for reservationID: Int) -> [GuestIntelligenceMatchedVisitPreviewDTO] {
         profilePack(for: reservationID)?.matchedVisitPreview ?? []
     }

@@ -31,7 +31,7 @@ enum GuestMatchConfidence: String, CaseIterable, Identifiable {
 
 // MARK: - Notes / Booking Source
 
-enum GuestInsightNoteType: String, Identifiable {
+enum GuestInsightNoteType: String, Identifiable, Hashable {
     case guest
     case staff
 
@@ -247,7 +247,7 @@ struct GuestBookingHistoryItem: Identifiable {
     }
 }
 
-struct GuestNoteHistoryItem: Identifiable {
+struct GuestNoteHistoryItem: Identifiable, Hashable {
     let reservationID: Int
     let date: String
     let time: String

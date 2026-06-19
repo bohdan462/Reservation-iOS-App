@@ -52,6 +52,7 @@ enum GuestProfileLoadingState: Equatable {
 
 struct GuestProfileViewState: Equatable {
     let header: GuestProfileHeaderState
+    let serviceProfile: GuestServiceProfilePresentation
     let aggregateProfile: GuestInsightsProfilePresentation.AggregateProfileState?
     let profileSummary: GuestProfileSummaryState?
     let preferenceLines: [String]
@@ -174,6 +175,15 @@ enum GuestProfileViewStateBuilder {
             return .ready
         }()
 
+        let serviceProfile = GuestServiceProfilePresentationBuilder.build(
+            selected: reservation,
+            historyPool: historyPool,
+            aggregateProfile: aggregateProfile,
+            profilePack: profilePack,
+            localReport: localReport,
+            mergedContext: mergedContext
+        )
+
         let freshness = ScreenFreshnessState.from(
             loadedAt: profilePack != nil ? now : nil,
             ttl: DataFreshnessPolicy.standard.guestIntelligenceTTL,
@@ -183,6 +193,7 @@ enum GuestProfileViewStateBuilder {
 
         let built = GuestProfileViewState(
             header: header,
+            serviceProfile: serviceProfile,
             aggregateProfile: aggregateState,
             profileSummary: hasProfileSummaryContent(profileSummary) ? profileSummary : nil,
             preferenceLines: aggregateState?.preferenceLines ?? GuestInsightsProfilePresentation.preferenceLines(from: profilePack),

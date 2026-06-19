@@ -221,6 +221,29 @@ enum GuestOperationalTruth {
       .max { serviceSortKey($0) < serviceSortKey($1) }
   }
 
+  static func cleanPastVisits(from rows: [GuestHistoryRow]) -> [GuestHistoryRow] {
+    rows
+      .filter { $0.outcome == .cleanVisit }
+      .sorted { ($0.serviceDateTime ?? .distantPast) > ($1.serviceDateTime ?? .distantPast) }
+  }
+
+  static func lastCleanVisit(from rows: [GuestHistoryRow]) -> GuestHistoryRow? {
+    cleanPastVisits(from: rows).first
+  }
+
+  static func summaryCounts(from rows: [GuestHistoryRow]) -> GuestProfileSummaryCounts {
+    GuestProfileSummaryCounts(
+      cleanPastVisitCount: rows.filter { $0.outcome == .cleanVisit }.count,
+      totalBookingCount: rows.count,
+      upcomingCount: rows.filter { $0.outcome == .upcoming }.count,
+      cancelledCount: rows.filter { $0.outcome == .cancelled }.count,
+      noShowCount: rows.filter { $0.outcome == .noShow }.count,
+      duplicateOrCorrectionCount: rows.filter { $0.outcome == .duplicateOrCorrection }.count,
+      hiddenCount: rows.filter { $0.outcome == .hidden }.count,
+      supersededCount: rows.filter { $0.outcome == .superseded }.count
+    )
+  }
+
   static func regularity(forPastVisitCount count: Int) -> Regularity {
     if count >= 3 { return .regular }
     if count >= 1 { return .seenBefore }

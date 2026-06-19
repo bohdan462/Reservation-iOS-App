@@ -123,6 +123,8 @@ struct GuestIntelligenceHistoryDTO: Decodable, Equatable {
     let lastSeenDate: String?
     let safeCopy: String?
     let matchedVisitPreview: [GuestIntelligenceMatchedVisitPreviewDTO]
+    let bookingHistory: [GuestHistoryRowDTO]
+    let notesHistory: [GuestNoteHistoryItemDTO]
 
     enum CodingKeys: String, CodingKey {
         case seenBefore
@@ -130,6 +132,8 @@ struct GuestIntelligenceHistoryDTO: Decodable, Equatable {
         case lastSeenDate
         case safeCopy
         case matchedVisitPreview
+        case bookingHistory
+        case notesHistory
     }
 
     init(from decoder: Decoder) throws {
@@ -142,6 +146,8 @@ struct GuestIntelligenceHistoryDTO: Decodable, Equatable {
             [GuestIntelligenceMatchedVisitPreviewDTO].self,
             forKey: .matchedVisitPreview
         ) ?? []
+        bookingHistory = try container.decodeIfPresent([GuestHistoryRowDTO].self, forKey: .bookingHistory) ?? []
+        notesHistory = try container.decodeIfPresent([GuestNoteHistoryItemDTO].self, forKey: .notesHistory) ?? []
     }
 }
 
@@ -341,6 +347,9 @@ struct GuestIntelligenceProfilePackDTO: Equatable {
     let visitAnalytics: GuestIntelligenceVisitAnalyticsDTO?
     let hostProfilePacket: GuestIntelligenceHostProfilePacketDTO?
     let item: GuestIntelligenceSummaryDTO?
+    let bookingHistory: [GuestHistoryRowDTO]
+    let notesHistory: [GuestNoteHistoryItemDTO]
+    let historyCounts: GuestHistoryCountsDTO?
 
     var matchedVisitPreview: [GuestIntelligenceMatchedVisitPreviewDTO] {
         history?.matchedVisitPreview ?? []
@@ -361,6 +370,9 @@ extension GuestIntelligenceProfilePackDTO: Decodable {
         case visitAnalytics
         case hostProfilePacket
         case item
+        case bookingHistory
+        case notesHistory
+        case historyCounts
     }
 
     init(from decoder: Decoder) throws {
@@ -389,6 +401,9 @@ extension GuestIntelligenceProfilePackDTO: Decodable {
             forKey: .hostProfilePacket
         )
         item = try container.decodeIfPresent(GuestIntelligenceSummaryDTO.self, forKey: .item)
+        bookingHistory = try container.decodeIfPresent([GuestHistoryRowDTO].self, forKey: .bookingHistory) ?? []
+        notesHistory = try container.decodeIfPresent([GuestNoteHistoryItemDTO].self, forKey: .notesHistory) ?? []
+        historyCounts = try container.decodeIfPresent(GuestHistoryCountsDTO.self, forKey: .historyCounts)
     }
 }
 
@@ -409,7 +424,10 @@ extension GuestIntelligenceProfilePackDTO {
             noteIntelligence: noteIntelligence,
             visitAnalytics: visitAnalytics,
             hostProfilePacket: hostProfilePacket,
-            item: item
+            item: item,
+            bookingHistory: bookingHistory,
+            notesHistory: notesHistory,
+            historyCounts: historyCounts
         )
     }
 
@@ -426,7 +444,10 @@ extension GuestIntelligenceProfilePackDTO {
             noteIntelligence: nil,
             visitAnalytics: nil,
             hostProfilePacket: nil,
-            item: summary
+            item: summary,
+            bookingHistory: [],
+            notesHistory: [],
+            historyCounts: nil
         )
     }
 
@@ -438,6 +459,13 @@ extension GuestIntelligenceProfilePackDTO {
             return summary
         }
         return nil
+    }
+
+    var fullProfile: GuestFullProfile {
+        GuestFullProfile(
+            bookingHistory: bookingHistory.isEmpty ? (history?.bookingHistory ?? []) : bookingHistory,
+            notesHistory: notesHistory.isEmpty ? (history?.notesHistory ?? []) : notesHistory
+        )
     }
 }
 
