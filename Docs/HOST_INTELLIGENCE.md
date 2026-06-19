@@ -61,9 +61,23 @@ Mode: `"server"` when summaries/packs present; `"local_bounded"` otherwise.
 - Production card may hide “local model” caption — see OPEN_WORK P2-2
 - Attention card can preserve previous snapshot during re-eval (brief stale window)
 
+## Host tab integration
+
+Host Intelligence **displays on** the Host board; it does **not** own selected-date state.
+
+| Concern | Owner |
+|---------|-------|
+| `selectedDate` | `HomeDashboardView` — see [HOST_TAB_STATE_FLOW.md](./HOST_TAB_STATE_FLOW.md) |
+| Board lists / pressure | `HostBoardSnapshot` — must match `selectedDateKey` (HT-1) |
+| Intelligence input | `HostBoardView.makeHostEngineInput` + `refreshBriefing` |
+
+**Docs:** [HOST_TAB_ARCHITECTURE.md](./HOST_TAB_ARCHITECTURE.md), [HOST_TAB_STATE_FLOW.md](./HOST_TAB_STATE_FLOW.md), [HOST_TAB_UI_DESIGN_SYSTEM.md](./HOST_TAB_UI_DESIGN_SYSTEM.md) (AI strip contract).
+
 ## Related docs
 
 - [LOCAL_MODEL_INTELLIGENCE.md](./LOCAL_MODEL_INTELLIGENCE.md) — runtime boundaries
+- [HOST_TAB_ARCHITECTURE.md](./HOST_TAB_ARCHITECTURE.md) — Host board file map
+- [HOST_TAB_STATE_FLOW.md](./HOST_TAB_STATE_FLOW.md) — date + snapshot rules
 - [INTELLIGENCE.md](./INTELLIGENCE.md) — backend APIs
 - [AUDIT_CURRENT_STATE.md](./AUDIT_CURRENT_STATE.md) §7
 

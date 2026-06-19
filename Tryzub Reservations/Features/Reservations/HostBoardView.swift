@@ -143,6 +143,14 @@ struct HostBoardView: View {
         selectedDate.reservationDateString()
     }
 
+    private var currentDateBoardSnapshot: HostBoardSnapshot? {
+        guard let boardSnapshot,
+              boardSnapshot.selectedDate.reservationDateString() == selectedDateKey else {
+            return nil
+        }
+        return boardSnapshot
+    }
+
     private var activityFeedGuestNames: [Int: String] {
         Dictionary(
             reservations.map { ($0.remoteID, $0.guestName) },
@@ -291,7 +299,7 @@ struct HostBoardView: View {
             let safeHeight = proxy.size.height.tryzubFinitePositiveLayoutValue
             let isTablet = UIDevice.current.userInterfaceIdiom == .pad
             let isWideLayout = isTablet || safeWidth >= 1100
-            let snapshot = boardSnapshot ?? HostBoardSnapshot(
+            let snapshot = currentDateBoardSnapshot ?? HostBoardSnapshot(
                 reservations: reservations,
                 selectedDate: selectedDate,
                 now: clockTick,
@@ -414,13 +422,15 @@ struct HostBoardView: View {
             )
             let incomingCount = reservations.count
             let lastStableCount = stableCountByDate[selectedDateKey] ?? 0
+            let cachedSnapshotDateKey = boardSnapshot?.selectedDate.reservationDateString()
+            let cachedMatchesSelectedDate = cachedSnapshotDateKey == selectedDateKey
 
             // Snapshot preservation: if the incoming count is 0 but this date previously
             // had reservations, do not overwrite the stable snapshot. This guards against
             // stale transient-empty snapshots that can slip through if the parent's
             // selectedDateReservations momentarily returns [] (e.g. during view init or
             // edge-case timing before the @Query observer fires on tab return).
-            if incomingCount == 0, lastStableCount > 0 {
+            if incomingCount == 0, lastStableCount > 0, cachedMatchesSelectedDate {
                 MultiDeviceSyncTrace.hostSnapshotPreserve(
                     date: selectedDateKey,
                     incomingCount: incomingCount,
@@ -431,6 +441,12 @@ struct HostBoardView: View {
                 // Preserve: keep the existing snapshot, do not publish empty.
                 return
             }
+
+            #if DEBUG
+            if incomingCount == 0, lastStableCount > 0, let cachedSnapshotDateKey, !cachedMatchesSelectedDate {
+                print("[HOST_BOARD] skipped stale snapshot preserve old=\(cachedSnapshotDateKey) new=\(selectedDateKey)")
+            }
+            #endif
 
             // Commit the snapshot and update stable count.
             if incomingCount > 0 {
@@ -457,6 +473,13 @@ struct HostBoardView: View {
             )
         }
         .onChange(of: selectedDateKey) { _, dateKey in
+            if let cachedSnapshotDateKey = boardSnapshot?.selectedDate.reservationDateString(),
+               cachedSnapshotDateKey != dateKey {
+                #if DEBUG
+                print("[HOST_BOARD] cleared stale snapshot old=\(cachedSnapshotDateKey) new=\(dateKey)")
+                #endif
+                boardSnapshot = nil
+            }
             controller.noteHostBoardSelectedDate(dateKey)
         }
         .onAppear {
@@ -2529,6 +2552,7 @@ private struct HomeServiceHeader: View {
                 selectedDate: $selectedDate,
                 chipStyle: .hostBoardGlass,
                 pinsCalendarToTrailing: true,
+                showsCalendarButton: false,
                 stripScale: dateStripScale
             )
             .frame(height: dateStripHeight)

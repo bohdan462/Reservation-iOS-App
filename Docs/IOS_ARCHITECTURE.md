@@ -50,7 +50,7 @@ Defined in `Core/Roles/AppUserRole.swift` → `AppCapabilities`.
 
 | Tab | Root view | Key child |
 |-----|-----------|-----------|
-| Host | `HomeDashboardView` | `HostBoardView` |
+| Host | `HomeDashboardView` | `HostBoardView` — **critical stateful surface** (date SSOT, snapshot cache); see Host tab docs |
 | Floor | `FloorPlanView` | `FloorPlanStore` |
 | Bookings | `ReservationScheduleView` | schedule scopes |
 | Guests | `GuestLookupView` | `GuestLookupStore` |
@@ -104,6 +104,10 @@ All shell-scoped stores created in `ReservationsTabShell`:
 
 ## Related docs
 
+- [HOST_TAB_ARCHITECTURE.md](./HOST_TAB_ARCHITECTURE.md) — Host board file map and ownership
+- [HOST_TAB_STATE_FLOW.md](./HOST_TAB_STATE_FLOW.md) — selected date, snapshot, pressure, seated duration
+- [HOST_TAB_UI_DESIGN_SYSTEM.md](./HOST_TAB_UI_DESIGN_SYSTEM.md) — glass, rows, AI strip
+- [HOST_INTELLIGENCE.md](./HOST_INTELLIGENCE.md) — intelligence on Host tab
 - [IOS_LIFECYCLE_AND_SYNC.md](./IOS_LIFECYCLE_AND_SYNC.md)
 - [RESERVATION_WORKFLOWS.md](./RESERVATION_WORKFLOWS.md)
 - [AUDIT_CURRENT_STATE.md](./AUDIT_CURRENT_STATE.md)

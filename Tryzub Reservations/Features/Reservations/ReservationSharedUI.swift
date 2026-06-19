@@ -1135,9 +1135,8 @@ struct ReservationServiceDateSelector: View {
     var chipStyle: ReservationDateChipStyle = .standard
     /// When true, calendar stays pinned to the trailing corner while only the chip strip scales.
     var pinsCalendarToTrailing = false
+    var showsCalendarButton = true
     var stripScale: CGFloat = 1
-
-    private var calendarReservedWidth: CGFloat { 52 }
 
     private var calendar: Calendar { .current }
 
@@ -1179,20 +1178,17 @@ struct ReservationServiceDateSelector: View {
     }
 
     var body: some View {
-        if pinsCalendarToTrailing {
-            ZStack(alignment: .trailing) {
-                dateStrip
-                    .padding(.trailing, calendarReservedWidth)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .scaleEffect(stripScale, anchor: .leading)
+        HStack(alignment: .center, spacing: pinsCalendarToTrailing ? 8 : 10) {
+            dateStrip
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .scaleEffect(stripScale, anchor: .leading)
+                .layoutPriority(0)
 
+            if showsCalendarButton {
                 ReservationOpenCalendarButton(selectedDate: $selectedDate, chipStyle: chipStyle)
-            }
-        } else {
-            HStack(alignment: .center, spacing: 10) {
-                dateStrip
-                    .frame(maxWidth: .infinity)
-                ReservationOpenCalendarButton(selectedDate: $selectedDate, chipStyle: chipStyle)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+                    .layoutPriority(1)
             }
         }
     }
@@ -1420,16 +1416,35 @@ struct ReservationOpenCalendarButton: View {
     @Binding var selectedDate: Date
     var title = ""
     var chipStyle: ReservationDateChipStyle = .standard
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showsCalendarPicker = false
 
     var body: some View {
+        if horizontalSizeClass == .compact {
+            calendarButton
+                .sheet(isPresented: $showsCalendarPicker) {
+                    calendarPickerContent(closesOnSelection: false)
+                        .presentationDetents([.medium, .large])
+                }
+        } else {
+            calendarButton
+                .popover(isPresented: $showsCalendarPicker) {
+                    calendarPickerContent(closesOnSelection: true)
+                }
+        }
+    }
+
+    private var calendarButton: some View {
         Button {
+            #if DEBUG
+            print("[HOST_DATE] calendar button tapped")
+            #endif
             showsCalendarPicker = true
             ReservationHaptics.selection()
         } label: {
             Image(systemName: "calendar")
                 .fixedSize()
-                .frame(width: 42, height: 40)
+                .frame(width: 44, height: 44)
               
 //            Label(title, systemImage: "calendar")
 //                .font(.subheadline.weight(.semibold))
@@ -1438,13 +1453,19 @@ struct ReservationOpenCalendarButton: View {
                 
         }
         .buttonStyle(ReservationHeaderIconButtonStyle(chipStyle: chipStyle))
-        .popover(isPresented: $showsCalendarPicker) {
-            DatePicker("Service date", selection: $selectedDate, displayedComponents: .date)
-                .datePickerStyle(.graphical)
-                .padding()
-                .frame(minWidth: 320, minHeight: 360)
-                .presentationCompactAdaptation(.popover)
-        }
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+    }
+
+    private func calendarPickerContent(closesOnSelection: Bool) -> some View {
+        DatePicker("Service date", selection: $selectedDate, displayedComponents: .date)
+            .datePickerStyle(.graphical)
+            .padding()
+            .frame(minWidth: 320, minHeight: 360)
+            .onChange(of: selectedDate) { _, _ in
+                guard closesOnSelection else { return }
+                showsCalendarPicker = false
+            }
     }
 }
 

@@ -544,14 +544,30 @@ struct ReservationRowView<Accessory: View>: View {
 
     private func hostBoardMetaItems(for presentation: ReservationRowPresentation) -> [ReservationRowDetailLabelData] {
         let tableText = presentation.tableText ?? "No table"
-        var items = [
+        var items: [ReservationRowDetailLabelData] = []
+
+        if presentation.status == .seated,
+           let seatedDurationDotStyle,
+           let seatedDurationText = contextNote?.nilIfBlank {
+            items.append(
+                ReservationRowDetailLabelData(
+                    text: seatedDurationText,
+                    systemImage: nil,
+                    accessibilityLabel: seatedDurationAccessibilityLabel(for: seatedDurationText),
+                    tint: .secondary,
+                    statusDotStyle: seatedDurationDotStyle
+                )
+            )
+        }
+
+        items.append(
             ReservationRowDetailLabelData(
                 text: tableText.removingTablePrefix,
                 systemImage: "table.furniture",
                 isTable: true,
                 accessibilityLabel: tableText
             )
-        ]
+        )
 
         if presentation.guestNotesIndicator != nil {
             items.append(
@@ -595,6 +611,12 @@ struct ReservationRowView<Accessory: View>: View {
         }
 
         return items
+    }
+
+    private func seatedDurationAccessibilityLabel(for text: String) -> String {
+        text
+            .replacingOccurrences(of: "h ", with: " hour ")
+            .replacingOccurrences(of: "m", with: " minutes")
     }
 
     private func compactMetaItems(for presentation: ReservationRowPresentation) -> [ReservationRowDetailLabelData] {
@@ -690,14 +712,15 @@ private enum ReservationRowLayout {
 
 private struct ReservationRowDetailLabelData: Identifiable {
     let text: String
-    let systemImage: String
+    let systemImage: String?
     var isTable = false
     var allowsWrapping = false
     var accessibilityLabel: String?
     var tint: Color = .secondary
+    var statusDotStyle: TryzubStaffStatusDotStyle?
 
     var id: String {
-        "\(systemImage)-\(text)-\(isTable)-\(allowsWrapping)-\(accessibilityLabel ?? "")"
+        "\(systemImage ?? "status-dot")-\(text)-\(isTable)-\(allowsWrapping)-\(accessibilityLabel ?? "")"
     }
 }
 
@@ -1003,9 +1026,14 @@ private struct ReservationRowDetailLabel: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {
-            Image(systemName: item.systemImage)
-                .font(.caption2.weight(.medium))
-                .frame(width: 13)
+            if let statusDotStyle = item.statusDotStyle {
+                TryzubStaffStatusDot(style: statusDotStyle, diameter: 5)
+                    .frame(width: 13)
+            } else if let systemImage = item.systemImage {
+                Image(systemName: systemImage)
+                    .font(.caption2.weight(.medium))
+                    .frame(width: 13)
+            }
 
             if !item.text.isEmpty {
                 Text(item.text)
@@ -1017,6 +1045,7 @@ private struct ReservationRowDetailLabel: View {
         }
         .foregroundStyle(item.tint)
         .fixedSize(horizontal: false, vertical: item.allowsWrapping)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.accessibilityLabel ?? item.text)
     }
 }
