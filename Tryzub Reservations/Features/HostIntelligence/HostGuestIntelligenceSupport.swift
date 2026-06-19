@@ -975,25 +975,23 @@ enum HostGuestIntelligenceSupport {
       return nil
     }
 
+    guard hasActiveSameDayDuplicatePeer(for: reservation, in: dayReservations) else {
+      return nil
+    }
+
     if report.collapsedDuplicateReservationCount > 0 {
-      guard hasActiveSameDayDuplicatePeer(for: reservation, in: dayReservations) else {
-        return nil
-      }
       return HostGuestSignal(
         id: "guest-duplicate-intent-\(reservation.remoteID)",
         reservationID: reservation.remoteID,
         guestName: reservation.guestName,
         kind: .possibleDuplicate,
         severity: .watch,
-        message: "\(reservation.guestName) may have duplicate booking copies in cache.",
+        message: activeSameDayDuplicateCorrectionMessage,
         evidence: ["collapsedDuplicateIntent"]
       )
     }
 
     if let identityMatch = report.possibleMatches.first {
-      guard hasActiveSameDayDuplicatePeer(for: reservation, in: dayReservations) else {
-        return nil
-      }
       var evidence = identityMatch.matchReasons
       if evidence.isEmpty {
         evidence = ["possibleIdentityMatch"]
@@ -1004,13 +1002,24 @@ enum HostGuestIntelligenceSupport {
         guestName: reservation.guestName,
         kind: .possibleDuplicate,
         severity: .watch,
-        message: "Possible same guest for \(reservation.guestName). Review only; nothing is merged.",
+        message: activeSameDayDuplicateCorrectionMessage,
         evidence: evidence
       )
     }
 
-    return nil
+    return HostGuestSignal(
+      id: "guest-duplicate-peer-\(reservation.remoteID)",
+      reservationID: reservation.remoteID,
+      guestName: reservation.guestName,
+      kind: .possibleDuplicate,
+      severity: .watch,
+      message: activeSameDayDuplicateCorrectionMessage,
+      evidence: ["activeSameDayPeer"]
+    )
   }
+
+  private static let activeSameDayDuplicateCorrectionMessage =
+    "Another active booking on this date uses the same phone or email. Check which one is correct."
 
   private static func hasActiveSameDayRelatedReservation(
     for reservation: ReservationRecord,

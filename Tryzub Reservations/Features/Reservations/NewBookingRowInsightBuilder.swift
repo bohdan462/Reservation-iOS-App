@@ -168,15 +168,7 @@ enum NewBookingRowInsightBuilder {
       return nil
     }
 
-    if report.collapsedDuplicateReservationCount > 0 {
-      return "Possible duplicate — compare details"
-    }
-
-    if !report.possibleMatches.isEmpty {
-      return "Possible duplicate — compare details"
-    }
-
-    return nil
+    return "Possible correction — same phone/email on another active booking today"
   }
 
   private static func hasActiveSameDayDuplicatePeer(
