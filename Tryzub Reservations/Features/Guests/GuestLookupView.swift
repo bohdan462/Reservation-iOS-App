@@ -153,7 +153,7 @@ private struct GuestLookupResultCard: View {
 
                 Spacer(minLength: 8)
 
-                Text("\(result.totalReservations) \(result.totalReservations == 1 ? "visit" : "visits")")
+                Text("\(result.totalReservations) \(result.totalReservations == 1 ? "reservation" : "reservations")")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(TryzubColors.mutedText)
             }

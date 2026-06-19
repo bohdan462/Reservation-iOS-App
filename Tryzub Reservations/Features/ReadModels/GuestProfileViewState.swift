@@ -90,7 +90,10 @@ enum GuestProfileViewStateBuilder {
         let reservationID = reservation.remoteID
         let dateKey = reservation.reservationDate
         let profilePack = store.profilePack(for: reservationID)
-        let aggregateState = GuestInsightsProfilePresentation.aggregateState(from: aggregateProfile)
+        let aggregateState = GuestInsightsProfilePresentation.aggregateState(
+            from: aggregateProfile,
+            referenceReservation: reservation
+        )
         let serverSummary = store.summary(for: reservationID, dateKey: dateKey)
         let serverAnswered = store.hasServerAnswer(for: reservationID, dateKey: dateKey)
         let isLoadingProfile = store.isLoadingProfile(reservationID: reservationID)
@@ -103,7 +106,9 @@ enum GuestProfileViewStateBuilder {
                 serverSummary: serverSummary,
                 serverAnswered: serverAnswered,
                 profileStamp: store.semanticProfileStamp(for: reservationID, dateKey: dateKey),
-                profilePack: profilePack
+                profilePack: profilePack,
+                selectedReservation: reservation,
+                reservationPool: historyPool
             )
         }()
 
@@ -118,7 +123,7 @@ enum GuestProfileViewStateBuilder {
         let header = GuestProfileHeaderState(
             guestName: cleaned(aggregateProfile?.primaryName) ?? reservation.guestName,
             reservationLine: "\(reservation.displayDate) at \(reservation.displayTime) · party of \(reservation.partySize)",
-            historyTitle: aggregateState != nil ? "Backend guest profile" : (mergedContext?.historyTitle ?? (profilePack != nil ? "Seen before" : "Guest history")),
+            historyTitle: aggregateState != nil ? "Guest history" : (mergedContext?.historyTitle ?? "Guest history"),
             historyDetail: aggregateState?.sourceLine ?? mergedContext?.historyDetail ?? fallbackHistoryDetail(
                 profilePack: profilePack,
                 isLoadingProfile: isLoadingProfile
@@ -229,7 +234,7 @@ enum GuestProfileViewStateBuilder {
         isLoadingProfile: Bool
     ) -> String {
         if profilePack != nil {
-            return "Server guest profile loaded."
+            return "Guest history loaded."
         }
         if isLoadingProfile {
             return "Guest history loading…"

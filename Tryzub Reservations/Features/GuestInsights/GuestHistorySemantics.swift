@@ -72,10 +72,6 @@ enum GuestHistorySemantics {
     return hasExplicitAllergyLanguage(in: text)
   }
 
-  static func serverBackedSeenBeforeMessage(guestName: String) -> String {
-    "\(guestName) appears to have visited before."
-  }
-
   static func occasionNoteTitle(for reservation: ReservationRecord) -> String {
     let lower = combinedNoteText(for: reservation).lowercased()
     if lower.contains("birthday") { return "Birthday note" }
@@ -180,14 +176,39 @@ enum GuestHistorySemantics {
     serverSummary: GuestIntelligenceSummaryDTO?,
     serverAnswered: Bool,
     profileStamp: String,
-    profilePack: GuestIntelligenceProfilePackDTO? = nil
+    profilePack: GuestIntelligenceProfilePackDTO? = nil,
+    selectedReservation: ReservationRecord? = nil,
+    reservationPool: [ReservationRecord]? = nil
   ) -> GuestInsightsMergedContext {
+    let operationalTruth: GuestOperationalTruth.Evaluation? = {
+      guard let selectedReservation else { return nil }
+      if let reservationPool {
+        return GuestOperationalTruth.evaluate(
+          surface: "guest_insights",
+          selected: selectedReservation,
+          reservationPool: reservationPool,
+          summary: serverSummary,
+          profilePack: profilePack
+        )
+      }
+      return GuestOperationalTruth.evaluate(
+        surface: "guest_insights",
+        selected: selectedReservation,
+        localReport: nil,
+        summary: serverSummary,
+        profilePack: profilePack
+      )
+    }()
     let merged = mergedHistoryLine(
       guestName: guestName,
       localReport: localReport,
       serverSummary: serverSummary,
       serverAnswered: serverAnswered,
-      profilePack: profilePack
+      profilePack: profilePack,
+      selectedReservation: selectedReservation,
+      reservationPool: reservationPool,
+      truthSurface: "guest_insights",
+      operationalTruth: operationalTruth
     )
     let backendSeenBefore = isBackendSeenBefore(
       serverSummary: serverSummary,
@@ -201,7 +222,10 @@ enum GuestHistorySemantics {
         localReport: localReport,
         serverSummary: serverSummary,
         serverAnswered: serverAnswered,
-        profilePack: profilePack
+        profilePack: profilePack,
+        selectedReservation: selectedReservation,
+        reservationPool: reservationPool,
+        operationalTruth: operationalTruth
       ),
       metrics: insightsMetricsPresentation(
         localReport: localReport,
@@ -218,7 +242,8 @@ enum GuestHistorySemantics {
       serverLastSeenDisplay: serverLastSeenDisplay(
         serverSummary,
         mergedSource: merged.source,
-        profilePack: profilePack
+        profilePack: profilePack,
+        selectedReservation: selectedReservation
       ),
       traceKey: semanticMergeDedupeKey(
         surface: "insights",
@@ -317,8 +342,8 @@ enum GuestHistorySemantics {
     if let profilePack, !profilePack.matchedVisitPreview.isEmpty {
       return GuestInsightsBookingHistoryPresentation(
         scope: .serverPreviewAvailable,
-        sectionTitle: "Server Guest History",
-        scopeNote: "Earlier visits from backend intelligence."
+        sectionTitle: "Past visits",
+        scopeNote: "Earlier guest visits."
       )
     }
 
@@ -332,7 +357,7 @@ enum GuestHistorySemantics {
       return GuestInsightsBookingHistoryPresentation(
         scope: .localCacheOnly,
         sectionTitle: "Cached Booking History",
-        scopeNote: "Earlier visit found from server history. Only locally cached bookings are shown below."
+        scopeNote: "Earlier visit found. Only bookings saved on this device are shown below."
       )
     }
 
@@ -359,7 +384,8 @@ enum GuestHistorySemantics {
   static func serverLastSeenDisplay(
     _ summary: GuestIntelligenceSummaryDTO?,
     mergedSource: MergedHistorySource,
-    profilePack: GuestIntelligenceProfilePackDTO? = nil
+    profilePack: GuestIntelligenceProfilePackDTO? = nil,
+    selectedReservation: ReservationRecord? = nil
   ) -> String? {
     guard mergedSource == .backendSeenBefore
       || mergedSource == .localReliablePriorVisits
@@ -371,10 +397,18 @@ enum GuestHistorySemantics {
           !raw.isEmpty else {
       return nil
     }
-    if let date = ReservationFormatters.reservationDateKey.date(from: raw) {
-      return ReservationFormatters.mediumDate.string(from: date)
+    guard let selectedReservation else {
+      #if DEBUG
+      print("[INTEL_TRUTH_TRACE] surface=serverLastSeenDisplay missingSelectedReservation=true lastVisitSuppressed=true")
+      #endif
+      return nil
     }
-    return raw
+    guard let date = GuestOperationalTruth.acceptedBackendLastVisit(
+      raw,
+      selectedDate: selectedReservation.reservationDate,
+      selectedTime: selectedReservation.reservationTime
+    ) else { return nil }
+    return ReservationFormatters.mediumDate.string(from: date)
   }
 
   static func reliableBackendPriorCount(_ summary: GuestIntelligenceSummaryDTO?) -> Int? {
@@ -402,16 +436,12 @@ enum GuestHistorySemantics {
       return ("2+", "Includes prior visit")
     }
 
-    let matched = summary.matchedVisitCount
-    if matched >= 2 {
-      return ("2+", "Includes prior visits")
-    }
-
     return nil
   }
 
   static func detailInsightPresentation(
     reservation: ReservationRecord,
+    reservationPool: [ReservationRecord],
     localReport: GuestInsightReport,
     serverSummary: GuestIntelligenceSummaryDTO?,
     serverAnswered: Bool,
@@ -422,7 +452,9 @@ enum GuestHistorySemantics {
       localReport: localReport,
       serverSummary: serverSummary,
       serverAnswered: serverAnswered,
-      profilePack: profilePack
+      profilePack: profilePack,
+      selectedReservation: reservation,
+      reservationPool: reservationPool
     )
     var supplemental: [DetailInsightLine] = []
 
@@ -472,33 +504,56 @@ enum GuestHistorySemantics {
     localReport: GuestInsightReport,
     serverSummary: GuestIntelligenceSummaryDTO?,
     serverAnswered: Bool,
-    profilePack: GuestIntelligenceProfilePackDTO? = nil
+    profilePack: GuestIntelligenceProfilePackDTO? = nil,
+    selectedReservation: ReservationRecord? = nil,
+    reservationPool: [ReservationRecord]? = nil,
+    truthSurface: String = "guest_detail",
+    operationalTruth: GuestOperationalTruth.Evaluation? = nil
   ) -> (title: String, detail: String, source: MergedHistorySource) {
-    // 1. Reservation profile pack — server-backed history evidence.
-    if isProfilePackReturning(profilePack) {
-      let detail = profilePackSeenBeforeDetail(
-        guestName: guestName,
-        profilePack: profilePack
-      )
-      return ("Seen before", detail, .backendSeenBefore)
-    }
-
-    // 2. Date summary item.
-    if let serverSummary, isServerReturning(serverSummary) {
-      return (
-        "Seen before",
-        serverBackedSeenBeforeMessage(guestName: guestName),
-        .backendSeenBefore
-      )
-    }
-
-    // 3. Bounded local analysis with reliable identity.
-    if localReport.hasReliableRepeatGuestHistory {
-      let line = compactHistoryLine(
-        priorReliableVisitCount: localReport.priorReliableVisitCount,
-        lastPriorVisitDisplayDate: localReport.lastPriorVisitDisplayDate
-      )
-      return (line.title, line.detail, .localReliablePriorVisits)
+    if let selectedReservation {
+      let truth: GuestOperationalTruth.Evaluation
+      if let operationalTruth {
+        truth = operationalTruth
+      } else if let reservationPool {
+        truth = GuestOperationalTruth.evaluate(
+          surface: truthSurface,
+          selected: selectedReservation,
+          reservationPool: reservationPool,
+          summary: serverSummary,
+          profilePack: profilePack
+        )
+      } else {
+        #if DEBUG
+        print("[INTEL_TRUTH_TRACE] surface=\(truthSurface) reservationID=\(selectedReservation.remoteID) missingReservationPool=true localTruthSuppressed=true")
+        #endif
+        truth = GuestOperationalTruth.evaluate(
+          surface: truthSurface,
+          selected: selectedReservation,
+          localReport: nil,
+          summary: serverSummary,
+          profilePack: profilePack
+        )
+      }
+      if truth.seenBefore {
+        let detail = truth.lastVisitDisplay.map { "Last visit \($0)" } ?? "Seen before"
+        let source: MergedHistorySource = truth.source == .local
+          ? .localReliablePriorVisits
+          : .backendSeenBefore
+        return ("Seen before", detail, source)
+      }
+      if truth.finalLabel == "Guest history found" {
+        return ("Guest history", "Guest history found", .localIncomplete)
+      }
+    } else {
+      #if DEBUG
+      print("[INTEL_TRUTH_TRACE] surface=\(truthSurface) reservationID=\(localReport.selectedReservationID) missingSelectedReservation=true confirmedTruthSuppressed=true")
+      #endif
+      let historyEvidence = isProfilePackReturning(profilePack)
+        || serverSummary.map(isServerReturning) == true
+        || (serverSummary?.matchedVisitCount ?? 0) > 0
+      if historyEvidence {
+        return ("Guest history", "Guest history found", .localIncomplete)
+      }
     }
 
     if serverAnswered,
@@ -583,14 +638,19 @@ enum GuestHistorySemantics {
     localReport: GuestInsightReport,
     serverSummary: GuestIntelligenceSummaryDTO?,
     serverAnswered: Bool,
-    profilePack: GuestIntelligenceProfilePackDTO?
+    profilePack: GuestIntelligenceProfilePackDTO?,
+    selectedReservation: ReservationRecord?,
+    reservationPool: [ReservationRecord]?
   ) -> String {
     let merged = mergedHistoryLine(
       guestName: guestName,
       localReport: localReport,
       serverSummary: serverSummary,
       serverAnswered: serverAnswered,
-      profilePack: profilePack
+      profilePack: profilePack,
+      selectedReservation: selectedReservation,
+      reservationPool: reservationPool,
+      truthSurface: surface
     )
     let backendSeenBefore = isBackendSeenBefore(
       serverSummary: serverSummary,
@@ -610,48 +670,48 @@ enum GuestHistorySemantics {
     localReport: GuestInsightReport,
     serverSummary: GuestIntelligenceSummaryDTO?,
     serverAnswered: Bool,
-    profilePack: GuestIntelligenceProfilePackDTO? = nil
+    profilePack: GuestIntelligenceProfilePackDTO? = nil,
+    selectedReservation: ReservationRecord? = nil,
+    reservationPool: [ReservationRecord]? = nil,
+    operationalTruth: GuestOperationalTruth.Evaluation? = nil
   ) -> GuestRegularityLevel? {
-    if isProfilePackReturning(profilePack) {
-      if let prior = profilePack?.history?.priorVisitCount
-        ?? profilePack?.visitAnalytics?.priorVisitCount,
-         prior >= 3 {
-        return .regular
+    if let selectedReservation {
+      let truth: GuestOperationalTruth.Evaluation
+      if let operationalTruth {
+        truth = operationalTruth
+      } else if let reservationPool {
+        truth = GuestOperationalTruth.evaluate(
+          surface: "regularity",
+          selected: selectedReservation,
+          reservationPool: reservationPool,
+          summary: serverSummary,
+          profilePack: profilePack
+        )
+      } else {
+        truth = GuestOperationalTruth.evaluate(
+          surface: "regularity",
+          selected: selectedReservation,
+          localReport: nil,
+          summary: serverSummary,
+          profilePack: profilePack
+        )
       }
-      return .seenBefore
+      if truth.finalLabel == "Guest history found" { return nil }
+      return truth.regularity.guestLevel
     }
-    if localReport.hasReliableRepeatGuestHistory {
-      return .seenBefore
-    }
-    guard let serverSummary, isServerReturning(serverSummary) else {
-      if serverAnswered, serverSummary?.classification == .new {
-        return .firstTime
-      }
-      return nil
-    }
-
-    switch serverSummary.classification {
-    case .frequentRegular:
-      return .frequentRegular
-    case .regular:
-      return .regular
-    case .returning:
-      return .seenBefore
-    case .new, .unknown, .needsReview:
-      return nil
-    }
+    #if DEBUG
+    print("[INTEL_TRUTH_TRACE] surface=regularity reservationID=\(localReport.selectedReservationID) missingSelectedReservation=true regularitySuppressed=true")
+    #endif
+    return serverAnswered && serverSummary?.classification == .new ? .firstTime : nil
   }
 
   static func isServerReturning(_ summary: GuestIntelligenceSummaryDTO) -> Bool {
     guard hasReliableServerClassificationIdentity(summary.identityConfidence) else {
       return false
     }
-    switch summary.classification {
-    case .returning, .regular, .frequentRegular:
-      return true
-    case .new, .unknown, .needsReview:
-      return false
-    }
+    if summary.cleanVisitCount > 0 { return true }
+    guard summary.possibleDuplicate == false else { return false }
+    return summary.classification == .regular || summary.classification == .frequentRegular
   }
 
   static func isBackendSeenBefore(
@@ -669,49 +729,24 @@ enum GuestHistorySemantics {
 
   static func isProfilePackReturning(_ profilePack: GuestIntelligenceProfilePackDTO?) -> Bool {
     guard let profilePack else { return false }
-    if profilePack.history?.seenBefore == true {
-      return true
-    }
-    if profilePack.hostProfilePacket?.seenBefore == true {
-      return true
-    }
-    if !profilePack.matchedVisitPreview.isEmpty {
-      return true
-    }
-    if let known = profilePack.visitAnalytics?.knownVisitCount, known > 1 {
-      return true
-    }
+    let confidence = profilePack.resolvedSummary?.identityConfidence
+    let hostConfidence = profilePack.hostProfilePacket?.identityConfidence?.lowercased()
+    let reliableIdentity = confidence == .exact || confidence == .strong
+      || hostConfidence == "exact" || hostConfidence == "strong"
+    guard reliableIdentity else { return false }
+    if let prior = profilePack.history?.priorVisitCount, prior > 0 { return true }
+    if let prior = profilePack.visitAnalytics?.priorVisitCount, prior > 0 { return true }
+    if let clean = profilePack.resolvedSummary?.cleanVisitCount, clean > 0 { return true }
     if let summary = profilePack.resolvedSummary, isServerReturning(summary) {
       return true
     }
     return false
   }
 
-  private static func profilePackSeenBeforeDetail(
-    guestName: String,
-    profilePack: GuestIntelligenceProfilePackDTO?
-  ) -> String {
-    if let safeCopy = profilePack?.history?.safeCopy?
-      .trimmingCharacters(in: .whitespacesAndNewlines),
-       !safeCopy.isEmpty {
-      return safeCopy
-    }
-    if let historyLine = profilePack?.hostProfilePacket?.safeHistoryLine?
-      .trimmingCharacters(in: .whitespacesAndNewlines),
-       !historyLine.isEmpty {
-      return historyLine
-    }
-    return serverBackedSeenBeforeMessage(guestName: guestName)
-  }
-
   private static func profilePackKnownVisitDisplay(
     _ profilePack: GuestIntelligenceProfilePackDTO?
   ) -> (value: String, caption: String)? {
     guard isProfilePackReturning(profilePack) else { return nil }
-
-    if let known = profilePack?.visitAnalytics?.knownVisitCount, known >= 2 {
-      return ("\(known)", "Includes prior visits")
-    }
 
     let prior = profilePack?.history?.priorVisitCount
       ?? profilePack?.visitAnalytics?.priorVisitCount
@@ -724,10 +759,6 @@ enum GuestHistorySemantics {
     if prior == 1 {
       return ("2+", "Includes prior visit")
     }
-    if !(profilePack?.matchedVisitPreview.isEmpty ?? true) {
-      return ("2+", "Includes prior visit")
-    }
-
     return ("Seen before", "Count not confirmed")
   }
 
@@ -780,118 +811,12 @@ enum GuestHistorySemantics {
 
   // MARK: - Visit History
 
-  static func isCleanVisit(_ status: ReservationStatus) -> Bool {
-    status != .cancelled && status != .noShow
-  }
-
-  static func isPrior(
-    record: ReservationRecord,
-    to selected: ReservationRecord
-  ) -> Bool {
-    guard record.remoteID != selected.remoteID else { return false }
-    if record.reservationDate < selected.reservationDate { return true }
-    if record.reservationDate > selected.reservationDate { return false }
-    return record.reservationTime < selected.reservationTime
-  }
-
-  static func isPrior(
-    date: String,
-    time: String,
-    to selected: ReservationRecord
-  ) -> Bool {
-    if date < selected.reservationDate { return true }
-    if date > selected.reservationDate { return false }
-    return time < selected.reservationTime
-  }
-
-  static func priorReliableVisitCount(
-    selected: ReservationRecord,
-    matchedRecords: [ReservationRecord]
-  ) -> Int {
-    matchedRecords.filter { record in
-      isPrior(record: record, to: selected) && isCleanVisit(record.statusValue)
-    }.count
-  }
-
-  static func priorReliableVisitCount(
-    selected: ReservationRecord,
-    matchedReservations: [GuestMatchedReservation]
-  ) -> Int {
-    priorReliableVisitCount(
-      selectedRemoteID: selected.remoteID,
-      selectedDate: selected.reservationDate,
-      selectedTime: selected.reservationTime,
-      matchedReservations: matchedReservations
-    )
-  }
-
-  static func priorReliableVisitCount(
-    selectedRemoteID: Int,
-    selectedDate: String,
-    selectedTime: String,
-    matchedReservations: [GuestMatchedReservation]
-  ) -> Int {
-    matchedReservations.filter { item in
-      item.reservationID != selectedRemoteID
-        && isPrior(date: item.date, time: item.time, toDate: selectedDate, toTime: selectedTime)
-        && isCleanVisit(item.status)
-    }.count
-  }
-
-  static func isPrior(
-    date: String,
-    time: String,
-    toDate selectedDate: String,
-    toTime selectedTime: String
-  ) -> Bool {
-    if date < selectedDate { return true }
-    if date > selectedDate { return false }
-    return time < selectedTime
-  }
-
   static func visitOrdinal(priorReliableVisitCount: Int) -> Int {
     priorReliableVisitCount + 1
   }
 
   static func hasReliableRepeatHistory(priorReliableVisitCount: Int) -> Bool {
     priorReliableVisitCount >= 1
-  }
-
-  static func lastPriorVisitDisplayDate(
-    selected: ReservationRecord,
-    matchedReservations: [GuestMatchedReservation]
-  ) -> String? {
-    lastPriorVisitDisplayDate(
-      selectedRemoteID: selected.remoteID,
-      selectedDate: selected.reservationDate,
-      selectedTime: selected.reservationTime,
-      matchedReservations: matchedReservations
-    )
-  }
-
-  static func lastPriorVisitDisplayDate(
-    selectedRemoteID: Int,
-    selectedDate: String,
-    selectedTime: String,
-    matchedReservations: [GuestMatchedReservation]
-  ) -> String? {
-    matchedReservations
-      .filter { item in
-        item.reservationID != selectedRemoteID
-          && isPrior(date: item.date, time: item.time, toDate: selectedDate, toTime: selectedTime)
-          && isCleanVisit(item.status)
-      }
-      .sorted { lhs, rhs in
-        if lhs.date == rhs.date {
-          if lhs.time == rhs.time {
-            return lhs.reservationID > rhs.reservationID
-          }
-          return lhs.time > rhs.time
-        }
-        return lhs.date > rhs.date
-      }
-      .first?
-      .displayDate
   }
 
   static func ordinalVisitText(for visitOrdinal: Int) -> String? {

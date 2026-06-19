@@ -262,11 +262,11 @@ final class GuestProfileStore: ObservableObject {
     // MARK: - Private
 
     private var listUnavailableMessage: String {
-        "Guest profiles unavailable."
+        "Guest history unavailable."
     }
 
     private var detailUnavailableMessage: String {
-        "Guest profile unavailable."
+        "Guest history unavailable."
     }
 
     private func adoptListResponse(_ response: GuestProfileListResponseDTO) {

@@ -106,7 +106,7 @@ struct RegularGuestsView: View {
             case .backend, .emptyBackend, .loading:
                 let metrics = backendMetrics
                 RegularGuestMetricCard(title: "Profiles", value: "\(metrics.profileCount)", caption: "Restaurant history")
-                RegularGuestMetricCard(title: "Regulars", value: "\(metrics.regularCount)", caption: "Backend labels")
+                RegularGuestMetricCard(title: "Regulars", value: "\(metrics.regularCount)", caption: "Guest history")
                 RegularGuestMetricCard(title: "Notes found", value: "\(metrics.notesCount)", caption: "Reservation notes")
                 RegularGuestMetricCard(title: "Upcoming", value: "\(metrics.upcomingCount)", caption: "Future visits")
             case .localFallback:
@@ -175,14 +175,14 @@ struct RegularGuestsView: View {
         case .loading:
             HStack {
                 Spacer()
-                ProgressView("Loading guest profiles…")
+                ProgressView("Loading guest history…")
                     .font(.caption)
                 Spacer()
             }
             .padding(.vertical, 24)
         case .emptyBackend:
             ContentUnavailableView(
-                "No guest profiles found yet.",
+                "No guest history found yet.",
                 systemImage: "person.2",
                 description: Text("Try a different search.")
             )
@@ -198,7 +198,7 @@ struct RegularGuestsView: View {
             if store.isComputing && store.displayedSummaries.isEmpty {
                 HStack {
                     Spacer()
-                    ProgressView("Loading guest profiles…")
+                    ProgressView("Loading guest history…")
                         .font(.caption)
                     Spacer()
                 }
@@ -267,11 +267,11 @@ struct RegularGuestsView: View {
     private var sourceCopy: String {
         switch source {
         case .backend, .emptyBackend:
-            return "Based on restaurant guest profiles from the backend."
+            return "Guest history from restaurant records."
         case .localFallback:
             return "Offline view based on reservations saved on this device."
         case .loading:
-            return "Loading guest profiles…"
+            return "Loading guest history…"
         }
     }
 
@@ -323,7 +323,7 @@ struct RegularGuestsView: View {
     }
 
     private var sortLabel: String {
-        sortOptions.contains(sort) ? sort.displayName : "Backend default"
+        sortOptions.contains(sort) ? sort.displayName : "Guest history"
     }
 
     private func isSelectedFilter(_ option: RegularGuestFilter) -> Bool {
@@ -381,8 +381,10 @@ private struct BackendGuestProfileMetrics {
     init(profiles: [GuestProfileDTO]) {
         profileCount = profiles.count
         regularCount = profiles.filter { profile in
-            profile.labels?.contains { $0.id == "regular_guest" } == true
-                || (profile.cleanVisitCount ?? profile.totalReservations ?? 0) >= 5
+            (profile.cleanVisitCount ?? 0) >= 3
+                || (profile.cleanVisitCount == nil
+                    && ["exact", "strong"].contains(profile.identityConfidence?.lowercased() ?? "")
+                    && profile.labels?.contains { $0.id == "regular_guest" } == true)
         }.count
         notesCount = profiles.filter { profile in
             (profile.counts?.guestNotes ?? 0) + (profile.counts?.staffNotes ?? 0) > 0
@@ -596,7 +598,7 @@ private struct BackendGuestProfileRow: View {
                     Spacer(minLength: 0)
 
                     if profile.stale == true {
-                        Text("Profile updating")
+                        Text("Updating guest history")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 7)
@@ -635,7 +637,7 @@ private struct BackendGuestProfileRow: View {
     }
 
     private var visitCount: Int {
-        max(0, profile.cleanVisitCount ?? profile.totalReservations ?? 0)
+        max(0, profile.cleanVisitCount ?? 0)
     }
 
     private var initials: String {
@@ -650,8 +652,11 @@ private struct BackendGuestProfileRow: View {
     private var detailLine: String {
         var parts: [String] = []
 
-        if let lastSeen = cleaned(profile.lastSeenDate) {
-            parts.append("Last seen \(lastSeen)")
+        if let lastSeen = GuestOperationalTruth.acceptedBackendLastVisit(
+            profile.lastSeenDate,
+            referenceDate: Date()
+        ) {
+            parts.append("Last visit \(ReservationFormatters.mediumDate.string(from: lastSeen))")
         }
         if let partySize = profile.usualPartySize ?? profile.preferences?.usualPartySize {
             parts.append("Usually party of \(partySize)")
@@ -686,6 +691,11 @@ private struct BackendGuestProfileRow: View {
 
     private func safeLabelTitle(_ label: GuestProfileLabelDTO) -> String? {
         guard let title = cleaned(label.title) else { return nil }
+        if label.id == "regular_guest" {
+            let classificationOnlyRegular = profile.cleanVisitCount == nil
+                && ["exact", "strong"].contains(profile.identityConfidence?.lowercased() ?? "")
+            guard (profile.cleanVisitCount ?? 0) >= 3 || classificationOnlyRegular else { return nil }
+        }
         let values = [
             label.id,
             label.title,

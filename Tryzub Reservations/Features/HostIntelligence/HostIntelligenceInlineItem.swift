@@ -54,6 +54,109 @@ struct HostIntelligenceReminderInlineContext: Equatable {
   let leadHours: Int
 }
 
+/// Cached, display-ready input for the Host Board intelligence card. Building this
+/// value may inspect reservation history; reading it from SwiftUI body is constant-time.
+struct HostIntelligenceCardPresentation: Equatable {
+  let key: String
+  let items: [HostIntelligenceInlineItem]
+  let visibleItems: [HostIntelligenceInlineItem]
+  let headline: String?
+  let primaryActionID: String?
+  let attentionItems: [ManagerAttentionItem]
+  let visibleCompactPrompts: [HostOperationalBriefingPrompt]
+  let expandedPrompts: [HostOperationalBriefingPrompt]
+  let hasCompactPrompts: Bool
+
+  static let empty = HostIntelligenceCardPresentation(
+    key: "empty",
+    items: [],
+    visibleItems: [],
+    headline: nil,
+    primaryActionID: nil,
+    attentionItems: [],
+    visibleCompactPrompts: [],
+    expandedPrompts: [],
+    hasCompactPrompts: false
+  )
+
+  static func build(
+    key: String,
+    snapshot: HostDecisionSnapshot,
+    reservations: [ReservationRecord],
+    knownReservations: [ReservationRecord],
+    reminderContext: HostIntelligenceReminderInlineContext?,
+    attentionPresentation: HostAttentionPresentation,
+    briefingText: String,
+    usesSeparatedPrompts: Bool,
+    includesReviewItem: Bool
+  ) -> HostIntelligenceCardPresentation {
+    let started = ContinuousClock.now
+    let items = HostIntelligenceInlineItemBuilder.build(
+      snapshot: snapshot,
+      reservations: reservations,
+      knownReservations: knownReservations,
+      reminderContext: reminderContext
+    )
+    let visibleItems = HostIntelligenceInlineItemBuilder.visibleItems(
+      from: items,
+      maxVisible: 4,
+      includeMoreItem: includesReviewItem
+    )
+    let attentionItems = ManagerAttentionItemBuilder.build(
+      from: snapshot,
+      presentation: attentionPresentation,
+      maxItems: 3,
+      compactPresentation: true,
+      briefingText: briefingText
+    )
+    let compactPrompts = usesSeparatedPrompts
+      ? HostOperationalBriefingPromptBuilder.buildCompactPrompts(from: snapshot)
+      : []
+    let expandedPrompts = usesSeparatedPrompts
+      ? HostOperationalBriefingPromptBuilder.buildExpandedPrompts(from: snapshot)
+      : []
+    let visibleCompactPrompts = attentionItems.isEmpty
+      ? ManagerAttentionItemBuilder.nonRedundantPrompts(
+          briefingText: briefingText,
+          prompts: compactPrompts
+        )
+      : []
+    let result = HostIntelligenceCardPresentation(
+      key: key,
+      items: items,
+      visibleItems: visibleItems,
+      headline: HostIntelligenceInlineItemBuilder.headline(
+        snapshot: snapshot,
+        reservations: reservations,
+        items: items
+      ),
+      primaryActionID: visibleItems.first(where: isPrimaryInlineCandidate)?.id,
+      attentionItems: attentionItems,
+      visibleCompactPrompts: visibleCompactPrompts,
+      expandedPrompts: expandedPrompts,
+      hasCompactPrompts: !compactPrompts.isEmpty
+    )
+    #if DEBUG
+    let durationMs = Int(started.duration(to: .now).pressureTraceTimeInterval * 1_000)
+    print("[INTEL_PERF_TRACE] operation=Host inline presentation build reservations=\(reservations.count) knownReservations=\(knownReservations.count) items=\(items.count) durationMs=\(durationMs)")
+    #endif
+    return result
+  }
+
+  private static func isPrimaryInlineCandidate(_ item: HostIntelligenceInlineItem) -> Bool {
+    switch item.kind {
+    case .allergy, .accessibility, .guestNote, .noTable, .possibleCorrection, .serviceSummary, .cleanup, .seatedTooLong:
+      return true
+    case .reminder:
+      return item.priority <= 26
+    case .busyTime:
+      return item.priority <= 30
+    case .nextGuest, .returningGuest, .occasion, .tableSuggestion, .calm:
+      return false
+    }
+  }
+}
+
 enum HostIntelligenceInlineItemBuilder {
   static func build(
     snapshot: HostDecisionSnapshot,
@@ -307,10 +410,15 @@ enum HostIntelligenceInlineItemBuilder {
     reservations: [ReservationRecord],
     knownReservations: [ReservationRecord]
   ) -> [HostIntelligenceInlineItem] {
-    reservations
+    let started = ContinuousClock.now
+    let historyIndex = ReturningGuestHistoryIndex(records: knownReservations)
+    let items: [HostIntelligenceInlineItem] = reservations
       .filter { $0.isExpectedGuest && !$0.isHidden }
       .compactMap { reservation in
-        let history = validPriorVisits(for: reservation, in: knownReservations)
+        let history = validPriorVisits(
+          for: reservation,
+          in: historyIndex.candidates(for: reservation)
+        )
         guard !history.priorVisits.isEmpty, history.reliableIdentity else { return nil }
         let priorCount = history.priorVisits.count
         let lastVisit = history.priorVisits.max { lhs, rhs in
@@ -340,6 +448,11 @@ enum HostIntelligenceInlineItemBuilder {
           suppressReason: nil
         )
       }
+    #if DEBUG
+    let durationMs = Int(started.duration(to: .now).pressureTraceTimeInterval * 1_000)
+    print("[INTEL_PERF_TRACE] operation=Host inline returning scan reservations=\(reservations.count) knownReservations=\(knownReservations.count) acceptedReturning=\(items.count) durationMs=\(durationMs)")
+    #endif
+    return items
   }
 
   private static func reminderItem(_ context: HostIntelligenceReminderInlineContext?) -> HostIntelligenceInlineItem? {
@@ -564,30 +677,62 @@ enum HostIntelligenceInlineItemBuilder {
     for reservation: ReservationRecord,
     in knownReservations: [ReservationRecord]
   ) -> (priorVisits: [ReservationRecord], reliableIdentity: Bool, identityKey: String) {
-    let selectedDate = reservation.reservationDate
-    let phoneKey = normalizedPhone(reservation.phone)
-    let emailKey = normalizedEmail(reservation.email)
-    let identityKey = phoneKey ?? emailKey ?? ""
-    guard !identityKey.isEmpty else { return ([], false, "none") }
+    let identity = GuestIdentityResolver().identity(for: reservation)
+    let identityKey = identity.fullPhoneDigits.map { "phone:\($0)" }
+      ?? identity.usefulEmail.map { "email:\($0)" }
+      ?? "none"
+    guard identityKey != "none" else { return ([], false, identityKey) }
+    let prior = GuestOperationalTruth.validPastVisits(
+      selected: reservation,
+      reservationPool: knownReservations,
+      emitTrace: false
+    )
+    return (prior, true, identityKey)
+  }
 
-    let prior = knownReservations.filter { candidate in
-      guard candidate.remoteID != reservation.remoteID,
-            !candidate.isHidden,
-            candidate.reservationDate < selectedDate,
-            candidate.statusValue == .completed,
-            (candidate.supersededById ?? 0) <= 0 else {
-        return false
+  /// Narrows truth evaluation to plausible identity peers without changing the
+  /// GuestOperationalTruth matching or visit-validity rules.
+  private struct ReturningGuestHistoryIndex {
+    private let resolver = GuestIdentityResolver()
+    private var recordsByID: [Int: ReservationRecord] = [:]
+    private var idsByPhone: [String: Set<Int>] = [:]
+    private var idsByEmail: [String: Set<Int>] = [:]
+    private var idsByName: [String: Set<Int>] = [:]
+
+    init(records: [ReservationRecord]) {
+      for record in records {
+        recordsByID[record.remoteID] = record
+        let identity = resolver.identity(for: record)
+        if let phone = identity.fullPhoneDigits {
+          idsByPhone[phone, default: []].insert(record.remoteID)
+        }
+        if let email = identity.usefulEmail {
+          idsByEmail[email, default: []].insert(record.remoteID)
+        }
+        if !identity.normalizedName.isEmpty {
+          idsByName[identity.normalizedName, default: []].insert(record.remoteID)
+        }
       }
-      if let phoneKey, normalizedPhone(candidate.phone) == phoneKey {
-        return true
-      }
-      if let emailKey, normalizedEmail(candidate.email) == emailKey {
-        return true
-      }
-      return false
     }
 
-    return (prior, true, phoneKey.map { "phone:\($0)" } ?? "email:\(emailKey ?? "")")
+    func candidates(for reservation: ReservationRecord) -> [ReservationRecord] {
+      let identity = resolver.identity(for: reservation)
+      guard identity.hasReliableContact else { return [reservation] }
+      var ids: Set<Int> = [reservation.remoteID]
+      if let phone = identity.fullPhoneDigits {
+        ids.formUnion(idsByPhone[phone] ?? [])
+      }
+      if let email = identity.usefulEmail {
+        ids.formUnion(idsByEmail[email] ?? [])
+      }
+      if !identity.normalizedName.isEmpty {
+        // Same-name candidates preserve the resolver's strong name + partial-contact rules.
+        ids.formUnion(idsByName[identity.normalizedName] ?? [])
+      }
+      return ids.compactMap { id in
+        id == reservation.remoteID ? reservation : recordsByID[id]
+      }
+    }
   }
 
   private static func normalizedPhone(_ value: String) -> String? {

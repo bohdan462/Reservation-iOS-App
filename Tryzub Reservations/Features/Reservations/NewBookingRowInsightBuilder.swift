@@ -175,43 +175,14 @@ enum NewBookingRowInsightBuilder {
     for reservation: ReservationRecord,
     in historyPool: [ReservationRecord]
   ) -> Bool {
-    let resolver = GuestIdentityResolver()
-    let selected = resolver.identity(for: reservation)
-
-    return historyPool.contains { peer in
-      guard peer.remoteID != reservation.remoteID,
-            peer.reservationDate == reservation.reservationDate,
-            isActiveDuplicateCandidate(peer) else {
-        return false
-      }
-
-      let candidate = resolver.identity(for: peer)
-      if let selectedPhone = selected.fullPhoneDigits,
-         let candidatePhone = candidate.fullPhoneDigits,
-         selectedPhone == candidatePhone {
-        return true
-      }
-      if let selectedEmail = selected.usefulEmail,
-         let candidateEmail = candidate.usefulEmail,
-         selectedEmail == candidateEmail {
-        return true
-      }
-      guard let match = resolver.match(
-        peer,
-        against: selected,
-        selectedID: reservation.remoteID
-      ) else {
-        return false
-      }
-      return match.confidence == .exact || match.confidence == .strong
-    }
+    GuestOperationalTruth.possibleCorrection(
+      reservation: reservation,
+      peers: historyPool
+    )
   }
 
   private static func isActiveDuplicateCandidate(_ reservation: ReservationRecord) -> Bool {
-    let supersededID = reservation.supersededById ?? 0
-    return reservation.isExpectedGuest
-      && !reservation.isHidden
-      && supersededID <= 0
+    GuestOperationalTruth.isActiveCorrectionCandidate(reservation)
   }
 
   private static func combinedNotes(for reservation: ReservationRecord) -> String {

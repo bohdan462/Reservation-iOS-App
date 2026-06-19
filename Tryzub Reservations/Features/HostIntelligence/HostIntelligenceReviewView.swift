@@ -733,7 +733,7 @@ struct HostIntelligenceReviewView: View {
     case .guest: return "Guest note"
     case .note: return "Staff note"
     case .preference: return "Guest note"
-    case .sync: return "Backend flag"
+    case .sync: return "System notice"
     case .cancellation: return "Cancellation"
     case .bookingDecision: return "Booking review"
     case .table: return "Table"

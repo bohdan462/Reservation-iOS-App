@@ -31,6 +31,10 @@ final class GuestInsightsAnalysisCoordinator: ObservableObject {
         isAnalyzingLocalCache = true
         let started = ContinuousClock.now
         let reservationID = selected.remoteID
+        let localTruth = GuestOperationalTruth.localTruthSnapshot(
+            selected: selected,
+            reservationPool: pool
+        )
 
         let built = UIPressureTrace.measure(
             phase: "guest_insights_snapshot",
@@ -50,7 +54,8 @@ final class GuestInsightsAnalysisCoordinator: ObservableObject {
                 ) {
                     GuestInsightsController().analyzeSnapshots(
                         selected: selectedSnapshot,
-                        all: allSnapshots
+                        all: allSnapshots,
+                        localTruth: localTruth
                     )
                 }
             }.value

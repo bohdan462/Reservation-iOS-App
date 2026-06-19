@@ -46,7 +46,7 @@ struct GlobalServiceIntelligenceView: View {
     /// Reservations that have actionable note signals (Phase 6 — Note intelligence).
     @State private var signalledReservations: [(reservation: ReservationRecord, topSignals: [ReservationSignal])] = []
     /// Backend-enriched guest signals for today — "Guests to know" section.
-    @State private var guestsToKnow: [GuestIntelligenceSummaryDTO] = []
+    @State private var guestsToKnow: [ServiceGuestTruthRow] = []
     /// Staff-language lines from BusinessIntelligenceInsightBuilder (upgrades analytics section).
     @State private var businessInsightLines: [String] = []
     /// Source label for [SERVICE_CONTEXT_TRACE] — "cache_only", "mixed", "backend_enriched".
@@ -206,23 +206,20 @@ struct GlobalServiceIntelligenceView: View {
             ) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(guestsToKnow.prefix(6)) { guest in
-                        if let reservation = reservationFor(guestSummary: guest) {
+                        if let reservation = windowReservations.first(where: { $0.remoteID == guest.id }) {
                             Button {
                                 selectedReservation = reservation
                             } label: {
-                                GuestToKnowRow(summary: guest)
+                                GuestToKnowRow(row: guest)
                             }
                             .buttonStyle(.plain)
                         } else {
-                            GuestToKnowRow(summary: guest)
+                            GuestToKnowRow(row: guest)
                         }
                         if guest.id != guestsToKnow.prefix(6).last?.id {
                             Divider().opacity(0.4)
                         }
                     }
-                    Text("Based on backend guest history.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
                 }
             }
         }
@@ -473,6 +470,7 @@ struct GlobalServiceIntelligenceView: View {
     /// Rebuild from cache. Automatically enriches with backend data when available.
     /// Never blocks: first call is instant; subsequent calls (after backend loads) are equally fast.
     private func rebuild() {
+        let rebuildStarted = ContinuousClock.now
         let bounds = todayServiceBounds
         let now = Date()
 
@@ -548,6 +546,7 @@ struct GlobalServiceIntelligenceView: View {
             selectedDateKey: todayKey,
             serviceMode: state.mode,
             dayReservations: todayReservations,
+            historyReservations: windowReservations,
             guestSummaries: guestSummaries,
             profilePacks: [:],
             businessSummary: businessIntelligenceStore.response(
@@ -565,7 +564,7 @@ struct GlobalServiceIntelligenceView: View {
             )
         )
 
-        guestsToKnow = ctx.prioritisedGuestsToKnow
+        guestsToKnow = ctx.prioritisedGuestTruthRows
         intelligenceSource = ctx.freshness.sourceToken
         freshnessNote = ctx.freshness.staffNote
 
@@ -594,6 +593,10 @@ struct GlobalServiceIntelligenceView: View {
             analyticsCached: settingsStore.analyticsSummary?.summary != nil,
             upcomingCount: upcomingReservationCount
         )
+        #if DEBUG
+        let rebuildMs = Int(rebuildStarted.duration(to: .now).pressureTraceTimeInterval * 1_000)
+        print("[INTEL_PERF_TRACE] operation=Service Intelligence rebuild reservations=\(windowReservations.count) guests=\(guestsToKnow.count) durationMs=\(rebuildMs)")
+        #endif
     }
 
     /// Schedules non-blocking background backend loads. Called once on `.onAppear`.
@@ -676,12 +679,14 @@ struct GlobalServiceIntelligenceView: View {
 // MARK: - Guest to know row (backend-enriched)
 
 private struct GuestToKnowRow: View {
-    let summary: GuestIntelligenceSummaryDTO
+    let row: ServiceGuestTruthRow
+
+    private var summary: GuestIntelligenceSummaryDTO? { row.summary }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(summary.guestName ?? "Guest")
+                Text(row.guestName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
                 HStack(spacing: 6) {
@@ -697,8 +702,8 @@ private struct GuestToKnowRow: View {
                 }
             }
             Spacer(minLength: 0)
-            if summary.matchedVisitCount > 0 {
-                Text("\(summary.matchedVisitCount) visit\(summary.matchedVisitCount == 1 ? "" : "s")")
+            if row.truth.seenBefore {
+                Text(row.truth.regularity == .regular ? "Regular" : "Seen before")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -707,11 +712,13 @@ private struct GuestToKnowRow: View {
 
     private var badges: [String] {
         var b: [String] = []
-        if summary.hasPriorServiceIssue  { b.append("Service issue") }
-        if summary.hasAllergyNote        { b.append("Allergy") }
-        if summary.hasAccessibilityNote  { b.append("Accessibility") }
-        if summary.hasSpecialOccasionNote{ b.append("Occasion") }
-        if summary.matchedVisitCount > 0 && b.isEmpty { b.append("Returning") }
+        if summary?.hasPriorServiceIssue == true  { b.append("Service issue") }
+        if summary?.hasAllergyNote == true        { b.append("Allergy") }
+        if summary?.hasAccessibilityNote == true  { b.append("Accessibility") }
+        if summary?.hasSpecialOccasionNote == true { b.append("Occasion") }
+        if row.truth.seenBefore && b.isEmpty {
+            b.append(row.truth.regularity == .regular ? "Regular" : "Seen before")
+        }
         return b
     }
 

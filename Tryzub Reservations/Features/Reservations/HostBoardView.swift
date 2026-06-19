@@ -63,6 +63,7 @@ struct HostBoardView: View {
     @StateObject private var lifecycleCoordinator = HostBoardLifecycleCoordinator()
     @State private var hostBoardHeaderCollapse: CGFloat = 0
     @State private var isPressureExpanded = false
+    @State private var hostIntelligenceCardPresentation: HostIntelligenceCardPresentation = .empty
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
@@ -161,11 +162,6 @@ struct HostBoardView: View {
         serviceDensityBounds: (open: Date?, close: Date?)
     ) -> (snapshot: HostBoardSnapshot, source: HostBoardSnapshotRenderSource) {
         if let cached = currentDateBoardSnapshot {
-            traceHostBoardBodyRender(
-                source: .cached,
-                snapshot: cached,
-                reservationsCount: reservations.count
-            )
             return (cached, .cached)
         }
 
@@ -178,11 +174,6 @@ struct HostBoardView: View {
                 serviceClose: serviceDensityBounds.close,
                 largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
             )
-            traceHostBoardBodyRender(
-                source: .loading,
-                snapshot: loadingSnapshot,
-                reservationsCount: reservations.count
-            )
             return (loadingSnapshot, .loading)
         }
 
@@ -193,11 +184,6 @@ struct HostBoardView: View {
             serviceOpen: serviceDensityBounds.open,
             serviceClose: serviceDensityBounds.close,
             largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
-        )
-        traceHostBoardBodyRender(
-            source: .fallback,
-            snapshot: fallback,
-            reservationsCount: reservations.count
         )
         return (fallback, .fallback)
     }
@@ -392,6 +378,13 @@ struct HostBoardView: View {
             .task(id: hostLayoutTraceID(width: safeWidth, isWideLayout: isWideLayout)) {
                 traceHostLayout(width: safeWidth, isWideLayout: isWideLayout)
             }
+            .task(id: "\(selectedDateKey)|\(renderContext.source.rawValue)") {
+                traceHostBoardRenderTransition(
+                    source: renderContext.source,
+                    snapshot: snapshot,
+                    reservationsCount: reservations.count
+                )
+            }
         }
         .alert(
             pendingActionTitle,
@@ -548,6 +541,9 @@ struct HostBoardView: View {
         }
         .onChange(of: serviceBriefingStamp, initial: true) { _, _ in
             rebuildServiceBriefing()
+        }
+        .task(id: hostIntelligenceCardPresentationKey) {
+            rebuildHostIntelligenceCardPresentation()
         }
         // Single coordinated task replaces the two independent availability +
         // guest-intelligence tasks. Floor plan fetch is scheduled immediately on Host
@@ -837,7 +833,11 @@ struct HostBoardView: View {
                 .onScrollGeometryChange(for: CGFloat.self, of: { geometry in
                     max(0, geometry.contentOffset.y)
                 }) { _, offset in
-                    hostBoardHeaderCollapse = HostBoardHeaderCollapse.progress(forScrollOffset: offset)
+                    let progress = HostBoardHeaderCollapse.progress(forScrollOffset: offset)
+                    let step: CGFloat = 0.05
+                    let quantized = min(1, max(0, (progress / step).rounded() * step))
+                    guard abs(quantized - hostBoardHeaderCollapse) >= step * 0.9 else { return }
+                    hostBoardHeaderCollapse = quantized
                 }
         } else {
             scrollView
@@ -1376,24 +1376,18 @@ struct HostBoardView: View {
     private var liveHostIntelligenceSection: some View {
         let snapshot = hostIntelligenceController.displaySnapshot
         let useSeparatedPrompts = hostIntelligenceController.settings.useSeparatedBriefingPrompts
-        let compactPrompts = useSeparatedPrompts
-            ? HostOperationalBriefingPromptBuilder.buildCompactPrompts(from: snapshot)
-            : []
-        let expandedPrompts = useSeparatedPrompts
-            ? HostOperationalBriefingPromptBuilder.buildExpandedPrompts(from: snapshot)
-            : []
+        let presentation = hostIntelligenceCardPresentation.key == hostIntelligenceCardPresentationKey
+            ? hostIntelligenceCardPresentation
+            : .empty
 
         HostIntelligenceCard(
             snapshot: snapshot,
-            reservations: reservations,
-            knownReservations: allKnownReservations,
-            reminderInlineContext: hostIntelligenceReminderInlineContext,
+            presentation: presentation,
             presentationStyle: .compactStrip,
             attentionPresentation: hostIntelligenceController.displayAttentionPresentation,
             briefingTextOverride: hostIntelligenceController.displayBriefingText,
             managerNarrative: hostIntelligenceController.displayManagerNarrative,
             briefingSource: hostIntelligenceController.briefingSource,
-            compactOperationalPrompts: compactPrompts,
             showOperationalReview: useSeparatedPrompts,
             staffFacingPresentation: true,
             externalPulseActive: onDeviceSupportCoordinator.phase.pulseIsActive,
@@ -1408,7 +1402,7 @@ struct HostBoardView: View {
                 HostIntelligenceReviewView(
                     snapshot: snapshot,
                     reservations: reservations,
-                    operationalPrompts: expandedPrompts,
+                    operationalPrompts: presentation.expandedPrompts,
                     briefingText: hostIntelligenceController.displayBriefingText,
                     briefingSource: hostIntelligenceController.briefingSource
                 ) { action in
@@ -1417,6 +1411,46 @@ struct HostBoardView: View {
             }
         }
 
+    }
+
+    private var hostIntelligenceCardPresentationKey: String {
+        let snapshot = hostIntelligenceController.displaySnapshot
+        let reminder = hostIntelligenceReminderInlineContext
+        let reminderStamp = reminder.map {
+            "\($0.dueCount)-\($0.skippedCount)-\($0.failedCount)-\($0.isSending)-\($0.dailyLimitReached)-\($0.leadHours)"
+        } ?? "none"
+        return [
+            selectedDateKey,
+            snapshot.llmPacket.briefingFingerprint,
+            String(snapshot.generatedAt.timeIntervalSinceReferenceDate),
+            String(hostIntelligenceReservationStamp),
+            hostHistoryEnrichmentGenerationKey,
+            String(allKnownReservations.count),
+            hostIntelligenceController.displayAttentionPresentation.presentationFingerprint,
+            HostAttentionStableDigest.hexDigest(hostIntelligenceController.displayBriefingText),
+            reminderStamp,
+            String(hostIntelligenceController.settings.useSeparatedBriefingPrompts)
+        ].joined(separator: "|")
+    }
+
+    private func rebuildHostIntelligenceCardPresentation() {
+        let key = hostIntelligenceCardPresentationKey
+        let snapshot = hostIntelligenceController.displaySnapshot
+        let presentation = HostIntelligenceCardPresentation.build(
+            key: key,
+            snapshot: snapshot,
+            reservations: reservations,
+            knownReservations: allKnownReservations,
+            reminderContext: hostIntelligenceReminderInlineContext,
+            attentionPresentation: hostIntelligenceController.displayAttentionPresentation,
+            briefingText: hostIntelligenceController.displayBriefingText,
+            usesSeparatedPrompts: hostIntelligenceController.settings.useSeparatedBriefingPrompts,
+            includesReviewItem: true
+        )
+        guard key == hostIntelligenceCardPresentationKey else { return }
+        if presentation != hostIntelligenceCardPresentation {
+            hostIntelligenceCardPresentation = presentation
+        }
     }
 
     private func handleHostIntelligenceAction(_ action: HostSuggestedAction) {
@@ -1639,7 +1673,7 @@ struct HostBoardView: View {
         }
     }
 
-    private func traceHostBoardBodyRender(
+    private func traceHostBoardRenderTransition(
         source: HostBoardSnapshotRenderSource,
         snapshot: HostBoardSnapshot,
         reservationsCount: Int
@@ -1647,7 +1681,7 @@ struct HostBoardView: View {
         #if DEBUG
         let snapshotCount = snapshot.upcoming.count + snapshot.seated.count
         print(
-            "[HOST_ROWS_TRACE] event=body_render date=\(selectedDateKey) source=\(source.rawValue) reservations=\(reservationsCount) snapshotCount=\(snapshotCount)"
+            "[HOST_ROWS_TRACE] event=render_source_changed date=\(selectedDateKey) source=\(source.rawValue) reservations=\(reservationsCount) snapshotCount=\(snapshotCount)"
         )
         #endif
     }

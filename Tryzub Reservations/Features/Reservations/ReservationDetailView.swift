@@ -493,6 +493,8 @@ struct ReservationDetailView: View {
                 reservationID: reservation.remoteID,
                 guestName: reservation.guestName,
                 localReport: guestInsightReport,
+                selectedReservation: reservation,
+                reservationPool: guestInsightHistoryPool,
                 dateKey: reservation.reservationDate,
                 semanticStamp: guestIntelligenceStore.semanticProfileStamp(
                     for: reservation.remoteID,
@@ -1450,7 +1452,7 @@ struct ReservationDetailView: View {
                         Text(guestProfilePreview.title)
                             .font(.subheadline.weight(.semibold))
                         if guestProfilePreview.showsUpdatingBadge {
-                            DetailPill(label: "Profile updating", systemImage: "arrow.triangle.2.circlepath", tint: .secondary)
+                            DetailPill(label: "Updating guest history", systemImage: "arrow.triangle.2.circlepath", tint: .secondary)
                         }
                     }
                     ForEach(Array(guestProfilePreview.lines.enumerated()), id: \.offset) { _, line in
@@ -1467,7 +1469,7 @@ struct ReservationDetailView: View {
                         }
                     }
                 } else if guestProfileStore.isLoadingDetail || guestIntelligenceStore.isLoadingProfile(reservationID: reservation.remoteID) {
-                    TryzubLoadingRow(title: "Loading guest profile...")
+                    TryzubLoadingRow(title: "Loading guest history...")
                 } else if guestInsightAnalysisCoordinator.isAnalyzingLocalCache {
                     TryzubLoadingRow(title: "Calculating local cache insights...")
                 }
@@ -1477,13 +1479,16 @@ struct ReservationDetailView: View {
 
     private var guestProfilePreview: GuestInsightsProfilePresentation.DetailPreview? {
         if let aggregatePreview = GuestInsightsProfilePresentation.detailPreview(
-            profile: guestProfileStore.cachedProfile(byReservationID: reservation.remoteID)
+            profile: guestProfileStore.cachedProfile(byReservationID: reservation.remoteID),
+            referenceReservation: reservation
         ) {
             return aggregatePreview
         }
         return GuestInsightsProfilePresentation.detailPreview(
             guestName: reservation.guestName,
-            pack: guestIntelligenceStore.profilePack(for: reservation.remoteID)
+            pack: guestIntelligenceStore.profilePack(for: reservation.remoteID),
+            referenceReservation: reservation,
+            reservationPool: guestInsightHistoryPool
         )
     }
 
@@ -1500,6 +1505,7 @@ struct ReservationDetailView: View {
         )
         return GuestHistorySemantics.detailInsightPresentation(
             reservation: reservation,
+            reservationPool: guestInsightHistoryPool,
             localReport: report,
             serverSummary: serverSummary,
             serverAnswered: serverAnswered,
@@ -1527,7 +1533,9 @@ struct ReservationDetailView: View {
             localReport: guestInsightReport,
             serverSummary: serverSummary,
             serverAnswered: serverAnswered,
-            profilePack: guestIntelligenceStore.profilePack(for: reservation.remoteID)
+            profilePack: guestIntelligenceStore.profilePack(for: reservation.remoteID),
+            selectedReservation: reservation,
+            reservationPool: guestInsightHistoryPool
         )
     }
 
@@ -1544,7 +1552,9 @@ struct ReservationDetailView: View {
             localReport: report,
             serverSummary: serverSummary,
             serverAnswered: serverAnswered,
-            profilePack: guestIntelligenceStore.profilePack(for: reservation.remoteID)
+            profilePack: guestIntelligenceStore.profilePack(for: reservation.remoteID),
+            selectedReservation: reservation,
+            reservationPool: guestInsightHistoryPool
         )
     }
 
@@ -2288,7 +2298,7 @@ private struct GuestInsightsPreviewCard: View {
                     Text(profilePreview.title)
                         .font(.subheadline.weight(.semibold))
                     if profilePreview.showsUpdatingBadge {
-                        DetailPill(label: "Profile updating", systemImage: "arrow.triangle.2.circlepath", tint: .secondary)
+                        DetailPill(label: "Updating guest history", systemImage: "arrow.triangle.2.circlepath", tint: .secondary)
                     }
                 }
                 ForEach(Array(profilePreview.lines.enumerated()), id: \.offset) { _, line in

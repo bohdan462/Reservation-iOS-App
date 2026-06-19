@@ -14,6 +14,33 @@ enum HostIntelligenceInlineVisualRole {
 }
 
 extension View {
+  func hostIntelligenceCompactPanel(cornerRadius: CGFloat) -> some View {
+    background {
+      Group {
+        if #available(iOS 26.0, *) {
+          RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(.clear)
+            .glassEffect(.clear, in: .rect(cornerRadius: cornerRadius))
+        } else {
+          RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(Color(.secondarySystemGroupedBackground).opacity(0.96))
+        }
+      }
+    }
+    .overlay {
+      RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.75)
+    }
+  }
+
+  func hostIntelligenceCompactCapsule(strokeOpacity: Double) -> some View {
+    background(Color(.tertiarySystemGroupedBackground).opacity(0.92), in: Capsule())
+      .overlay {
+        Capsule()
+          .strokeBorder(Color.primary.opacity(strokeOpacity), lineWidth: 0.65)
+      }
+  }
+
   func hostIntelligenceInlineChipChrome(
     role: HostIntelligenceInlineVisualRole,
     tint: Color,
@@ -40,7 +67,6 @@ private struct HostIntelligenceInlineChipChromeModifier: ViewModifier {
       .padding(.horizontal, horizontalPadding)
       .padding(.vertical, verticalPadding)
       .background(backgroundFill, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-      .background(tint.opacity(tintFillOpacity), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
       .overlay {
         HostInlineChipBorder(
           cornerRadius: cornerRadius,
@@ -48,7 +74,6 @@ private struct HostIntelligenceInlineChipChromeModifier: ViewModifier {
           lineWidth: lineWidth
         )
       }
-      .shadow(color: shadowColor, radius: shadowRadius, x: 0, y: 1)
   }
 
   private var horizontalPadding: CGFloat {
@@ -69,11 +94,11 @@ private struct HostIntelligenceInlineChipChromeModifier: ViewModifier {
   private var backgroundFill: some ShapeStyle {
     switch role {
     case .primaryAction:
-      return AnyShapeStyle(.thinMaterial)
+      return AnyShapeStyle(tint.opacity(0.10))
     case .secondaryAction:
-      return AnyShapeStyle(.ultraThinMaterial)
+      return AnyShapeStyle(tint.opacity(0.055))
     case .info:
-      return AnyShapeStyle(Color.primary.opacity(0.025))
+      return AnyShapeStyle(Color(.tertiarySystemGroupedBackground).opacity(0.90))
     }
   }
 
@@ -85,14 +110,6 @@ private struct HostIntelligenceInlineChipChromeModifier: ViewModifier {
     }
   }
 
-  private var tintFillOpacity: Double {
-    switch role {
-    case .primaryAction: return 0.085
-    case .secondaryAction: return 0.045
-    case .info: return 0.0
-    }
-  }
-
   private var lineWidth: CGFloat {
     switch role {
     case .primaryAction: return 1.15
@@ -101,24 +118,6 @@ private struct HostIntelligenceInlineChipChromeModifier: ViewModifier {
     }
   }
 
-  private var shadowColor: Color {
-    switch role {
-    case .primaryAction:
-      return tint.opacity(0.12)
-    case .secondaryAction:
-      return tint.opacity(0.05)
-    case .info:
-      return .clear
-    }
-  }
-
-  private var shadowRadius: CGFloat {
-    switch role {
-    case .primaryAction: return 6
-    case .secondaryAction: return 2
-    case .info: return 0
-    }
-  }
 }
 
 private struct HostInlineChipBorder: View {

@@ -71,7 +71,10 @@ enum GuestInsightRecordSnapshotBuilder {
     ) -> (selected: GuestInsightRecordSnapshot, all: [GuestInsightRecordSnapshot]) {
         let resolver = GuestIdentityResolver()
         let deduper = GuestReservationIntentDeduper()
-        let unique = uniqueRecords([selected] + pool)
+        let unique = uniqueRecords([selected] + pool).filter { record in
+            record.remoteID == selected.remoteID
+                || (!record.isHidden && (record.supersededById ?? 0) <= 0)
+        }
         let all = unique.map { snapshot(for: $0, resolver: resolver, deduper: deduper) }
         let selectedSnapshot = all.first { $0.remoteID == selected.remoteID }
             ?? snapshot(for: selected, resolver: resolver, deduper: deduper)

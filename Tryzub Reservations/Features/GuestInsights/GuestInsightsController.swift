@@ -18,16 +18,25 @@ struct GuestInsightsController {
         selected reservation: ReservationRecord,
         allReservations: [ReservationRecord]
     ) -> GuestInsightReport {
+        let localTruth = GuestOperationalTruth.localTruthSnapshot(
+            selected: reservation,
+            reservationPool: allReservations
+        )
         let built = GuestInsightRecordSnapshotBuilder.build(
             selected: reservation,
             pool: allReservations
         )
-        return analyzeSnapshots(selected: built.selected, all: built.all)
+        return analyzeSnapshots(
+            selected: built.selected,
+            all: built.all,
+            localTruth: localTruth
+        )
     }
 
     func analyzeSnapshots(
         selected reservation: GuestInsightRecordSnapshot,
-        all allSnapshots: [GuestInsightRecordSnapshot]
+        all allSnapshots: [GuestInsightRecordSnapshot],
+        localTruth: GuestOperationalTruth.LocalSnapshot? = nil
     ) -> GuestInsightReport {
         let records = uniqueSnapshots([reservation] + allSnapshots)
         let selectedIdentity = reservation.identity
@@ -100,22 +109,10 @@ struct GuestInsightsController {
         let preferredWeekdays = weekdayPreferences(from: matchedRecords)
         let partySizeStats = partyStats(from: matchedRecords)
         let statusStats = statusStats(from: matchedRecords)
-        let priorReliableVisitCount = GuestHistorySemantics.priorReliableVisitCount(
-            selectedRemoteID: reservation.remoteID,
-            selectedDate: reservation.reservationDate,
-            selectedTime: reservation.reservationTime,
-            matchedReservations: matchedItems
-        )
-        let lastPriorVisitDisplayDate = GuestHistorySemantics.lastPriorVisitDisplayDate(
-            selectedRemoteID: reservation.remoteID,
-            selectedDate: reservation.reservationDate,
-            selectedTime: reservation.reservationTime,
-            matchedReservations: matchedItems
-        )
-        let visitOrdinal = GuestHistorySemantics.visitOrdinal(
-            priorReliableVisitCount: priorReliableVisitCount
-        )
-
+        // Staff-facing truth must come from GuestOperationalTruth while ReservationRecord
+        // visibility, supersession, identity, and intent-dedupe evidence are available.
+        let priorReliableVisitCount = localTruth?.validPastVisitCount ?? 0
+        let lastPriorVisitDisplayDate = localTruth?.lastVisitDisplay
         let summary = summary(
             from: matchedRecords,
             noteHistory: noteHistory,
@@ -148,7 +145,7 @@ struct GuestInsightsController {
             primaryPhone: primaryPhone,
             primaryEmail: primaryEmail,
             isLikelyManualGuest: isLikelyManualGuest,
-            regularityLevel: GuestRegularityLevel.level(for: visitOrdinal),
+            regularityLevel: GuestOperationalTruth.regularity(forPastVisitCount: priorReliableVisitCount).guestLevel,
             hospitalitySnapshot: hospitalitySnapshot,
             bookingBehavior: bookingBehavior,
             collapsedDuplicateReservationCount: dedupedMatchedRecords.collapsedDuplicateCount,
@@ -512,7 +509,7 @@ struct GuestInsightsController {
                 GuestInsightWarning(
                     id: "past-cancellations",
                     title: "Prior cancellation or no-show",
-                    message: "A previous matched reservation was cancelled or marked no-show.",
+                    message: "A previous reservation was cancelled or marked no-show.",
                     systemImage: "exclamationmark.circle"
                 )
             )
@@ -523,7 +520,7 @@ struct GuestInsightsController {
                 GuestInsightWarning(
                     id: "upcoming",
                     title: "Has upcoming reservation",
-                    message: "This guest has an upcoming matched reservation in the local cache.",
+                    message: "This guest has an upcoming reservation saved on this device.",
                     systemImage: "calendar"
                 )
             )

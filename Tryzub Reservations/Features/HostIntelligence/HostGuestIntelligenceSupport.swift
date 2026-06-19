@@ -510,11 +510,16 @@ enum HostGuestIntelligenceSupport {
     for reservation: ReservationRecord,
     summary: GuestIntelligenceSummaryDTO
   ) -> HostGuestSignal? {
-    guard summary.cleanVisitCount >= 1 else { return nil }
+    let truth = GuestOperationalTruth.evaluate(
+      surface: "host_inline",
+      selected: reservation,
+      localReport: nil,
+      summary: summary
+    )
+    guard truth.seenBefore else { return nil }
 
-    let visitOrdinal = summary.cleanVisitCount + 1
-    let lastVisit = summary.lastVisitDate?.trimmingCharacters(in: .whitespacesAndNewlines)
-    let lastVisitDisplay = (lastVisit?.isEmpty == false) ? lastVisit : nil
+    let visitOrdinal = truth.cleanVisitCount + 1
+    let lastVisitDisplay = truth.lastVisitDisplay
     let message = GuestHistorySemantics.returningGuestMessage(
       guestName: reservation.guestName,
       visitOrdinal: visitOrdinal,
@@ -543,11 +548,16 @@ enum HostGuestIntelligenceSupport {
     for reservation: ReservationRecord,
     summary: GuestIntelligenceSummaryDTO
   ) -> HostGuestSignal? {
-    guard summary.cleanVisitCount >= 1 else { return nil }
+    let truth = GuestOperationalTruth.evaluate(
+      surface: "host_inline",
+      selected: reservation,
+      localReport: nil,
+      summary: summary
+    )
+    guard truth.seenBefore, truth.regularity == .regular else { return nil }
 
-    let visitOrdinal = summary.cleanVisitCount + 1
-    let lastVisit = summary.lastVisitDate?.trimmingCharacters(in: .whitespacesAndNewlines)
-    let lastVisitDisplay = (lastVisit?.isEmpty == false) ? lastVisit : nil
+    let visitOrdinal = truth.cleanVisitCount + 1
+    let lastVisitDisplay = truth.lastVisitDisplay
     let message = GuestHistorySemantics.returningGuestMessage(
       guestName: reservation.guestName,
       visitOrdinal: visitOrdinal,
@@ -690,14 +700,13 @@ enum HostGuestIntelligenceSupport {
     for reservation: ReservationRecord,
     summary: GuestIntelligenceSummaryDTO
   ) -> HostGuestSignal? {
-    guard hasReliableReturningIdentity(summary.identityConfidence) else { return nil }
-
-    switch summary.classification {
-    case .returning, .regular, .frequentRegular:
-      break
-    case .new, .unknown, .needsReview:
-      return nil
-    }
+    let truth = GuestOperationalTruth.evaluate(
+      surface: "host_inline",
+      selected: reservation,
+      localReport: nil,
+      summary: summary
+    )
+    guard truth.seenBefore else { return nil }
 
     return HostGuestSignal(
       id: "guest-seen-before-server-\(reservation.remoteID)",
@@ -705,9 +714,7 @@ enum HostGuestIntelligenceSupport {
       guestName: reservation.guestName,
       kind: .regularGuest,
       severity: .info,
-      message: GuestHistorySemantics.serverBackedSeenBeforeMessage(
-        guestName: reservation.guestName
-      ),
+      message: truth.lastVisitDisplay.map { "Seen before · Last visit \($0)" } ?? "Seen before",
       evidence: backendEvidence(
         summary: summary,
         extra: ["serverSeenBeforeFallback", "returningGuest"]
@@ -1042,44 +1049,14 @@ enum HostGuestIntelligenceSupport {
     for reservation: ReservationRecord,
     in dayReservations: [ReservationRecord]
   ) -> Bool {
-    guard isActiveDuplicateCandidate(reservation) else { return false }
-    let resolver = GuestIdentityResolver()
-    let selected = resolver.identity(for: reservation)
-
-    return dayReservations.contains { peer in
-      guard peer.remoteID != reservation.remoteID,
-            peer.reservationDate == reservation.reservationDate,
-            isActiveDuplicateCandidate(peer) else {
-        return false
-      }
-
-      let candidate = resolver.identity(for: peer)
-      if let selectedPhone = selected.fullPhoneDigits,
-         let candidatePhone = candidate.fullPhoneDigits,
-         selectedPhone == candidatePhone {
-        return true
-      }
-      if let selectedEmail = selected.usefulEmail,
-         let candidateEmail = candidate.usefulEmail,
-         selectedEmail == candidateEmail {
-        return true
-      }
-      guard let match = resolver.match(
-        peer,
-        against: selected,
-        selectedID: reservation.remoteID
-      ) else {
-        return false
-      }
-      return match.confidence == .exact || match.confidence == .strong
-    }
+    GuestOperationalTruth.possibleCorrection(
+      reservation: reservation,
+      peers: dayReservations
+    )
   }
 
   private static func isActiveDuplicateCandidate(_ reservation: ReservationRecord) -> Bool {
-    let supersededID = reservation.supersededById ?? 0
-    return reservation.isExpectedGuest
-      && !reservation.isHidden
-      && supersededID <= 0
+    GuestOperationalTruth.isActiveCorrectionCandidate(reservation)
   }
 
   // MARK: - Facts / Actions Helpers
@@ -1140,15 +1117,6 @@ enum HostGuestIntelligenceSupport {
 
     switch signal.kind {
     case .regularGuest, .importantGuest:
-      if let line = packet.safeHistoryLine?.trimmingCharacters(in: .whitespacesAndNewlines),
-         !line.isEmpty {
-        message = line
-        evidence.append("host_profile_safe_history")
-      } else if let line = packet.lastSeenLine?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !line.isEmpty,
-                !message.lowercased().contains("last") {
-        message = "\(message) \(line)."
-      }
       if let prefs = packet.preferenceLines?.filter({ !$0.isEmpty }), !prefs.isEmpty {
         evidence.append(contentsOf: prefs.prefix(2).map { "host_profile_pref=\($0)" })
       }

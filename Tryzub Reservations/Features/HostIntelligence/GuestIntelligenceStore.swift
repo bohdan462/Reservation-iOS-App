@@ -292,6 +292,8 @@ final class GuestIntelligenceStore: ObservableObject {
         reservationID: Int,
         guestName: String,
         localReport: GuestInsightReport,
+        selectedReservation: ReservationRecord,
+        reservationPool: [ReservationRecord],
         dateKey: String,
         semanticStamp: String
     ) {
@@ -304,7 +306,10 @@ final class GuestIntelligenceStore: ObservableObject {
             localReport: localReport,
             serverSummary: serverSummary,
             serverAnswered: serverAnswered,
-            profilePack: profilePack
+            profilePack: profilePack,
+            selectedReservation: selectedReservation,
+            reservationPool: reservationPool,
+            truthSurface: surface
         )
         let mergeDurationMs = Int(mergeStarted.duration(to: .now).pressureTraceTimeInterval * 1000)
         let backendSeenBefore = GuestHistorySemantics.isBackendSeenBefore(

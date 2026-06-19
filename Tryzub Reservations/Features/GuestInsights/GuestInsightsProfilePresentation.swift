@@ -61,30 +61,36 @@ enum GuestInsightsProfilePresentation {
         let caption: String
     }
 
-    static func aggregateState(from profile: GuestProfileDTO?) -> AggregateProfileState? {
+    static func aggregateState(
+        from profile: GuestProfileDTO?,
+        referenceReservation: ReservationRecord? = nil
+    ) -> AggregateProfileState? {
         guard let profile else { return nil }
-        let labels = safeLabels(from: profile.labels)
+        let labels = safeLabels(from: profile)
         let summaryLines = aggregateSummaryLines(from: profile, labels: labels)
         return AggregateProfileState(
-            sourceLine: profile.stale == true ? "Based on backend guest profile. Profile updating." : "Based on backend guest profile.",
+            sourceLine: profile.stale == true ? "Updating guest history" : "Guest history",
             showsUpdatingBadge: profile.stale == true,
             summaryLines: summaryLines,
             labels: labels,
-            countCards: aggregateMetrics(from: profile),
+            countCards: aggregateMetrics(from: profile, referenceReservation: referenceReservation),
             preferenceLines: aggregatePreferenceLines(from: profile),
             noteLines: aggregateNoteLines(from: profile),
             upcomingLine: upcomingLine(from: profile.nextReservation)
         )
     }
 
-    static func detailPreview(profile: GuestProfileDTO?) -> DetailPreview? {
+    static func detailPreview(
+        profile: GuestProfileDTO?,
+        referenceReservation: ReservationRecord? = nil
+    ) -> DetailPreview? {
         guard let profile else { return nil }
         var lines: [String] = []
-        let visitCount = profile.cleanVisitCount ?? profile.totalReservations ?? 0
+        let visitCount = profile.cleanVisitCount ?? 0
         if visitCount > 0 {
-            lines.append("\(visitCount) \(visitCount == 1 ? "visit" : "visits") in backend guest profile.")
+            lines.append("\(visitCount) confirmed \(visitCount == 1 ? "visit" : "visits").")
         }
-        if let lastSeen = displayDate(profile.lastSeenDate) {
+        if let lastSeen = acceptedLastSeen(profile.lastSeenDate, referenceReservation: referenceReservation) {
             lines.append("Last seen \(lastSeen).")
         }
         if let partySize = profile.usualPartySize ?? profile.preferences?.usualPartySize, partySize > 0 {
@@ -93,10 +99,10 @@ enum GuestInsightsProfilePresentation {
         if let upcoming = upcomingLine(from: profile.nextReservation) {
             lines.append(upcoming)
         }
-        let badges = safeLabels(from: profile.labels).map(\.title)
+        let badges = safeLabels(from: profile).map(\.title)
         guard !lines.isEmpty || !badges.isEmpty || profile.stale == true else { return nil }
         return DetailPreview(
-            title: "Backend guest profile",
+            title: "Guest history",
             lines: lines,
             badges: Array(badges.prefix(4)),
             showsUpdatingBadge: profile.stale == true
@@ -118,21 +124,45 @@ enum GuestInsightsProfilePresentation {
 
     static func detailPreview(
         guestName: String,
-        pack: GuestIntelligenceProfilePackDTO?
+        pack: GuestIntelligenceProfilePackDTO?,
+        referenceReservation: ReservationRecord? = nil,
+        reservationPool: [ReservationRecord]? = nil
     ) -> DetailPreview? {
         guard let pack else { return nil }
         var lines: [String] = []
 
-        if let historyLine = pack.hostProfilePacket?.safeHistoryLine?.nilIfBlank {
-            lines.append(historyLine)
-        } else if let safeCopy = pack.history?.safeCopy?.nilIfBlank {
-            lines.append(safeCopy)
-        } else if pack.history?.seenBefore == true {
-            lines.append("\(guestName) has visited before.")
+        if let referenceReservation {
+            let truth: GuestOperationalTruth.Evaluation
+            if let reservationPool {
+                truth = GuestOperationalTruth.evaluate(
+                    surface: "guest_detail",
+                    selected: referenceReservation,
+                    reservationPool: reservationPool,
+                    summary: pack.resolvedSummary,
+                    profilePack: pack
+                )
+            } else {
+                truth = GuestOperationalTruth.evaluate(
+                    surface: "guest_detail",
+                    selected: referenceReservation,
+                    localReport: nil,
+                    summary: pack.resolvedSummary,
+                    profilePack: pack
+                )
+            }
+            if truth.seenBefore {
+                lines.append("Seen before")
+            } else if truth.finalLabel == "Guest history found" {
+                lines.append("Guest history found")
+            }
+        } else if GuestHistorySemantics.isProfilePackReturning(pack) {
+            lines.append("Seen before")
         }
 
-        if let lastSeen = displayDate(pack.history?.lastSeenDate)
-            ?? pack.hostProfilePacket?.lastSeenLine?.nilIfBlank {
+        if let lastSeen = acceptedLastSeen(
+            pack.history?.lastSeenDate,
+            referenceReservation: referenceReservation
+        ) {
             lines.append("Last seen \(lastSeen).")
         }
 
@@ -156,7 +186,7 @@ enum GuestInsightsProfilePresentation {
         }
 
         guard !lines.isEmpty else { return nil }
-        return DetailPreview(title: "Guest profile", lines: lines)
+        return DetailPreview(title: "Guest history", lines: lines)
     }
 
     private static func aggregateSummaryLines(
@@ -175,25 +205,27 @@ enum GuestInsightsProfilePresentation {
             }
         }
         if lines.isEmpty, let name = profile.primaryName?.nilIfBlank {
-            lines.append("\(name)'s profile is loaded from backend guest history.")
+            lines.append("Guest history is available for \(name).")
         }
         return lines
     }
 
-    private static func aggregateMetrics(from profile: GuestProfileDTO) -> [AggregateMetricState] {
+    private static func aggregateMetrics(
+        from profile: GuestProfileDTO,
+        referenceReservation: ReservationRecord?
+    ) -> [AggregateMetricState] {
         var metrics: [AggregateMetricState] = []
-        let total = profile.totalReservations ?? 0
         let clean = profile.cleanVisitCount ?? 0
         metrics.append(
             AggregateMetricState(
                 id: "visits",
                 title: "Visits",
-                value: "\(max(clean, total))",
-                caption: clean > 0 ? "Clean visits" : "Reservations"
+                value: "\(clean)",
+                caption: "Confirmed visits"
             )
         )
-        if let lastSeen = displayDate(profile.lastSeenDate) {
-            metrics.append(AggregateMetricState(id: "last_seen", title: "Last seen", value: lastSeen, caption: "Backend profile"))
+        if let lastSeen = acceptedLastSeen(profile.lastSeenDate, referenceReservation: referenceReservation) {
+            metrics.append(AggregateMetricState(id: "last_seen", title: "Last seen", value: lastSeen, caption: "Guest history"))
         }
         if let party = profile.usualPartySize ?? profile.preferences?.usualPartySize, party > 0 {
             metrics.append(AggregateMetricState(id: "party", title: "Usual party", value: "\(party)", caption: "Most common size"))
@@ -202,12 +234,30 @@ enum GuestInsightsProfilePresentation {
             metrics.append(AggregateMetricState(id: "upcoming", title: "Upcoming", value: "\(upcoming)", caption: "Future reservations"))
         }
         if let noShow = profile.noShowCount ?? profile.counts?.noShow, noShow > 0 {
-            metrics.append(AggregateMetricState(id: "no_show", title: "No-shows", value: "\(noShow)", caption: "Backend history"))
+            metrics.append(AggregateMetricState(id: "no_show", title: "No-shows", value: "\(noShow)", caption: "Guest history"))
         }
         if let cancelled = profile.cancelledCount ?? profile.counts?.cancelled, cancelled > 0 {
-            metrics.append(AggregateMetricState(id: "cancelled", title: "Cancelled", value: "\(cancelled)", caption: "Backend history"))
+            metrics.append(AggregateMetricState(id: "cancelled", title: "Cancelled", value: "\(cancelled)", caption: "Guest history"))
         }
         return Array(metrics.prefix(6))
+    }
+
+    private static func acceptedLastSeen(
+        _ raw: String?,
+        referenceReservation: ReservationRecord?
+    ) -> String? {
+        guard let referenceReservation else {
+            #if DEBUG
+            print("[INTEL_TRUTH_TRACE] surface=guest_profile_metrics missingSelectedReservation=true lastVisitSuppressed=true")
+            #endif
+            return nil
+        }
+        guard let date = GuestOperationalTruth.acceptedBackendLastVisit(
+            raw,
+            selectedDate: referenceReservation.reservationDate,
+            selectedTime: referenceReservation.reservationTime
+        ) else { return nil }
+        return ReservationFormatters.mediumDate.string(from: date)
     }
 
     private static func aggregatePreferenceLines(from profile: GuestProfileDTO) -> [String] {
@@ -255,10 +305,17 @@ enum GuestInsightsProfilePresentation {
         return lines
     }
 
-    private static func safeLabels(from labels: [GuestProfileLabelDTO]?) -> [AggregateLabelState] {
-        Array((labels ?? [])
+    private static func safeLabels(from profile: GuestProfileDTO) -> [AggregateLabelState] {
+        Array((profile.labels ?? [])
             .compactMap { label -> AggregateLabelState? in
                 guard let title = label.title?.nilIfBlank else { return nil }
+                if label.id == "regular_guest" {
+                    let classificationOnlyRegular = profile.cleanVisitCount == nil
+                        && ["exact", "strong"].contains(profile.identityConfidence?.lowercased() ?? "")
+                    guard (profile.cleanVisitCount ?? 0) >= 3 || classificationOnlyRegular else {
+                        return nil
+                    }
+                }
                 let values = [label.id, label.title, label.category, label.source]
                 guard !values.contains(where: containsUnsupportedLabelToken) else { return nil }
                 let identity = [label.id, label.category, label.title, label.detail]

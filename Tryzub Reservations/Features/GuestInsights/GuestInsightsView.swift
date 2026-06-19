@@ -71,8 +71,8 @@ struct GuestInsightsView: View {
                     } else if guestIntelligenceStore.isLoadingProfile(
                         reservationID: selectedReservation.remoteID
                     ) {
-                        GuestInsightCard(title: "Server guest profile", systemImage: "arrow.triangle.2.circlepath") {
-                            TryzubLoadingRow(title: "Loading server history…")
+                        GuestInsightCard(title: "Guest history", systemImage: "arrow.triangle.2.circlepath") {
+                            TryzubLoadingRow(title: "Loading guest history…")
                         }
                     }
                     GuestInsightNotesSection(report: report)
@@ -99,7 +99,7 @@ struct GuestInsightsView: View {
                     guestProfileShell(state: viewState)
                 } else {
                     GuestInsightReservationShell(reservation: selectedReservation)
-                    TryzubLoadingRow(title: "Loading guest profile…")
+                    TryzubLoadingRow(title: "Loading guest history…")
                 }
             }
             .padding(.horizontal, 16)
@@ -131,6 +131,8 @@ struct GuestInsightsView: View {
                 reservationID: selectedReservation.remoteID,
                 guestName: selectedReservation.guestName,
                 localReport: report,
+                selectedReservation: selectedReservation,
+                reservationPool: allReservations,
                 dateKey: selectedReservation.reservationDate,
                 semanticStamp: guestIntelligenceStore.semanticProfileStamp(
                     for: selectedReservation.remoteID,
@@ -168,7 +170,9 @@ struct GuestInsightsView: View {
             serverSummary: serverSummary,
             serverAnswered: serverAnswered,
             profileStamp: guestIntelligenceStore.semanticProfileStamp(for: reservationID, dateKey: dateKey),
-            profilePack: profilePack
+            profilePack: profilePack,
+            selectedReservation: selectedReservation,
+            reservationPool: allReservations
         )
     }
 
@@ -194,7 +198,9 @@ struct GuestInsightsView: View {
             localReport: report,
             serverSummary: guestIntelligenceStore.summary(for: reservationID, dateKey: dateKey),
             serverAnswered: guestIntelligenceStore.hasServerAnswer(for: reservationID, dateKey: dateKey),
-            profilePack: guestIntelligenceStore.profilePack(for: reservationID)
+            profilePack: guestIntelligenceStore.profilePack(for: reservationID),
+            selectedReservation: selectedReservation,
+            reservationPool: allReservations
         )
     }
 
@@ -232,8 +238,8 @@ struct GuestInsightsView: View {
                 GuestInsightServerHistorySection(rows: serverVisitRows)
             }
         } else if state.loadingState == .loadingServerProfile || state.loadingState == .loadingBoth {
-            GuestInsightCard(title: "Server guest profile", systemImage: "arrow.triangle.2.circlepath") {
-                TryzubLoadingRow(title: "Loading server history…")
+            GuestInsightCard(title: "Guest history", systemImage: "arrow.triangle.2.circlepath") {
+                TryzubLoadingRow(title: "Loading guest history…")
             }
         }
 
@@ -257,7 +263,7 @@ private struct GuestInsightAggregateHeader: View {
                         .font(.title3.weight(.semibold))
                     Spacer(minLength: 0)
                     if state.aggregateProfile?.showsUpdatingBadge == true {
-                        GuestInsightBadge("Profile updating", systemImage: "arrow.triangle.2.circlepath")
+                        GuestInsightBadge("Updating guest history", systemImage: "arrow.triangle.2.circlepath")
                     }
                 }
                 Text(state.header.reservationLine)
@@ -289,7 +295,7 @@ private struct GuestInsightAggregateProfileSection: View {
             }
         }
 
-        GuestInsightCard(title: "Backend guest profile", systemImage: "person.text.rectangle") {
+        GuestInsightCard(title: "Guest history", systemImage: "person.text.rectangle") {
             VStack(alignment: .leading, spacing: 10) {
                 Text(aggregateProfile.sourceLine)
                     .font(.caption)
@@ -663,7 +669,7 @@ private struct GuestInsightProfileSummarySection: View {
     let pack: GuestIntelligenceProfilePackDTO
 
     var body: some View {
-        GuestInsightCard(title: "Guest Profile", systemImage: "person.text.rectangle") {
+        GuestInsightCard(title: "Guest history", systemImage: "person.text.rectangle") {
             VStack(alignment: .leading, spacing: 8) {
                 if let summary = pack.profileSummary?.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !summary.isEmpty {
@@ -732,9 +738,9 @@ private struct GuestInsightServerHistorySection: View {
     let rows: [GuestInsightsProfilePresentation.ServerVisitRow]
 
     var body: some View {
-        GuestInsightCard(title: "Server Guest History", systemImage: "calendar.badge.clock") {
+        GuestInsightCard(title: "Past visits", systemImage: "calendar.badge.clock") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Earlier visits from backend intelligence.")
+                Text("Earlier guest visits.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -781,11 +787,46 @@ private struct GuestInsightBookingHistorySection: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(report.bookingHistory) { item in
-                        GuestInsightBookingRow(item: item)
+                    if !pastVisits.isEmpty {
+                        Text("Past visits")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(pastVisits) { item in
+                            GuestInsightBookingRow(item: item)
+                        }
+                    }
+                    if !upcomingReservations.isEmpty {
+                        Text("Upcoming reservations")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(upcomingReservations) { item in
+                            GuestInsightBookingRow(item: item)
+                        }
                     }
                 }
             }
+        }
+    }
+
+    private var selectedSortKey: String {
+        guard let selected = report.bookingHistory.first(where: {
+            $0.reservationID == report.selectedReservationID
+        }) else { return "" }
+        return "\(selected.date) \(selected.time)"
+    }
+
+    private var pastVisits: [GuestBookingHistoryItem] {
+        report.bookingHistory.filter { item in
+            let clean = item.status == .confirmed || item.status == .seated || item.status == .completed
+            return clean && "\(item.date) \(item.time)" < selectedSortKey
+        }
+    }
+
+    private var upcomingReservations: [GuestBookingHistoryItem] {
+        report.bookingHistory.filter { item in
+            "\(item.date) \(item.time)" >= selectedSortKey
+                && item.status != .cancelled
+                && item.status != .noShow
         }
     }
 }

@@ -145,8 +145,10 @@ struct RegularGuestsController {
         allRecords: [ReservationRecord]
     ) -> RegularGuestSummary? {
         let dedupedRecords = intentDeduper.collapse(records)
-        let cleanRecords = dedupedRecords.records
-        guard let representative = cleanRecords.sorted(by: newestFirst).first else { return nil }
+        let allDedupedRecords = dedupedRecords.records
+        guard let representative = allDedupedRecords.sorted(by: newestFirst).first else { return nil }
+        let cleanRecords = GuestOperationalTruth.validHistoricalVisits(allDedupedRecords)
+        guard !cleanRecords.isEmpty else { return nil }
 
         let identities = cleanRecords.map(identityResolver.identity)
         let primaryPhoneDigits = mostCommon(identities.compactMap(\.fullPhoneDigits))
@@ -164,21 +166,19 @@ struct RegularGuestsController {
                 + (record.staffNotes?.nilIfBlank == nil ? 0 : 1)
                 + (record.guestNotes?.nilIfBlank == nil ? 0 : 1)
         }
-        let cancelledNoShowCount = statusCounts(from: cleanRecords)
-
         return RegularGuestSummary(
             id: stableID(for: cleanRecords, identities: identities, representative: representative),
             displayName: displayName,
             primaryPhone: primaryPhone,
             primaryEmail: primaryEmail,
-            regularityLevel: GuestRegularityLevel.level(for: cleanRecords.count),
+            regularityLevel: GuestOperationalTruth.regularity(forPastVisitCount: cleanRecords.count).guestLevel,
             totalReservations: cleanRecords.count,
             firstSeenDate: sortedOldest.first?.displayDate,
             lastBookedDate: sortedNewest.first?.displayDate,
             firstSeenSortKey: sortedOldest.first?.reservationDate,
             lastBookedSortKey: sortedNewest.first?.reservationDate,
-            upcomingCount: cleanRecords.filter { isUpcomingActive($0) }.count,
-            cancelledNoShowCount: cancelledNoShowCount,
+            upcomingCount: allDedupedRecords.filter { isUpcomingActive($0) }.count,
+            cancelledNoShowCount: statusCounts(from: allDedupedRecords),
             mostCommonTime: mostCommonTime(from: cleanRecords),
             mostCommonPartySize: mostCommon(cleanRecords.map(\.partySize)),
             hasStaffNotes: cleanRecords.contains(where: \.hasStaffNotes),

@@ -2401,7 +2401,7 @@ private struct GuestPhoneLookupSuggestionRow: View {
                         Text(email)
                     }
                     if result.totalReservations > 0 {
-                        Text("\(result.totalReservations) visits")
+                        Text("\(result.totalReservations) reservations")
                     }
                 }
                 .font(.caption.weight(.medium))
