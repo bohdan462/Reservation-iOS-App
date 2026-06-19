@@ -370,7 +370,7 @@ struct HostBoardView: View {
                             showsReservationLoadingPlaceholder: showsReservationLoading
                         )
                         .safeAreaInset(edge: .top, spacing: 0) {
-                            homeServiceHeader
+                            homeServiceHeader(usesInlineDateStrip: true)
                                 .padding(.horizontal, 16)
                                 .padding(.top, HostBoardHeaderCollapse.lerp(8, 4, hostBoardHeaderCollapse))
                                 .padding(.bottom, HostBoardHeaderCollapse.lerp(4, 1, hostBoardHeaderCollapse))
@@ -775,7 +775,8 @@ struct HostBoardView: View {
         return .closedEmpty
     }
 
-    private var homeServiceHeader: some View {
+    @ViewBuilder
+    private func homeServiceHeader(usesInlineDateStrip: Bool = false) -> some View {
         HomeServiceHeader(
             title: environment.role == .developer ? "Dev" : "Host",
             selectedDate: $selectedDate,
@@ -789,7 +790,8 @@ struct HostBoardView: View {
             onShowFormProblems: onShowFormProblems,
             onOpenTimeline: nil,
             onOpenShiftReminders: { showShiftReminders = true },
-            collapseProgress: hostBoardHeaderCollapse
+            collapseProgress: hostBoardHeaderCollapse,
+            usesInlineDateStrip: usesInlineDateStrip
         )
     }
 
@@ -806,7 +808,7 @@ struct HostBoardView: View {
         let scrollView = ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 if includesHeader {
-                    homeServiceHeader
+                    homeServiceHeader()
                 }
 
                 onDeviceSupportStatusBanner
@@ -1718,6 +1720,8 @@ private struct HomeServiceHeader: View {
     var onOpenTimeline: (() -> Void)? = nil
     var onOpenShiftReminders: (() -> Void)? = nil
     var collapseProgress: CGFloat = 0
+    /// iPad Host board: title + sync and date chips share one row when horizontal space allows.
+    var usesInlineDateStrip: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1757,33 +1761,27 @@ private struct HomeServiceHeader: View {
         HostBoardHeaderCollapse.lerp(14, 11, effectiveCollapse)
     }
 
-    private var compactServiceDateText: String {
-        if Calendar.current.isDateInToday(selectedDate) {
-            return selectedDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+    private var headerMaxHeight: CGFloat {
+        if usesInlineDateStrip {
+            return HostBoardHeaderCollapse.lerp(58, 52, effectiveCollapse)
         }
-        return selectedDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
+        return HostBoardHeaderCollapse.lerp(132, 94, effectiveCollapse)
+    }
+
+    private var rowSpacing: CGFloat {
+        HostBoardHeaderCollapse.lerp(10, 6, effectiveCollapse)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: headerSpacing) {
-            HStack(alignment: .center, spacing: HostBoardHeaderCollapse.lerp(10, 6, effectiveCollapse)) {
-                titleBlock
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                    .layoutPriority(0)
-                actionBar
-                    .fixedSize()
-                    .layoutPriority(1)
-                    .scaleEffect(HostBoardHeaderCollapse.lerp(1, 0.92, effectiveCollapse))
+        Group {
+            if usesInlineDateStrip {
+                ViewThatFits(in: .horizontal) {
+                    inlineHeaderLayout
+                    stackedHeaderLayout
+                }
+            } else {
+                stackedHeaderLayout
             }
-
-            ReservationServiceDateSelector(
-                selectedDate: $selectedDate,
-                chipStyle: .hostBoardGlass,
-                pinsCalendarToTrailing: true,
-                showsCalendarButton: false,
-                stripScale: dateStripScale
-            )
-            .frame(height: dateStripHeight)
         }
         .padding(.horizontal, horizontalPadding)
         .padding(.vertical, verticalPadding)
@@ -1792,10 +1790,56 @@ private struct HomeServiceHeader: View {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
         }
-        .frame(maxHeight: HostBoardHeaderCollapse.lerp(132, 94, effectiveCollapse), alignment: .top)
+        .frame(maxHeight: headerMaxHeight, alignment: .top)
         .clipped()
         .scaleEffect(HostBoardHeaderCollapse.lerp(1, 0.96, effectiveCollapse), anchor: .top)
         .animation(.smooth(duration: 0.32), value: effectiveCollapse)
+    }
+
+    private var stackedHeaderLayout: some View {
+        VStack(alignment: .leading, spacing: headerSpacing) {
+            titleAndActionRow
+            serviceDateSelector
+        }
+    }
+
+    private var inlineHeaderLayout: some View {
+        HStack(alignment: .center, spacing: rowSpacing) {
+            titleBlock(expandsHorizontally: false, showsInlineSecondaryStatus: false)
+                .layoutPriority(2)
+
+            serviceDateSelector
+                .frame(minWidth: 120, maxWidth: .infinity)
+                .layoutPriority(0)
+
+            actionBar
+                .fixedSize()
+                .layoutPriority(3)
+                .scaleEffect(HostBoardHeaderCollapse.lerp(1, 0.92, effectiveCollapse))
+        }
+    }
+
+    private var titleAndActionRow: some View {
+        HStack(alignment: .center, spacing: rowSpacing) {
+            titleBlock(expandsHorizontally: true, showsInlineSecondaryStatus: true)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(0)
+            actionBar
+                .fixedSize()
+                .layoutPriority(1)
+                .scaleEffect(HostBoardHeaderCollapse.lerp(1, 0.92, effectiveCollapse))
+        }
+    }
+
+    private var serviceDateSelector: some View {
+        ReservationServiceDateSelector(
+            selectedDate: $selectedDate,
+            chipStyle: .hostBoardGlass,
+            pinsCalendarToTrailing: true,
+            showsCalendarButton: false,
+            stripScale: dateStripScale
+        )
+        .frame(height: dateStripHeight)
     }
     
 //OLD VERSION
@@ -1847,12 +1891,16 @@ private struct HomeServiceHeader: View {
 //        }
 //    }
 
-    private var titleBlock: some View {
+    private func titleBlock(
+        expandsHorizontally: Bool,
+        showsInlineSecondaryStatus: Bool
+    ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(title)
                 .font(.system(size: titleFontSize, weight: .semibold))
                 .foregroundStyle(ReservationUIStyle.serviceTitleColor)
                 .lineLimit(1)
+                .layoutPriority(1)
 
             HStack(spacing: 6) {
                 Text(statusPresentation.primarySyncText)
@@ -1869,8 +1917,11 @@ private struct HomeServiceHeader: View {
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(.secondary)
+            .layoutPriority(0)
 
-            if let secondary = statusPresentation.secondaryProgressText, showsSecondaryStatus {
+            if showsInlineSecondaryStatus,
+               let secondary = statusPresentation.secondaryProgressText,
+               showsSecondaryStatus {
                 Text(secondary)
                     .font(.caption2.weight(.medium))
                     .lineLimit(1)
@@ -1880,7 +1931,7 @@ private struct HomeServiceHeader: View {
                     .animation(.easeInOut(duration: 0.25), value: secondary)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: expandsHorizontally ? .infinity : nil, alignment: .leading)
     }
 
     private var actionBar: some View {
