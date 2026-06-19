@@ -50,7 +50,8 @@ enum NewBookingRowInsightBuilder {
     )
     let noteLine = noteInsightLine(
       for: reservation,
-      report: report
+      report: report,
+      historyPool: historyPool
     )
 
     let insight = NewBookingRowInsight(
@@ -93,7 +94,11 @@ enum NewBookingRowInsightBuilder {
     let analyzer = GuestInsightsController()
     return pending.filter { reservation in
       let report = analyzer.analyze(selected: reservation, allReservations: historyPool)
-      return possibleDuplicateLine(report: report, reservation: reservation) != nil
+      return possibleDuplicateLine(
+        report: report,
+        reservation: reservation,
+        historyPool: historyPool
+      ) != nil
     }.count
   }
 
@@ -127,9 +132,14 @@ enum NewBookingRowInsightBuilder {
 
   private static func noteInsightLine(
     for reservation: ReservationRecord,
-    report: GuestInsightReport
+    report: GuestInsightReport,
+    historyPool: [ReservationRecord]
   ) -> String? {
-    if let duplicateLine = possibleDuplicateLine(report: report, reservation: reservation) {
+    if let duplicateLine = possibleDuplicateLine(
+      report: report,
+      reservation: reservation,
+      historyPool: historyPool
+    ) {
       return duplicateLine
     }
 
@@ -150,18 +160,66 @@ enum NewBookingRowInsightBuilder {
 
   private static func possibleDuplicateLine(
     report: GuestInsightReport,
-    reservation: ReservationRecord
+    reservation: ReservationRecord,
+    historyPool: [ReservationRecord]
   ) -> String? {
+    guard isActiveDuplicateCandidate(reservation),
+          hasActiveSameDayDuplicatePeer(for: reservation, in: historyPool) else {
+      return nil
+    }
+
     if report.collapsedDuplicateReservationCount > 0 {
       return "Possible duplicate — compare details"
     }
 
-    let staffNotes = (reservation.staffNotes ?? "").lowercased()
-    if staffNotes.contains("possible duplicate") || staffNotes.contains("correction") {
+    if !report.possibleMatches.isEmpty {
       return "Possible duplicate — compare details"
     }
 
     return nil
+  }
+
+  private static func hasActiveSameDayDuplicatePeer(
+    for reservation: ReservationRecord,
+    in historyPool: [ReservationRecord]
+  ) -> Bool {
+    let resolver = GuestIdentityResolver()
+    let selected = resolver.identity(for: reservation)
+
+    return historyPool.contains { peer in
+      guard peer.remoteID != reservation.remoteID,
+            peer.reservationDate == reservation.reservationDate,
+            isActiveDuplicateCandidate(peer) else {
+        return false
+      }
+
+      let candidate = resolver.identity(for: peer)
+      if let selectedPhone = selected.fullPhoneDigits,
+         let candidatePhone = candidate.fullPhoneDigits,
+         selectedPhone == candidatePhone {
+        return true
+      }
+      if let selectedEmail = selected.usefulEmail,
+         let candidateEmail = candidate.usefulEmail,
+         selectedEmail == candidateEmail {
+        return true
+      }
+      guard let match = resolver.match(
+        peer,
+        against: selected,
+        selectedID: reservation.remoteID
+      ) else {
+        return false
+      }
+      return match.confidence == .exact || match.confidence == .strong
+    }
+  }
+
+  private static func isActiveDuplicateCandidate(_ reservation: ReservationRecord) -> Bool {
+    let supersededID = reservation.supersededById ?? 0
+    return reservation.isExpectedGuest
+      && !reservation.isHidden
+      && supersededID <= 0
   }
 
   private static func combinedNotes(for reservation: ReservationRecord) -> String {

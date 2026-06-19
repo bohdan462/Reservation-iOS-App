@@ -60,6 +60,7 @@ enum HostGuestIntelligenceSupport {
           contentsOf: buildBackendGuestSignals(
             reservation: reservation,
             summary: summary,
+            dayReservations: allDayReservations,
             settings: settings
           )
         )
@@ -109,7 +110,15 @@ enum HostGuestIntelligenceSupport {
       appendUnique(&signals, &seenKeys, noShowRiskSignal(for: reservation, report: report))
       appendUnique(&signals, &seenKeys, previousServiceIssueSignal(for: reservation))
       appendUnique(&signals, &seenKeys, manualCallInSignal(for: reservation, report: report))
-      appendUnique(&signals, &seenKeys, possibleDuplicateSignal(for: reservation, report: report))
+      appendUnique(
+        &signals,
+        &seenKeys,
+        possibleDuplicateSignal(
+          for: reservation,
+          report: report,
+          dayReservations: allDayReservations
+        )
+      )
     }
 
     return enrichSignalsWithProfilePackets(
@@ -281,6 +290,7 @@ enum HostGuestIntelligenceSupport {
   private static func buildBackendGuestSignals(
     reservation: ReservationRecord,
     summary: GuestIntelligenceSummaryDTO,
+    dayReservations: [ReservationRecord],
     settings: HostIntelligenceSettings
   ) -> [HostGuestSignal] {
     var signals: [HostGuestSignal] = []
@@ -419,7 +429,12 @@ enum HostGuestIntelligenceSupport {
       )
     }
 
-    if summary.possibleDuplicate {
+    if summary.possibleDuplicate,
+       hasActiveSameDayRelatedReservation(
+        for: reservation,
+        relatedReservationIds: summary.relatedReservationIds,
+        in: dayReservations
+       ) {
       var evidence = backendEvidence(summary: summary, extra: ["possibleDuplicateFlag"])
       if !summary.relatedReservationIds.isEmpty {
         evidence.append(
@@ -949,34 +964,21 @@ enum HostGuestIntelligenceSupport {
 
   private static func possibleDuplicateSignal(
     for reservation: ReservationRecord,
-    report: GuestInsightReport
+    report: GuestInsightReport,
+    dayReservations: [ReservationRecord]
   ) -> HostGuestSignal? {
     if let superseded = reservation.supersededById, superseded > 0 {
-      return HostGuestSignal(
-        id: "guest-duplicate-superseded-\(reservation.remoteID)",
-        reservationID: reservation.remoteID,
-        guestName: reservation.guestName,
-        kind: .possibleDuplicate,
-        severity: .watch,
-        message: "\(reservation.guestName) may be a duplicate or corrected booking.",
-        evidence: ["supersededById=\(superseded)"]
-      )
+      return nil
     }
 
-    let staffNotes = (reservation.staffNotes ?? "").lowercased()
-    if staffNotes.contains("possible duplicate") || staffNotes.contains("correction") {
-      return HostGuestSignal(
-        id: "guest-duplicate-note-\(reservation.remoteID)",
-        reservationID: reservation.remoteID,
-        guestName: reservation.guestName,
-        kind: .possibleDuplicate,
-        severity: .watch,
-        message: "\(reservation.guestName) may need duplicate review.",
-        evidence: ["staffNoteFlag=duplicateOrCorrection"]
-      )
+    guard isActiveDuplicateCandidate(reservation) else {
+      return nil
     }
 
     if report.collapsedDuplicateReservationCount > 0 {
+      guard hasActiveSameDayDuplicatePeer(for: reservation, in: dayReservations) else {
+        return nil
+      }
       return HostGuestSignal(
         id: "guest-duplicate-intent-\(reservation.remoteID)",
         reservationID: reservation.remoteID,
@@ -989,6 +991,9 @@ enum HostGuestIntelligenceSupport {
     }
 
     if let identityMatch = report.possibleMatches.first {
+      guard hasActiveSameDayDuplicatePeer(for: reservation, in: dayReservations) else {
+        return nil
+      }
       var evidence = identityMatch.matchReasons
       if evidence.isEmpty {
         evidence = ["possibleIdentityMatch"]
@@ -1005,6 +1010,67 @@ enum HostGuestIntelligenceSupport {
     }
 
     return nil
+  }
+
+  private static func hasActiveSameDayRelatedReservation(
+    for reservation: ReservationRecord,
+    relatedReservationIds: [Int],
+    in dayReservations: [ReservationRecord]
+  ) -> Bool {
+    guard isActiveDuplicateCandidate(reservation), !relatedReservationIds.isEmpty else {
+      return false
+    }
+    let relatedIDs = Set(relatedReservationIds)
+    return dayReservations.contains { peer in
+      peer.remoteID != reservation.remoteID
+        && relatedIDs.contains(peer.remoteID)
+        && isActiveDuplicateCandidate(peer)
+        && peer.reservationDate == reservation.reservationDate
+    }
+  }
+
+  private static func hasActiveSameDayDuplicatePeer(
+    for reservation: ReservationRecord,
+    in dayReservations: [ReservationRecord]
+  ) -> Bool {
+    guard isActiveDuplicateCandidate(reservation) else { return false }
+    let resolver = GuestIdentityResolver()
+    let selected = resolver.identity(for: reservation)
+
+    return dayReservations.contains { peer in
+      guard peer.remoteID != reservation.remoteID,
+            peer.reservationDate == reservation.reservationDate,
+            isActiveDuplicateCandidate(peer) else {
+        return false
+      }
+
+      let candidate = resolver.identity(for: peer)
+      if let selectedPhone = selected.fullPhoneDigits,
+         let candidatePhone = candidate.fullPhoneDigits,
+         selectedPhone == candidatePhone {
+        return true
+      }
+      if let selectedEmail = selected.usefulEmail,
+         let candidateEmail = candidate.usefulEmail,
+         selectedEmail == candidateEmail {
+        return true
+      }
+      guard let match = resolver.match(
+        peer,
+        against: selected,
+        selectedID: reservation.remoteID
+      ) else {
+        return false
+      }
+      return match.confidence == .exact || match.confidence == .strong
+    }
+  }
+
+  private static func isActiveDuplicateCandidate(_ reservation: ReservationRecord) -> Bool {
+    let supersededID = reservation.supersededById ?? 0
+    return reservation.isExpectedGuest
+      && !reservation.isHidden
+      && supersededID <= 0
   }
 
   // MARK: - Facts / Actions Helpers
