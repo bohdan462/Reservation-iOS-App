@@ -127,33 +127,7 @@ enum HostActionPresentationPolicy {
   }
 
   static func actionTitle(for action: HostSuggestedAction?) -> String {
-    guard let action else { return "Check details" }
-    switch action.kind {
-    case .assignTable, .holdTable, .releaseTable:
-      return "Check floor plan"
-    case .alertServer:
-      return "Check guest note"
-    case .reviewReservation, .reviewCancellationOpportunity:
-      return "Check reservation"
-    case .confirmReservation:
-      return "Confirm details"
-    case .suggestAlternateTime:
-      return "Check time options"
-    case .seatReservation:
-      return "Check seating"
-    case .completeReservation:
-      return "Check completion"
-    case .markNoShow:
-      return "Check no-show"
-    case .closeSlot:
-      return "Check open times"
-    case .generateEmailDraft:
-      return "Draft message"
-    case .generateGuestManageLink:
-      return "Check guest link"
-    case .noAction:
-      return "Check details"
-    }
+    HostIntelligenceActionLabelPolicy.label(for: action)
   }
 
   static func matchingAction(

@@ -132,7 +132,7 @@ enum ManagerAttentionItemBuilder {
     if action.id.hasPrefix("unresolved-late-cleanup-action-") {
       return "Resolve booking"
     }
-    return staffTapLabel(for: action.kind)
+    return HostIntelligenceActionLabelPolicy.label(for: action)
   }
 
   private static func priority(for severity: HostSeverity) -> ManagerAttentionPriority {
@@ -146,7 +146,7 @@ enum ManagerAttentionItemBuilder {
   private static func staffTitle(for action: HostSuggestedAction) -> String {
     let title = HostStaffLanguage.rewrite(action.title)
     if !title.isEmpty { return title }
-    return staffTapLabel(for: action.kind)
+    return HostIntelligenceActionLabelPolicy.label(for: action)
   }
 
   private static func staffDetail(
@@ -226,35 +226,6 @@ enum ManagerAttentionItemBuilder {
     }
 
     return false
-  }
-
-  private static func staffTapLabel(for kind: HostActionKind) -> String {
-    switch kind {
-    case .assignTable, .holdTable, .releaseTable:
-      return "Check floor plan"
-    case .alertServer:
-      return "Check guest note"
-    case .reviewReservation, .reviewCancellationOpportunity:
-      return "Check reservation"
-    case .confirmReservation:
-      return "Confirm details"
-    case .suggestAlternateTime:
-      return "Check time options"
-    case .seatReservation:
-      return "Check seating"
-    case .completeReservation:
-      return "Check completion"
-    case .markNoShow:
-      return "Check no-show"
-    case .closeSlot:
-      return "Check open times"
-    case .generateEmailDraft:
-      return "Draft message"
-    case .generateGuestManageLink:
-      return "Check guest link"
-    case .noAction:
-      return "Check details"
-    }
   }
 
   private static func destinationHint(for kind: HostActionKind) -> ManagerAttentionDestinationHint {

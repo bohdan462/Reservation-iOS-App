@@ -69,6 +69,7 @@ struct HostIntelligenceCard: View {
 
       HStack(spacing: 6) {
         compactStateChip
+        compactPrimaryActionChip
         compactReviewButton
       }
       .fixedSize(horizontal: true, vertical: false)
@@ -475,6 +476,21 @@ struct HostIntelligenceCard: View {
       + snapshot.seatedTimingSignals.count
   }
 
+  private var compactPrimaryAction: HostSuggestedAction? {
+    guard let action = HostIntelligenceActionLabelPolicy.primaryAction(
+      from: attentionPresentation,
+      snapshot: snapshot
+    ) else {
+      return nil
+    }
+
+    if action.kind == .closeSlot {
+      return onReviewTapped == nil ? nil : action
+    }
+
+    return onActionTapped == nil ? nil : action
+  }
+
   private var renderTraceKey: String {
     [
       cardRenderSource,
@@ -558,6 +574,29 @@ struct HostIntelligenceCard: View {
       .padding(.vertical, 4)
       .hostBoardGlassCapsule(strokeOpacity: 0.10)
       .accessibilityHidden(true)
+  }
+
+  @ViewBuilder
+  private var compactPrimaryActionChip: some View {
+    if let action = compactPrimaryAction {
+      Button {
+        if action.kind == .closeSlot {
+          onReviewTapped?()
+        } else {
+          onActionTapped?(action)
+        }
+      } label: {
+        Text(HostIntelligenceActionLabelPolicy.label(for: action))
+          .font(.caption2.weight(.semibold))
+          .lineLimit(1)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .hostBoardGlassCapsule(strokeOpacity: 0.14)
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(.primary)
+      .accessibilityLabel(HostIntelligenceActionLabelPolicy.label(for: action))
+    }
   }
 
   @ViewBuilder

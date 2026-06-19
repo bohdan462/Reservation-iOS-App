@@ -166,7 +166,7 @@ enum HostAttentionGrouper {
       priority: window.severity == .veryBusy ? .high : .normal,
       title: action.title,
       detail: action.reason,
-      actionTitle: "Check open times",
+      actionTitle: HostIntelligenceActionLabelPolicy.label(for: action),
       destinationHint: .schedule,
       relatedReservationIDs: [],
       sourceAction: action

@@ -389,7 +389,7 @@ enum ManagerNarrativeTemplateBuilder {
       $0.severity == .busy || $0.severity == .critical
     }) {
       let time = displaySlotTime(pressure.slotTime)
-      let line = "Seating pressure builds around \(time)."
+      let line = "Busy around \(time)."
       if !HostStaffLanguage.areSameStaffMeaning(line, headline) {
         return line
       }
