@@ -64,6 +64,7 @@ struct HostBoardView: View {
     @State private var hostBoardHeaderCollapse: CGFloat = 0
     @State private var isPressureExpanded = false
     @State private var hostIntelligenceCardPresentation: HostIntelligenceCardPresentation = .empty
+    @AppStorage("host.liveModeEnabled") private var liveHostModeEnabled = false
 
     private var hasOpenInteraction: Bool {
         externalInteractionActive
@@ -787,7 +788,8 @@ struct HostBoardView: View {
             onOpenTimeline: nil,
             onOpenShiftReminders: { showShiftReminders = true },
             collapseProgress: hostBoardHeaderCollapse,
-            usesInlineDateStrip: usesInlineDateStrip
+            usesInlineDateStrip: usesInlineDateStrip,
+            liveHostModeEnabled: $liveHostModeEnabled
         )
     }
 
@@ -893,14 +895,34 @@ struct HostBoardView: View {
             let usesWideStatusPanel = horizontalSizeClass == .regular && availableWidth >= 760
 
             VStack(alignment: .leading, spacing: 8) {
-                hostOperationalStatusPanel(snapshot: snapshot, isWideLayout: usesWideStatusPanel)
-                HostBoardPressureSection(
-                    snapshot: snapshot,
-                    reservations: reservations,
-                    isExpanded: $isPressureExpanded,
-                    onOpenReservation: onOpenReservation
-                )
+                if liveHostModeEnabled {
+                    if snapshot.upcoming.isEmpty,
+                       snapshot.seated.isEmpty,
+                       selectedDateKey == Date.reservationDateString(),
+                       guestIntelligenceStore.isLoading(dateKey: selectedDateKey),
+                       guestIntelligenceStore.response(for: selectedDateKey) == nil {
+                        TryzubSectionLoadingCard(
+                            title: "Checking guest context…",
+                            systemImage: "person.2"
+                        )
+                    }
+                } else {
+                    hostOperationalStatusPanel(snapshot: snapshot, isWideLayout: usesWideStatusPanel)
+                    HostBoardPressureSection(
+                        snapshot: snapshot,
+                        reservations: reservations,
+                        isExpanded: $isPressureExpanded,
+                        onOpenReservation: onOpenReservation
+                    )
+                }
                 hostIntelligenceSection
+
+                if liveHostModeEnabled {
+                    let noticeItems = liveHostNoticeItems(snapshot: snapshot)
+                    if !noticeItems.isEmpty {
+                        LiveHostNoticeBar(items: noticeItems)
+                    }
+                }
 
                 if isWideLayout {
                     wideBoard(
@@ -1287,7 +1309,9 @@ struct HostBoardView: View {
 
     @ViewBuilder
     private var hostIntelligenceSection: some View {
-        if let serviceBriefingState, usesServiceBriefingCard(serviceBriefingState.mode) {
+        if liveHostModeEnabled {
+            liveHostIntelligenceSection
+        } else if let serviceBriefingState, usesServiceBriefingCard(serviceBriefingState.mode) {
             HostServiceBriefingCard(state: serviceBriefingState) { intent in
                 handleServiceActionIntent(intent)
             }
@@ -1298,6 +1322,33 @@ struct HostBoardView: View {
                 HostBookingLoadCompactStrip(item: bookingTopItem, knownOnlyNote: bookingKnownOnlyNote)
             }
         }
+    }
+
+    private func liveHostNoticeItems(snapshot: HostBoardSnapshot) -> [String] {
+        var items: [String] = []
+
+        if snapshot.newReservations.count > 0 {
+            let count = snapshot.newReservations.count
+            items.append("\(count) new reservation\(count == 1 ? "" : "s")")
+        }
+        if snapshot.needsReview.count > 0 {
+            let count = snapshot.needsReview.count
+            items.append("\(count) \(count == 1 ? "needs" : "need") review")
+        }
+        if snapshot.noTableCount > 0 {
+            let count = snapshot.noTableCount
+            items.append("\(count) no table\(count == 1 ? "" : "s")")
+        }
+        if let dueCount = hostReminderPanelContext?.status?.summary.eligible, dueCount > 0 {
+            items.append("\(dueCount) reminder\(dueCount == 1 ? "" : "s") not sent")
+        }
+
+        if !items.isEmpty, let next = snapshot.upcoming.first {
+            let firstName = next.guestName.split(separator: " ").first.map(String.init) ?? next.guestName
+            items.append("Next: \(firstName) · \(next.displayTime)")
+        }
+
+        return items
     }
 
     @ViewBuilder
@@ -1740,6 +1791,29 @@ private enum HostBoardHeaderCollapse {
     }
 }
 
+private struct LiveHostNoticeBar: View {
+    let items: [String]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "bolt.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(TryzubGlassChrome.hostBoardAccentBlue)
+
+            Text(items.joined(separator: " · "))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .hostBoardGlassPanel(cornerRadius: 12, strokeOpacity: 0.10)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private struct HomeServiceHeader: View {
     let title: String
     @Binding var selectedDate: Date
@@ -1756,6 +1830,7 @@ private struct HomeServiceHeader: View {
     var collapseProgress: CGFloat = 0
     /// iPad Host board: title + sync and date chips share one row when horizontal space allows.
     var usesInlineDateStrip: Bool = false
+    @Binding var liveHostModeEnabled: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1973,6 +2048,24 @@ private struct HomeServiceHeader: View {
 
     private var actionBar: some View {
         HStack(spacing: 6) {
+            Button {
+                ReservationHaptics.selection()
+                liveHostModeEnabled.toggle()
+            } label: {
+                Label("Live", systemImage: "bolt.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(liveHostModeEnabled ? Color.white : Color.primary)
+                    .frame(width: 58, height: 36)
+                    .hostBoardGlassChip(
+                        cornerRadius: 18,
+                        isSelected: liveHostModeEnabled,
+                        strokeOpacity: 0.10
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Live Host mode")
+            .accessibilityValue(liveHostModeEnabled ? "On" : "Off")
+
             Menu {
                 if let onOpenShiftReminders {
                     Button {

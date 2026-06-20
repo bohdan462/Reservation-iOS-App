@@ -547,7 +547,6 @@ struct ReservationRowView<Accessory: View>: View {
         var items: [ReservationRowDetailLabelData] = []
 
         if presentation.status == .seated,
-           let seatedDurationDotStyle,
            let seatedDurationText = contextNote?.nilIfBlank {
             items.append(
                 ReservationRowDetailLabelData(
