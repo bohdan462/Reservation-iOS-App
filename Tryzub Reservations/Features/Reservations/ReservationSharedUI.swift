@@ -1137,6 +1137,7 @@ struct ReservationServiceDateSelector: View {
     var pinsCalendarToTrailing = false
     var showsCalendarButton = true
     var stripScale: CGFloat = 1
+    var stripScaleAnchor: UnitPoint = .leading
 
     private var calendar: Calendar { .current }
 
@@ -1181,7 +1182,7 @@ struct ReservationServiceDateSelector: View {
         HStack(alignment: .center, spacing: pinsCalendarToTrailing ? 8 : 10) {
             dateStrip
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .scaleEffect(stripScale, anchor: .leading)
+                .scaleEffect(stripScale, anchor: stripScaleAnchor)
                 .layoutPriority(0)
 
             if showsCalendarButton {

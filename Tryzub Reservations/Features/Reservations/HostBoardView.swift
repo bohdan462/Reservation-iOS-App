@@ -1795,11 +1795,12 @@ private struct HomeServiceHeader: View {
         HostBoardHeaderCollapse.lerp(14, 11, effectiveCollapse)
     }
 
-    private var headerMaxHeight: CGFloat {
-        if usesInlineDateStrip {
-            return HostBoardHeaderCollapse.lerp(58, 52, effectiveCollapse)
-        }
-        return HostBoardHeaderCollapse.lerp(132, 94, effectiveCollapse)
+    private var inlineSideRailWidth: CGFloat {
+        156
+    }
+
+    private var inlineDateStripWidth: CGFloat {
+        600
     }
 
     private var rowSpacing: CGFloat {
@@ -1824,8 +1825,6 @@ private struct HomeServiceHeader: View {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
         }
-        .frame(maxHeight: headerMaxHeight, alignment: .top)
-        .clipped()
         .scaleEffect(HostBoardHeaderCollapse.lerp(1, 0.96, effectiveCollapse), anchor: .top)
         .animation(.smooth(duration: 0.32), value: effectiveCollapse)
     }
@@ -1840,17 +1839,20 @@ private struct HomeServiceHeader: View {
     private var inlineHeaderLayout: some View {
         HStack(alignment: .center, spacing: rowSpacing) {
             titleBlock(expandsHorizontally: false, showsInlineSecondaryStatus: false)
+                .frame(width: inlineSideRailWidth, alignment: .leading)
                 .layoutPriority(2)
 
             serviceDateSelector
-                .frame(minWidth: 120, maxWidth: .infinity)
+                .frame(width: inlineDateStripWidth)
                 .layoutPriority(0)
 
             actionBar
                 .fixedSize()
+                .frame(width: inlineSideRailWidth, alignment: .trailing)
                 .layoutPriority(3)
                 .scaleEffect(HostBoardHeaderCollapse.lerp(1, 0.92, effectiveCollapse))
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var titleAndActionRow: some View {
@@ -1871,7 +1873,8 @@ private struct HomeServiceHeader: View {
             chipStyle: .hostBoardGlass,
             pinsCalendarToTrailing: true,
             showsCalendarButton: false,
-            stripScale: dateStripScale
+            stripScale: dateStripScale,
+            stripScaleAnchor: .center
         )
         .frame(height: dateStripHeight)
     }

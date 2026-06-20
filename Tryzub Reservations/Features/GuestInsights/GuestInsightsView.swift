@@ -27,76 +27,8 @@ struct GuestInsightsView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
-                if let viewState, let aggregateProfile = viewState.aggregateProfile {
-                    GuestInsightAggregateHeader(state: viewState)
-                    GuestInsightAggregateProfileSection(aggregateProfile: aggregateProfile)
-                    if let report {
-                        GuestInsightBookingHistorySection(
-                            report: report,
-                            bookingHistory: GuestHistorySemantics.localCachedHistoryPresentation(
-                                localReport: report,
-                                profilePack: nil
-                            ) ?? GuestHistorySemantics.GuestInsightsBookingHistoryPresentation(
-                                scope: .localCacheOnly,
-                                sectionTitle: "Offline supplement",
-                                scopeNote: "Offline supplement based on reservations saved on this device."
-                            )
-                        )
-                        GuestInsightPossibleMatchesSection(report: report)
-                        GuestInsightWarningsSection(warnings: report.warnings)
-                    }
-                } else if let report, let mergedContext {
-                    GuestInsightHeader(
-                        report: report,
-                        mergedContext: mergedContext
-                    )
-                    GuestInsightSnapshotGrid(
-                        report: report,
-                        metrics: mergedContext.metrics,
-                        mergedSource: mergedContext.mergedSource
-                    )
-                    if let profilePack {
-                        if hasProfileSummaryContent(profilePack) {
-                            GuestInsightProfileSummarySection(pack: profilePack)
-                        }
-                        if !GuestInsightsProfilePresentation.preferenceLines(from: profilePack).isEmpty {
-                            GuestInsightBackendPreferencesSection(pack: profilePack)
-                        }
-                        if !GuestInsightsProfilePresentation.priorNoteLines(from: profilePack).isEmpty {
-                            GuestInsightPriorNotesSection(pack: profilePack)
-                        }
-                        if !GuestInsightsProfilePresentation.visitAnalyticsLines(from: profilePack).isEmpty {
-                            GuestInsightVisitPatternSection(pack: profilePack)
-                        }
-                    } else if guestIntelligenceStore.isLoadingProfile(
-                        reservationID: selectedReservation.remoteID
-                    ) {
-                        GuestInsightCard(title: "Guest history", systemImage: "arrow.triangle.2.circlepath") {
-                            TryzubLoadingRow(title: "Loading guest history…")
-                        }
-                    }
-                    GuestInsightNotesSection(report: report)
-                    if !serverVisitRows.isEmpty {
-                        GuestInsightServerHistorySection(rows: serverVisitRows)
-                    } else {
-                        GuestInsightBookingHistorySection(
-                            report: report,
-                            bookingHistory: mergedContext.bookingHistory
-                        )
-                    }
-                    if let localCachedHistory {
-                        GuestInsightBookingHistorySection(
-                            report: report,
-                            bookingHistory: localCachedHistory
-                        )
-                    }
-                    if profilePack == nil {
-                        GuestInsightPreferencesSection(report: report)
-                    }
-                    GuestInsightPossibleMatchesSection(report: report)
-                    GuestInsightWarningsSection(warnings: report.warnings)
-                } else if let viewState {
-                    guestProfileShell(state: viewState)
+                if let viewState {
+                    GuestServiceProfileContent(presentation: viewState.serviceProfile)
                 } else {
                     GuestInsightReservationShell(reservation: selectedReservation)
                     TryzubLoadingRow(title: "Loading guest history…")
@@ -107,7 +39,7 @@ struct GuestInsightsView: View {
             .padding(.bottom, ReservationLayout.scrollBottomInset)
         }
         .background(Color(.systemGroupedBackground))
-        .navigationTitle("Guest Insights")
+        .navigationTitle("Guest history")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .fontDesign(.rounded)
@@ -250,6 +182,254 @@ struct GuestInsightsView: View {
         }
     }
 
+}
+
+private struct GuestServiceProfileContent: View {
+    let presentation: GuestServiceProfilePresentation
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    var body: some View {
+        if horizontalSizeClass == .regular {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 14) {
+                    guestHeader
+                    todaySection
+                    historyMetrics
+                    patternsSection
+                    watchoutsSection
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    pastVisitsSection
+                    notesSection
+                    upcomingSection
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 14) {
+                guestHeader
+                todaySection
+                historyMetrics
+                watchoutsSection
+                pastVisitsSection
+                notesSection
+                patternsSection
+                upcomingSection
+            }
+        }
+    }
+
+    private var guestHeader: some View {
+        GuestInsightCard {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(presentation.guestName)
+                    .font(.title2.weight(.semibold))
+                    .lineLimit(2)
+                Text(presentation.status.title)
+                    .font(.headline.weight(.semibold))
+                if let detail = presentation.status.detail {
+                    Text(detail)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var todaySection: some View {
+        GuestInsightCard(title: presentation.today.sectionTitle, systemImage: "calendar") {
+            VStack(alignment: .leading, spacing: 9) {
+                if let dateLine = presentation.today.dateLine {
+                    Text(dateLine)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                Text(presentation.today.primaryLine)
+                    .font(.headline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                GuestServiceFactLine(
+                    text: presentation.today.tableLine,
+                    systemImage: presentation.today.tableLine == "No table picked" ? "tablecells.badge.ellipsis" : "tablecells"
+                )
+                if let reminder = presentation.today.reminderLine {
+                    GuestServiceFactLine(
+                        text: reminder,
+                        systemImage: reminder == "Reminder not sent" ? "bell.slash" : "bell.badge.checkmark"
+                    )
+                }
+                ForEach(presentation.today.noteLines, id: \.self) { line in
+                    GuestServiceFactLine(text: line, systemImage: "note.text")
+                }
+            }
+        }
+    }
+
+    private var historyMetrics: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 10)], spacing: 10) {
+            ForEach(presentation.metrics) { metric in
+                GuestInsightMetricCard(title: metric.title, value: metric.value, caption: metric.caption)
+            }
+        }
+    }
+
+    private var pastVisitsSection: some View {
+        GuestInsightCard(title: "Past visits", systemImage: "clock.arrow.circlepath") {
+            VStack(alignment: .leading, spacing: 12) {
+                if presentation.pastVisits.isEmpty {
+                    GuestInsightEmptyState("No past visits found.")
+                } else {
+                    ForEach(Array(presentation.pastVisits.prefix(5))) { visit in
+                        GuestVisitEvidenceRow(visit: visit, showsNotes: true)
+                    }
+                    if presentation.pastVisits.count > 5 {
+                        Text("Showing 5 of \(presentation.pastVisits.count) most recent visits.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private var upcomingSection: some View {
+        GuestInsightCard(title: "Upcoming", systemImage: "calendar.badge.clock") {
+            VStack(alignment: .leading, spacing: 12) {
+                if presentation.upcomingReservations.isEmpty {
+                    GuestInsightEmptyState("No upcoming reservations found.")
+                } else {
+                    ForEach(presentation.upcomingReservations) { visit in
+                        GuestVisitEvidenceRow(visit: visit, showsNotes: false)
+                    }
+                }
+            }
+        }
+    }
+
+    private var notesSection: some View {
+        GuestInsightCard(title: "Notes history", systemImage: "note.text") {
+            VStack(alignment: .leading, spacing: 12) {
+                if presentation.notes.isEmpty {
+                    GuestInsightEmptyState("No guest or staff notes saved yet.")
+                } else {
+                    ForEach(presentation.notes) { note in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("\(note.displayDate) · \(note.kind.rawValue)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Text(note.text)
+                                .font(.subheadline)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+        }
+    }
+
+    private var patternsSection: some View {
+        GuestInsightCard(title: "Patterns", systemImage: "chart.bar.doc.horizontal") {
+            VStack(alignment: .leading, spacing: 10) {
+                if presentation.patterns.isEmpty {
+                    GuestInsightEmptyState("Not enough history for patterns yet.")
+                } else {
+                    ForEach(presentation.patterns) { pattern in
+                        GuestServiceFactLine(text: pattern.text, systemImage: pattern.systemImage)
+                    }
+                }
+            }
+        }
+    }
+
+    private var watchoutsSection: some View {
+        GuestInsightCard(title: "Watchouts", systemImage: "checklist") {
+            VStack(alignment: .leading, spacing: 11) {
+                if presentation.watchouts.isEmpty {
+                    GuestInsightEmptyState("Nothing special to check.")
+                } else {
+                    ForEach(presentation.watchouts) { item in
+                        HStack(alignment: .top, spacing: 9) {
+                            Image(systemName: item.systemImage)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.title)
+                                    .font(.subheadline.weight(.semibold))
+                                if let detail = item.detail {
+                                    Text(detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct GuestServiceFactLine: View {
+    let text: String
+    let systemImage: String
+
+    var body: some View {
+        Label {
+            Text(text)
+                .font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: systemImage)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct GuestVisitEvidenceRow: View {
+    let visit: GuestServiceProfilePresentation.Visit
+    let showsNotes: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("\(visit.displayDate) · \(visit.displayTime) · Party of \(visit.partySize)")
+                .font(.subheadline.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            Text("\(visit.status) · \(visit.table)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if showsNotes, let note = visit.guestNote {
+                Text("Guest note: \(note)")
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if showsNotes, let note = visit.staffNote {
+                Text("Staff note: \(note)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct GuestInsightEmptyState: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 private struct GuestInsightAggregateHeader: View {

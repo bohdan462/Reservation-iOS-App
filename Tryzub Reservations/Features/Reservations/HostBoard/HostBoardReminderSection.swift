@@ -43,13 +43,6 @@ struct HostReminderPanelContext {
         return summary.message
     }
 
-    var compactSecondaryLine: String? {
-        if canSendBatchReminders {
-            return summary.secondary
-        }
-        return summary.secondary ?? summary.actionLabel
-    }
-
     var stateTint: Color {
         switch summary.severity {
         case .ok:
@@ -187,7 +180,7 @@ struct HostReminderStaffSummary {
             return HostReminderStaffSummary(
                 title: title,
                 message: "Automatic reminders are off.",
-                secondary: cutoffLine(skipped: status?.summary.skipped ?? 0, leadHours: reminderLeadHours),
+                secondary: nil,
                 actionLabel: canSendBatchReminders ? "Send reminders" : nil,
                 severity: canSendBatchReminders ? .attention : .info
             )
@@ -231,7 +224,7 @@ struct HostReminderStaffSummary {
                 return HostReminderStaffSummary(
                     title: title,
                     message: "\(failed) \(failed == 1 ? "reminder needs" : "reminders need") a staff check.",
-                    secondary: skipped > 0 ? cutoffLine(skipped: skipped, leadHours: reminderLeadHours) : nil,
+                    secondary: nil,
                     actionLabel: nil,
                     severity: .attention
                 )
@@ -240,7 +233,7 @@ struct HostReminderStaffSummary {
                 return HostReminderStaffSummary(
                     title: title,
                     message: "No reminders can be sent right now.",
-                    secondary: cutoffLine(skipped: skipped, leadHours: reminderLeadHours),
+                    secondary: nil,
                     actionLabel: backendManualBatchEnabled ? "No reminders due" : nil,
                     severity: .info
                 )
@@ -263,14 +256,4 @@ struct HostReminderStaffSummary {
         )
     }
 
-    private static func cutoffLine(skipped: Int, leadHours: Int) -> String? {
-        guard skipped > 0 else { return nil }
-        let cutoff: String
-        if leadHours > 0 {
-            cutoff = " because \(skipped == 1 ? "they are" : "they are") inside the \(leadHours)-hour cutoff"
-        } else {
-            cutoff = ""
-        }
-        return "\(skipped) \(skipped == 1 ? "guest was" : "guests were") skipped\(cutoff)."
-    }
 }

@@ -154,9 +154,8 @@ struct HostOperationalStatusPanel: View {
             if isWideLayout {
                 HStack(alignment: .top, spacing: 16) {
                     statsSection
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
                     reminderSection
-                        .frame(width: 300, alignment: .topLeading)
+                    Spacer(minLength: 0)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 14) {
@@ -232,11 +231,18 @@ struct HostOperationalStatusPanel: View {
     }
 
     private var reminderSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 8) {
                 Label("Reminders", systemImage: "bell.badge")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(TryzubColors.primaryText)
+                    .fixedSize()
+
+                Text(reminderContext?.shortStateLine ?? "Off")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(reminderContext?.stateTint ?? TryzubColors.mutedText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
 
                 if reminderContext?.isSending == true {
                     ProgressView()
@@ -247,35 +253,52 @@ struct HostOperationalStatusPanel: View {
 
                 if reminderContext?.canSendBatchReminders == true {
                     Button(action: onSendReminders) {
-                        Label("Send", systemImage: "paperplane")
-                            .labelStyle(.titleAndIcon)
+                        Image(systemName: "paperplane.fill")
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .disabled(reminderContext?.isSending == true)
+                    .accessibilityLabel("Send reminders")
                 }
             }
 
-            Text(reminderContext?.shortStateLine ?? "Reminders off")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(reminderContext?.stateTint ?? TryzubColors.mutedText)
-                .lineLimit(1)
-
-            if let secondary = reminderContext?.compactSecondaryLine {
-                Text(secondary)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(TryzubColors.mutedText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let notice = reminderContext?.notice, !notice.isEmpty {
-                Text(notice)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(TryzubColors.mutedText)
-                    .fixedSize(horizontal: false, vertical: true)
+            if let summary = reminderContext?.status?.summary {
+                HStack(alignment: .center, spacing: 9) {
+                    reminderMetric(systemImage: "paperplane.fill", value: summary.sent, label: "Sent")
+                    reminderMetric(systemImage: "checkmark.circle.fill", value: summary.alreadySent, label: "Handled")
+                    reminderMetric(systemImage: "clock.fill", value: summary.eligible, label: "Due")
+                    reminderMetric(systemImage: "forward.end.fill", value: summary.skipped, label: "Skipped")
+                    reminderMetric(
+                        systemImage: "exclamationmark.triangle.fill",
+                        value: summary.failed,
+                        label: "Failed",
+                        tint: summary.failed > 0 ? TryzubColors.warning : TryzubColors.mutedText
+                    )
+                }
+                .frame(minHeight: 28)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func reminderMetric(
+        systemImage: String,
+        value: Int,
+        label: String,
+        tint: Color = TryzubColors.mutedText
+    ) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: systemImage)
+                .font(.system(size: 9, weight: .semibold))
+            Text("\(value)")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .monospacedDigit()
+        }
+        .foregroundStyle(tint)
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label): \(value)")
     }
 
     private func statItem(_ stat: HostBoardStat) -> some View {

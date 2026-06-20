@@ -71,7 +71,9 @@ struct HostIntelligenceCard: View {
         HStack(spacing: 6) {
           compactStateChip
           compactPrimaryActionChip
-          compactReviewButton
+          if !staffFacingPresentation {
+            compactReviewButton
+          }
         }
         .fixedSize(horizontal: true, vertical: false)
       }

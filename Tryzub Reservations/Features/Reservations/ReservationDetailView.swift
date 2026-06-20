@@ -1425,7 +1425,7 @@ struct ReservationDetailView: View {
 
     @ViewBuilder
     private var guestInsightsSection: some View {
-        DetailSectionCard(title: "Guest insights", systemImage: "person.text.rectangle") {
+        DetailSectionCard(title: "Guest history", systemImage: "person.text.rectangle") {
             VStack(alignment: .leading, spacing: 10) {
                 if let guestInsightReport {
                     // Full report available: preview card already contains profile text.
