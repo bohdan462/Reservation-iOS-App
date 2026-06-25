@@ -1,7 +1,7 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `0a89caa` (pending doc commit)  
+**Root HEAD:** `39f7fcb` (pending doc commit)  
 **Last reviewed:** 2026-06-25  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
@@ -145,17 +145,6 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 
 ## P1 — Guest memory (post-foundation)
 
-### P1-5: Guests tab + detail local-first guest cache wiring
-
-| Field | Value |
-|-------|-------|
-| **Risk** | Staff search Guests tab misses backend-known profiles already on disk |
-| **Files** | `GuestLookupView.swift`, `GuestProfileFacade.swift`, `ReservationDetailView.swift`, `RegularGuestsView.swift` |
-| **Approach** | Pass `ModelContext` to `GuestLookupStore.updateCache`; read-through from `GuestProfileCacheRecord` before network |
-| **Acceptance** | After background sync, Guests tab finds a known profile without manual-form phone entry; detail uses cache when fresh |
-| **Class** | V1 product — iOS only |
-| **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #5 |
-
 ### P1-6: Indexed / predicate-based local guest search
 
 | Field | Value |
@@ -164,7 +153,7 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 | **Files** | `GuestProfileRepository.swift`, `GuestLookupStore.swift` |
 | **Approach** | SwiftData predicates / phone-prefix index; avoid scanning all rows on each keystroke |
 | **Acceptance** | Lookup remains local-only; search latency stable with 500+ cached profiles |
-| **Class** | **Required before broader product release** — acceptable for Tryzub V1 pilot only as-is |
+| **Class** | **Required before broader product release** — acceptable for current Tryzub V1 data size as-is |
 | **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #6 |
 
 ---
@@ -222,6 +211,9 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 - Guest profile SwiftData cache + background incremental list sync (`0f06852`)
 - Guest list `updated_since` on iOS API client + UserDefaults sync cursor (`0f06852`)
 - Manual intake: local guest cache merge, call-in/walk-in modes, known-guest prefill, phone UX (`0a89caa`)
+- Guests tab + detail local-first guest cache wiring (`67e02d2`)
+- Host freshness + idle snapshot flicker polish (`71601fc`)
+- Host Intelligence card presentation stability (`39f7fcb`)
 - V1 confirmation flow hardening (`cf6e641`)
 - Mail-first confirm + manual-email-log + PATCH (when backend confirmation is **off** on device)
 - Both backend `/confirm` and manual Mail paths exist; active path is setting-dependent (`EmailAutomationSettings`, default `backendConfirmationEnabled = true`)

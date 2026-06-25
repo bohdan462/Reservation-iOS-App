@@ -14,7 +14,7 @@
 ## Safe invariants (must stay true)
 
 1. Normal refresh never calls `POST /import`
-2. `isBackendConfirmEmailEnabled == false` in production pilot
+2. `isBackendConfirmEmailEnabled == false` in production restaurant test build (unless explicitly changed)
 3. Local model never PATCHes reservations
 4. Activity history — iOS never POSTs activity events
 
@@ -44,6 +44,16 @@
 2. Cancel reservation on another device → within full sync cycle, row should leave Host list (known gap if only delta — see OPEN_WORK P0-2)
 3. Developer: verify `ActiveWindowFreshnessTrace` shows full vs delta
 
+## Host header + flicker test (`71601fc` + `39f7fcb`)
+
+1. Host header shows **`Last sync HH:mm`** after successful sync (not `Updated`)
+2. When sync is stale (>2 min) and auto-refresh skipped, secondary shows staff reason (`Paused`, `Paused while editing`, `Waiting — busy`, `Retry soon`, or `May be out of date · tap refresh`)
+3. **Live on + today:** header should not sit stale without explanation when foreground and no modal open
+4. **Quiet off-hours** (no seated, no reservations within ~90 min): board should not visibly flicker every minute from idle snapshot timing (`71601fc`)
+5. **Host Intelligence card:** inline chips should not disappear/reappear when intelligence refreshes (`39f7fcb`)
+6. **During service** (seated or due soon): seated duration / due labels still update over time
+7. Manual **Refresh** from Host ⋯ menu bumps `Last sync` on success
+
 ## Floor / table test
 
 1. Floor tab with backend layout → assign via sheet
@@ -65,6 +75,9 @@
 
 - [ ] Login manager + developer
 - [ ] Host tab loads cache-first
+- [ ] Host header shows `Last sync`; stale secondary when appropriate (`71601fc`)
+- [ ] Host board quiet off-hours — no minute idle flicker; intelligence-card chips stable during refresh (`39f7fcb`); seated/due timing still updates in service
+- [ ] Guests tab finds backend-known guest after sync (`67e02d2`)
 - [ ] Confirm with email (Mail flow)
 - [ ] Confirm without email
 - [ ] Shift reminder email + text review

@@ -2,9 +2,9 @@
 
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md) · [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) · [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md)
 
-Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9) is **done**. Next product slice: **Guests tab + detail local-first wiring** (#5).
+Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), and Tryzub V1 Host production polish (#5b, #5c) are **done**.
 
-**Current focus:** iOS device verification, confirmation mode on restaurant iPad, final V1 smoke test — then Guests tab cache wiring.
+**Current focus:** iOS device verification, confirmation mode on restaurant iPad, final V1 smoke test.
 
 ---
 
@@ -41,7 +41,6 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | **Status** | **current** — code at `b910bd1`; device verification not done |
 | **Scope** | `ReservationsListView`, `ReservationsController`, `FreshnessCoordinator` |
 | **Verification** | Foreground + privacy unlock refresh; bounded-full; no import on normal refresh |
-| **Do not mix with** | Guests tab cache wiring until stabilization green |
 
 ---
 
@@ -49,9 +48,9 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 | Field | Value |
 |-------|-------|
-| **Status** | **current** — not yet verified on pilot device |
+| **Status** | **current** — not yet verified on test device |
 | **Scope** | `EmailAutomationSettings.backendConfirmationEnabled` |
-| **Note** | Confirmation hardening shipped at `cf6e641`; pilot setting still needs explicit check |
+| **Note** | Confirmation hardening shipped at `cf6e641`; device setting still needs explicit check |
 
 ---
 
@@ -61,7 +60,9 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 |-------|-------|
 | **Status** | **current** — after #4 and #4b |
 | **Scope** | End-to-end staff ops on restaurant iPad |
-| **Include** | Guest profile background sync (`0f06852`), manual walk-in + known-guest intake (`0a89caa`) |
+| **Include** | Guest profile background sync (`0f06852`); manual walk-in + known-guest intake (`0a89caa`); Guests tab + detail cache (`67e02d2`); Host freshness (`71601fc`); Host Intelligence card stability (`39f7fcb`) |
+| **Host header checks** | Header shows `Last sync HH:mm`; stale secondary reason when refresh skipped/stale; Live-on today does not sit stale without explanation; manual refresh bumps `Last sync` on success |
+| **Host flicker checks** | Quiet Host board does not rebuild/flicker every minute from idle snapshot timing; Host Intelligence card chips do not disappear/reappear when intelligence refreshes; during service, seated/due/nearby rows still update timing |
 
 ---
 
@@ -69,11 +70,32 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 | Field | Value |
 |-------|-------|
-| **Status** | **next** — after #4, #4b, #4c (or parallel if Bohdan approves) |
-| **Scope** | `GuestLookupView`, `GuestProfileFacade` / `ReservationDetailView`, `RegularGuestsView` — read `GuestProfileCacheRecord` before network |
-| **Why** | Manual intake uses cache; Guests tab search still reservation-history only; detail still network-first |
-| **Verification** | Guests tab finds backend-known guests after sync without typing phone in manual form; detail shows cached aggregate when fresh |
-| **Do not mix with** | AI clustering, VIP editor, offline queue |
+| **Status** | **done** — `67e02d2` |
+| **Scope** | `GuestLookupView`, `ReservationDetailView`, `GuestProfileRepository` |
+| **Delivered** | Guests tab reads `GuestProfileCacheRecord`; result cards show compact guest memory metadata; detail disk cache preview before memory/network; full history remains network/detail-only |
+| **Gap** | `RegularGuestsView` disk-first remains later |
+
+---
+
+## 5b. Host freshness + idle snapshot flicker polish
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done** — `71601fc` |
+| **Scope** | `HostBoardView.swift`, `ReservationSharedUI.swift`, `ReservationsController.swift` |
+| **Delivered** | `Last sync` / `Checked` header copy; stale staff-facing skip reasons; conditional snapshot minute rebuild; Live + today bypasses only `full_fresh_no_cursor` |
+| **Do not overstate** | Reduced idle snapshot flicker — not all flicker eliminated; did **not** fix intelligence-card presentation flicker (see #5c); 120s stale threshold unchanged |
+
+---
+
+## 5c. Host Intelligence card presentation stability
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done** — `39f7fcb` |
+| **Scope** | `HostBoardView.swift` only |
+| **Delivered** | No `HostIntelligenceCardPresentation.empty` during presentation-key mismatch; keeps prior stable card/chips during async presentation rebuild; removes old-card → empty-card → rebuilt-card flicker path |
+| **Do not overstate** | Removed empty interstitial flicker path — not all Host flicker eliminated; does not change Host Intelligence cadence, local model pipeline, sync, backend, guest cache, or `FreshnessCoordinator`; final device verification still open |
 
 ---
 
@@ -83,7 +105,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 |-------|-------|
 | **Status** | **product-scale follow-up** — required before broader product release |
 | **Scope** | `GuestProfileRepository`, `GuestLookupStore` — replace full-table in-memory filter |
-| **Why** | Broad in-memory filtering is acceptable for **Tryzub V1 pilot only**; will not scale for multi-venue or large guest lists |
+| **Why** | Broad in-memory filtering is acceptable for **current Tryzub V1 data size** only; will not scale for multi-venue or large guest lists |
 | **Do not mix with** | Backend schema changes |
 
 ---
@@ -105,7 +127,6 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | **Status** | **done** — `0a89caa` |
 | **Scope** | `ManualReservationFormView`, `GuestLookupStore`, `GuestLookupModels` |
 | **Delivered** | Call-in / walk-in modes; known-guest card + prefill; local cache merge; `manual_walk_in`+`seated`, `known_guest_manual`+`confirmed`; phone `.textContentType(.none)` |
-| **Gap** | Guests tab not wired (see #5) |
 
 ---
 
@@ -122,12 +143,21 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 | Field | Value |
 |-------|-------|
-| **Status** | later |
+| **Status** | later — partially improved by `67e02d2` disk preview; full dedupe remains open |
 | **Scope** | `ReservationDetailView` — remove redundant `GuestIntelligenceStore.loadProfile` when aggregate suffices |
 
 ---
 
-## 11. Analytics local persisted cache
+## 11. RegularGuestsView disk-first
+
+| Field | Value |
+|-------|-------|
+| **Status** | later |
+| **Scope** | `RegularGuestsView` — read `GuestProfileCacheRecord` before network |
+
+---
+
+## 12. Analytics local persisted cache
 
 | Field | Value |
 |-------|-------|
@@ -136,7 +166,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 ---
 
-## 12. Public guest token route rate limiting
+## 13. Public guest token route rate limiting
 
 | Field | Value |
 |-------|-------|
@@ -145,7 +175,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 ---
 
-## 13. Feedback MVP
+## 14. Feedback MVP
 
 | Field | Value |
 |-------|-------|
@@ -153,7 +183,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 ---
 
-## 14. Floor-first Host mode
+## 15. Floor-first Host mode
 
 | Field | Value |
 |-------|-------|
@@ -173,6 +203,9 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | Guest profile SwiftData cache + background sync | `0f06852` |
 | Manual intake cache merge + walk-in + known guest | `0a89caa` |
 | Guest list `updated_since` on iOS | `0f06852` |
+| Guests tab + detail local-first cache wiring | `67e02d2` |
+| Host freshness + idle snapshot flicker polish | `71601fc` |
+| Host Intelligence card presentation stability | `39f7fcb` |
 
 ---
 
@@ -181,11 +214,10 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | Item | Reason |
 |------|--------|
 | **Offline manual reservation queue** | Explicitly not v1 |
-| **Host stale warning UI** | Already covered by `HomeServiceStatusPresenter` / `ScreenFreshnessState` |
 | **Broad Host redesign** | After stabilization |
 | **Full AI clustering / “knows each other” / local semantic tags** | Not started |
 | **VIP editor** | No backend guest-level notes contract |
-| Multi-tenant rewrite | Post-pilot |
+| Multi-tenant rewrite | Post-V1 |
 | SMS automation | Owner decision |
 | New LLM feature work | Host Intelligence local model is wording-only |
 

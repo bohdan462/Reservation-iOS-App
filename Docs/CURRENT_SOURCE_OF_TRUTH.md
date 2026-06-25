@@ -17,7 +17,7 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 4. **Normal iOS refresh must not call** `POST /managed-reservations/import`.
 5. **Do not create a second sync manager.** `ReservationsController` + `ReservationSyncService` own refresh and mutation orchestration.
 6. **Do not create a second guest truth engine** beside `GuestOperationalTruth` and backend aggregates (`/guest-profiles`, `/guest-intelligence`). In-memory stores are cache layers, not parallel truth.
-7. **Checked/fetched status UI already exists** on Host (`HomeServiceStatusPresenter`, `ScreenFreshnessState`). Do not add duplicate stale-warning UI without proving a real gap.
+7. **Host sync status UI** — `HomeServiceStatusPresenter` shows `Last sync HH:mm` (server sync), `Checked HH:mm` (cache-only), stale dot at 120s, and staff-facing skip reasons (`71601fc`). `ScreenFreshnessState` covers availability/slots sub-screens. Do not add duplicate stale-warning UI without proving a real gap.
 
 ---
 
@@ -33,18 +33,21 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 8. **Foreground / privacy unlock refresh** — implemented `b910bd1` via `autoRefreshDashboardIfAllowed` in `ReservationsListView`.
 9. **Stale local cache risk** — if refresh skipped, fails, or staff device holds old PATCH without `expected_updated_at`, UI can disagree with server.
 10. **Offline / degraded** — no offline manual create/edit queue in V1. Mutations are blocked when network is unavailable; cache remains visible for viewing. Offline notices only.
-11. **Checked/fetched UI** — Host already shows checked/updated/saved-data state via `HomeServiceStatusPresenter` and `ScreenFreshnessState`. Do not add duplicate Host stale-warning UI without device-proven gap.
-12. **Guest search scale** — broad in-memory filter over cached profiles is acceptable for **Tryzub V1 pilot only**; indexed / predicate-based local search is required before broader product release.
+11. **Host sync header** — `Last sync HH:mm` after successful active-window server sync; `Checked HH:mm` for cache-only freshness; stale secondary reasons when trust >120s (`Paused`, `Paused while editing`, `Waiting — busy`, `Retry soon`, or fallback `May be out of date · tap refresh`). Live + today bypasses only `full_fresh_no_cursor` idle skip.
+12. **Host snapshot timing** — snapshot minute rebuild is conditional (`71601fc`): stable for non-today and quiet today boards; still minute-refreshes for seated / due / overdue / upcoming within ~90 min. Reduced idle snapshot flicker — not eliminated.
+13. **Host Intelligence card presentation** — keeps last stable card/chips during async presentation rebuild (`39f7fcb`); no empty interstitial during key mismatch. Removed intelligence-card empty flicker path — final device verification still open.
+14. **Guest search scale** — broad in-memory filter over cached profiles is acceptable for **current Tryzub V1 data size**; indexed / predicate-based local search is required before broader product release.
+15. **Guests tab + detail** — `GuestLookupView` and `ReservationDetailView` read `GuestProfileCacheRecord` from disk first (`67e02d2`); full guest history remains network/detail-only.
 
 ---
 
 ## 3. Current confirmation truth
 
 1. **Both paths exist:** backend confirmation (`POST /managed-reservations/{id}/confirm`) and **manual Mail** staff confirmation.
-2. **Active device behavior depends on Email Automation / This iPad Email Controls** (`EmailAutomationSettings.backendConfirmationEnabled`). Code default is **`true`** — do **not** assume Mail-first unless the device setting is confirmed on the pilot iPad.
+2. **Active device behavior depends on Email Automation / This iPad Email Controls** (`EmailAutomationSettings.backendConfirmationEnabled`). Code default is **`true`** — do **not** assume Mail-first unless the device setting is confirmed on the restaurant test iPad.
 3. **Manual Mail path** (when backend confirmation is off or staff uses reviewable send): `beginPrimaryConfirmFlow` → guest manage link → Mail composer → `manual-email-log` → PATCH `confirmed` on `.sent` only.
 4. **Backend confirmation path** (when enabled): `POST /confirm` sends through backend/provider; must only confirm after backend send success when a usable guest email exists. **Not production-verified** until live tests pass.
-5. **Agents must not switch pilot flows** unless explicitly asked.
+5. **Agents must not switch confirmation flows** on the test device unless explicitly asked.
 6. See [RESERVATION_WORKFLOWS.md](./RESERVATION_WORKFLOWS.md) for step-by-step detail.
 
 ---
@@ -75,6 +78,9 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 1. **`selectedDate` is owned by `HomeDashboardView` only** (`ReservationsListView.swift`).
 2. **`HostBoardView` must use `@Binding` only** — must not introduce a second `selectedDate` source.
 3. Host Board must **not** render snapshot or operational data for the wrong selected date (see [HOST_TAB_STATE_FLOW.md](./HOST_TAB_STATE_FLOW.md)).
+4. **Snapshot rebuild cadence** — `boardSnapshotBuildKey` uses conditional minute stamp (`hostBoardSnapshotTimingRefreshStamp`, `71601fc`); do not revert to unconditional per-minute rebuild without device reason.
+5. **Intelligence card presentation** — render uses last stable `@State` presentation during async rebuild (`39f7fcb`); do not reintroduce key-mismatch `.empty` gate in `liveHostIntelligenceSection`.
+6. **Auto-refresh skip reasons** — surfaced in header secondary when stale; cleared on successful server sync.
 
 ---
 
