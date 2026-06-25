@@ -25,6 +25,7 @@ struct GuestLookupResult: Identifiable, Equatable {
     let identitySource: GuestLookupIdentitySource
     let matchBasis: GuestProfileLookupMatchBasis?
     let matchConfidence: GuestProfileLookupMatchConfidence?
+    let nextReservation: GuestLookupNextReservationSummary?
 
     var prefill: ManualReservationPrefill {
         ManualReservationPrefill(
@@ -62,7 +63,8 @@ struct GuestLookupResult: Identifiable, Equatable {
         isBackendProfile: Bool,
         identitySource: GuestLookupIdentitySource? = nil,
         matchBasis: GuestProfileLookupMatchBasis? = nil,
-        matchConfidence: GuestProfileLookupMatchConfidence? = nil
+        matchConfidence: GuestProfileLookupMatchConfidence? = nil,
+        nextReservation: GuestLookupNextReservationSummary? = nil
     ) {
         self.id = id
         self.guestKey = guestKey
@@ -81,6 +83,22 @@ struct GuestLookupResult: Identifiable, Equatable {
         self.identitySource = identitySource ?? (isBackendProfile ? .cachedProfile : .localReservationHistory)
         self.matchBasis = matchBasis
         self.matchConfidence = matchConfidence
+        self.nextReservation = nextReservation
+    }
+}
+
+struct GuestLookupNextReservationSummary: Equatable, Sendable {
+    let date: String?
+    let time: String?
+    let partySize: Int?
+    let status: String?
+    let tableName: String?
+
+    var hasDisplayValue: Bool {
+        date?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            || time?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            || partySize != nil
+            || tableName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 }
 

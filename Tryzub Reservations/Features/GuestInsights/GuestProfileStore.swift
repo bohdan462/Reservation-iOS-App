@@ -103,7 +103,16 @@ struct GuestProfileLookupCandidate: Identifiable, Equatable {
             isBackendProfile: true,
             identitySource: .backendLookup,
             matchBasis: matchBasis,
-            matchConfidence: matchConfidence
+            matchConfidence: matchConfidence,
+            nextReservation: profile.nextReservation.map {
+                GuestLookupNextReservationSummary(
+                    date: $0.date ?? $0.reservationDate,
+                    time: $0.time ?? $0.reservationTime,
+                    partySize: $0.partySize,
+                    status: $0.status,
+                    tableName: $0.tableName
+                )
+            }
         )
     }
 

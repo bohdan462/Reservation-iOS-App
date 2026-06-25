@@ -131,10 +131,12 @@ private struct GuestLookupNormalizedQuery: Equatable {
     }
 
     var isActive: Bool {
-        queryDigits.count >= 4 || normalizedName.count >= 2
+        queryDigits.count >= 4 || normalizedEmail.count >= 3 || normalizedName.count >= 2
     }
 
     var debounceMilliseconds: Int {
+        if normalizedEmail.count >= 5 { return 80 }
+        if normalizedEmail.count >= 3 { return 150 }
         if queryDigits.count >= 7 { return 0 }
         if queryDigits.count >= 5 { return 60 }
         if queryDigits.count >= 4 { return 120 }
@@ -292,6 +294,7 @@ private struct GuestLookupSearchIndex {
         for record in visibleRecords {
             let normalizedName = GuestLookupNormalizer.normalizedName(record.guestName)
             guard normalizedName.count >= 2 else { continue }
+            guard !GuestLookupNormalizer.isPlaceholderName(normalizedName) else { continue }
 
             let phoneDigits = GuestLookupPhoneNormalizer.digits(record.phone).nilIfBlank
             let email = GuestLookupNormalizer.normalizedEmail(record.email).nilIfBlank
@@ -451,6 +454,7 @@ private struct GuestLookupProfile {
     let identitySource: GuestLookupIdentitySource
     let matchBasis: GuestProfileLookupMatchBasis?
     let matchConfidence: GuestProfileLookupMatchConfidence?
+    let nextReservation: GuestLookupNextReservationSummary?
 
     var result: GuestLookupResult {
         GuestLookupResult(
@@ -470,7 +474,8 @@ private struct GuestLookupProfile {
             isBackendProfile: isBackendProfile,
             identitySource: identitySource,
             matchBasis: matchBasis,
-            matchConfidence: matchConfidence
+            matchConfidence: matchConfidence,
+            nextReservation: nextReservation
         )
     }
 
@@ -535,6 +540,7 @@ private struct GuestLookupProfileBuilder {
     var identitySource: GuestLookupIdentitySource = .localReservationHistory
     var matchBasis: GuestProfileLookupMatchBasis?
     var matchConfidence: GuestProfileLookupMatchConfidence?
+    var nextReservation: GuestLookupNextReservationSummary?
 
     mutating func add(_ record: ReservationRecord) {
         totalReservations += 1
@@ -578,6 +584,15 @@ private struct GuestLookupProfileBuilder {
         if let lastSeenDate = cachedProfile.lastSeenDate?.nilIfBlank {
             lastReservationDate = max(lastReservationDate ?? lastSeenDate, lastSeenDate)
         }
+        if cachedProfile.nextReservationDate?.nilIfBlank != nil || cachedProfile.nextReservationTime?.nilIfBlank != nil {
+            nextReservation = GuestLookupNextReservationSummary(
+                date: cachedProfile.nextReservationDate,
+                time: cachedProfile.nextReservationTime,
+                partySize: nil,
+                status: nil,
+                tableName: nil
+            )
+        }
         totalReservations = max(totalReservations, cachedProfile.totalReservations)
         latestGuestNotes = cachedProfile.latestGuestNotePreview?.nilIfBlank ?? latestGuestNotes
         latestStaffNotes = cachedProfile.latestStaffNotePreview?.nilIfBlank ?? latestStaffNotes
@@ -606,7 +621,8 @@ private struct GuestLookupProfileBuilder {
             isBackendProfile: isBackendProfile,
             identitySource: identitySource,
             matchBasis: matchBasis,
-            matchConfidence: matchConfidence
+            matchConfidence: matchConfidence,
+            nextReservation: nextReservation
         )
     }
 }
@@ -625,6 +641,10 @@ private enum GuestLookupNormalizer {
     static func displayName(_ value: String) -> String {
         collapsedWhitespace(value)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func isPlaceholderName(_ normalizedName: String) -> Bool {
+        ["guest", "unknown", "walk-in guest", "walk in guest", "walkin guest"].contains(normalizedName)
     }
 
     static func phoneDigits(_ value: String) -> String {
