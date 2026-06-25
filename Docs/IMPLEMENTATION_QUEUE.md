@@ -2,7 +2,7 @@
 
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md) · [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) · [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md)
 
-Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), and Tryzub V1 Host production polish (#5b, #5c) are **done**.
+Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), and Tryzub V1 Host production polish (#5b, #5c) are **done**.
 
 **Current focus:** iOS device verification, confirmation mode on restaurant iPad, final V1 smoke test.
 
@@ -60,7 +60,8 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 |-------|-------|
 | **Status** | **current** — after #4 and #4b |
 | **Scope** | End-to-end staff ops on restaurant iPad |
-| **Include** | Guest profile background sync (`0f06852`); manual walk-in + known-guest intake (`0a89caa`); Guests tab + detail cache (`67e02d2`); Host freshness (`71601fc`); Host Intelligence card stability (`39f7fcb`) |
+| **Include** | Guest profile background sync (`0f06852`); guest full-list sync completion (`d541488`); manual walk-in + known-guest intake (`0a89caa`); Guests tab + detail cache (`67e02d2`); Host freshness (`71601fc`); Host Intelligence card stability (`39f7fcb`) |
+| **Guest memory checks** | Full-list sync eventually marks complete; Guests/manual intake finds known guest outside old 500 cap; no backend call on every phone digit; incomplete full-list sync does not wait on TTL before retrying full sync |
 | **Host header checks** | Header shows `Last sync HH:mm`; stale secondary reason when refresh skipped/stale; Live-on today does not sit stale without explanation; manual refresh bumps `Last sync` on success |
 | **Host flicker checks** | Quiet Host board does not rebuild/flicker every minute from idle snapshot timing; Host Intelligence card chips do not disappear/reappear when intelligence refreshes; during service, seated/due/nearby rows still update timing |
 
@@ -96,6 +97,17 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | **Scope** | `HostBoardView.swift` only |
 | **Delivered** | No `HostIntelligenceCardPresentation.empty` during presentation-key mismatch; keeps prior stable card/chips during async presentation rebuild; removes old-card → empty-card → rebuilt-card flicker path |
 | **Do not overstate** | Removed empty interstitial flicker path — not all Host flicker eliminated; does not change Host Intelligence cadence, local model pipeline, sync, backend, guest cache, or `FreshnessCoordinator`; final device verification still open |
+
+---
+
+## 5d. Guest person-map Slice 1 — full-list sync completion + full cache lookup
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done** — `d541488` |
+| **Scope** | `GuestProfileSyncService.swift`, `GuestProfileRepository.swift`, `GuestLookupStore.swift` |
+| **Delivered** | Sync metadata (`fullListSyncCompleted`, `lastFullListSyncAt`, `backendProfileTotal`, `cachedProfileCount`, `lastSyncFailureReason`); force full paginated sync while incomplete; TTL bypass while incomplete; reconcile cached count vs backend total; index all cached profiles in lookup (removed 500 cap) |
+| **Do not overstate** | No backend targeted lookup; no full history prefetch for every profile; no indexed search; improves reliability but does not block final V1 smoke test; final device verification still open |
 
 ---
 
@@ -191,6 +203,45 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 ---
 
+## 16. Backend targeted guest lookup by phone/email/name
+
+| Field | Value |
+|-------|-------|
+| **Status** | **later** — before broader product release |
+| **Scope** | Backend `guest-profiles` route or dedicated lookup endpoint; iOS client when needed |
+| **Note** | Closest existing route is `GET /guest-profiles?q=` (fuzzy LIKE); no exact identity resolver yet |
+
+---
+
+## 17. iOS backend fallback lookup when local cache incomplete
+
+| Field | Value |
+|-------|-------|
+| **Status** | **later** — after #16 or hardened `q=` use |
+| **Scope** | `GuestLookupStore`, `GuestProfileSyncService` — fallback only when `fullListSyncCompleted == false` or no local match with strong phone/email input |
+| **Do not** | Call backend on every keystroke |
+
+---
+
+## 18. Detail blob persistence for opened full guest profiles
+
+| Field | Value |
+|-------|-------|
+| **Status** | **later** |
+| **Scope** | `GuestProfileRepository`, `GuestProfileStore` — persist `booking_history` / `notes_history` JSON on detail fetch |
+| **Note** | Schema slots exist; list sync does not populate detail blobs |
+
+---
+
+## 19. Guest profile re-sync on foreground / mutations
+
+| Field | Value |
+|-------|-------|
+| **Status** | **later** — optional follow-up |
+| **Scope** | `AppReservationSession`, `GuestProfileSyncService` — currently syncs once per session after startup deferral |
+
+---
+
 ## Completed (reference)
 
 | Slice | Commit / note |
@@ -206,6 +257,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | Guests tab + detail local-first cache wiring | `67e02d2` |
 | Host freshness + idle snapshot flicker polish | `71601fc` |
 | Host Intelligence card presentation stability | `39f7fcb` |
+| Guest person-map Slice 1 — sync completeness + full cache lookup | `d541488` |
 
 ---
 

@@ -27,17 +27,17 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 2. **Active-window sync** — full replace vs delta upsert per `ReservationsController` policy (bounded-full after 5 deltas or 2 hours).
 3. **Sync cursor persistence** — active-window `server_time` cursors live in `ReservationsController.serverCursorByScope` and are **persisted in UserDefaults** (`tryzub.sync.serverCursors.v1`) so delta/full policy can resume after relaunch. Scope last-success timestamps and active-window bounds metadata are also persisted in UserDefaults. This is **not** an offline mutation queue.
 4. **SwiftData** stores reservation rows and guest profile list aggregates (operational cache only). **`lastSyncedAt`**, **`lastFreshnessCheckedAt`**, and **`cacheTrustSource`** are controller presentation/session fields rehydrated from local DB timestamps and startup state where applicable — not server truth.
-5. **Guest profile list sync** — iOS fetches `GET /guest-profiles` incrementally (`updated_since`) in background after startup deferral; **list only**, no bulk detail/history prefetch on sync.
-6. **Manual intake guest lookup** — local merge of `GuestProfileCacheRecord` + `ReservationRecord` history; **no network on phone keystroke**.
-7. **Manual create** — does **not** send `guest_key` (backend create contract lacks it); identity resolved server-side from contact fields after insert.
-8. **Foreground / privacy unlock refresh** — implemented `b910bd1` via `autoRefreshDashboardIfAllowed` in `ReservationsListView`.
-9. **Stale local cache risk** — if refresh skipped, fails, or staff device holds old PATCH without `expected_updated_at`, UI can disagree with server.
-10. **Offline / degraded** — no offline manual create/edit queue in V1. Mutations are blocked when network is unavailable; cache remains visible for viewing. Offline notices only.
-11. **Host sync header** — `Last sync HH:mm` after successful active-window server sync; `Checked HH:mm` for cache-only freshness; stale secondary reasons when trust >120s (`Paused`, `Paused while editing`, `Waiting — busy`, `Retry soon`, or fallback `May be out of date · tap refresh`). Live + today bypasses only `full_fresh_no_cursor` idle skip.
-12. **Host snapshot timing** — snapshot minute rebuild is conditional (`71601fc`): stable for non-today and quiet today boards; still minute-refreshes for seated / due / overdue / upcoming within ~90 min. Reduced idle snapshot flicker — not eliminated.
-13. **Host Intelligence card presentation** — keeps last stable card/chips during async presentation rebuild (`39f7fcb`); no empty interstitial during key mismatch. Removed intelligence-card empty flicker path — final device verification still open.
-14. **Guest search scale** — broad in-memory filter over cached profiles is acceptable for **current Tryzub V1 data size**; indexed / predicate-based local search is required before broader product release.
-15. **Guests tab + detail** — `GuestLookupView` and `ReservationDetailView` read `GuestProfileCacheRecord` from disk first (`67e02d2`); full guest history remains network/detail-only.
+5. **Guest profile list sync** — iOS fetches `GET /guest-profiles` in background after startup deferral; **list only**, no bulk detail/history prefetch. Full-list completion tracked in UserDefaults (`d541488`): while incomplete, forces full paginated sync and bypasses 15-minute TTL; reconciles local count vs backend `total`.
+6. **Guest lookup indexing** — `GuestLookupStore` indexes all locally cached `GuestProfileCacheRecord` rows (`d541488`); broad in-memory filter acceptable for **current Tryzub V1 data size**; indexed search required before broader product release. **No backend lookup on keystroke.**
+7. **Manual intake guest lookup** — local merge of `GuestProfileCacheRecord` + `ReservationRecord` history; **no network on phone keystroke**.
+8. **Manual create** — does **not** send `guest_key` (backend create contract lacks it); identity resolved server-side from contact fields after insert.
+9. **Foreground / privacy unlock refresh** — implemented `b910bd1` via `autoRefreshDashboardIfAllowed` in `ReservationsListView`.
+10. **Stale local cache risk** — if refresh skipped, fails, or staff device holds old PATCH without `expected_updated_at`, UI can disagree with server.
+11. **Offline / degraded** — no offline manual create/edit queue in V1. Mutations are blocked when network is unavailable; cache remains visible for viewing. Offline notices only.
+12. **Host sync header** — `Last sync HH:mm` after successful active-window server sync; `Checked HH:mm` for cache-only freshness; stale secondary reasons when trust >120s (`Paused`, `Paused while editing`, `Waiting — busy`, `Retry soon`, or fallback `May be out of date · tap refresh`). Live + today bypasses only `full_fresh_no_cursor` idle skip.
+13. **Host snapshot timing** — snapshot minute rebuild is conditional (`71601fc`): stable for non-today and quiet today boards; still minute-refreshes for seated / due / overdue / upcoming within ~90 min. Reduced idle snapshot flicker — not eliminated.
+14. **Host Intelligence card presentation** — keeps last stable card/chips during async presentation rebuild (`39f7fcb`); no empty interstitial during key mismatch. Removed intelligence-card empty flicker path — final device verification still open.
+15. **Guests tab + detail** — `GuestLookupView` and `ReservationDetailView` read `GuestProfileCacheRecord` from disk first (`67e02d2`); full guest history remains network/detail-only (detail blobs not yet persisted for every profile).
 
 ---
 

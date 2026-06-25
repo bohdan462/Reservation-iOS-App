@@ -1,7 +1,7 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `39f7fcb` (pending doc commit)  
+**Root HEAD:** `d541488` (pending doc commit)  
 **Last reviewed:** 2026-06-25  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
@@ -156,6 +156,50 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 | **Class** | **Required before broader product release** — acceptable for current Tryzub V1 data size as-is |
 | **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #6 |
 
+### P1-7: Backend targeted guest lookup by phone/email/name
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Known guest invisible when not yet in local cache or name-only weak match |
+| **Files** | Backend `guest-profiles.php`, `routes.php`; iOS `ReservationsAPIClient` |
+| **Approach** | Dedicated exact phone/email lookup or hardened `q=` resolver; not per-keystroke |
+| **Acceptance** | Strong phone/email input returns canonical `guest_key` profile when backend has it |
+| **Class** | Before broader product release — not V1 stabilization blocker |
+| **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #16 |
+
+### P1-8: iOS backend fallback when local cache incomplete / no match
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Staff cannot find guest during intake if local full-list sync incomplete |
+| **Files** | `GuestLookupStore.swift`, `GuestProfileSyncService.swift` |
+| **Approach** | Fallback to backend lookup only when `fullListSyncCompleted == false` or no local match with strong phone/email |
+| **Acceptance** | No network on every digit; fallback fires only on strong input + cache miss |
+| **Class** | Before broader product release — not V1 stabilization blocker |
+| **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #17 |
+
+### P1-9: Detail blob persistence for opened guest profiles
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Re-opened detail re-fetches full history; offline detail preview thin |
+| **Files** | `GuestProfileRepository.swift`, `GuestProfileStore.swift` |
+| **Approach** | Encode `booking_history` / `notes_history` into SwiftData on detail fetch |
+| **Acceptance** | Second open of same guest uses disk detail blobs when fresh enough |
+| **Class** | Later slice — not V1 stabilization blocker |
+| **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #18 |
+
+### P1-10: Guest profile re-sync on foreground / mutations
+
+| Field | Value |
+|-------|-------|
+| **Risk** | New backend profiles not visible until next app session |
+| **Files** | `AppReservationSession.swift`, `GuestProfileSyncService.swift` |
+| **Approach** | Trigger incremental sync on foreground return or reservation mutation (optional) |
+| **Acceptance** | Profile list updates within one visibility cycle after server change |
+| **Class** | Optional follow-up — not V1 stabilization blocker |
+| **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #19 |
+
 ---
 
 ## P3 — Structural (post-stabilization)
@@ -214,6 +258,7 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 - Guests tab + detail local-first guest cache wiring (`67e02d2`)
 - Host freshness + idle snapshot flicker polish (`71601fc`)
 - Host Intelligence card presentation stability (`39f7fcb`)
+- Guest person-map Slice 1 — full-list sync completion + full cache lookup (`d541488`)
 - V1 confirmation flow hardening (`cf6e641`)
 - Mail-first confirm + manual-email-log + PATCH (when backend confirmation is **off** on device)
 - Both backend `/confirm` and manual Mail paths exist; active path is setting-dependent (`EmailAutomationSettings`, default `backendConfirmationEnabled = true`)

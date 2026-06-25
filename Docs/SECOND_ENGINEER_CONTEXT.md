@@ -45,8 +45,9 @@ Latest known **pushed** state:
 | Backend branch | `AI` |
 | Backend HEAD | `078a44a` — Document guest self-service cache contract |
 | Root branch | `audit-current-state` |
-| Root HEAD | `39f7fcb` — Keep Host Intelligence card stable during presentation rebuild |
+| Root HEAD | `d541488` — Track guest profile full sync and index all cached profiles |
 | Guests tab + detail cache wiring | `67e02d2` |
+| Guest person-map Slice 1 (sync completeness + full cache lookup) | `d541488` |
 | Host freshness / idle snapshot polish | `71601fc` |
 | Host Intelligence card presentation stability | `39f7fcb` |
 | Guest cache foundation | `0f06852` — SwiftData cache + background `updated_since` sync |
@@ -74,13 +75,13 @@ git rev-parse --short HEAD
 git submodule status
 ```
 
-**Production:** Guest self-service cancel + dead-state verified live. App login works. Guest profile aggregates exist server-side; iOS syncs list to `GuestProfileCacheRecord` after `0f06852`. Guests tab and detail read disk cache first after `67e02d2`. Tryzub V1 Host production polish shipped at `71601fc` + `39f7fcb` — final device verification still open.
+**Production:** Guest self-service cancel + dead-state verified live. App login works. Guest profile aggregates exist server-side; iOS syncs list to `GuestProfileCacheRecord` after `0f06852`. Guests tab and detail read disk cache first after `67e02d2`. Guest person-map Slice 1 reliability shipped at `d541488`. Tryzub V1 Host production polish shipped at `71601fc` + `39f7fcb` — final device verification still open.
 
 ---
 
 ## 3. V1 focus (this weekend)
 
-**Stabilize device verification; guest memory + Tryzub V1 Host production polish are shipped.**
+**Stabilize device verification; guest memory, guest person-map Slice 1, and Tryzub V1 Host production polish are shipped.**
 
 ### Done (backend + iOS product)
 
@@ -92,20 +93,25 @@ git submodule status
 6. ~~Guests tab + detail local-first cache wiring~~ — `67e02d2` (Guests tab `@Query` cache; detail disk preview before network).
 7. ~~Host freshness + idle snapshot flicker polish~~ — `71601fc` (`Last sync` copy, stale skip reasons, conditional snapshot minute rebuild, Live no-cursor bypass).
 8. ~~Host Intelligence card presentation stability~~ — `39f7fcb` (no empty interstitial during presentation-key mismatch; keeps prior chips during async rebuild).
+9. ~~Guest person-map Slice 1 — full-list sync completion + full cache lookup~~ — `d541488` (sync metadata, TTL bypass while incomplete, all cached profiles indexed; no backend lookup yet).
 
 ### Still open (stabilization)
 
-9. **iOS data/fetch on device** — foreground/privacy refresh (`b910bd1`).
-10. **Confirmation mode on restaurant iPad** — Mail vs backend `/confirm`.
-11. **Final V1 smoke test** — end-to-end staff ops on restaurant iPad (include guest cache, walk-in, Host header/flicker + intelligence-card checks).
+10. **iOS data/fetch on device** — foreground/privacy refresh (`b910bd1`).
+11. **Confirmation mode on restaurant iPad** — Mail vs backend `/confirm`.
+12. **Final V1 smoke test** — end-to-end staff ops on restaurant iPad (include guest full-list sync, Guests/intake lookup, Host header/flicker + intelligence-card checks).
 
-**Not production-ready** until items 9–11 pass.
+**Not production-ready** until items 10–12 pass.
 
 ### Before broader product release (not V1 stabilization blocker)
 
-11. **Indexed / predicate-based local guest search** — replace broad in-memory filtering; acceptable for **current Tryzub V1 data size** only.
-12. **`RegularGuestsView` disk-first** — later slice.
-13. **`ReservationDetail` guest fetch dedupe** — partially improved; full dedupe later.
+13. **Backend targeted guest lookup** — exact phone/email/name endpoint (or hardened use of `q=`).
+14. **iOS backend fallback lookup** — only when local cache incomplete/no local match and input is strong enough (phone/email).
+15. **Detail blob persistence** — cache opened full guest profiles (`booking_history`, `notes_history`) to SwiftData.
+16. **Indexed / predicate-based local guest search** — replace broad in-memory filtering; acceptable for **current Tryzub V1 data size** only.
+17. **`RegularGuestsView` disk-first** — later slice.
+18. **`ReservationDetail` guest fetch dedupe** — partially improved; full dedupe later.
+19. **Guest profile re-sync on foreground/mutations** — optional follow-up; currently once per session at startup deferral.
 
 **Parked:** offline queue, SMS, broad Host redesign, full AI clustering / “knows each other” / local semantic tags, VIP editor without backend contract.
 
@@ -132,12 +138,15 @@ git submodule status
 
 ## 5. Code truths docs must match
 
-### Guest memory (iOS — `0f06852` + `0a89caa` + `67e02d2`)
+### Guest memory (iOS — `0f06852` + `0a89caa` + `67e02d2` + `d541488`)
 
 - `GuestProfileCacheRecord` in SwiftData; registered in `Tryzub_ReservationsApp` `ModelContainer`.
-- `GuestProfileSyncService` paginates `GET /guest-profiles` after `canStartNoncriticalStartupLoads`; cursor in UserDefaults (`tryzub.guestProfiles.lastUpdatedSince.v1`).
+- `GuestProfileSyncService` paginates `GET /guest-profiles` after `canStartNoncriticalStartupLoads`; tracks full-list completion metadata in UserDefaults (`d541488`).
+- While `fullListSyncCompleted == false`: forces full paginated sync (`updatedSince == nil`) and **bypasses 15-minute TTL**.
+- Once complete: incremental `updated_since` cursor + normal 15-minute TTL.
+- Reconciles local `cachedProfileCount` against `backendProfileTotal` before marking complete.
 - **List sync only** — no bulk detail/history prefetch, no `/guest-profiles/rebuild`, no `/guest-intelligence` on typing.
-- `GuestLookupStore` merges cache + `ReservationRecord` history for **manual intake and Guests tab**.
+- `GuestLookupStore` merges **all** cached profiles + `ReservationRecord` history for **manual intake and Guests tab** (`d541488` — removed 500 cap).
 - `GuestLookupView` uses `@Query` on `GuestProfileCacheRecord`; result cards show compact guest memory metadata.
 - `ReservationDetailView` reads disk cache preview before memory/network preview; full history remains network/detail-only.
 - Phone: `GuestLookupPhoneNormalizer.digits`; intake phone `.textContentType(.none)`.
@@ -191,6 +200,7 @@ git submodule status
 | Guests tab + detail cache wiring on test iPad | **Open** (post-`67e02d2`) |
 | Host freshness / idle snapshot polish on test iPad | **Open** (post-`71601fc`) |
 | Host Intelligence card presentation stability on test iPad | **Open** (post-`39f7fcb`) |
+| Guest profile full-list sync + full-cache lookup on test iPad | **Open** (post-`d541488`) |
 
 ---
 
@@ -218,9 +228,9 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
 
 1. Device-test iOS refresh (`b910bd1`).
 2. Confirm confirmation mode on restaurant iPad.
-3. Final V1 smoke test — include guest cache, walk-in/known-guest, Host `Last sync`, stale reasons, reduced idle flicker, intelligence-card chips stable during refresh, seated/due timing, manual refresh.
-4. Before broader product release → **indexed local guest search**.
-5. Later → `RegularGuestsView` disk-first; `ReservationDetail` guest fetch dedupe.
+3. Final V1 smoke test — include guest full-list sync, Guests/intake lookup (no per-digit backend), walk-in/known-guest, Host `Last sync`, stale reasons, reduced idle flicker, intelligence-card chips stable during refresh, seated/due timing, manual refresh.
+4. Before broader product release → backend targeted lookup, iOS fallback lookup, detail blob persistence, **indexed local guest search**.
+5. Later → `RegularGuestsView` disk-first; guest profile re-sync on foreground/mutations; `ReservationDetail` guest fetch dedupe.
 6. Do **not** start offline queue, AI clustering, or VIP editor without backend contract.
 
 ---
@@ -235,4 +245,4 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
 
 ---
 
-*Last aligned: 2026-06-25 (guest cache `67e02d2` + Host polish `71601fc` + intelligence-card stability `39f7fcb` pushed). Update when repo HEAD or verification status changes materially.*
+*Last aligned: 2026-06-25 (guest person-map Slice 1 `d541488` + Host polish `71601fc`/`39f7fcb` pushed). Update when repo HEAD or verification status changes materially.*

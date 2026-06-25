@@ -44,6 +44,14 @@
 2. Cancel reservation on another device → within full sync cycle, row should leave Host list (known gap if only delta — see OPEN_WORK P0-2)
 3. Developer: verify `ActiveWindowFreshnessTrace` shows full vs delta
 
+## Guest memory / person-map test (`d541488`)
+
+1. On fresh install or first session, guest profile **full-list sync** eventually marks `fullListSyncCompleted` (local count reconciled with backend total).
+2. **Guests tab** and **manual intake** can find a known guest that would have been outside the old 500-profile lookup cap.
+3. **No backend call** occurs on every phone digit while typing in Guests or manual intake.
+4. If full-list sync is incomplete, guest profile sync **does not wait on 15-minute TTL** before retrying full paginated sync.
+5. Full guest history is **not** prefetched for every profile — detail/history remains on open.
+
 ## Host header + flicker test (`71601fc` + `39f7fcb`)
 
 1. Host header shows **`Last sync HH:mm`** after successful sync (not `Updated`)
@@ -77,7 +85,8 @@
 - [ ] Host tab loads cache-first
 - [ ] Host header shows `Last sync`; stale secondary when appropriate (`71601fc`)
 - [ ] Host board quiet off-hours — no minute idle flicker; intelligence-card chips stable during refresh (`39f7fcb`); seated/due timing still updates in service
-- [ ] Guests tab finds backend-known guest after sync (`67e02d2`)
+- [ ] Guests tab finds backend-known guest after sync (`67e02d2`); known guest outside old 500 cap findable (`d541488`)
+- [ ] Guest profile full-list sync completes; no per-digit backend calls during Guests/intake typing (`d541488`)
 - [ ] Confirm with email (Mail flow)
 - [ ] Confirm without email
 - [ ] Shift reminder email + text review

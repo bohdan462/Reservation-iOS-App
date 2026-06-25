@@ -15,8 +15,8 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 | Location | State |
 |----------|--------|
 | **Root branch** | `audit-current-state` |
-| **Root HEAD** | `39f7fcb` — Keep Host Intelligence card stable during presentation rebuild |
-| **Root vs remote** | Pushed to `origin/audit-current-state` at `39f7fcb` (pending this doc commit) |
+| **Root HEAD** | `d541488` — Track guest profile full sync and index all cached profiles |
+| **Root vs remote** | Pushed to `origin/audit-current-state` at `d541488` (pending this doc commit) |
 | **Backend submodule pointer** | `078a44a` — Document guest self-service cache contract |
 | **Backend branch** | `AI` |
 | **Backend HEAD** | `078a44a` |
@@ -24,6 +24,8 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 
 **Recent root commits (newest first):**
 
+- `d541488` — guest profile full-list sync completion + all cached profile lookup (no 500 cap)
+- `dc3d8c5` — docs after guest cache wiring and Host polish
 - `39f7fcb` — Host Intelligence card stable during presentation rebuild (no empty interstitial during key mismatch)
 - `71601fc` — Host sync status copy (`Last sync`), stale skip reasons, conditional snapshot minute rebuild, Live no-cursor bypass
 - `67e02d2` — Guests tab + Reservation Detail read local guest cache first
@@ -47,7 +49,7 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 
 ## Current slice goal
 
-**Stabilization still open** (device verification + final smoke test). **Guest memory foundation** and **Tryzub V1 Host production polish** (freshness header + idle snapshot + intelligence-card stability) are shipped on iOS.
+**Stabilization still open** (device verification + final smoke test). **Guest memory foundation**, **guest person-map Slice 1 reliability** (`d541488`), and **Tryzub V1 Host production polish** are shipped on iOS.
 
 ### Completed (iOS guest memory — `0f06852` + `0a89caa` + `67e02d2`)
 
@@ -68,6 +70,16 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
    - `ReservationDetailView` reads disk cache preview before memory/network preview.
    - Full guest history / profile pack remains network/detail-only.
    - `RegularGuestsView` disk-first remains a later slice.
+
+### Completed (guest person-map Slice 1 — `d541488`)
+
+1. **`GuestProfileSyncService`** persists sync metadata: `fullListSyncCompleted`, `lastFullListSyncAt`, `backendProfileTotal`, `cachedProfileCount`, `lastSyncFailureReason`.
+2. If full-list sync is **incomplete**, iOS forces full paginated `GET /guest-profiles` sync (`updatedSince == nil`).
+3. **15-minute guest-profile sync TTL is bypassed** while full-list sync is incomplete; normal TTL applies once complete.
+4. Local cached count is reconciled against backend `total` before marking complete.
+5. **`GuestLookupStore`** indexes **all** locally cached `GuestProfileCacheRecord` rows — removed old default 500 cap.
+6. Guests tab and manual intake remain **local-only while typing** — no backend lookup route yet.
+7. **No** full history prefetch, **no** backend/PHP changes, **no** indexed/predicate search yet.
 
 ### Completed (Tryzub V1 Host production polish — `71601fc` + `39f7fcb`)
 
@@ -96,7 +108,7 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 
 1. Verify iOS data/fetch/storage on device (foreground/privacy refresh at `b910bd1`).
 2. Confirm confirmation mode on restaurant iPad (Mail vs backend `/confirm`).
-3. Final V1 smoke test on restaurant iPad — must now include Host header/flicker + intelligence-card checks (see [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #4c).
+3. Final V1 smoke test on restaurant iPad — must now include guest full-list sync, Guests/intake lookup, Host header/flicker + intelligence-card checks (see [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #4c).
 
 **Not production-ready** until stabilization items 1–3 pass.
 
@@ -104,7 +116,7 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 
 Replace broad in-memory guest filtering with **indexed / predicate-based local search**. Acceptable for **current Tryzub V1 data size** only.
 
-**Later slices (not blocking V1 smoke test):** `RegularGuestsView` disk-first; `ReservationDetail` guest fetch dedupe (partially improved; full dedupe later).
+**Later slices (not blocking V1 smoke test):** backend targeted lookup by exact phone/email/name; iOS backend fallback when local cache incomplete/no match and input is strong enough; detail blob persistence for opened full guest profiles; `RegularGuestsView` disk-first; foreground/mutation-triggered guest-profile re-sync; `ReservationDetail` guest fetch dedupe (partially improved; full dedupe later).
 
 **Parked / not started:** offline queue, broad Host redesign, full AI clustering / “knows each other” / local semantic tags, VIP editor (no backend guest-notes contract).
 
@@ -139,24 +151,25 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 
 - iOS foreground/privacy-cover refresh on physical device
 - Confirmation mode on restaurant iPad
-- Final V1 smoke test (staff ops on restaurant iPad) — include guest cache, walk-in/known-guest, Host `Last sync` + stale reasons + reduced idle flicker + intelligence-card chip stability
+- Final V1 smoke test (staff ops on restaurant iPad) — include guest full-list sync completion, Guests/intake lookup beyond old 500 cap, walk-in/known-guest, Host `Last sync` + stale reasons + reduced idle flicker + intelligence-card chip stability
 - Guest profile background sync on test iPad (post-`0f06852` install)
 - Manual walk-in + known-guest intake on test iPad (post-`0a89caa` install)
 - Guests tab + detail cache wiring on test iPad (post-`67e02d2` install)
 - Host freshness/flicker polish on test iPad (post-`71601fc` install)
 - Host Intelligence card presentation stability on test iPad (post-`39f7fcb` install)
+- Guest profile full-list sync + full-cache lookup on test iPad (post-`d541488` install)
 
 ---
 
-## iOS guest memory (`0f06852` + `0a89caa` + `67e02d2`)
+## iOS guest memory (`0f06852` + `0a89caa` + `67e02d2` + `d541488`)
 
 | Component | Role |
 |-----------|------|
 | `GuestProfileCacheRecord` | SwiftData disk cache of list aggregates |
-| `GuestProfileRepository` | Upsert, search, phone match |
-| `GuestProfileSyncService` | Paginated `/guest-profiles` + `updated_since` cursor in UserDefaults |
+| `GuestProfileRepository` | Upsert, search, phone match; `allCachedProfiles` for full local index |
+| `GuestProfileSyncService` | Paginated `/guest-profiles`; full-list completion metadata + TTL bypass while incomplete (`d541488`) |
 | `GuestProfileStore` | Memory TTL + optional disk write-through when `ModelContext` passed |
-| `GuestLookupStore` | Merges cache + reservation history for manual intake and Guests tab |
+| `GuestLookupStore` | Merges all cached profiles + reservation history for manual intake and Guests tab (`d541488`) |
 | `GuestLookupView` | `@Query` cache + compact guest memory metadata on result cards |
 | `ReservationDetailView` | Disk cache preview before memory/network preview |
 | `ManualReservationFormView` | Call-in/walk-in segmented mode, known-guest card, prefill |
@@ -192,7 +205,7 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 
 1. **Device-test** iOS foreground/privacy refresh (`b910bd1`).
 2. **Confirm** confirmation mode on restaurant iPad.
-3. **Run** final V1 smoke test — include guest cache, walk-in/known-guest, Host header (`Last sync`), stale secondary reasons, Live-on-today refresh, quiet-board idle flicker, intelligence-card chips stable during refresh, seated/due timing updates, manual refresh bumps `Last sync`.
+3. **Run** final V1 smoke test — include guest full-list sync, Guests/intake lookup (no per-digit backend calls), walk-in/known-guest, Host header (`Last sync`), stale secondary reasons, Live-on-today refresh, quiet-board idle flicker, intelligence-card chips stable during refresh, seated/due timing updates, manual refresh bumps `Last sync`.
 4. Before broader product release → **indexed local guest search** ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #6).
 
 ---
