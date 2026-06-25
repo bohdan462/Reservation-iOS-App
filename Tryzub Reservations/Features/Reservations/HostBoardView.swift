@@ -1492,9 +1492,7 @@ struct HostBoardView: View {
     private var liveHostIntelligenceSection: some View {
         let snapshot = hostIntelligenceController.displaySnapshot
         let useSeparatedPrompts = hostIntelligenceController.settings.useSeparatedBriefingPrompts
-        let presentation = hostIntelligenceCardPresentation.key == hostIntelligenceCardPresentationKey
-            ? hostIntelligenceCardPresentation
-            : .empty
+        let presentation = stableHostIntelligenceCardPresentation
 
         HostIntelligenceCard(
             snapshot: snapshot,
@@ -1527,6 +1525,10 @@ struct HostBoardView: View {
             }
         }
 
+    }
+
+    private var stableHostIntelligenceCardPresentation: HostIntelligenceCardPresentation {
+        hostIntelligenceCardPresentation
     }
 
     private var isHostIntelligenceCardVisible: Bool {
