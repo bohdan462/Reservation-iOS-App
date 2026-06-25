@@ -2,9 +2,9 @@
 
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md) · [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) · [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md)
 
-Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), iOS Slice 3A lookup foundation (#20), iOS Slice 3B Guests tab lookup UI (#21), and Tryzub V1 Host production polish (#5b, #5c) are **done**.
+Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), iOS Slices 3A/3B/3R, and Tryzub V1 Host production polish (#5b, #5c) are **done**.
 
-**Current focus:** iOS device verification, confirmation mode on restaurant iPad, final V1 smoke test. **Next guest person-map code slice:** **3R** (Regulars cache-first + shared Guest history tap).
+**Current focus:** iOS device verification, confirmation mode on restaurant iPad, final V1 smoke test. **Next guest person-map code slice:** **3D** (full shared Guest history UI + Reservation Detail bridge).
 
 ---
 
@@ -60,7 +60,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 |-------|-------|
 | **Status** | **current** — after #4 and #4b |
 | **Scope** | End-to-end staff ops on restaurant iPad |
-| **Include** | Guest profile background sync (`0f06852`); guest full-list sync completion (`d541488`); manual walk-in + known-guest intake (`0a89caa`); Guests tab + detail cache (`67e02d2`); Guests tab explicit all-record lookup + View history shell (`1dfa14a`); Host freshness (`71601fc`); Host Intelligence card stability (`39f7fcb`) |
+| **Include** | Guest profile background sync (`0f06852`); guest full-list sync completion (`d541488`); manual walk-in + known-guest intake (`0a89caa`); Guests tab + detail cache (`67e02d2`); Guests tab explicit all-record lookup + View history shell (`1dfa14a`); Regulars cache-first + View history (`50df843`); Host freshness (`71601fc`); Host Intelligence card stability (`39f7fcb`) |
 | **Guest memory checks** | Full-list sync eventually marks complete; Guests/manual intake finds known guest outside old 500 cap; no backend call on every phone digit; Guests tab explicit search only (not per keystroke); incomplete full-list sync does not wait on TTL before retrying full sync |
 | **Host header checks** | Header shows `Last sync HH:mm`; stale secondary reason when refresh skipped/stale; Live-on today does not sit stale without explanation; manual refresh bumps `Last sync` on success |
 | **Host flicker checks** | Quiet Host board does not rebuild/flicker every minute from idle snapshot timing; Host Intelligence card chips do not disappear/reappear when intelligence refreshes; during service, seated/due/nearby rows still update timing |
@@ -73,8 +73,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 |-------|-------|
 | **Status** | **done** — `67e02d2` |
 | **Scope** | `GuestLookupView`, `ReservationDetailView`, `GuestProfileRepository` |
-| **Delivered** | Guests tab reads `GuestProfileCacheRecord`; result cards show compact guest memory metadata; detail disk cache preview before memory/network; explicit all-record lookup + shared Guest history shell (`1dfa14a`) |
-| **Gap** | `RegularGuestsView` disk-first + shared destination — Slice 3R |
+| **Delivered** | Guests tab reads `GuestProfileCacheRecord`; result cards show compact guest memory metadata; detail disk cache preview before memory/network; explicit all-record lookup + shared Guest history shell (`1dfa14a`); Regulars cache-first (`50df843`) |
 
 ---
 
@@ -164,9 +163,10 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 | Field | Value |
 |-------|-------|
-| **Status** | **later** — next guest person-map code slice |
-| **Scope** | `RegularGuestsView` — primary list from `GuestProfileCacheRecord` / `allCachedProfiles`; tap opens `GuestProfileDetailView(guestKey:)`; remove network-page-first “25 of 101” UX and heavy `GuestInsightsView` tap path |
-| **Do not overstate** | Background `GuestProfileSyncService` still refreshes cache; full history UI remains Slice 3D |
+| **Status** | **done** — `50df843` |
+| **Scope** | `RegularGuestsView`, `ReservationsListView`, `GlobalServiceIntelligenceView` |
+| **Delivered** | Primary list from `@Query` `GuestProfileCacheRecord`; local search/filter/sort; honest sync copy; tap opens `GuestProfileDetailView(guestKey:)`; removed network page-25 primary UI and “Showing 25 of 101” copy; `environment` passed from More and Service Intelligence |
+| **Do not overstate** | Background `GuestProfileSyncService` still refreshes cache; full history UI remains Slice 3D; detail JSON persistence remains Slice 3E |
 
 ---
 
@@ -208,10 +208,10 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 | Field | Value |
 |-------|-------|
-| **Status** | **done** — backend `1431a06`, root pointer `b1a09e7` |
+| **Status** | **done** — backend `1431a06`, root pointer `b1a09e7`; **deployed** to WordPress |
 | **Scope** | `GET /guest-profiles/lookup` in `guest-profiles.php`, `routes.php`, backend `README.md` |
 | **Delivered** | Staff-auth lookup doorway; exact email + 10+ digit phone strong; 7–9 digit phone and name-only possible; compact summaries with `match_basis` / `match_confidence`; safe strong-only `best_match_*`; no rebuild/scan/public tokens |
-| **Do not overstate** | **Not deployed** to production WordPress; iOS calls route from Guests tab explicit search only (`1dfa14a`); name-only is never canonical; full list/detail endpoints unchanged |
+| **Do not overstate** | iOS calls route from Guests tab explicit search only (`1dfa14a`); name-only is never canonical; full list/detail endpoints unchanged; **device lookup smoke tests still open** |
 
 ---
 
@@ -263,7 +263,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | **Status** | **done** — `1dfa14a` |
 | **Scope** | `GuestLookupView.swift`, `GuestProfileDetailView.swift` |
 | **Delivered** | Explicit Search all guest records; local typing unchanged; Likely guest / Possible match; View history + Book reservation; `GuestProfileDetailView` summary shell by `guestKey` |
-| **Do not overstate** | Not full booking/notes timeline; not Regulars/Manual Intake/Reservation Detail integration; not disk-first full detail |
+| **Do not overstate** | Not full booking/notes timeline; not Manual Intake/Reservation Detail integration; not disk-first full detail |
 
 ---
 
@@ -302,9 +302,10 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | Host freshness + idle snapshot flicker polish | `71601fc` |
 | Host Intelligence card presentation stability | `39f7fcb` |
 | Guest person-map Slice 1 — sync completeness + full cache lookup | `d541488` |
-| Backend guest person-map Slice 2 — staff profile lookup | `1431a06` (backend), `b1a09e7` (root pointer) |
+| Backend guest person-map Slice 2 — staff profile lookup | `1431a06` (backend), `b1a09e7` (root pointer); **deployed** |
 | iOS guest person-map Slice 3A — lookup foundation | `823f42c` |
 | iOS guest person-map Slice 3B — Guests tab lookup UI + shared history shell | `1dfa14a` |
+| iOS guest person-map Slice 3R — Regulars cache-first + shared Guest history | `50df843` |
 
 ---
 

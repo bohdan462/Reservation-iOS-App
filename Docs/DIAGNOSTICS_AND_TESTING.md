@@ -54,9 +54,9 @@
 
 ## Backend guest profile lookup smoke test (`1431a06`)
 
-**Status:** checklist only — **not deployed**; **not passed**.
+**Status:** checklist only — route **deployed** at `1431a06`; **device smoke tests not yet passed**.
 
-Requires staff auth (`tryzub_can_read_reservations`). Run after deploying backend `1431a06` to WordPress.
+Requires staff auth (`tryzub_can_read_reservations`). Backend `1431a06` is live on WordPress.
 
 1. Unauthenticated `GET /guest-profiles/lookup` → **401/403**
 2. Known exact `email=` → one `strong` candidate; `best_match_guest_key`, `best_match_basis`, `best_match_confidence: strong` all populated
@@ -70,7 +70,7 @@ Requires staff auth (`tryzub_can_read_reservations`). Run after deploying backen
 10. Lookup result `guest_key` opens `GET /guest-profiles/{guest_key}` with `booking_history` and `notes_history` intact
 11. Paginated `GET /guest-profiles` list behavior unchanged
 
-**Do not claim:** route is live in production, iOS calls lookup, name-only result is confirmed identity, lookup returns full history.
+**Do not claim:** device smoke tests passed, Manual Intake calls lookup, name-only result is confirmed identity, lookup returns full history.
 
 ## Host header + flicker test (`71601fc` + `39f7fcb`)
 

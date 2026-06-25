@@ -15,8 +15,8 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 | Location | State |
 |----------|--------|
 | **Root branch** | `audit-current-state` |
-| **Root HEAD** | `1dfa14a` — Add Guests tab guest-record search and shared guest history shell |
-| **Root vs remote** | Pushed to `origin/audit-current-state` at `1dfa14a` (pending this doc commit) |
+| **Root HEAD** | `50df843` — Make Regulars cache-first with shared Guest history destination |
+| **Root vs remote** | Pushed to `origin/audit-current-state` at `50df843` (pending this doc commit) |
 | **Backend submodule pointer** | `1431a06` — Add staff guest profile lookup with safe strong-only best match |
 | **Backend branch** | `AI` |
 | **Backend HEAD** | `1431a06` |
@@ -24,6 +24,8 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 
 **Recent root commits (newest first):**
 
+- `50df843` — Regulars cache-first + shared Guest history destination (Slice 3R)
+- `5f7cb45` — docs after Guests tab guest-record search
 - `1dfa14a` — Guests tab guest-record search + shared Guest history shell (Slice 3B)
 - `823f42c` — iOS guest profile lookup API/client/store foundation (Slice 3A)
 - `e1e911a` — docs after backend guest profile lookup
@@ -55,9 +57,19 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 
 ## Current slice goal
 
-**Stabilization still open** (device verification + final smoke test). **Guest memory foundation**, **guest person-map Slice 1** (`d541488`), **backend Slice 2 lookup** (`1431a06`), **iOS Slice 3A lookup foundation** (`823f42c`), **iOS Slice 3B Guests tab lookup UI** (`1dfa14a`), and **Tryzub V1 Host production polish** are shipped.
+**Stabilization still open** (device verification + final smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R**, and **Tryzub V1 Host production polish** are shipped.
 
-**Guest Person Map target:** one shared **Guest history** destination by `guestKey`, reused across Guests tab (done in 3B), More → Guest Memory / Regulars (open — Slice 3R), Reservation Detail guest insights (open — Slice 3D integration), Manual Intake candidates (open — Slice 3M), and booking-history rows later. Backend `GET /guest-profiles/{guest_key}` detail DTO is the primary source for full history (`bookingHistory`, `notesHistory`, counts, labels, summary, preferences, source mix, next reservation). SwiftData is operational cache only — avoid recomputing heavy reservation-scoped guest analysis when a backend/cached guest profile exists.
+**Guest Person Map target:** one shared **Guest history** destination by `guestKey` (`GuestProfileDetailView`). Wiring status:
+
+| Entry point | Shared Guest history | Status |
+|-------------|---------------------|--------|
+| Guests tab | `GuestProfileDetailView(guestKey:)` | **Done** — `1dfa14a` |
+| Regulars / Guest Memory | `GuestProfileDetailView(guestKey:)` | **Done** — `50df843` |
+| Reservation Detail | `GuestProfileDetailView(guestKey:)` | **Open** — Slice 3D-a |
+| Manual Intake candidates | `GuestProfileDetailView(guestKey:)` | **Open** — Slice 3M |
+| Booking-history rows | local `ReservationDetailView` if cached; else read-only | **Open** — Slice 3D |
+
+Backend `GET /guest-profiles/{guest_key}` detail DTO is the primary source for full history (`bookingHistory`, `notesHistory`, counts, labels, summary, preferences, source mix, next reservation). SwiftData is operational cache only — avoid recomputing heavy reservation-scoped guest analysis when a backend/cached guest profile exists. `GuestProfileDetailView` currently shows a **summary shell only** — full booking/notes timeline is Slice 3D.
 
 ### Completed (iOS guest memory — `0f06852` + `0a89caa` + `67e02d2`)
 
@@ -77,7 +89,7 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
    - `GuestLookupView` reads `GuestProfileCacheRecord` via `@Query`; result cards show compact guest memory metadata.
    - `ReservationDetailView` reads disk cache preview before memory/network preview.
    - Full guest history / profile pack remains network/detail-only.
-   - `RegularGuestsView` disk-first remains a later slice.
+   - `RegularGuestsView` cache-first wiring completed in Slice 3R (`50df843`).
 
 ### Completed (guest person-map Slice 1 — `d541488`)
 
@@ -107,6 +119,17 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 6. **`GuestProfileDetailView`** is the shared destination **shell** by `guestKey` through existing `GuestProfileStore.loadProfile(guestKey:)` — shows identity/contact, labels, first/last seen, metrics, next reservation, summary/pattern lines.
 7. **Not in 3B:** full booking-history list, chronological notes timeline, source-mix UI, disk-first full detail persistence, Regulars integration, Manual Intake backend lookup, Reservation Detail shared-destination routing.
 
+### Completed (guest person-map Slice 3R — iOS `50df843`)
+
+1. **More → Guest Memory / Regulars** is **cache-first** — primary list reads `GuestProfileCacheRecord` via `@Query`.
+2. **No backend page-25 list** as primary UI; **“Showing 25 of 101 profiles”** copy removed.
+3. Search, filter, and sort are **local** over cached profiles (250ms debounce on search text).
+4. Honest sync copy: “X guest profiles saved on this iPad” / “Still syncing…” using `GuestProfileSyncService` metadata keys.
+5. Row tap opens **`GuestProfileDetailView(guestKey:environment:)`** — shared Guest history shell; **no** heavy `GuestInsightsView` on normal row tap.
+6. **Service Intelligence → Guest Memory** and **More → Guest Memory** both pass `environment` into `RegularGuestsView`.
+7. Background `GuestProfileSyncService` remains the freshness mechanism — no per-keystroke backend lookup.
+8. **Not in 3R:** full booking-history list, notes timeline, source-mix UI, detail JSON persistence (3E), Manual Intake, Reservation Detail bridge.
+
 ### Completed (guest person-map Slice 2 — backend `1431a06`, root pointer `b1a09e7`)
 
 Staff targeted guest lookup doorway — part of the guest person-map / “know your guest” system:
@@ -121,7 +144,7 @@ Staff targeted guest lookup doorway — part of the guest person-map / “know y
 8. **Safe best match:** `best_match_guest_key` / `best_match_basis` / `best_match_confidence` populated only when exactly one unique strong guest key exists; null when zero or conflicting strong matches. Name-only and partial-phone candidates never become canonical automatically.
 9. **No** inline rebuild, **no** reservation-table scan, **no** public access.
 10. **Complete guest access preserved:** paginated `GET /guest-profiles` remains the full profile list; `GET /guest-profiles/{guest_key}` and `GET /guest-profiles/by-reservation/{id}` remain full detail/history/notes/stats.
-11. **Not deployed** to production WordPress yet; **iOS calls this route from Guests tab explicit search only** (`1dfa14a`) — not from Manual Intake or per-keystroke typing.
+11. **Deployed** to production WordPress at `1431a06`. **iOS calls this route from Guests tab explicit search only** (`1dfa14a`) — not from Manual Intake or per-keystroke typing. **Device smoke tests for lookup still open** (see verification table).
 
 ### Completed (Tryzub V1 Host production polish — `71601fc` + `39f7fcb`)
 
@@ -158,9 +181,7 @@ Staff targeted guest lookup doorway — part of the guest person-map / “know y
 
 Replace broad in-memory guest filtering with **indexed / predicate-based local search**. Acceptable for **current Tryzub V1 data size** only.
 
-**Later slices (not blocking V1 smoke test):** **3R** Regulars / Guest Memory cache-first + shared Guest history tap; **3D** full shared Guest history UI (booking history + notes timeline); **3M** Manual Intake name search, all-record lookup, candidate list, walk-in/call-in validation; **3M-B** backend support for true unknown walk-ins without name/phone; **3E** detail JSON persistence; phone normalization 10 vs 11 digit follow-up; dedicated validation error for blank lookup if needed; indexed local guest search; foreground/mutation-triggered guest-profile re-sync; `ReservationDetail` guest fetch dedupe (partially improved; full dedupe later).
-
-**Regulars / Guest Memory (still open — Slice 3R):** `RegularGuestsView` remains **network-page-first** (`page: 1`, `perPage: 25`) and can show **“Showing 25 of 101 profiles”** even when all profiles are cached locally. Backend rows are not tappable to `GuestProfileDetailView`; local fallback still opens heavy reservation-scoped `GuestInsightsView`.
+**Later slices (not blocking V1 smoke test):** **3D** full shared Guest history UI (booking history + notes timeline) + Reservation Detail bridge; **3M** Manual Intake name search, all-record lookup, candidate list, walk-in/call-in validation; **3M-B** backend support for true unknown walk-ins without name/phone; **3E** detail JSON persistence; phone normalization 10 vs 11 digit follow-up; dedicated validation error for blank lookup if needed; indexed local guest search; foreground/mutation-triggered guest-profile re-sync; `ReservationDetail` guest fetch dedupe (partially improved; full dedupe later).
 
 **Manual Intake (still open — Slice 3M):** phone/local-first only; **no backend lookup**; walk-in still requires name + 10-digit phone on both iOS validator and backend create; true optional walk-in name/phone needs **3M-B** backend + iOS changes.
 
@@ -206,12 +227,13 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 - Host freshness/flicker polish on test iPad (post-`71601fc` install)
 - Host Intelligence card presentation stability on test iPad (post-`39f7fcb` install)
 - Guest profile full-list sync + full-cache lookup on test iPad (post-`d541488` install)
-- Backend guest profile lookup route deployed + smoke-tested on WordPress (post-`1431a06` deploy — **not done**)
+- Backend guest profile lookup route **deployed** on WordPress (`1431a06`) — **device smoke tests still open** (exact email/phone lookup; name-only possible match; conflicting phone/email does not auto-pick; guest key opens full detail; unauthenticated lookup blocked)
 - Guests tab explicit all-record lookup + View history shell on test iPad (post-`1dfa14a` install)
+- Regulars cache-first + View history on test iPad (post-`50df843` install)
 
 ---
 
-## iOS guest memory (`0f06852` + `0a89caa` + `67e02d2` + `d541488` + `823f42c` + `1dfa14a`)
+## iOS guest memory (`0f06852` + `0a89caa` + `67e02d2` + `d541488` + `823f42c` + `1dfa14a` + `50df843`)
 
 | Component | Role |
 |-----------|------|
@@ -223,7 +245,7 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 | `GuestLookupView` | Local search while typing; explicit **Search all guest records**; **View history** + **Book reservation** (`1dfa14a`) |
 | `GuestProfileDetailView` | Shared **Guest history** shell by `guestKey` — summary/metrics only until Slice 3D (`1dfa14a`) |
 | `ReservationDetailView` | Disk cache preview before memory/network; still opens reservation-scoped `GuestInsightsView` for full history |
-| `RegularGuestsView` | **Still network-page-first** — Slice 3R open |
+| `RegularGuestsView` | Cache-first `@Query` list; local search/filter/sort; tap → `GuestProfileDetailView` (`50df843`) |
 | `ManualReservationFormView` | Call-in/walk-in segmented mode, phone-only known-guest card, prefill — **no backend lookup** |
 
 **Rules:**

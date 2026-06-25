@@ -1,7 +1,7 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `1dfa14a` (pending doc commit)  
+**Root HEAD:** `50df843` (pending doc commit)  
 **Last reviewed:** 2026-06-25  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
@@ -164,7 +164,7 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 | **Files** | Backend `guest-profiles.php`, `routes.php`; iOS `ReservationsAPIClient`, `GuestProfileStore`, `GuestLookupView` (Guests tab explicit search only; Manual Intake open in 3M) |
 | **Approach** | `GET /guest-profiles/lookup` with exact email/phone and possible name candidates |
 | **Acceptance** | Strong phone/email input returns canonical `guest_key` profile when backend has it; name-only never auto-canonical |
-| **Class** | **Done** — backend `1431a06`, root pointer `b1a09e7`; iOS foundation `823f42c` + Guests tab UI `1dfa14a`; deploy to WordPress still open |
+| **Class** | **Done** — backend `1431a06` **deployed** to WordPress; iOS foundation `823f42c` + Guests tab UI `1dfa14a`; **device lookup smoke tests still open** |
 | **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #16, #20, #21 |
 
 ### P1-8: Manual Intake backend lookup + walk-in/call-in validation (Slice 3M)
@@ -183,10 +183,10 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 | Field | Value |
 |-------|-------|
 | **Risk** | Guest Memory shows “25 of 101” while full cache exists; tap runs heavy `GuestInsightsView` |
-| **Files** | `RegularGuestsView.swift` |
-| **Approach** | Primary list from `GuestProfileCacheRecord`; tap → `GuestProfileDetailView(guestKey:)` |
+| **Files** | `RegularGuestsView.swift`, `ReservationsListView.swift`, `GlobalServiceIntelligenceView.swift` |
+| **Approach** | Primary list from `GuestProfileCacheRecord` via `@Query`; tap → `GuestProfileDetailView(guestKey:)` |
 | **Acceptance** | All cached profiles browsable locally; no network page cap as primary UI |
-| **Class** | Next guest person-map code slice |
+| **Class** | **Done** — `50df843` |
 | **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #11 |
 
 ### P1-8c: iOS backend fallback when local cache incomplete / no match (Guests/Manual — partial)
@@ -283,6 +283,7 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 - Backend guest person-map Slice 2 — staff profile lookup (`1431a06` backend, `b1a09e7` root pointer)
 - iOS guest person-map Slice 3A — lookup API/client/store foundation (`823f42c`)
 - iOS guest person-map Slice 3B — Guests tab explicit all-record lookup + shared Guest history shell (`1dfa14a`)
+- iOS guest person-map Slice 3R — Regulars cache-first + shared Guest history (`50df843`)
 - V1 confirmation flow hardening (`cf6e641`)
 - Mail-first confirm + manual-email-log + PATCH (when backend confirmation is **off** on device)
 - Both backend `/confirm` and manual Mail paths exist; active path is setting-dependent (`EmailAutomationSettings`, default `backendConfirmationEnabled = true`)
