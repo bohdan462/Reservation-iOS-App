@@ -11,10 +11,12 @@ Do not implement from stale index or diagram files listed under [Stale / archive
 | Doc | Purpose |
 |-----|---------|
 | [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) | Non-negotiable architecture and workflow rules |
-| [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) | Ordered implementation slices |
-| [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) | Active coding slice (backend/iOS scope, files, tests) |
+| [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) | V1 stabilization order (self-service verify → auth → pipeline → iOS freshness) |
+| [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) | Active slice: production stabilization and verification checklist |
 | [OPEN_WORK.md](./OPEN_WORK.md) | V1 stabilization backlog with acceptance tests |
 | [DIAGNOSTICS_AND_TESTING.md](./DIAGNOSTICS_AND_TESTING.md) | Roles, invariants, test checklists |
+
+**Deploy note:** `Backend/*.zip` is not tracked in git. Build plugin zip locally from submodule `HEAD` when deploying to WordPress.
 
 ---
 

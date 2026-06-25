@@ -2,7 +2,7 @@
 
 **Status:** Current source of truth  
 **Branch:** `audit-current-state`  
-**Audit date:** 2026-06-14
+**Last reviewed:** 2026-06-24
 
 ## Rules
 
@@ -10,6 +10,21 @@
 2. **SwiftData** mirrors server; never authoritative.
 3. **No** `POST /import` in normal workflow (not exposed in client for refresh).
 4. Mutations go through `ReservationsController` → `ReservationMutationService` → upsert/delete local row.
+5. **Offline / degraded:** mutations are blocked when network is unavailable; saved cache stays visible. **No offline manual create/edit queue** in V1.
+
+## Sync metadata persistence
+
+`ReservationsController` persists active-window sync state in **UserDefaults** (not server truth):
+
+| Key / field | Purpose |
+|-------------|---------|
+| `tryzub.sync.serverCursors.v1` | Per-scope `server_time` cursor for `updated_since` delta GETs |
+| Scope success timestamps | Last successful refresh per scope (feeds freshness TTL / header trust) |
+| Active window bounds metadata | Last known window bounds for reconcile on relaunch |
+
+**SwiftData** holds reservation rows. **`lastSyncedAt`**, **`lastFreshnessCheckedAt`**, and **`cacheTrustSource`** are controller presentation fields rehydrated from local DB / persisted scope success — not authoritative server state.
+
+This persistence resumes delta/full policy after relaunch. It is **not** offline mutation support or a sync-when-online queue.
 
 ## Startup (cache-first)
 
@@ -81,6 +96,10 @@ Blocked when: mutation in flight, `isSyncing`, interaction active (sheets).
 **Coalescing:** `activeWindowRefreshTask` — same scope awaits in-flight; different scope may skip.
 
 **Auto guards:** skip if busy, interaction open, 60s since last attempt, 180s after failure. With cursor, delta runs even if scope “fresh” (TTL does not suppress delta).
+
+**Foreground / privacy unlock (`b910bd1`):** `ReservationsListView` calls `autoRefreshDashboardIfAllowed` when app becomes active or privacy cover dismisses — same active-window path as loops above.
+
+**Host status UI:** `HomeServiceStatusPresenter` already shows Updated / Checked / Saved data / offline state. Do not add a second stale-warning layer without device-proven gap.
 
 **Asymmetry risk:** Bookings auto-syncs on past dates; Host does not. See OPEN_WORK P1-1.
 

@@ -1,8 +1,12 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Audit date:** 2026-06-14  
+**Last reviewed:** 2026-06-24  
 **Scope:** Stabilization only — no V2 automation unless noted
+
+**Priority order:** [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) owns what to do next. This file tracks backlog items and implementation status. Production/device verification remains open even when code is implemented.
+
+**Not V1:** offline manual reservation queue; offline create/edit sync queue.
 
 Every item includes risk, files, approach, acceptance test, and classification.
 
@@ -34,6 +38,8 @@ Implemented 2026-06-15: `isContentEquivalent` now compares all server-backed fie
 
 Implemented 2026-06-15: automatic active-window refresh now forces full replace when no successful full has been recorded in the controller session, after 5 successful deltas since the last full, or when the last successful full is older than 2 hours. Manual Host/Bookings refresh remains forced full; delta remains upsert-only.
 
+Also implemented: active-window `server_time` cursors and scope success metadata persist in UserDefaults so delta/full policy resumes after relaunch (not an offline mutation queue). **Device/production verification still open** — see IMPLEMENTATION_QUEUE #4.
+
 ### P0-3: Confirm pending UI state
 
 | Field | Value |
@@ -57,6 +63,8 @@ Implemented 2026-06-15: automatic active-window refresh now forces full replace 
 | **Approach** | Single policy: auto delta only when selected date is today OR explicit “live service” flag; otherwise manual refresh only |
 | **Acceptance** | Viewing past date on Bookings does not trigger 60s network loop |
 | **Class** | V1 stabilization — iOS only |
+
+**Related implemented (2026-06-19, `b910bd1`):** foreground return and privacy-cover dismiss call `autoRefreshDashboardIfAllowed`. Device verification still open.
 
 ### P1-2: Block legacy `tableName` PATCH when backend layout exists
 
@@ -184,7 +192,10 @@ Implemented 2026-06-15: automatic active-window refresh now forces full replace 
 
 ## Implemented — remove from active backlog
 
-- Mail-first confirm + manual-email-log + PATCH
+- Mail-first confirm + manual-email-log + PATCH (when backend confirmation is **off** on device)
+- Both backend `/confirm` and manual Mail paths exist; active path is setting-dependent (`EmailAutomationSettings`, default `backendConfirmationEnabled = true`)
+- Foreground / privacy-cover refresh (`b910bd1`) — code done; device verify open
+- Active-window bounded-full policy + UserDefaults cursor persistence (P0-2)
 - Shift reminders (`ShiftReminderReviewSheet`) — Host ⋯ + Bookings bell
 - Shared guest email templates (`GuestEmailTemplateRenderer`)
 - No-show Bookings tab
@@ -193,7 +204,7 @@ Implemented 2026-06-15: automatic active-window refresh now forces full replace 
 - `HostAttentionGrouper`
 - Manual/custom email log skip + trace (`unsupported_email_type`)
 - `POST /import` not in normal client workflow
-- `isBackendConfirmEmailEnabled = false`
+- Offline mutations blocked when degraded; no offline create/edit queue (not V1)
 
 ---
 
