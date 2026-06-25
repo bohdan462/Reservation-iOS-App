@@ -31,8 +31,8 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 ## 3. Guest cancellation truth
 
 1. Guest self-cancel exists: `POST /reservation-self/cancel` with manage token.
-2. **Current gap (active slice):** cancellation email is **not** sent on successful guest cancel; guest page copy still implies an active booking in places.
-3. **Required fix:** send `cancellation` email after successful self-cancel (re-fetch row post-update); update guest page **dead-state** copy so cancelled bookings do not imply change/active flow.
+2. **Implemented** in backend commit `239b297`: sends `cancellation` email after successful self-cancel (re-fetch row post-update); guest page **dead-state** copy for cancelled bookings; confirmation email no longer includes misleading “Request Different Time” CTA.
+3. **Deploy verification still required:** confirm on live WordPress — email log row `email_type=cancellation`, cancelled page dead-state, double-cancel / too-late guards, confirmation copy.
 4. Staff cancel remains PATCH `cancelled` from Host/Detail — separate from guest self-service.
 
 ---

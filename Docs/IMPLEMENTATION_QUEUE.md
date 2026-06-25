@@ -10,10 +10,11 @@ Ordered slices for V1 stabilization. One slice per commit series unless explicit
 
 | Field | Value |
 |-------|-------|
-| **Status** | **current** |
-| **Scope** | `emails.php`, `reservation-self-service.php`, `intelligence-system-status.php` (backend only) |
+| **Status** | **done** (committed `239b297`; auth repair `5a04af4`; root pointer `3c44856`) |
+| **Scope** | `emails.php`, `reservation-self-service.php`, `intelligence-system-status.php` (+ auth: `activation.php`, `permissions.php`, `health.php`, `tryzub-reservations-api.php`) |
 | **Why** | Highest guest-facing gap; small diff; no iOS; unblocks trust in self-service |
-| **Do not mix with** | iOS, auth dirty files (`activation.php`, `permissions.php`, `health.php`, `tryzub-reservations-api.php`), rate limits, walk-in, guest profile cache |
+| **Verification** | Live REST + email verification still required after WordPress deploy (manager ping, guest cancel email log, dead-state page, confirmation copy, `developer_summary` flattening) |
+| **Do not mix with** | iOS, rate limits, walk-in, guest profile cache |
 
 ---
 
@@ -21,7 +22,7 @@ Ordered slices for V1 stabilization. One slice per commit series unless explicit
 
 | Field | Value |
 |-------|-------|
-| **Status** | pending |
+| **Status** | **current** |
 | **Scope** | `ReservationsListView`, `ReservationsController`, privacy cover dismiss hook |
 | **Why** | Staff sees stale board after background/privacy unlock; scenePhase today only resets navigation |
 | **Do not mix with** | Host Board task stabilization, guest profile SwiftData |

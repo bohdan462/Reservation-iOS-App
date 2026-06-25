@@ -6,23 +6,54 @@
 
 ## Title
 
-Backend guest cancellation email + cancelled self-service dead state + confirmation copy cleanup + pipeline visibility flattening.
+iOS foreground / privacy stale refresh
 
 ---
 
-## Git state (audit 2026-06-19)
+## Git state (2026-06-19)
 
 | Location | State |
 |----------|--------|
-| **Root** | `m Backend/tryzub-reservations-api` only (submodule pointer; iOS clean) |
-| **Backend HEAD** | `253f251` — Add full guest booking history and notes payload |
+| **Root branch** | `audit-current-state` — clean working tree |
+| **Root HEAD** | `3c44856` — Update backend plugin for auth and guest cancellation fixes |
+| **Backend submodule pointer** | `239b297` — Add guest cancellation email and pipeline visibility fixes |
+| **Backend branch** | `AI` — clean working tree |
+| **iOS** | Clean (no uncommitted Swift for this slice) |
 
-**Backend dirty — unrelated; do not bundle:**
+**Recent root commits:**
 
-- `includes/activation.php`
-- `includes/health.php`
-- `includes/permissions.php`
-- `tryzub-reservations-api.php`
+- `3c44856` — submodule pointer → `239b297`
+- `ac6c622` — remove duplicate Docs backend contract copies
+- `b0f9419` — documentation source of truth and agent handoff
+
+**Backend commits included in pointer:**
+
+- `239b297` — guest cancellation email, cancelled self-service dead state, confirmation copy cleanup, pipeline `developer_summary` flattening
+- `5a04af4` — auth role repair and diagnostics
+
+---
+
+## Backend verification reminder
+
+Backend slice is **committed** but **not verified live** until deployed and checked on WordPress.
+
+After deploy, verify before treating guest cancel / auth as production-ready:
+
+1. Manager `/ping` → `user.can_manage_tryzub_reservations: true`
+2. Guest cancel → `email_type=cancellation` in email log
+3. Cancelled guest page → dead-state copy; no cancel button
+4. Confirmation email → no “Request Different Time”
+5. `GET /intelligence/system-status` → flattened pipeline fields in `developer_summary`
+
+See prior handoff tests in git history (`b0f9419` era `AGENT_HANDOFF_CURRENT.md`) or post-deploy checklist in conversation notes.
+
+---
+
+## Goal
+
+Refresh reservations when the app returns to **foreground** or when the **restaurant privacy cover** is dismissed, using existing refresh methods (`requestManualTodayRefresh`, `autoRefreshDashboardIfAllowed`), without refresh loops or fighting startup/background policy.
+
+**Current gap:** `scenePhase == .active` in `ReservationsListView` only resets stale navigation — no network refresh. Privacy cover `recordInteraction()` / `dismissCover()` only dismisses UI. Host/Bookings auto-refresh loops skip while inactive and may wait up to 60s after return.
 
 ---
 
@@ -30,64 +61,52 @@ Backend guest cancellation email + cancelled self-service dead state + confirmat
 
 | File | Why |
 |------|-----|
-| `Backend/tryzub-reservations-api/includes/emails.php` | Cancellation email builders/send; confirmation HTML copy cleanup |
-| `Backend/tryzub-reservations-api/includes/reservation-self-service.php` | Cancel handler email insert; guest page JS dead-state copy |
-| `Backend/tryzub-reservations-api/includes/intelligence-system-status.php` | Flatten `pipeline_diagnostics.summary` into `developer_summary` for iOS probes |
+| `Tryzub Reservations/Features/Reservations/ReservationsListView.swift` | `scenePhase` handler; privacy cover modifier attachment |
+| `Tryzub Reservations/Import/ReservationsController.swift` | `requestManualTodayRefresh`, `autoRefreshDashboardIfAllowed`, busy/cooldown guards |
+| `Tryzub Reservations/Features/Reservations/RestaurantPrivacyCover.swift` | Privacy cover dismiss hook; `RestaurantPrivacyCoverController` |
+| `Tryzub Reservations/Services/FreshnessCoordinator.swift` | TTL / skip decisions (only if hook must respect coordinator) |
+| Related privacy cover/controller files | Only if needed for dismiss callback wiring |
 
 ## Read-only reference
 
 | File | Why |
 |------|-----|
-| `Backend/tryzub-reservations-api/includes/routes.php` | Route registration (no change expected) |
-| `Backend/tryzub-reservations-api/includes/managed-reservations.php` | `tryzub_get_managed_reservation_row_by_id` |
-| `Backend/tryzub-reservations-api/includes/reservation-pipeline-diagnostics.php` | Classification logic and summary keys |
+| `Tryzub Reservations/Features/Reservations/HostBoardView.swift` | 60s auto-refresh loop (`autoRefreshDashboardIfAllowed`) |
+| `Tryzub Reservations/Services/AppReservationSession.swift` | Startup wiring; `FreshnessCoordinator` injection |
 
 ---
 
 ## Forbidden
 
-- All iOS Swift files
-- Schema / migration / `activation.php`
-- `permissions.php`, `health.php`, `tryzub-reservations-api.php` (unless explicitly approved)
-- Rate limits on public guest routes
-- Walk-in mode
+- All backend PHP (`Backend/tryzub-reservations-api/*`)
 - Guest profile SwiftData cache
-- Analytics local cache
-- Zip files, build number changes
+- Walk-in creation mode
+- Host stale warning UI (queue #3)
+- Full Host Board refactor
+- Rate limits, analytics persistence, zip/build number churn
 
 ---
 
-## Functions to modify
+## Implementation guidance (audit → code)
 
-| File | Function | Current behavior | Required change |
-|------|----------|------------------|-----------------|
-| `emails.php` | `tryzub_send_reservation_email` (~1619) | HTML only for `confirmation`, `reminder` | Add `cancellation` branch |
-| `emails.php` | `tryzub_build_reservation_email_subject` (~1936) | No cancellation subject | Add cancellation subject |
-| `emails.php` | `tryzub_build_reservation_email_body` (~1944) | No cancellation body | Add cancellation plain text |
-| `emails.php` | `tryzub_build_reservation_confirmation_email_html` (~2007) | Includes **"Request Different Time"** CTA (~2066) | Remove misleading CTA; keep manage link when `$manage_url` set |
-| `emails.php` | **NEW** cancellation HTML/text builder | Missing | Mirror confirmation card styling; no manage/book CTAs |
-| `reservation-self-service.php` | `tryzub_cancel_reservation_self` (~309) | Updates status, logs activity; **no email** | After update (~408): re-fetch row via `tryzub_get_managed_reservation_row_by_id`, call `tryzub_send_reservation_email($row, 'cancellation')`, then activity log |
-| `reservation-self-service.php` | Shortcode JS `buildCardMarkup` (~830) | Hardcoded `Your Booking Details` | Cancelled dead-state title |
-| `reservation-self-service.php` | `updateSubtitle` (~748) | Active: change-via-email copy; cancelled: hides subtitle | Cancelled: explicit dead-state message; active: accurate self-service copy |
-| `reservation-self-service.php` | `updateStatusDisplay` / `renderCancelAction` | Cancelled pill; hides cancel UI | Verify reload path after cancel |
-| `intelligence-system-status.php` | `tryzub_get_intelligence_system_status` (~3) | Nests pipeline summary under `pipeline_diagnostics` only | Merge key summary fields into `developer_summary` (snake_case keys iOS decodes) |
-
-**Reuse:** `tryzub_log_reservation_email`, `tryzub_reservation_activity_log`, `tryzub_get_managed_reservation_row_by_id`, `tryzub_validate_guest_manage_token` (unchanged).
-
-**Note:** `tryzub_update_reservation_for_guest_request` returns `true`, not a refreshed row — must re-fetch before email.
+1. **Foreground:** Hook `scenePhase` transition to `.active` (or equivalent) to trigger refresh when appropriate tab is visible.
+2. **Privacy unlock:** Hook `RestaurantPrivacyCoverController.recordInteraction()` / `dismissCover()` (or modifier callback) — not on every touch, only when cover was presented and is dismissed.
+3. **Prefer existing methods:**
+   - `requestManualTodayRefresh(context:source:)` for explicit staff-context refresh after unlock/foreground
+   - `autoRefreshDashboardIfAllowed` only if semantics match (quiet delta; respects interaction guards)
+4. **Guardrails:** Respect `hasActiveMutation`, `hasActiveReservationRefresh`, manual cooldown, auto interval throttle, `isScopeFresh` / 300s TTL. Do not duplicate startup pass (`performActiveWindowRefresh(mode: .startup)`).
+5. **Tab scope:** Decide whether refresh fires at root shell level or only when Host/Bookings is active — document choice in commit message.
 
 ---
 
 ## Tests
 
-1. Guest cancel success → 200, status `cancelled`, `guest_cancelled` activity.
-2. Cancellation email → `tryzub_reservation_emails` row `email_type=cancellation`, `sent` or `skipped` (placeholder email).
-3. Guest page reload → cancelled title/subtitle, no cancel button, cancelled pill.
-4. Double cancel → 409 `already_cancelled`, no duplicate email.
-5. Too-close cancel (<2h) → 409, no email.
-6. Confirmation email → no **"Request Different Time"** button.
-7. `GET /intelligence/system-status` → `developer_summary` includes flattened pipeline counts (`flamingo_inbound_total`, `managed_active`, `unexplained_missing`, etc.).
-8. `GET /intelligence/reservation-pipeline-diagnostics?include_items=1` → can explain 300/338-style gap per `classification` + `explanation`.
+1. **Background return** — background app 2+ min, foreground → board reflects remote changes without manual pull-to-refresh.
+2. **Privacy unlock** — idle until cover shows, dismiss → refresh within reasonable time; no loop on normal touches.
+3. **Mutation in flight** — active create/edit → foreground/unlock does not stomp in-flight mutation.
+4. **Host tab** — visible Host + today → refresh on foreground/unlock.
+5. **Bookings tab** — visible Bookings → refresh on foreground/unlock (or explicitly skipped with documented reason).
+6. **No duplicate refresh loop** — no back-to-back full syncs; cooldown guards hold; logs show skip vs fetch decisions.
 
 ---
 
@@ -96,15 +115,15 @@ Backend guest cancellation email + cancelled self-service dead state + confirmat
 ```bash
 git status --short
 git diff --stat
-php -l <each modified PHP file>
+# Xcode build after implementation
 ```
 
-- No broad repo grep unless a function name is missing.
-- Read only listed files/functions.
-- Targeted `git diff` on modified paths only.
+- Read only allowed + reference files.
+- Audit first (Composer); implement second (GPT-5.5 Agent).
+- One commit series per concern.
 
 ---
 
 ## Out of scope
 
-iOS, rate limits, walk-in, guest profile cache, analytics persistence, auth dirty files.
+Backend, walk-ins, guest profile cache, Host stale warning UI, full Host Board refactor, analytics persistence.
