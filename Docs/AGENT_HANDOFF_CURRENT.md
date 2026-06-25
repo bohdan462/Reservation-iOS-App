@@ -10,20 +10,22 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 
 ---
 
-## Git state (2026-06-25)
+## Git state (2026-06-19)
 
 | Location | State |
 |----------|--------|
 | **Root branch** | `audit-current-state` |
-| **Root HEAD** | `d541488` — Track guest profile full sync and index all cached profiles |
-| **Root vs remote** | Pushed to `origin/audit-current-state` at `d541488` (pending this doc commit) |
-| **Backend submodule pointer** | `078a44a` — Document guest self-service cache contract |
+| **Root HEAD** | `b1a09e7` — Point backend to staff guest profile lookup |
+| **Root vs remote** | Pushed to `origin/audit-current-state` at `b1a09e7` (pending this doc commit) |
+| **Backend submodule pointer** | `1431a06` — Add staff guest profile lookup with safe strong-only best match |
 | **Backend branch** | `AI` |
-| **Backend HEAD** | `078a44a` |
-| **Backend vs remote** | Pushed to `origin/AI` at `078a44a` |
+| **Backend HEAD** | `1431a06` |
+| **Backend vs remote** | Pushed to `origin/AI` at `1431a06` |
 
 **Recent root commits (newest first):**
 
+- `b1a09e7` — backend submodule pointer → staff guest profile lookup (`1431a06`)
+- `5e90170` — docs after guest person-map Slice 1
 - `d541488` — guest profile full-list sync completion + all cached profile lookup (no 500 cap)
 - `dc3d8c5` — docs after guest cache wiring and Host polish
 - `39f7fcb` — Host Intelligence card stable during presentation rebuild (no empty interstitial during key mismatch)
@@ -38,6 +40,7 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 
 **Backend commits on pointer (newest first):**
 
+- `1431a06` — `GET /guest-profiles/lookup` staff targeted search with safe strong-only best match
 - `078a44a` — document guest self-service cache contract (README)
 - `d46713a` — guest self-service no-store headers, JS cache bust, POST cancel returns refreshed `data`
 - `854b82d` / `6a30203` — guest-facing confirmation/cancellation/page copy
@@ -49,7 +52,7 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 
 ## Current slice goal
 
-**Stabilization still open** (device verification + final smoke test). **Guest memory foundation**, **guest person-map Slice 1 reliability** (`d541488`), and **Tryzub V1 Host production polish** are shipped on iOS.
+**Stabilization still open** (device verification + final smoke test). **Guest memory foundation**, **guest person-map Slice 1 reliability** (`d541488`), **backend guest person-map Slice 2 lookup** (`1431a06`), and **Tryzub V1 Host production polish** are shipped.
 
 ### Completed (iOS guest memory — `0f06852` + `0a89caa` + `67e02d2`)
 
@@ -78,8 +81,24 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 3. **15-minute guest-profile sync TTL is bypassed** while full-list sync is incomplete; normal TTL applies once complete.
 4. Local cached count is reconciled against backend `total` before marking complete.
 5. **`GuestLookupStore`** indexes **all** locally cached `GuestProfileCacheRecord` rows — removed old default 500 cap.
-6. Guests tab and manual intake remain **local-only while typing** — no backend lookup route yet.
-7. **No** full history prefetch, **no** backend/PHP changes, **no** indexed/predicate search yet.
+6. Guests tab and manual intake remain **local-only while typing** — iOS does not call backend lookup yet.
+7. **No** full history prefetch, **no** indexed/predicate search yet.
+
+### Completed (guest person-map Slice 2 — backend `1431a06`, root pointer `b1a09e7`)
+
+Staff targeted guest lookup doorway — part of the guest person-map / “know your guest” system:
+
+1. **`GET /tryzub/v1/guest-profiles/lookup`** — staff/admin auth via `tryzub_can_read_reservations`; registered **before** `/guest-profiles/{guest_key}`.
+2. Params: `phone`, `email`, `q`, bounded `limit` (default 5, max 10). At least one required.
+3. **Exact normalized email** → `match_confidence: strong`, `match_basis: email`.
+4. **Exact 10+ digit phone** → `match_confidence: strong`, `match_basis: phone`.
+5. **7–9 digit phone** exact/suffix → `match_confidence: possible`, `match_basis: phone`.
+6. **Name-only `q`** → possible candidates for walk-ins and guests without contact details; `match_basis: name`; never strong.
+7. Returns **compact profile summaries** only (`guest_key`, identity fields, visit stats, labels, summary, `match_basis`, `match_confidence`). **No** `booking_history`, `notes_history`, self-service tokens, manage links, or cancellation tokens.
+8. **Safe best match:** `best_match_guest_key` / `best_match_basis` / `best_match_confidence` populated only when exactly one unique strong guest key exists; null when zero or conflicting strong matches. Name-only and partial-phone candidates never become canonical automatically.
+9. **No** inline rebuild, **no** reservation-table scan, **no** public access.
+10. **Complete guest access preserved:** paginated `GET /guest-profiles` remains the full profile list; `GET /guest-profiles/{guest_key}` and `GET /guest-profiles/by-reservation/{id}` remain full detail/history/notes/stats.
+11. **Not deployed** to production WordPress yet; **iOS does not call this route yet**.
 
 ### Completed (Tryzub V1 Host production polish — `71601fc` + `39f7fcb`)
 
@@ -116,7 +135,9 @@ V1 stabilization: device verification + final smoke test (guest memory + Tryzub 
 
 Replace broad in-memory guest filtering with **indexed / predicate-based local search**. Acceptable for **current Tryzub V1 data size** only.
 
-**Later slices (not blocking V1 smoke test):** backend targeted lookup by exact phone/email/name; iOS backend fallback when local cache incomplete/no match and input is strong enough; detail blob persistence for opened full guest profiles; `RegularGuestsView` disk-first; foreground/mutation-triggered guest-profile re-sync; `ReservationDetail` guest fetch dedupe (partially improved; full dedupe later).
+**Later slices (not blocking V1 smoke test):** iOS backend fallback when local cache incomplete/no match and input is strong enough; detail blob persistence for opened full guest profiles; `RegularGuestsView` disk-first; foreground/mutation-triggered guest-profile re-sync; `ReservationDetail` guest fetch dedupe (partially improved; full dedupe later).
+
+**Backend lookup P2 follow-ups (non-blocking):** 10-digit local vs stored `1`-prefixed country-code mismatch; short numeric `q` may enter text/name search; name-query SQL may also match email substring while reporting `name` basis; unrelated `phone`+`email` params may return separate candidates; suffix phone `LIKE` may not use phone index efficiently.
 
 **Parked / not started:** offline queue, broad Host redesign, full AI clustering / “knows each other” / local semantic tags, VIP editor (no backend guest-notes contract).
 
@@ -158,6 +179,7 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 - Host freshness/flicker polish on test iPad (post-`71601fc` install)
 - Host Intelligence card presentation stability on test iPad (post-`39f7fcb` install)
 - Guest profile full-list sync + full-cache lookup on test iPad (post-`d541488` install)
+- Backend guest profile lookup route deployed + smoke-tested on WordPress (post-`1431a06` deploy — **not done**)
 
 ---
 
@@ -176,7 +198,7 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 
 **Rules:**
 
-- List sync only in background — **no detail/history prefetch**, no `/guest-profiles/rebuild`, no `/guest-intelligence` on keystroke.
+- List sync only in background — **no detail/history prefetch**, no `/guest-profiles/rebuild`, no `/guest-intelligence` on keystroke. Backend `/guest-profiles/lookup` exists (`1431a06`) but iOS does not call it yet.
 - Phone normalization: `GuestLookupPhoneNormalizer.digits` everywhere (typed phone, cache, reservation history).
 - Broad in-memory guest filter: acceptable for **current Tryzub V1 data size**; indexed search required before broader product release.
 

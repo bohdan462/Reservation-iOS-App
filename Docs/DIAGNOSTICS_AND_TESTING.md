@@ -52,6 +52,26 @@
 4. If full-list sync is incomplete, guest profile sync **does not wait on 15-minute TTL** before retrying full paginated sync.
 5. Full guest history is **not** prefetched for every profile — detail/history remains on open.
 
+## Backend guest profile lookup smoke test (`1431a06`)
+
+**Status:** checklist only — **not deployed**; **not passed**.
+
+Requires staff auth (`tryzub_can_read_reservations`). Run after deploying backend `1431a06` to WordPress.
+
+1. Unauthenticated `GET /guest-profiles/lookup` → **401/403**
+2. Known exact `email=` → one `strong` candidate; `best_match_guest_key`, `best_match_basis`, `best_match_confidence: strong` all populated
+3. Known exact 10-digit `phone=` → one `strong` candidate; best-match fields populated
+4. `email` + `phone` resolving to **same** profile → one candidate; unambiguous strong best match
+5. `email` + `phone` resolving to **different** profiles → multiple candidates; **all best-match fields null**
+6. Name-only walk-in `q=` → `possible` candidates with `match_basis: name`; **all best-match fields null**
+7. 7–9 digit `phone=` → `possible` candidates; best-match fields null
+8. Four-digit `phone=` only → `profiles: []`; best-match fields null
+9. No params → **400**
+10. Lookup result `guest_key` opens `GET /guest-profiles/{guest_key}` with `booking_history` and `notes_history` intact
+11. Paginated `GET /guest-profiles` list behavior unchanged
+
+**Do not claim:** route is live in production, iOS calls lookup, name-only result is confirmed identity, lookup returns full history.
+
 ## Host header + flicker test (`71601fc` + `39f7fcb`)
 
 1. Host header shows **`Last sync HH:mm`** after successful sync (not `Updated`)
@@ -94,6 +114,7 @@
 - [ ] Floor assign (if layout configured)
 - [ ] Bookings search + detail
 - [ ] Activity history on detail + More
+- [ ] Backend guest profile lookup smoke tests after WordPress deploy (`1431a06`) — staff auth only; not iOS
 - [ ] Logout clears session
 
 ## Cache reset (developer)

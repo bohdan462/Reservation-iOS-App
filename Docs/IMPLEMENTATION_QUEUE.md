@@ -2,7 +2,7 @@
 
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md) · [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) · [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md)
 
-Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), and Tryzub V1 Host production polish (#5b, #5c) are **done**.
+Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), and Tryzub V1 Host production polish (#5b, #5c) are **done**.
 
 **Current focus:** iOS device verification, confirmation mode on restaurant iPad, final V1 smoke test.
 
@@ -207,9 +207,10 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 | Field | Value |
 |-------|-------|
-| **Status** | **later** — before broader product release |
-| **Scope** | Backend `guest-profiles` route or dedicated lookup endpoint; iOS client when needed |
-| **Note** | Closest existing route is `GET /guest-profiles?q=` (fuzzy LIKE); no exact identity resolver yet |
+| **Status** | **done** — backend `1431a06`, root pointer `b1a09e7` |
+| **Scope** | `GET /guest-profiles/lookup` in `guest-profiles.php`, `routes.php`, backend `README.md` |
+| **Delivered** | Staff-auth lookup doorway; exact email + 10+ digit phone strong; 7–9 digit phone and name-only possible; compact summaries with `match_basis` / `match_confidence`; safe strong-only `best_match_*`; no rebuild/scan/public tokens |
+| **Do not overstate** | **Not deployed** to production WordPress; **iOS does not call route yet**; name-only is never canonical; full list/detail endpoints unchanged |
 
 ---
 
@@ -217,9 +218,9 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 | Field | Value |
 |-------|-------|
-| **Status** | **later** — after #16 or hardened `q=` use |
-| **Scope** | `GuestLookupStore`, `GuestProfileSyncService` — fallback only when `fullListSyncCompleted == false` or no local match with strong phone/email input |
-| **Do not** | Call backend on every keystroke |
+| **Status** | **later** — after #16 |
+| **Scope** | `GuestLookupStore`, `GuestProfileSyncService`, `ReservationsAPIClient` — fallback only when `fullListSyncCompleted == false` or no local match with strong phone/email input |
+| **Do not** | Call backend on every keystroke; auto-trust name-only `best_match_guest_key` (use `match_confidence === strong` only) |
 
 ---
 
@@ -258,6 +259,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | Host freshness + idle snapshot flicker polish | `71601fc` |
 | Host Intelligence card presentation stability | `39f7fcb` |
 | Guest person-map Slice 1 — sync completeness + full cache lookup | `d541488` |
+| Backend guest person-map Slice 2 — staff profile lookup | `1431a06` (backend), `b1a09e7` (root pointer) |
 
 ---
 

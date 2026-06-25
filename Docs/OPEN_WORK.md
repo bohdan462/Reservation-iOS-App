@@ -1,8 +1,8 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `d541488` (pending doc commit)  
-**Last reviewed:** 2026-06-25  
+**Root HEAD:** `b1a09e7` (pending doc commit)  
+**Last reviewed:** 2026-06-19  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
 **Priority order:** [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) owns what to do next. This file tracks backlog items and implementation status. Production/device verification remains open even when code is implemented.
@@ -161,10 +161,10 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 | Field | Value |
 |-------|-------|
 | **Risk** | Known guest invisible when not yet in local cache or name-only weak match |
-| **Files** | Backend `guest-profiles.php`, `routes.php`; iOS `ReservationsAPIClient` |
-| **Approach** | Dedicated exact phone/email lookup or hardened `q=` resolver; not per-keystroke |
-| **Acceptance** | Strong phone/email input returns canonical `guest_key` profile when backend has it |
-| **Class** | Before broader product release — not V1 stabilization blocker |
+| **Files** | Backend `guest-profiles.php`, `routes.php`; iOS `ReservationsAPIClient` (iOS not wired yet) |
+| **Approach** | `GET /guest-profiles/lookup` with exact email/phone and possible name candidates |
+| **Acceptance** | Strong phone/email input returns canonical `guest_key` profile when backend has it; name-only never auto-canonical |
+| **Class** | **Done** — backend `1431a06`, root pointer `b1a09e7`; deploy + iOS fallback still open |
 | **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #16 |
 
 ### P1-8: iOS backend fallback when local cache incomplete / no match
@@ -259,6 +259,7 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 - Host freshness + idle snapshot flicker polish (`71601fc`)
 - Host Intelligence card presentation stability (`39f7fcb`)
 - Guest person-map Slice 1 — full-list sync completion + full cache lookup (`d541488`)
+- Backend guest person-map Slice 2 — staff profile lookup (`1431a06` backend, `b1a09e7` root pointer)
 - V1 confirmation flow hardening (`cf6e641`)
 - Mail-first confirm + manual-email-log + PATCH (when backend confirmation is **off** on device)
 - Both backend `/confirm` and manual Mail paths exist; active path is setting-dependent (`EmailAutomationSettings`, default `backendConfirmationEnabled = true`)

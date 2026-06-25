@@ -43,10 +43,10 @@ Latest known **pushed** state:
 | Area | State |
 |------|-------|
 | Backend branch | `AI` |
-| Backend HEAD | `078a44a` — Document guest self-service cache contract |
+| Backend HEAD | `1431a06` — Add staff guest profile lookup with safe strong-only best match |
 | Root branch | `audit-current-state` |
-| Root HEAD | `d541488` — Track guest profile full sync and index all cached profiles |
-| Guests tab + detail cache wiring | `67e02d2` |
+| Root HEAD | `b1a09e7` — Point backend to staff guest profile lookup |
+| Backend guest person-map Slice 2 lookup | `1431a06` (backend), `b1a09e7` (root pointer) |
 | Guest person-map Slice 1 (sync completeness + full cache lookup) | `d541488` |
 | Host freshness / idle snapshot polish | `71601fc` |
 | Host Intelligence card presentation stability | `39f7fcb` |
@@ -54,7 +54,7 @@ Latest known **pushed** state:
 | Manual intake + walk-in | `0a89caa` |
 | Confirmation safety | `cf6e641` — V1 confirmation flow hardening |
 | iOS foreground/privacy refresh | `b910bd1` on root |
-| Root submodule pointer | Backend `078a44a` |
+| Root submodule pointer | Backend `1431a06` |
 | Zip files | **Do not track.** `Backend/*.zip` is gitignored. |
 
 Before any implementation work, verify live git:
@@ -75,13 +75,13 @@ git rev-parse --short HEAD
 git submodule status
 ```
 
-**Production:** Guest self-service cancel + dead-state verified live. App login works. Guest profile aggregates exist server-side; iOS syncs list to `GuestProfileCacheRecord` after `0f06852`. Guests tab and detail read disk cache first after `67e02d2`. Guest person-map Slice 1 reliability shipped at `d541488`. Tryzub V1 Host production polish shipped at `71601fc` + `39f7fcb` — final device verification still open.
+**Production:** Guest self-service cancel + dead-state verified live. App login works. Guest profile aggregates exist server-side; iOS syncs list to `GuestProfileCacheRecord` after `0f06852`. Guests tab and detail read disk cache first after `67e02d2`. Guest person-map Slice 1 reliability shipped at `d541488`. Backend guest profile lookup route committed at `1431a06` — **not deployed**; **iOS does not call it yet**. Tryzub V1 Host production polish shipped at `71601fc` + `39f7fcb` — final device verification still open.
 
 ---
 
 ## 3. V1 focus (this weekend)
 
-**Stabilize device verification; guest memory, guest person-map Slice 1, and Tryzub V1 Host production polish are shipped.**
+**Stabilize device verification; guest memory, guest person-map Slice 1, backend Slice 2 lookup, and Tryzub V1 Host production polish are shipped.**
 
 ### Done (backend + iOS product)
 
@@ -93,25 +93,26 @@ git submodule status
 6. ~~Guests tab + detail local-first cache wiring~~ — `67e02d2` (Guests tab `@Query` cache; detail disk preview before network).
 7. ~~Host freshness + idle snapshot flicker polish~~ — `71601fc` (`Last sync` copy, stale skip reasons, conditional snapshot minute rebuild, Live no-cursor bypass).
 8. ~~Host Intelligence card presentation stability~~ — `39f7fcb` (no empty interstitial during presentation-key mismatch; keeps prior chips during async rebuild).
-9. ~~Guest person-map Slice 1 — full-list sync completion + full cache lookup~~ — `d541488` (sync metadata, TTL bypass while incomplete, all cached profiles indexed; no backend lookup yet).
+9. ~~Guest person-map Slice 1 — full-list sync completion + full cache lookup~~ — `d541488` (sync metadata, TTL bypass while incomplete, all cached profiles indexed; no iOS backend lookup yet).
+10. ~~Backend guest person-map Slice 2 — staff profile lookup~~ — `1431a06` / `b1a09e7` (`GET /guest-profiles/lookup`; safe strong-only best match; not deployed; iOS not wired).
 
 ### Still open (stabilization)
 
-10. **iOS data/fetch on device** — foreground/privacy refresh (`b910bd1`).
-11. **Confirmation mode on restaurant iPad** — Mail vs backend `/confirm`.
-12. **Final V1 smoke test** — end-to-end staff ops on restaurant iPad (include guest full-list sync, Guests/intake lookup, Host header/flicker + intelligence-card checks).
+11. **iOS data/fetch on device** — foreground/privacy refresh (`b910bd1`).
+12. **Confirmation mode on restaurant iPad** — Mail vs backend `/confirm`.
+13. **Final V1 smoke test** — end-to-end staff ops on restaurant iPad (include guest full-list sync, Guests/intake lookup, Host header/flicker + intelligence-card checks).
 
-**Not production-ready** until items 10–12 pass.
+**Not production-ready** until items 11–13 pass.
 
 ### Before broader product release (not V1 stabilization blocker)
 
-13. **Backend targeted guest lookup** — exact phone/email/name endpoint (or hardened use of `q=`).
-14. **iOS backend fallback lookup** — only when local cache incomplete/no local match and input is strong enough (phone/email).
+14. **iOS backend fallback lookup** — only when local cache incomplete/no local match and input is strong enough (phone/email); name-only requires explicit staff action.
 15. **Detail blob persistence** — cache opened full guest profiles (`booking_history`, `notes_history`) to SwiftData.
 16. **Indexed / predicate-based local guest search** — replace broad in-memory filtering; acceptable for **current Tryzub V1 data size** only.
 17. **`RegularGuestsView` disk-first** — later slice.
 18. **`ReservationDetail` guest fetch dedupe** — partially improved; full dedupe later.
 19. **Guest profile re-sync on foreground/mutations** — optional follow-up; currently once per session at startup deferral.
+20. **Backend lookup deploy + smoke tests** — deploy `1431a06` to WordPress; run staff-auth lookup checklist (not passed).
 
 **Parked:** offline queue, SMS, broad Host redesign, full AI clustering / “knows each other” / local semantic tags, VIP editor without backend contract.
 
@@ -123,7 +124,9 @@ git submodule status
 |------|--------|
 | Backend is source of truth | SwiftData (reservations + guest profiles) is operational cache only |
 | Guest profiles server-side | Precomputed in `tryzub_guest_profiles`; iOS list sync uses `updated_since` |
-| Manual intake lookup | **Local only** on phone keystroke — no `/guest-profiles` per digit |
+| Manual intake lookup | **Local only** on phone keystroke — no `/guest-profiles` or `/guest-profiles/lookup` per digit |
+| Guest profile lookup (backend) | `GET /guest-profiles/lookup` exists (`1431a06`) — staff-only compact candidates; iOS not wired |
+| Name-only walk-ins | Valid searchable profiles; `match_confidence: possible` only — staff must confirm; never auto-canonical |
 | Guests tab lookup | Reads `GuestProfileCacheRecord` from disk; merges with reservation history |
 | Manual create identity | **No `guest_key` on create** — send contact fields; backend resolves after insert |
 | Walk-in create | `manual_walk_in` + `seated`; known guest walk-in keeps `manual_walk_in` for analytics |
@@ -229,7 +232,7 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
 1. Device-test iOS refresh (`b910bd1`).
 2. Confirm confirmation mode on restaurant iPad.
 3. Final V1 smoke test — include guest full-list sync, Guests/intake lookup (no per-digit backend), walk-in/known-guest, Host `Last sync`, stale reasons, reduced idle flicker, intelligence-card chips stable during refresh, seated/due timing, manual refresh.
-4. Before broader product release → backend targeted lookup, iOS fallback lookup, detail blob persistence, **indexed local guest search**.
+4. Before broader product release → iOS fallback lookup, detail blob persistence, **indexed local guest search**; deploy + smoke-test backend lookup (`1431a06`).
 5. Later → `RegularGuestsView` disk-first; guest profile re-sync on foreground/mutations; `ReservationDetail` guest fetch dedupe.
 6. Do **not** start offline queue, AI clustering, or VIP editor without backend contract.
 
@@ -240,9 +243,10 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
 - Deployed plugin SHA not tracked in git; submodule pointer is repo truth.
 - Stale staff PATCH can revert guest `cancelled`.
 - Broad in-memory guest search will not scale beyond current Tryzub V1 data size — plan indexed search before broader release.
+- Backend lookup route committed (`1431a06`) but not deployed; iOS does not call it yet.
 - Host `clockTick` still runs every 60s — idle flicker reduced (`71601fc`), not eliminated. Intelligence-card empty interstitial removed (`39f7fcb`); final device verification still open.
 - Final V1 smoke test not yet run — do not claim App Store / production-ready.
 
 ---
 
-*Last aligned: 2026-06-25 (guest person-map Slice 1 `d541488` + Host polish `71601fc`/`39f7fcb` pushed). Update when repo HEAD or verification status changes materially.*
+*Last aligned: 2026-06-19 (backend guest lookup `1431a06` / pointer `b1a09e7` pushed). Update when repo HEAD or verification status changes materially.*
