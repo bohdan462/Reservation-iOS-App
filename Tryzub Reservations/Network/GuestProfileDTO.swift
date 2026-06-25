@@ -22,6 +22,77 @@ struct GuestProfileDetailResponseDTO: Decodable, Equatable {
     let data: GuestProfileDTO?
 }
 
+struct GuestProfileLookupResponseDTO: Decodable, Equatable, @unchecked Sendable {
+    let success: Bool
+    let profiles: [GuestProfileLookupCandidateDTO]
+    let bestMatchGuestKey: String?
+    let bestMatchBasis: GuestProfileLookupMatchBasis?
+    let bestMatchConfidence: GuestProfileLookupMatchConfidence?
+    let query: GuestProfileLookupQueryDTO?
+}
+
+struct GuestProfileLookupCandidateDTO: Decodable, Equatable, @unchecked Sendable {
+    let profile: GuestProfileDTO
+    let matchBasis: GuestProfileLookupMatchBasis
+    let matchConfidence: GuestProfileLookupMatchConfidence
+
+    private enum CodingKeys: String, CodingKey {
+        case matchBasis
+        case matchConfidence
+    }
+
+    init(from decoder: Decoder) throws {
+        profile = try GuestProfileDTO(from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        matchBasis = try container.decodeIfPresent(GuestProfileLookupMatchBasis.self, forKey: .matchBasis) ?? .unknown
+        matchConfidence = try container.decodeIfPresent(GuestProfileLookupMatchConfidence.self, forKey: .matchConfidence) ?? .unknown
+    }
+
+    init(
+        profile: GuestProfileDTO,
+        matchBasis: GuestProfileLookupMatchBasis,
+        matchConfidence: GuestProfileLookupMatchConfidence
+    ) {
+        self.profile = profile
+        self.matchBasis = matchBasis
+        self.matchConfidence = matchConfidence
+    }
+}
+
+struct GuestProfileLookupQueryDTO: Decodable, Equatable, Sendable {
+    let phone: String?
+    let email: String?
+    let q: String?
+    let limit: Int?
+}
+
+enum GuestProfileLookupMatchBasis: String, Codable, Equatable, Sendable {
+    case email
+    case phone
+    case name
+    case query
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        self = GuestProfileLookupMatchBasis(rawValue: value) ?? .unknown
+    }
+}
+
+enum GuestProfileLookupMatchConfidence: String, Codable, Equatable, Sendable {
+    case strong
+    case possible
+    case weak
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        self = GuestProfileLookupMatchConfidence(rawValue: value) ?? .unknown
+    }
+}
+
 struct GuestProfileDTO: Decodable, Identifiable, Equatable {
     let guestKey: String?
     var id: String { stableIdentity }

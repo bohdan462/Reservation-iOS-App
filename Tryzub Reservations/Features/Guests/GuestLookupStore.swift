@@ -307,11 +307,13 @@ private struct GuestLookupSearchIndex {
 
             var builder = profilesByKey[key] ?? GuestLookupProfileBuilder(
                 key: key,
+                guestKey: nil,
                 displayName: GuestLookupNormalizer.displayName(record.guestName),
                 normalizedName: normalizedName,
                 phoneDigits: phoneDigits,
                 email: email?.isManualPlaceholderEmail == true ? nil : email,
-                isBackendProfile: false
+                isBackendProfile: false,
+                identitySource: .localReservationHistory
             )
             builder.add(record)
             profilesByKey[key] = builder
@@ -333,11 +335,13 @@ private struct GuestLookupSearchIndex {
 
             var builder = profilesByKey[key] ?? GuestLookupProfileBuilder(
                 key: key,
+                guestKey: cachedProfile.guestKey,
                 displayName: cachedProfile.displayName,
                 normalizedName: normalizedName,
                 phoneDigits: phoneDigits,
                 email: email,
-                isBackendProfile: true
+                isBackendProfile: true,
+                identitySource: .cachedProfile
             )
             builder.apply(cachedProfile)
             profilesByKey[key] = builder
@@ -430,6 +434,7 @@ private struct GuestPhoneLookupScoredResult {
 
 private struct GuestLookupProfile {
     let key: String
+    let guestKey: String?
     let displayName: String
     let normalizedName: String
     let phoneDigits: String?
@@ -443,10 +448,14 @@ private struct GuestLookupProfile {
     let hasDietaryNote: Bool
     let isRegularGuest: Bool
     let isBackendProfile: Bool
+    let identitySource: GuestLookupIdentitySource
+    let matchBasis: GuestProfileLookupMatchBasis?
+    let matchConfidence: GuestProfileLookupMatchConfidence?
 
     var result: GuestLookupResult {
         GuestLookupResult(
             id: key,
+            guestKey: guestKey,
             displayName: displayName,
             phoneDigits: phoneDigits,
             email: email,
@@ -458,7 +467,10 @@ private struct GuestLookupProfile {
             summaryLine: summaryLine,
             hasDietaryNote: hasDietaryNote,
             isRegularGuest: isRegularGuest,
-            isBackendProfile: isBackendProfile
+            isBackendProfile: isBackendProfile,
+            identitySource: identitySource,
+            matchBasis: matchBasis,
+            matchConfidence: matchConfidence
         )
     }
 
@@ -506,6 +518,7 @@ private struct GuestLookupProfile {
 
 private struct GuestLookupProfileBuilder {
     let key: String
+    var guestKey: String?
     var displayName: String
     var normalizedName: String
     var phoneDigits: String?
@@ -519,6 +532,9 @@ private struct GuestLookupProfileBuilder {
     var hasDietaryNote = false
     var isRegularGuest = false
     var isBackendProfile = false
+    var identitySource: GuestLookupIdentitySource = .localReservationHistory
+    var matchBasis: GuestProfileLookupMatchBasis?
+    var matchConfidence: GuestProfileLookupMatchConfidence?
 
     mutating func add(_ record: ReservationRecord) {
         totalReservations += 1
@@ -549,6 +565,8 @@ private struct GuestLookupProfileBuilder {
 
     mutating func apply(_ cachedProfile: GuestProfileCacheRecord) {
         isBackendProfile = true
+        guestKey = cachedProfile.guestKey
+        identitySource = .cachedProfile
         displayName = cachedProfile.displayName
         normalizedName = GuestLookupNormalizer.normalizedName(cachedProfile.displayName)
         if let digits = cachedProfile.normalizedPhone?.nilIfBlank {
@@ -572,6 +590,7 @@ private struct GuestLookupProfileBuilder {
     var profile: GuestLookupProfile {
         GuestLookupProfile(
             key: key,
+            guestKey: guestKey,
             displayName: displayName,
             normalizedName: normalizedName,
             phoneDigits: phoneDigits,
@@ -584,7 +603,10 @@ private struct GuestLookupProfileBuilder {
             summaryLine: summaryLine,
             hasDietaryNote: hasDietaryNote,
             isRegularGuest: isRegularGuest,
-            isBackendProfile: isBackendProfile
+            isBackendProfile: isBackendProfile,
+            identitySource: identitySource,
+            matchBasis: matchBasis,
+            matchConfidence: matchConfidence
         )
     }
 }

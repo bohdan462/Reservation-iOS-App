@@ -53,6 +53,69 @@ enum GuestProfileSort: String, CaseIterable, Identifiable {
     }
 }
 
+struct GuestProfileLookupResult: Equatable {
+    let candidates: [GuestProfileLookupCandidate]
+    let bestMatchGuestKey: String?
+    let bestMatchBasis: GuestProfileLookupMatchBasis?
+    let bestMatchConfidence: GuestProfileLookupMatchConfidence?
+}
+
+struct GuestProfileLookupCandidate: Identifiable, Equatable {
+    let profile: GuestProfileDTO
+    let matchBasis: GuestProfileLookupMatchBasis
+    let matchConfidence: GuestProfileLookupMatchConfidence
+
+    var id: String {
+        profile.guestKey ?? profile.id
+    }
+
+    var guestKey: String? {
+        profile.guestKey
+    }
+
+    var lookupResult: GuestLookupResult {
+        GuestLookupResult(
+            id: "backend:\(id)",
+            guestKey: guestKey,
+            displayName: profile.primaryName?.nilIfBlank ?? "Guest",
+            phoneDigits: profile.primaryPhone.map(GuestLookupPhoneNormalizer.digits)?.nilIfBlank,
+            email: profile.primaryEmail?.nilIfBlank,
+            lastReservationDate: profile.lastSeenDate ?? profile.lastBookedAt,
+            totalReservations: profile.totalReservations ?? profile.totalBookingCount ?? 0,
+            latestGuestNotes: nil,
+            latestStaffNotes: nil,
+            labelSummary: profile.labels?.compactMap { $0.title?.nilIfBlank }.prefix(3).joined(separator: ", ").nilIfBlank,
+            summaryLine: profile.summary?.summaryText?.nilIfBlank,
+            hasDietaryNote: profile.noteFlags?.hasDietaryNote == true
+                || profile.labels?.contains { label in
+                    let text = [label.id, label.title, label.detail]
+                        .compactMap { $0?.lowercased() }
+                        .joined(separator: " ")
+                    return text.contains("dietary") || text.contains("allerg")
+                } == true,
+            isRegularGuest: (profile.cleanVisitCount ?? profile.cleanPastVisitCount ?? 0) >= 3
+                || profile.labels?.contains { label in
+                    let text = [label.id, label.title]
+                        .compactMap { $0?.lowercased() }
+                        .joined(separator: " ")
+                    return text.contains("regular")
+                } == true,
+            isBackendProfile: true,
+            identitySource: .backendLookup,
+            matchBasis: matchBasis,
+            matchConfidence: matchConfidence
+        )
+    }
+
+    var isStrongBackendMatch: Bool {
+        lookupResult.isStrongBackendMatch
+    }
+
+    var requiresStaffConfirmation: Bool {
+        lookupResult.requiresStaffConfirmation
+    }
+}
+
 @MainActor
 final class GuestProfileStore: ObservableObject {
     @Published private(set) var listProfiles: [GuestProfileDTO] = []
@@ -83,10 +146,23 @@ final class GuestProfileStore: ObservableObject {
         let loadedAt: Date
     }
 
+    private struct GuestProfileLookupRequestKey: Hashable {
+        let phone: String
+        let email: String
+        let query: String
+        let limit: Int
+    }
+
+    private struct GuestProfileLookupInFlight {
+        let id = UUID()
+        let task: Task<GuestProfileLookupResult, Error>
+    }
+
     private var profileByReservationID: [Int: CachedGuestProfile] = [:]
     private var profileByGuestKey: [String: CachedGuestProfile] = [:]
     private var listCache: [GuestProfileListCacheKey: GuestProfileListCacheEntry] = [:]
     private var listTasksByKey: [GuestProfileListCacheKey: Task<GuestProfileListResponseDTO, Error>] = [:]
+    private var lookupTasksByKey: [GuestProfileLookupRequestKey: GuestProfileLookupInFlight] = [:]
     private var currentListRequestKey: GuestProfileListCacheKey?
     private var detailTasksByReservationID: [Int: Task<GuestProfileDTO?, Never>] = [:]
     private var detailTasksByGuestKey: [String: Task<GuestProfileDTO?, Never>] = [:]
@@ -275,6 +351,8 @@ final class GuestProfileStore: ObservableObject {
         detailTasksByGuestKey.values.forEach { $0.cancel() }
         detailTasksByReservationID = [:]
         detailTasksByGuestKey = [:]
+        lookupTasksByKey.values.forEach { $0.task.cancel() }
+        lookupTasksByKey = [:]
         isLoadingDetail = false
     }
 
@@ -302,6 +380,65 @@ final class GuestProfileStore: ObservableObject {
         try GuestProfileRepository().searchProfiles(query: query, limit: limit, context: context)
     }
 
+    func lookupProfiles(
+        phone: String? = nil,
+        email: String? = nil,
+        query: String? = nil,
+        limit: Int = 5,
+        context: ModelContext
+    ) async throws -> GuestProfileLookupResult {
+        let requestKey = GuestProfileLookupRequestKey(
+            phone: phone.map(GuestLookupPhoneNormalizer.digits) ?? "",
+            email: normalizedQueryValue(email).lowercased(),
+            query: normalizedQueryValue(query),
+            limit: min(10, max(1, limit))
+        )
+        guard !requestKey.phone.isEmpty || !requestKey.email.isEmpty || !requestKey.query.isEmpty else {
+            throw ReservationAPIError.invalidURL
+        }
+
+        if let inFlight = lookupTasksByKey[requestKey] {
+            return try await inFlight.task.value
+        }
+
+        let task = Task<GuestProfileLookupResult, Error> { [apiClient] in
+            let response = try await apiClient.fetchGuestProfileLookup(
+                phone: requestKey.phone.isEmpty ? nil : requestKey.phone,
+                email: requestKey.email.isEmpty ? nil : requestKey.email,
+                query: requestKey.query.isEmpty ? nil : requestKey.query,
+                limit: requestKey.limit
+            )
+            return GuestProfileLookupResult(
+                candidates: response.profiles.map { candidate in
+                    GuestProfileLookupCandidate(
+                        profile: candidate.profile,
+                        matchBasis: candidate.matchBasis,
+                        matchConfidence: candidate.matchConfidence
+                    )
+                },
+                bestMatchGuestKey: response.bestMatchGuestKey,
+                bestMatchBasis: response.bestMatchBasis,
+                bestMatchConfidence: response.bestMatchConfidence
+            )
+        }
+        let inFlight = GuestProfileLookupInFlight(task: task)
+        lookupTasksByKey[requestKey] = inFlight
+
+        do {
+            let result = try await task.value
+            clearLookupTask(id: inFlight.id, for: requestKey)
+            let profiles = result.candidates.map(\.profile)
+            if !profiles.isEmpty {
+                try GuestProfileRepository().upsertProfiles(profiles, context: context)
+            }
+            cacheListProfiles(result.candidates.map(\.profile))
+            return result
+        } catch {
+            clearLookupTask(id: inFlight.id, for: requestKey)
+            throw error
+        }
+    }
+
     // MARK: - Private
 
     private var listUnavailableMessage: String {
@@ -310,6 +447,14 @@ final class GuestProfileStore: ObservableObject {
 
     private var detailUnavailableMessage: String {
         "Guest history unavailable."
+    }
+
+    private func clearLookupTask(
+        id: UUID,
+        for key: GuestProfileLookupRequestKey
+    ) {
+        guard lookupTasksByKey[key]?.id == id else { return }
+        lookupTasksByKey.removeValue(forKey: key)
     }
 
     private func adoptListResponse(_ response: GuestProfileListResponseDTO) {
@@ -478,5 +623,12 @@ final class GuestProfileStore: ObservableObject {
             return true
         }
         return false
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

@@ -53,6 +53,7 @@ enum ReservationAPIRequestReason: String {
     case reservationAnalyticsSummary = "reservation_analytics_summary"
     case businessIntelligenceSummary = "business_intelligence_summary"
     case guestIntelligence = "guest_intelligence"
+    case guestProfileLookup = "guest_profile_lookup"
     case intelligenceSystemStatus = "intelligence_system_status"
     case reconcileByID = "reconcile_by_id"
     case floorPlan = "floor_plan"
@@ -71,7 +72,7 @@ enum ReservationAPIRequestReason: String {
 
     var suppressesResponseBodyLogging: Bool {
         switch self {
-        case .businessIntelligenceSummary, .guestIntelligence, .intelligenceSystemStatus:
+        case .businessIntelligenceSummary, .guestIntelligence, .guestProfileLookup, .intelligenceSystemStatus:
             return true
         default:
             return false
@@ -238,10 +239,11 @@ enum ReservationAPILogger {
         components.password = nil
 
         components.queryItems = components.queryItems?.map { item in
-            if item.name.lowercased() == "search" {
+            let name = item.name.lowercased()
+            if name == "search" || name == "phone" || name == "email" || name == "q" {
                 return URLQueryItem(name: item.name, value: "<redacted>")
             }
-            if item.name.lowercased().contains("token") {
+            if name.contains("token") {
                 return URLQueryItem(name: item.name, value: "<redacted>")
             }
             return item
@@ -347,6 +349,12 @@ protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
         perPage: Int,
         updatedSince: String?
     ) async throws -> GuestProfileListResponseDTO
+    func fetchGuestProfileLookup(
+        phone: String?,
+        email: String?,
+        query: String?,
+        limit: Int
+    ) async throws -> GuestProfileLookupResponseDTO
     func fetchGuestProfile(guestKey: String) async throws -> GuestProfileDTO
     func fetchGuestProfile(byReservationID reservationID: Int) async throws -> GuestProfileDTO
     func fetchIntelligenceSystemStatus(
@@ -1162,6 +1170,50 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return try decode(GuestProfileListResponseDTO.self, from: data, request: request)
     }
 
+    // Intent: Looks up compact guest profile candidates for staff intake/search.
+    // Network: GET /guest-profiles/lookup.
+    func fetchGuestProfileLookup(
+        phone: String? = nil,
+        email: String? = nil,
+        query: String? = nil,
+        limit: Int = 5
+    ) async throws -> GuestProfileLookupResponseDTO {
+        let normalizedPhone = phone
+            .map(GuestLookupPhoneNormalizer.digits)
+            .flatMap(normalizedLookupText)
+        let normalizedEmail = email
+            .flatMap(normalizedLookupText)
+            .map { $0.lowercased() }
+        let normalizedQuery = query.flatMap(normalizedLookupText)
+        let clampedLimit = min(10, max(1, limit))
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "limit", value: String(clampedLimit))
+        ]
+
+        if let normalizedPhone {
+            queryItems.append(URLQueryItem(name: "phone", value: normalizedPhone))
+        }
+        if let normalizedEmail {
+            queryItems.append(URLQueryItem(name: "email", value: normalizedEmail))
+        }
+        if let normalizedQuery {
+            queryItems.append(URLQueryItem(name: "q", value: normalizedQuery))
+        }
+
+        guard queryItems.count > 1 else {
+            throw ReservationAPIError.invalidURL
+        }
+
+        let url = try makeURL(path: "guest-profiles/lookup", queryItems: queryItems)
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, reason: .guestProfileLookup)
+        let response = try decode(GuestProfileLookupResponseDTO.self, from: data, request: request)
+        if response.success == false {
+            throw intelligenceEnvelopeFailure()
+        }
+        return response
+    }
+
     // Intent: Reads one precomputed backend guest profile aggregate by internal key.
     // Network: GET /guest-profiles/{guestKey}.
     func fetchGuestProfile(guestKey: String) async throws -> GuestProfileDTO {
@@ -1364,6 +1416,12 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
     }
 
     // MARK: - Request Helpers
+
+    private func normalizedLookupText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 
     private func apiURL(path: String, queryItems: [URLQueryItem] = []) throws -> URL {
         let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))

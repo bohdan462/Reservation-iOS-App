@@ -9,6 +9,7 @@ import Foundation
 
 struct GuestLookupResult: Identifiable, Equatable {
     let id: String
+    let guestKey: String?
     let displayName: String
     let phoneDigits: String?
     let email: String?
@@ -21,6 +22,9 @@ struct GuestLookupResult: Identifiable, Equatable {
     let hasDietaryNote: Bool
     let isRegularGuest: Bool
     let isBackendProfile: Bool
+    let identitySource: GuestLookupIdentitySource
+    let matchBasis: GuestProfileLookupMatchBasis?
+    let matchConfidence: GuestProfileLookupMatchConfidence?
 
     var prefill: ManualReservationPrefill {
         ManualReservationPrefill(
@@ -30,6 +34,60 @@ struct GuestLookupResult: Identifiable, Equatable {
             source: .callInGuestLookup
         )
     }
+
+    var isStrongBackendMatch: Bool {
+        identitySource == .backendLookup
+            && matchConfidence == .strong
+            && (matchBasis == .email || matchBasis == .phone)
+    }
+
+    var requiresStaffConfirmation: Bool {
+        !isStrongBackendMatch
+    }
+
+    init(
+        id: String,
+        guestKey: String? = nil,
+        displayName: String,
+        phoneDigits: String?,
+        email: String?,
+        lastReservationDate: String?,
+        totalReservations: Int,
+        latestGuestNotes: String?,
+        latestStaffNotes: String?,
+        labelSummary: String?,
+        summaryLine: String?,
+        hasDietaryNote: Bool,
+        isRegularGuest: Bool,
+        isBackendProfile: Bool,
+        identitySource: GuestLookupIdentitySource? = nil,
+        matchBasis: GuestProfileLookupMatchBasis? = nil,
+        matchConfidence: GuestProfileLookupMatchConfidence? = nil
+    ) {
+        self.id = id
+        self.guestKey = guestKey
+        self.displayName = displayName
+        self.phoneDigits = phoneDigits
+        self.email = email
+        self.lastReservationDate = lastReservationDate
+        self.totalReservations = totalReservations
+        self.latestGuestNotes = latestGuestNotes
+        self.latestStaffNotes = latestStaffNotes
+        self.labelSummary = labelSummary
+        self.summaryLine = summaryLine
+        self.hasDietaryNote = hasDietaryNote
+        self.isRegularGuest = isRegularGuest
+        self.isBackendProfile = isBackendProfile
+        self.identitySource = identitySource ?? (isBackendProfile ? .cachedProfile : .localReservationHistory)
+        self.matchBasis = matchBasis
+        self.matchConfidence = matchConfidence
+    }
+}
+
+enum GuestLookupIdentitySource: Equatable, Sendable {
+    case cachedProfile
+    case localReservationHistory
+    case backendLookup
 }
 
 struct ManualReservationPrefill: Equatable {
