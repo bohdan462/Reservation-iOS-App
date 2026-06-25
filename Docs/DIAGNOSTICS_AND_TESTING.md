@@ -72,25 +72,26 @@ Requires staff auth (`tryzub_can_read_reservations`). Backend `1431a06` is live 
 
 **Do not claim:** device smoke tests passed, name-only result is confirmed identity, lookup returns full history.
 
-## Manual Intake walk-in + guest lookup (`63d0cfc` + `e775f52`)
+## Manual Intake walk-in + guest lookup (`63d0cfc` + `e775f52` + `ad5d274`)
 
-**Status:** checklist only — backend `63d0cfc` **implemented** (root pointer `c7f5a69`); **WordPress deployment pending**; iOS `e775f52` shipped; **device smoke tests not yet passed**.
+**Status:** checklist only — backend `63d0cfc` **deployed** to WordPress (root pointer `c7f5a69`); iOS `e775f52` + input polish `ad5d274` shipped; **device smoke tests not yet passed** — **ready to test on restaurant iPad**.
 
-Requires staff auth for backend lookup routes. Unknown walk-in save on device requires backend `63d0cfc` deployed.
+Requires staff auth for backend lookup routes.
 
-1. Walk-in with party/date/time only → save succeeds; no name/phone/email field errors on iOS
-2. Walk-in with partial phone typed → save succeeds; phone omitted from payload
-3. Walk-in with known guest candidate → **Use guest** fills fields; save still `manual_walk_in` + seated
-4. Call-in blank name → blocked on iOS
-5. Call-in blank phone → blocked on iOS
-6. Call-in valid name+phone → save succeeds
-7. Type name (e.g. "Michael") → multiple saved candidates; no auto-fill
-8. **Search all guest records** → backend candidates; staff must tap **Use guest**; no auto-pick
-9. **View history** from candidate with `guestKey` → shared Guest history shell
-10. No `/guest-profiles/lookup` while typing in Manual Intake
-11. Backend unknown walk-in: no fake `guest_key`/profile created; placeholder email not sendable (after `63d0cfc` deploy)
+1. Unknown walk-in party/time only → **Add** → review sheet → **confirm** → save
+2. Response shows Walk-in guest / blank phone/email / seated
+3. Unknown walk-in does not create fake Guest Memory profile
+4. Walk-in partial phone → save; phone omitted from payload
+5. Call-in blank phone → blocked **before** review sheet
+6. Call-in valid name+phone → save
+7. Manual Intake has **no** pre-create confirmation/message buttons (`GuestTextMessageActionButtons` removed)
+8. Reservation Detail still has confirmation/message workflow after reservation exists
+9. Type known guest name/phone/email → local candidates after debounce (~250–300 ms)
+10. **Search all guest records** → backend candidates; staff must tap **Use guest**; no auto-pick
+11. **View history** from candidate with `guestKey` → shared Guest history shell
+12. No `/guest-profiles/lookup` while typing in Manual Intake
 
-**Do not claim:** full booking/notes timeline in Guest history; backend `63d0cfc` deployed unless verified; all device tests passed.
+**Do not claim:** full booking/notes timeline in Guest history; device smoke tests passed; TestFlight uploaded.
 
 ## Host header + flicker test (`71601fc` + `39f7fcb`)
 
@@ -135,8 +136,8 @@ Requires staff auth for backend lookup routes. Unknown walk-in save on device re
 - [ ] Bookings search + detail
 - [ ] Activity history on detail + More
 - [ ] Backend guest profile lookup smoke tests after WordPress deploy (`1431a06`) — staff auth only
-- [ ] Manual Intake walk-in + guest lookup on test iPad (`e775f52`; unknown walk-in needs backend `63d0cfc` deploy)
-- [ ] Backend unknown walk-in contract smoke tests after WordPress deploy (`63d0cfc`)
+- [ ] Manual Intake walk-in + guest lookup + input polish on test iPad (`e775f52`, `ad5d274`; backend `63d0cfc` **deployed**)
+- [ ] Backend unknown walk-in contract smoke tests on WordPress (`63d0cfc` **deployed**)
 - [ ] Logout clears session
 
 ## Cache reset (developer)

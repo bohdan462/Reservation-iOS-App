@@ -6,7 +6,7 @@
 
 ## Title
 
-V1 stabilization: device verification + release smoke test (guest person-map 3M-B/3M shipped; 3D open)
+V1 stabilization: device verification + release smoke test (guest person-map 3M-B/3M + Manual Intake input polish shipped; 3D open)
 
 ---
 
@@ -15,8 +15,8 @@ V1 stabilization: device verification + release smoke test (guest person-map 3M-
 | Location | State |
 |----------|--------|
 | **Root branch** | `audit-current-state` |
-| **Root HEAD** | `e775f52` — Add Manual Intake walk-in validation and guest lookup |
-| **Root vs remote** | Pushed to `origin/audit-current-state` at `e775f52` (pending this doc commit) |
+| **Root HEAD** | `ad5d274` — Polish Manual Intake input flow and remove pre-create confirmation messages |
+| **Root vs remote** | Pushed to `origin/audit-current-state` at `ad5d274` (pending this doc commit) |
 | **Backend submodule pointer** | `63d0cfc` — Allow unknown manual walk-ins without guest identity |
 | **Backend branch** | `AI` |
 | **Backend HEAD** | `63d0cfc` |
@@ -24,6 +24,8 @@ V1 stabilization: device verification + release smoke test (guest person-map 3M-
 
 **Recent root commits (newest first):**
 
+- `ad5d274` — Manual Intake input polish + removed pre-create confirmation/message actions
+- `2b59c73` — docs after Manual Intake guest lookup and walk-in support
 - `e775f52` — Manual Intake walk-in validation + guest lookup (Slice 3M)
 - `c7f5a69` — backend submodule pointer → unknown walk-in support (`63d0cfc`)
 - `86c3236` — docs after Regulars cache-first Guest Memory
@@ -57,7 +59,7 @@ V1 stabilization: device verification + release smoke test (guest person-map 3M-
 
 ## Current slice goal
 
-**Stabilization still open** (device verification + release smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R/3M-B/3M**, and **Tryzub V1 Host production polish** are shipped.
+**Stabilization still open** (device verification + release smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R/3M-B/3M**, **Manual Intake input polish**, and **Tryzub V1 Host production polish** are shipped.
 
 **Guest Person Map target:** one shared **Guest history** destination by `guestKey` (`GuestProfileDetailView`). Wiring status:
 
@@ -140,7 +142,7 @@ Unknown walk-in backend contract for Tryzub V1 staff operations:
 4. Placeholder name (`Walk-in guest`), placeholder email, and repeated-digit fake phones are **ignored** for `guest_key` resolution, profile rebuilds/lookups, duplicate matching, and email eligibility.
 5. Walk-ins with real email, phone, or meaningful full name still enter normal guest profile flow.
 6. Confirmation/reminder/manual email paths reject placeholder email — not sendable.
-7. **Implemented and root-pointed** at `63d0cfc` / `c7f5a69`. **WordPress deployment pending** — production unknown walk-in save requires deploy before device verification.
+7. **Implemented, root-pointed, and deployed** to WordPress at `63d0cfc` / `c7f5a69`. Production unknown walk-in save is **ready for device verification** — smoke tests not yet passed.
 
 ### Completed (guest person-map Slice 3M — iOS `e775f52`)
 
@@ -154,6 +156,19 @@ Unknown walk-in backend contract for Tryzub V1 staff operations:
 8. Removed old phone-only `GuestPhoneLookupSuggestionRow` from Manual Intake UI.
 9. **Not in 3M:** full booking-history list, notes timeline, source-mix UI, Reservation Detail bridge, detail JSON persistence (3E).
 10. **P3 cleanup open:** unused `GuestLookupStore.schedulePhoneLookup` dead code remains.
+
+### Completed (Manual Intake input polish — iOS `ad5d274`)
+
+Post-3M staff-operations polish for live-service Manual Intake:
+
+1. **Final review/confirmation sheet remains** before backend create — primary Add validates, dismisses keyboard, opens review sheet; `createReservation()` runs **only** from final sheet confirm.
+2. **Removed pre-create confirmation/message actions** — no `GuestTextMessageActionButtons` on Manual Intake; no send-confirmation / send-text / create-and-send before reservation exists.
+3. **Reservation Detail** confirmation/message workflow **unchanged** — post-create confirm/email remains on detail (`ReservationDetailView`, `ReservationActionButtons`, `ManualTextMessageService`).
+4. **Keyboard Next/Done** flow on name/phone/email; focus trace **DEBUG-only**; removed `draft_changed` per-keystroke trace flood.
+5. **Local guest lookup** debounced (250–300 ms); phone local-search threshold starts at **7 digits**; local candidate results capped (index 8 / UI 6); no backend lookup while typing.
+6. Removed animated focus scroll; candidate section layout more stable while keyboard is open.
+7. Review sheet summary improved — intake mode, Walk-in guest / No phone / No email, table and notes when set.
+8. **Walk-in/call-in 3M behavior preserved** — blank walk-in identity, call-in name+phone required, Use guest, View history, explicit Search all guest records.
 
 ### Completed (guest person-map Slice 2 — backend `1431a06`, root pointer `b1a09e7`)
 
@@ -206,9 +221,7 @@ Staff targeted guest lookup doorway — part of the guest person-map / “know y
 
 Replace broad in-memory guest filtering with **indexed / predicate-based local search**. Acceptable for **current Tryzub V1 data size** only.
 
-**Later slices (not blocking release smoke test):** **3D** full shared Guest history UI (booking history timeline, guest/staff notes timeline, source mix, usual party/day/time) + Reservation Detail bridge (3D-a) + booking-history row → local `ReservationDetailView` when cached else read-only; **3E** detail JSON persistence / disk-first full profile reopen; phone normalization 10 vs 11 digit follow-up; dedicated validation error for blank lookup if needed; indexed local guest search; foreground/mutation-triggered guest-profile re-sync; `ReservationDetail` guest fetch dedupe (partially improved; full dedupe later); remove unused `schedulePhoneLookup` (P3).
-
-**Deploy pending:** backend **`63d0cfc`** to WordPress for production unknown walk-in create.
+**Later slices (not blocking release smoke test):** **3D** full shared Guest history UI (booking history timeline, guest/staff notes timeline, source mix, usual party/day/time) + Reservation Detail bridge (3D-a) + booking-history row → local `ReservationDetailView` when cached else read-only; **3E** detail JSON persistence / disk-first full profile reopen; phone normalization 10 vs 11 digit follow-up; dedicated validation error for blank lookup if needed; indexed local guest search; foreground/mutation-triggered guest-profile re-sync; `ReservationDetail` guest fetch dedupe (partially improved; full dedupe later); remove unused `schedulePhoneLookup` (P3); backend README wording cleanup if README still says pilot/MVP.
 
 **Parked / not started:** offline queue, broad Host redesign, full AI clustering / “knows each other” / local semantic tags, VIP editor (no backend guest-notes contract).
 
@@ -228,7 +241,7 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 | App login | **Works** in production |
 | Guest profile aggregates (backend table) | **Live** — iOS syncs incrementally |
 | Backend guest profile lookup (`1431a06`) | **Deployed** to WordPress |
-| Backend unknown walk-in support (`63d0cfc`) | **Implemented** — root pointer `c7f5a69`; **WordPress deployment pending** |
+| Backend unknown walk-in support (`63d0cfc`) | **Deployed** to WordPress — root pointer `c7f5a69` |
 | Deployed zip SHA in git | **Not tracked** |
 
 ---
@@ -255,13 +268,14 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 - Backend guest profile lookup route **deployed** on WordPress (`1431a06`) — **device smoke tests still open** (exact email/phone lookup; name-only possible match; conflicting phone/email does not auto-pick; guest key opens full detail; unauthenticated lookup blocked)
 - Guests tab explicit all-record lookup + View history shell on test iPad (post-`1dfa14a` install)
 - Regulars cache-first + View history on test iPad (post-`50df843` install)
-- Manual Intake walk-in blank identity save on test iPad (post-`e775f52` install; requires backend `63d0cfc` deployed)
-- Manual Intake local + all-record guest lookup + View history on test iPad (post-`e775f52` install)
-- Backend unknown walk-in contract on WordPress (post-`63d0cfc` deploy) — blank walk-in create; no fake guest profile; placeholder email not sendable
+- Manual Intake walk-in blank identity save on test iPad (post-`e775f52` / `ad5d274`; backend `63d0cfc` **deployed** — ready to test)
+- Manual Intake local + all-record guest lookup + View history on test iPad (post-`e775f52` / `ad5d274`)
+- Manual Intake input polish on test iPad (post-`ad5d274`) — review sheet before create; no pre-create message buttons; Next/Done keyboard; debounced local lookup
+- Backend unknown walk-in contract on WordPress (`63d0cfc` **deployed**) — blank walk-in create; no fake guest profile; placeholder email not sendable; **device smoke tests still open**
 
 ---
 
-## iOS guest memory (`0f06852` + `0a89caa` + `67e02d2` + `d541488` + `823f42c` + `1dfa14a` + `50df843` + `e775f52`)
+## iOS guest memory (`0f06852` + `0a89caa` + `67e02d2` + `d541488` + `823f42c` + `1dfa14a` + `50df843` + `e775f52` + `ad5d274`)
 
 | Component | Role |
 |-----------|------|
@@ -274,7 +288,7 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 | `GuestProfileDetailView` | Shared **Guest history** shell by `guestKey` — summary/metrics only until Slice 3D (`1dfa14a`) |
 | `ReservationDetailView` | Disk cache preview before memory/network; still opens reservation-scoped `GuestInsightsView` for full history |
 | `RegularGuestsView` | Cache-first `@Query` list; local search/filter/sort; tap → `GuestProfileDetailView` (`50df843`) |
-| `ManualReservationFormView` | Walk-in optional identity (`e775f52`); call-in name+phone required; local search while typing; explicit all-record lookup; Use guest + View history (`e775f52`) |
+| `ManualReservationFormView` | Walk-in optional identity (`e775f52`); call-in name+phone required; local search while typing; explicit all-record lookup; Use guest + View history (`e775f52`); input polish — review sheet before create, no pre-create messages, keyboard Next/Done, debounced lookup (`ad5d274`) |
 
 **Rules:**
 
@@ -308,9 +322,8 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 
 1. **Device-test** iOS foreground/privacy refresh (`b910bd1`).
 2. **Confirm** confirmation mode on restaurant iPad.
-3. **Run** release smoke test — include guest full-list sync, Guests + Manual Intake lookup (no per-digit backend), unknown walk-in save (after backend `63d0cfc` deploy), walk-in/known-guest, Host header (`Last sync`), stale secondary reasons, Live-on-today refresh, quiet-board idle flicker, intelligence-card chips stable during refresh, seated/due timing updates, manual refresh bumps `Last sync`.
-4. **Deploy** backend `63d0cfc` to WordPress before production unknown walk-in verification.
-5. Before broader product release → **indexed local guest search** ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #6).
+3. **Run** release smoke test — include guest full-list sync, Guests + Manual Intake lookup (no per-digit backend), unknown walk-in save (backend `63d0cfc` deployed), Manual Intake review sheet + no pre-create messages (`ad5d274`), walk-in/known-guest, Host header (`Last sync`), stale secondary reasons, Live-on-today refresh, quiet-board idle flicker, intelligence-card chips stable during refresh, seated/due timing updates, manual refresh bumps `Last sync`.
+4. Before broader product release → **indexed local guest search** ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #6).
 
 ---
 

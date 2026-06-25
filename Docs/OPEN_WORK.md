@@ -1,7 +1,7 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `e775f52` (pending doc commit)  
+**Root HEAD:** `ad5d274` (pending doc commit)  
 **Last reviewed:** 2026-06-25  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
@@ -175,8 +175,19 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 | **Files** | `ManualReservationFormView.swift`, `GuestLookupStore.swift`, `GuestLookupModels.swift`, `GuestProfileStore.swift`; backend `managed-reservations.php` (`63d0cfc`) |
 | **Approach** | Local name/phone/email search while typing; explicit all-record lookup; Use guest / View history; walk-in blank identity; call-in name+phone |
 | **Acceptance** | No network on every digit; multiple name matches shown; staff must tap; walk-in save without phone/name with backend `63d0cfc` deployed |
-| **Class** | **Done** — iOS `e775f52`; backend `63d0cfc` / `c7f5a69`; **deploy + device smoke tests still open** |
+| **Class** | **Done** — iOS `e775f52`; backend `63d0cfc` / `c7f5a69` **deployed**; **device smoke tests still open** |
 | **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #17, #18 |
+
+### P1-8d: Manual Intake input polish (post-3M)
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Accidental create during live service; pre-create message actions confuse staff before reservation exists |
+| **Files** | `ManualReservationFormView.swift`, `GuestLookupStore.swift` |
+| **Approach** | Keep final review sheet; remove `GuestTextMessageActionButtons` from Manual Intake; keyboard Next/Done; debounced local lookup; phone threshold 7 digits |
+| **Acceptance** | Add opens review sheet before create; no pre-create send-confirmation UI; Reservation Detail confirm/message still works post-create |
+| **Class** | **Done** — `ad5d274`; **device smoke tests still open** |
+| **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #17b |
 
 ### P1-8b: Regulars cache-first + shared Guest history (Slice 3R)
 
@@ -284,9 +295,9 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 - iOS guest person-map Slice 3A — lookup API/client/store foundation (`823f42c`)
 - iOS guest person-map Slice 3B — Guests tab explicit all-record lookup + shared Guest history shell (`1dfa14a`)
 - iOS guest person-map Slice 3R — Regulars cache-first + shared Guest history (`50df843`)
-- Backend guest person-map Slice 3M-B — unknown walk-in without guest identity (`63d0cfc` backend, `c7f5a69` root pointer)
+- Backend guest person-map Slice 3M-B — unknown walk-in without guest identity (`63d0cfc` backend, `c7f5a69` root pointer; **deployed**)
 - iOS guest person-map Slice 3M — Manual Intake walk-in validation + guest lookup (`e775f52`)
-- iOS guest person-map Slice 3R — Regulars cache-first + shared Guest history (`50df843`)
+- Manual Intake input polish — review sheet, no pre-create messages, keyboard/debounce (`ad5d274`)
 - V1 confirmation flow hardening (`cf6e641`)
 - Mail-first confirm + manual-email-log + PATCH (when backend confirmation is **off** on device)
 - Both backend `/confirm` and manual Mail paths exist; active path is setting-dependent (`EmailAutomationSettings`, default `backendConfirmationEnabled = true`)
