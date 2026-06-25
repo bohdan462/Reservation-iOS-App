@@ -96,6 +96,27 @@ struct GuestProfileRepository {
         return try context.fetch(descriptor)
     }
 
+    func matchProfile(
+        for reservation: ReservationRecord,
+        context: ModelContext
+    ) throws -> GuestProfileCacheRecord? {
+        if let phoneMatch = try matchPhoneDigits(reservation.phone, context: context) {
+            return phoneMatch
+        }
+
+        guard let email = normalizedEmail(reservation.email) else { return nil }
+        let descriptor = FetchDescriptor<GuestProfileCacheRecord>(
+            sortBy: [
+                SortDescriptor(\.cleanVisitCount, order: .reverse),
+                SortDescriptor(\.totalReservations, order: .reverse),
+                SortDescriptor(\.fetchedAt, order: .reverse)
+            ]
+        )
+        return try context.fetch(descriptor).first { record in
+            record.email?.caseInsensitiveCompare(email) == .orderedSame
+        }
+    }
+
     func matchPhoneDigits(_ digits: String, context: ModelContext) throws -> GuestProfileCacheRecord? {
         let normalizedDigits = normalizedPhoneDigits(digits)
         guard normalizedDigits.count >= 7 else { return nil }

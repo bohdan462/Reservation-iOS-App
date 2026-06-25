@@ -13,6 +13,14 @@ struct GuestLookupView: View {
     @EnvironmentObject private var controller: ReservationsController
     @Query
     private var reservations: [ReservationRecord]
+    @Query(
+        sort: [
+            SortDescriptor(\GuestProfileCacheRecord.cleanVisitCount, order: .reverse),
+            SortDescriptor(\GuestProfileCacheRecord.totalReservations, order: .reverse),
+            SortDescriptor(\GuestProfileCacheRecord.fetchedAt, order: .reverse)
+        ]
+    )
+    private var cachedGuestProfiles: [GuestProfileCacheRecord]
 
     @StateObject private var store = GuestLookupStore()
     @State private var searchText = ""
@@ -122,7 +130,7 @@ struct GuestLookupView: View {
     }
 
     private var cacheKey: GuestLookupCacheKey {
-        GuestLookupCacheKey(records: reservations)
+        GuestLookupCacheKey(records: reservations, cachedProfiles: cachedGuestProfiles)
     }
 
     private var isBookingDisabled: Bool {
@@ -131,7 +139,7 @@ struct GuestLookupView: View {
 
     private func refreshCacheIfVisible() {
         guard isActive else { return }
-        store.updateCache(records: reservations, cacheKey: cacheKey)
+        store.updateCache(records: reservations, cacheKey: cacheKey, context: modelContext)
         store.scheduleSearch(searchText)
     }
 }
@@ -175,6 +183,13 @@ private struct GuestLookupResultCard: View {
             .foregroundStyle(TryzubColors.mutedText)
             .lineLimit(1)
 
+            if let memoryLine {
+                Text(memoryLine)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TryzubColors.mutedText)
+                    .lineLimit(2)
+            }
+
             if result.latestGuestNotes != nil || result.latestStaffNotes != nil {
                 HStack(spacing: 8) {
                     if result.latestGuestNotes != nil {
@@ -207,6 +222,23 @@ private struct GuestLookupResultCard: View {
                 .stroke(TryzubColors.border, lineWidth: 1)
         }
     }
+
+    private var memoryLine: String? {
+        var parts: [String] = []
+        if result.isRegularGuest {
+            parts.append("Regular guest")
+        }
+        if result.hasDietaryNote {
+            parts.append("Dietary note")
+        }
+        if let labelSummary = result.labelSummary?.nilIfBlank {
+            parts.append(labelSummary)
+        }
+        if let summaryLine = result.summaryLine?.nilIfBlank {
+            parts.append(summaryLine)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 }
 
 private struct GuestLookupSheet: Identifiable {
@@ -221,5 +253,12 @@ private enum GuestLookupDateFormatter {
         }
 
         return date.formatted(.dateTime.month(.abbreviated).day().year())
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

@@ -476,6 +476,7 @@ struct ReservationDetailView: View {
         }
         .task(id: guestIntelligenceFetchKey) {
             if await guestProfileStore.loadProfile(byReservationID: reservation.remoteID) == nil {
+                guard cachedGuestProfilePreview == nil else { return }
                 guestIntelligenceStore.ensureSummary(
                     reservationID: reservation.remoteID,
                     dateKey: reservation.reservationDate
@@ -1478,6 +1479,9 @@ struct ReservationDetailView: View {
     }
 
     private var guestProfilePreview: GuestInsightsProfilePresentation.DetailPreview? {
+        if let cachedPreview = cachedGuestProfilePreview {
+            return cachedPreview
+        }
         if let aggregatePreview = GuestInsightsProfilePresentation.detailPreview(
             profile: guestProfileStore.cachedProfile(byReservationID: reservation.remoteID),
             referenceReservation: reservation
@@ -1490,6 +1494,17 @@ struct ReservationDetailView: View {
             referenceReservation: reservation,
             reservationPool: guestInsightHistoryPool
         )
+    }
+
+    private var cachedGuestProfilePreview: GuestInsightsProfilePresentation.DetailPreview? {
+        GuestInsightsProfilePresentation.detailPreview(
+            cachedProfile: cachedGuestProfileCacheRecord,
+            referenceReservation: reservation
+        )
+    }
+
+    private var cachedGuestProfileCacheRecord: GuestProfileCacheRecord? {
+        try? GuestProfileRepository().matchProfile(for: reservation, context: modelContext)
     }
 
     private func guestDetailInsightPresentation(

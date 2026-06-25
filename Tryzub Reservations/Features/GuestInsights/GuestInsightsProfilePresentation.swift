@@ -109,6 +109,57 @@ enum GuestInsightsProfilePresentation {
         )
     }
 
+    static func detailPreview(
+        cachedProfile: GuestProfileCacheRecord?,
+        referenceReservation: ReservationRecord? = nil
+    ) -> DetailPreview? {
+        guard let cachedProfile else { return nil }
+        var lines: [String] = []
+
+        if cachedProfile.cleanVisitCount > 0 {
+            let visits = cachedProfile.cleanVisitCount
+            lines.append("\(visits) confirmed \(visits == 1 ? "visit" : "visits").")
+        } else if cachedProfile.totalReservations > 0 {
+            let total = cachedProfile.totalReservations
+            lines.append("\(total) \(total == 1 ? "reservation" : "reservations") on file.")
+        }
+
+        if let lastSeen = acceptedLastSeen(cachedProfile.lastSeenDate, referenceReservation: referenceReservation) {
+            lines.append("Last seen \(lastSeen).")
+        }
+        if let summary = cachedProfile.summaryLine?.nilIfBlank {
+            lines.append(truncate(summary, limit: 120))
+        }
+        if let notePreview = cachedProfile.latestNotePreview?.nilIfBlank {
+            lines.append("Prior note: \(truncate(notePreview)).")
+        }
+        if let nextLine = cachedNextReservationLine(cachedProfile) {
+            lines.append(nextLine)
+        }
+
+        var badges: [String] = []
+        if cachedProfile.isLikelyRegular {
+            badges.append("Regular guest")
+        }
+        if cachedProfile.hasDietaryNote {
+            badges.append("Dietary note")
+        }
+        if let topLabelTitles = cachedProfile.topLabelTitles?.nilIfBlank {
+            badges.append(contentsOf: topLabelTitles
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty })
+        }
+
+        guard !lines.isEmpty || !badges.isEmpty else { return nil }
+        return DetailPreview(
+            title: "Guest history",
+            lines: Array(lines.prefix(4)),
+            badges: Array(badges.prefix(4)),
+            showsUpdatingBadge: false
+        )
+    }
+
     static func serverVisitRows(from pack: GuestIntelligenceProfilePackDTO?) -> [ServerVisitRow] {
         guard let pack else { return [] }
         return pack.matchedVisitPreview.map { visit in
@@ -258,6 +309,20 @@ enum GuestInsightsProfilePresentation {
             selectedTime: referenceReservation.reservationTime
         ) else { return nil }
         return ReservationFormatters.mediumDate.string(from: date)
+    }
+
+    private static func cachedNextReservationLine(_ cachedProfile: GuestProfileCacheRecord) -> String? {
+        guard let date = cachedProfile.nextReservationDate?.nilIfBlank else { return nil }
+        let displayDate: String
+        if let parsed = ReservationFormatters.reservationDateKey.date(from: date) {
+            displayDate = ReservationFormatters.mediumDate.string(from: parsed)
+        } else {
+            displayDate = date
+        }
+        if let time = cachedProfile.nextReservationTime?.nilIfBlank {
+            return "Next reservation \(displayDate) at \(displayTime(time))."
+        }
+        return "Next reservation \(displayDate)."
     }
 
     private static func aggregatePreferenceLines(from profile: GuestProfileDTO) -> [String] {
