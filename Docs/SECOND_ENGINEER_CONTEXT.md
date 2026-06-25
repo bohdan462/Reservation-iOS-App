@@ -44,13 +44,13 @@ Latest known **pushed** state:
 |------|-------|
 | Backend branch | `AI` |
 | Backend HEAD | `078a44a` — Document guest self-service cache contract |
-| Backend cache fix (code) | `d46713a` — Prevent cached guest self-service status after cancellation |
 | Root branch | `audit-current-state` |
-| Root HEAD | `2b2bc8f` — Align docs with current sync and confirmation behavior |
-| Root submodule pointer | Backend `078a44a` |
+| Root HEAD | `0a89caa` — Wire manual intake to local guest cache and walk-ins |
+| Guest cache foundation | `0f06852` — SwiftData cache + background `updated_since` sync |
+| Confirmation safety | `cf6e641` — V1 confirmation flow hardening |
 | iOS foreground/privacy refresh | `b910bd1` on root |
-| Zip files | **Do not track.** `Backend/*.zip` is gitignored. Deploy zips are local-only. |
-| Docs | Reconciled 2026-06-24 for cursor persistence, confirmation settings, offline policy, self-service cancellation. |
+| Root submodule pointer | Backend `078a44a` |
+| Zip files | **Do not track.** `Backend/*.zip` is gitignored. |
 
 Before any implementation work, verify live git:
 
@@ -70,26 +70,39 @@ git rev-parse --short HEAD
 git submodule status
 ```
 
-**Production:** Guest self-service cancel + dead-state verified live (2026-06-24). App login works. Submodule pointer (`078a44a`) is repo truth; exact deployed plugin SHA is not tracked in git.
+**Production:** Guest self-service cancel + dead-state verified live. App login works. Guest profile aggregates exist server-side; iOS now syncs list to `GuestProfileCacheRecord` after `0f06852`.
 
 ---
 
 ## 3. V1 focus (this weekend)
 
-**Stabilize before new product features.**
+**Stabilize device verification; guest memory foundation is shipped.**
 
-Ordered work ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md)):
+### Done (backend + iOS product)
 
-1. ~~**Guest self-service cancel + cache**~~ — **verified in production** (`d46713a`+ deployed; dead-state on reload confirmed).
-2. ~~**Production auth**~~ — **app login works** in production; optional curl spot-check of `/ping` / `/restaurant-setup` remains available.
-3. ~~**Pipeline diagnostics**~~ — **reviewed**; one `unexplained_missing` item is a known old pre-hardening test — **non-blocking for V1**.
-4. **iOS data/fetch on device** — foreground/privacy refresh (`b910bd1`), bounded-full, no import on normal refresh — **still open**.
-5. **Confirmation mode on restaurant iPad** — confirm Mail vs backend `/confirm` setting matches pilot intent — **still open**.
-6. **Final V1 smoke test** — end-to-end staff ops on the restaurant iPad — **still open**.
+1. ~~Guest self-service cancel + cache~~ — verified in production.
+2. ~~Production auth~~ — app login works.
+3. ~~Pipeline diagnostics~~ — reviewed; old `unexplained_missing` test non-blocking.
+4. ~~Guest profile local cache foundation~~ — `0f06852` (SwiftData + incremental list sync).
+5. ~~Manual intake local guest cache + walk-in~~ — `0a89caa` (call-in, walk-in, known guest, phone UX, local lookup).
 
-**After open items:** walk-ins/wait room or guest persistence — Bohdan decides.
+### Still open (stabilization)
 
-**Not production-ready:** V1 stabilization is not complete until device refresh, confirmation mode, and final smoke test pass.
+6. **iOS data/fetch on device** — foreground/privacy refresh (`b910bd1`).
+7. **Confirmation mode on restaurant iPad** — Mail vs backend `/confirm`.
+8. **Final V1 smoke test** — end-to-end staff ops on restaurant iPad (include guest cache + walk-in spot-checks).
+
+**Not production-ready** until items 6–8 pass.
+
+### Next product slice (after stabilization)
+
+9. **Guests tab + detail local-first cache wiring** — `GuestLookupView` still reservation-history only; detail should read disk cache before network where safe.
+
+### Before broader product release (not V1 pilot blocker)
+
+10. **Indexed / predicate-based local guest search** — replace broad in-memory filtering; acceptable for Tryzub V1 pilot only.
+
+**Parked:** offline queue, SMS, broad Host redesign, full AI clustering / “knows each other” / local semantic tags, VIP editor without backend contract.
 
 ---
 
@@ -97,40 +110,45 @@ Ordered work ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md)):
 
 | Rule | Detail |
 |------|--------|
-| Backend is source of truth | SwiftData is operational cache only |
-| No offline queue in V1 | No offline manual create/edit queue; mutations blocked when degraded; cache stays visible |
-| No duplicate Host stale UI | `HomeServiceStatusPresenter` / `ScreenFreshnessState` already show Updated/Checked/Saved data |
-| Guest token after cancel | Token **stays valid**; page shows **cancelled dead state**, not invalid link |
-| No zip in git | Build locally; folder must be `tryzub-reservations-api/` inside zip |
-| No backend contract duplication | API/schema live in backend README + INTELLIGENCE only |
+| Backend is source of truth | SwiftData (reservations + guest profiles) is operational cache only |
+| Guest profiles server-side | Precomputed in `tryzub_guest_profiles`; iOS list sync uses `updated_since` |
+| Manual intake lookup | **Local only** on phone keystroke — no `/guest-profiles` per digit |
+| Manual create identity | **No `guest_key` on create** — send contact fields; backend resolves after insert |
+| Walk-in create | `manual_walk_in` + `seated`; known guest walk-in keeps `manual_walk_in` for analytics |
+| Known guest call-in | `known_guest_manual` + `confirmed` when staff taps Use / books from Guests |
+| No offline queue in V1 | Mutations blocked when degraded |
+| No duplicate Host stale UI | `HomeServiceStatusPresenter` / `ScreenFreshnessState` already exist |
+| Guest token after cancel | Token stays valid; cancelled dead state |
+| No zip in git | Build locally |
 | Normal iOS refresh | Must **not** call `POST /managed-reservations/import` |
-
-**Parked / not V1:** offline queue, SMS automation, broad Host redesign, new LLM features, multi-tenant rewrite.
 
 ---
 
 ## 5. Code truths docs must match
 
+### Guest memory (iOS — `0f06852` + `0a89caa`)
+
+- `GuestProfileCacheRecord` in SwiftData; registered in `Tryzub_ReservationsApp` `ModelContainer`.
+- `GuestProfileSyncService` paginates `GET /guest-profiles` after `canStartNoncriticalStartupLoads`; cursor in UserDefaults (`tryzub.guestProfiles.lastUpdatedSince.v1`).
+- **List sync only** — no bulk detail/history prefetch, no `/guest-profiles/rebuild`, no `/guest-intelligence` on typing.
+- `GuestLookupStore` merges cache + `ReservationRecord` history for **manual intake**; **Guests tab not wired yet**.
+- Phone: `GuestLookupPhoneNormalizer.digits`; intake phone `.textContentType(.none)`.
+- In-memory filter over full cache rows: **V1 pilot acceptable**; indexed search required before broader release.
+
 ### Sync / freshness (iOS)
 
 - Cache-first startup; active-window full vs delta upsert.
-- **`server_time` cursors persist in UserDefaults** (`tryzub.sync.serverCursors.v1`) — not in-memory only; **not** an offline mutation queue.
-- Bounded-full: force full replace after 5 deltas or 2 hours without full.
-- `lastSyncedAt`, `lastFreshnessCheckedAt`, `cacheTrustSource` = presentation/session fields, not server truth.
+- `server_time` cursors persist in UserDefaults — not an offline mutation queue.
+- Bounded-full after 5 deltas or 2 hours.
 
 ### Confirmation (staff)
 
-- **Both paths exist:** manual Mail and `POST /managed-reservations/{id}/confirm`.
-- Active behavior depends on **Email Automation / This iPad Email Controls** (`EmailAutomationSettings.backendConfirmationEnabled`).
-- **Code default is `true`** — do not assume Mail-first unless pilot iPad setting is confirmed.
-- Manual Mail: manage link → Mail composer → `manual-email-log` → PATCH `confirmed` on `.sent` only.
-- Backend confirm: server send path; **confirmation mode on the restaurant iPad still needs explicit verification** (queue item #5).
+- Both Mail and `POST /confirm` paths exist; device setting matters (`EmailAutomationSettings.backendConfirmationEnabled`, default `true`).
+- Hardening at `cf6e641` — pre-reconcile before backend confirm.
 
 ### Guest self-service (backend `d46713a`+)
 
-- Public `GET/POST /reservation-self*` with no-store headers.
-- JS: `cache: 'no-store'`, `_ts` on GET, POST cancel returns refreshed guest-safe `data`.
-- Cancellation email after status update + re-fetch (`239b297`).
+- Public routes with no-store headers; cancel returns refreshed guest-safe `data`.
 
 ---
 
@@ -138,39 +156,14 @@ Ordered work ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md)):
 
 | Check | Status |
 |-------|--------|
-| Anonymous `/ping` | Done |
-| Protected routes 401 without auth | Done |
-| Guest cancel email received | Done |
-| Guest cancelled page / dead-state after reload | Done |
-| App login (manager/developer protected routes) | Done |
-| Pipeline `unexplained_missing` item | Known old pre-hardening test — non-blocking for V1 |
+| Guest cancel + dead-state | Done |
+| App login | Done |
+| Pipeline unexplained item | Known old test — non-blocking |
 | iOS foreground/privacy refresh on device | **Open** |
-| Confirmation mode on restaurant iPad (Mail vs backend `/confirm`) | **Open** |
-| Final V1 smoke test (staff ops on restaurant iPad) | **Open** |
-
-Optional spot-checks (not blocking if app login already works): manager `/ping` curl, `Cache-Control: no-store` header audit on `/reservation-self`.
-
-Guest cancel curl (disposable token only):
-
-```bash
-export BASE_URL="https://tryzubchicago.com/wp-json/tryzub/v1"
-export TOKEN="..."   # never commit; never paste in chat
-
-curl -sS -D - -o /dev/null "$BASE_URL/reservation-self?token=$TOKEN&_ts=$(date +%s)"
-curl -sS "$BASE_URL/reservation-self?token=$TOKEN&_ts=$(date +%s)" | jq '.data.status, .data.can_request_cancel'
-```
-
-Manager + pipeline (Application Password in local env file only):
-
-```bash
-source ~/tryzub-local-api.env   # WP_USER, WP_APP_PASSWORD — never commit
-
-curl -sS -u "$WP_USER:$WP_APP_PASSWORD" "$BASE_URL/ping" | jq '.user'
-
-curl -sS -u "$WP_USER:$WP_APP_PASSWORD" \
-  "$BASE_URL/intelligence/reservation-pipeline-diagnostics?from=$FROM&to=$TO&include_items=0" \
-  | jq '.data.summary, .data.manager_message'
-```
+| Confirmation mode on restaurant iPad | **Open** |
+| Final V1 smoke test | **Open** |
+| Guest profile sync on pilot iPad | **Open** (post-`0f06852`) |
+| Manual walk-in / known-guest intake on pilot iPad | **Open** (post-`0a89caa`) |
 
 ---
 
@@ -182,10 +175,6 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
   -x "tryzub-reservations-api/.git/*" "tryzub-reservations-api/.git/**"
 ```
 
-- Upload in WordPress → Plugins (must replace existing `tryzub-reservations-api` folder).
-- Purge cache for `/manage-reservation/` after guest self-service deploy.
-- Delete duplicate plugin folder if a bad flat zip created a second copy.
-
 ---
 
 ## 8. Agent workflow
@@ -196,33 +185,26 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
 | Code | **GPT-5.5 Agent** | Implements from exact handoff; allowed files only |
 | Product / deploy | **Bohdan** | Priorities, credentials, WordPress upload, device testing |
 
-**Rules:**
-
-- Audit first, implement second.
-- One commit per concern.
-- Do not commit without Bohdan asking.
-- Do not track zip files.
-- Composer prompts: scope files explicitly; forbid unrelated dirty files.
-
 ---
 
 ## 9. What to tell Bohdan when he asks “what’s next?”
 
-1. Device-test iOS refresh after background/privacy unlock (`b910bd1`).
-2. Confirm confirmation mode on the restaurant iPad matches pilot intent.
-3. Run final V1 smoke test on the restaurant iPad.
-4. If all green → pick walk-ins or guest persistence.
-5. Do **not** start offline queue, Host stale-warning UI, or broad refactors.
-6. Do **not** treat the app as fully production-ready until open verification items pass.
+1. Device-test iOS refresh (`b910bd1`).
+2. Confirm confirmation mode on restaurant iPad.
+3. Final V1 smoke test (include guest cache sync + walk-in/known-guest).
+4. If green → **Guests tab + detail local-first cache wiring**.
+5. Before broader release → **indexed local guest search**.
+6. Do **not** start offline queue, AI clustering, or VIP editor without backend contract.
 
 ---
 
 ## 10. Known risks
 
-- Deployed plugin SHA is not tracked in git; submodule pointer is repo truth.
-- Stale iOS PATCH without `expected_updated_at` can revert guest `cancelled` → `confirmed`.
-- Pipeline may still surface historical `unexplained_missing` rows from pre-hardening tests — treat as known, not a live mystery.
+- Deployed plugin SHA not tracked in git; submodule pointer is repo truth.
+- Stale staff PATCH can revert guest `cancelled`.
+- Guests tab still misses backend cache merge until next slice.
+- Broad in-memory guest search will not scale beyond pilot — plan indexed search.
 
 ---
 
-*Last aligned: 2026-06-24 (production guest cancel + login verified). Update when repo HEAD, V1 slice, or verification status changes materially.*
+*Last aligned: 2026-06-25 (guest cache `0f06852` + intake `0a89caa` pushed). Update when repo HEAD or verification status changes materially.*

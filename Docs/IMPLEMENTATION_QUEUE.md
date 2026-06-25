@@ -2,9 +2,9 @@
 
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md) · [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) · [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md)
 
-Ordered slices for **V1 production stabilization**. Finish open items (#4, #4b, #4c) before new product features. One slice per commit series unless explicitly combined.
+Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9) is **done**. Next product slice: **Guests tab + detail local-first wiring** (#5).
 
-**Current focus:** iOS device verification, confirmation mode on restaurant iPad, and final V1 smoke test — backend guest self-service, auth, and pipeline items verified in production.
+**Current focus:** iOS device verification, confirmation mode on restaurant iPad, final V1 smoke test — then Guests tab cache wiring.
 
 ---
 
@@ -12,12 +12,9 @@ Ordered slices for **V1 production stabilization**. Finish open items (#4, #4b, 
 
 | Field | Value |
 |-------|-------|
-| **Status** | **done** — verified in production (cancel email + cancelled dead-state on reload) |
-| **Scope** | `reservation-self-service.php` (no-store headers, POST `data`, JS cache bust) |
-| **Prior work** | `239b297` cancellation email + dead-state UI; `854b82d`/`6a30203` copy |
-| **Why** | Production showed Confirmed + cancel button after successful guest cancel email (stale GET cache) |
-| **Verification** | POST cancel → `data.status=cancelled`; GET headers `no-store`; reload shows dead state; token still valid; push `d46713a`; deploy zip matches submodule SHA |
-| **Do not mix with** | iOS features, walk-ins, guest profile cache |
+| **Status** | **done** — verified in production |
+| **Scope** | `reservation-self-service.php` |
+| **Commits** | `d46713a`, `078a44a` README |
 
 ---
 
@@ -25,11 +22,7 @@ Ordered slices for **V1 production stabilization**. Finish open items (#4, #4b, 
 
 | Field | Value |
 |-------|-------|
-| **Status** | **done** — app login works in production; optional curl spot-check remains |
-| **Scope** | Live WordPress — manager Application Password, `/ping`, protected routes |
-| **Why** | Anonymous checks passed; app login now confirmed live |
-| **Verification** | App login works; optional `/ping` curl and `/restaurant-setup` 200 spot-check |
-| **Do not mix with** | Guest self-service UI changes |
+| **Status** | **done** — app login works in production |
 
 ---
 
@@ -37,11 +30,7 @@ Ordered slices for **V1 production stabilization**. Finish open items (#4, #4b, 
 
 | Field | Value |
 |-------|-------|
-| **Status** | **done** — reviewed; `unexplained_missing` is known old pre-hardening test, non-blocking for V1 |
-| **Scope** | `GET /intelligence/reservation-pipeline-diagnostics`, `/intelligence/system-status` |
-| **Why** | `239b297` flattened `developer_summary`; live check complete |
-| **Verification** | Developer role can load diagnostics; historical unexplained row understood — not a current production mystery |
-| **Do not mix with** | iOS import paths |
+| **Status** | **done** — reviewed; old `unexplained_missing` test non-blocking |
 
 ---
 
@@ -50,10 +39,9 @@ Ordered slices for **V1 production stabilization**. Finish open items (#4, #4b, 
 | Field | Value |
 |-------|-------|
 | **Status** | **current** — code at `b910bd1`; device verification not done |
-| **Scope** | `ReservationsListView`, `ReservationsController`, `ReservationImportService`, `FreshnessCoordinator` |
-| **Why** | Foreground/privacy refresh implemented; cache-first + delta/full policy must be trusted in ops |
-| **Verification** | Background return + privacy unlock refresh board; no import on normal refresh; ghost rows cleared by bounded-full; checked/updated/saved-data UI reflects state (no duplicate stale-warning UI) |
-| **Do not mix with** | Walk-ins, guest SwiftData cache |
+| **Scope** | `ReservationsListView`, `ReservationsController`, `FreshnessCoordinator` |
+| **Verification** | Foreground + privacy unlock refresh; bounded-full; no import on normal refresh |
+| **Do not mix with** | Guests tab cache wiring until stabilization green |
 
 ---
 
@@ -62,10 +50,8 @@ Ordered slices for **V1 production stabilization**. Finish open items (#4, #4b, 
 | Field | Value |
 |-------|-------|
 | **Status** | **current** — not yet verified on pilot device |
-| **Scope** | Email Automation / This iPad Email Controls (`EmailAutomationSettings.backendConfirmationEnabled`) |
-| **Why** | Code default is backend `/confirm` enabled; pilot may intend Mail-first — must match restaurant intent |
-| **Verification** | Confirm active setting on restaurant iPad; send test confirmation; verify expected path (Mail vs server) |
-| **Do not mix with** | Backend schema changes |
+| **Scope** | `EmailAutomationSettings.backendConfirmationEnabled` |
+| **Note** | Confirmation hardening shipped at `cf6e641`; pilot setting still needs explicit check |
 
 ---
 
@@ -74,43 +60,65 @@ Ordered slices for **V1 production stabilization**. Finish open items (#4, #4b, 
 | Field | Value |
 |-------|-------|
 | **Status** | **current** — after #4 and #4b |
-| **Scope** | End-to-end staff ops on restaurant iPad (refresh, reservations, confirm flow, guest self-service spot-check) |
-| **Why** | Individual backend checks passed; full ops pass still required before calling V1 ready |
-| **Do not mix with** | New product features |
+| **Scope** | End-to-end staff ops on restaurant iPad |
+| **Include** | Guest profile background sync (`0f06852`), manual walk-in + known-guest intake (`0a89caa`) |
 
 ---
+
+## 5. Guests tab + detail local-first guest cache wiring
 
 | Field | Value |
 |-------|-------|
-| **Status** | pending — **after #4, #4b, #4c** |
-| **Scope** | `ManualReservationFormView` — pass `manual_walk_in` + seated default |
-| **Why** | Backend accepts walk-in; iOS never sends source type |
-| **Do not mix with** | Backend schema changes (not required for basic path) |
+| **Status** | **next** — after #4, #4b, #4c (or parallel if Bohdan approves) |
+| **Scope** | `GuestLookupView`, `GuestProfileFacade` / `ReservationDetailView`, `RegularGuestsView` — read `GuestProfileCacheRecord` before network |
+| **Why** | Manual intake uses cache; Guests tab search still reservation-history only; detail still network-first |
+| **Verification** | Guests tab finds backend-known guests after sync without typing phone in manual form; detail shows cached aggregate when fresh |
+| **Do not mix with** | AI clustering, VIP editor, offline queue |
 
 ---
 
-## 6. Guest profile local cache / indexing
+## 6. Indexed / predicate-based local guest search
 
 | Field | Value |
 |-------|-------|
-| **Status** | later — **after stabilization** |
-| **Scope** | SwiftData cache record + `GuestProfileStore` |
-| **Why** | Profiles lost on restart; repeated network on detail |
-| **Do not mix with** | Guest Insights Phase 2 UI polish |
+| **Status** | **product-scale follow-up** — required before broader product release |
+| **Scope** | `GuestProfileRepository`, `GuestLookupStore` — replace full-table in-memory filter |
+| **Why** | Broad in-memory filtering is acceptable for **Tryzub V1 pilot only**; will not scale for multi-venue or large guest lists |
+| **Do not mix with** | Backend schema changes |
 
 ---
 
-## 7. Guest `updated_since` incremental sync
+## 7. Guest profile local cache foundation
 
 | Field | Value |
 |-------|-------|
-| **Status** | later |
-| **Scope** | iOS API client + `GuestProfileStore` list fetch |
-| **Why** | Backend supports `updated_since` on `/guest-profiles`; iOS does not pass it |
+| **Status** | **done** — `0f06852` |
+| **Scope** | `GuestProfileCacheRecord`, `GuestProfileRepository`, `GuestProfileSyncService`, `GuestProfileStore` disk write-through, `updated_since` on API client |
+| **Verification** | Background paginated list sync after startup deferral; no detail prefetch |
 
 ---
 
-## 8. ReservationDetail guest fetch dedupe
+## 8. Manual intake local guest cache + walk-in
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done** — `0a89caa` |
+| **Scope** | `ManualReservationFormView`, `GuestLookupStore`, `GuestLookupModels` |
+| **Delivered** | Call-in / walk-in modes; known-guest card + prefill; local cache merge; `manual_walk_in`+`seated`, `known_guest_manual`+`confirmed`; phone `.textContentType(.none)` |
+| **Gap** | Guests tab not wired (see #5) |
+
+---
+
+## 9. Guest `updated_since` incremental sync
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done** — shipped in `0f06852` |
+| **Scope** | `ReservationsAPIClient.fetchGuestProfiles(updatedSince:)`, `GuestProfileSyncService` cursor |
+
+---
+
+## 10. ReservationDetail guest fetch dedupe
 
 | Field | Value |
 |-------|-------|
@@ -119,7 +127,7 @@ Ordered slices for **V1 production stabilization**. Finish open items (#4, #4b, 
 
 ---
 
-## 9. Analytics local persisted cache
+## 11. Analytics local persisted cache
 
 | Field | Value |
 |-------|-------|
@@ -128,30 +136,28 @@ Ordered slices for **V1 production stabilization**. Finish open items (#4, #4b, 
 
 ---
 
-## 10. Public guest token route rate limiting
+## 12. Public guest token route rate limiting
 
 | Field | Value |
 |-------|-------|
 | **Status** | later |
-| **Scope** | `reservation-self-service.php` — per-token / per-IP limits |
+| **Scope** | `reservation-self-service.php` |
 
 ---
 
-## 11. Feedback MVP
+## 13. Feedback MVP
 
 | Field | Value |
 |-------|-------|
 | **Status** | later |
-| **Scope** | TBD — not in current codebase |
 
 ---
 
-## 12. Floor-first Host mode
+## 14. Floor-first Host mode
 
 | Field | Value |
 |-------|-------|
 | **Status** | later |
-| **Scope** | Host Board presentation mode |
 
 ---
 
@@ -159,31 +165,33 @@ Ordered slices for **V1 production stabilization**. Finish open items (#4, #4b, 
 
 | Slice | Commit / note |
 |-------|----------------|
-| Backend guest cancel email + page copy + pipeline flattening | `239b297`, `5a04af4` |
-| iOS foreground / privacy stale refresh (code) | `b910bd1` — verify on device (queue #4) |
-| Guest self-service cache fix | `d46713a` + `078a44a` README — **verified in production** |
-| Production auth (app login) | **Verified in production** |
-| Pipeline diagnostics review | **Done** — unexplained item is known old test |
+| Backend guest cancel + cache | `d46713a`, `078a44a` — verified in production |
+| Production auth | Verified in production |
+| Pipeline diagnostics | Reviewed — old unexplained test |
+| iOS foreground / privacy refresh (code) | `b910bd1` — device verify open (#4) |
+| V1 confirmation hardening | `cf6e641` |
+| Guest profile SwiftData cache + background sync | `0f06852` |
+| Manual intake cache merge + walk-in + known guest | `0a89caa` |
+| Guest list `updated_since` on iOS | `0f06852` |
 
 ---
 
 ## Parked / not v1
 
-Do **not** schedule these as active next work:
-
 | Item | Reason |
 |------|--------|
-| **Host stale warning UI** | `HomeServiceStatusPresenter` / `ScreenFreshnessState` already show Updated / Checked / Saved data / offline — **do not duplicate** unless device testing proves a gap |
-| **Offline manual reservation queue** | Explicitly not v1 — no queued offline creates/edits |
-| **Offline create/edit / sync-when-online queue** | Not v1 — mutations blocked offline; cache view-only |
+| **Offline manual reservation queue** | Explicitly not v1 |
+| **Host stale warning UI** | Already covered by `HomeServiceStatusPresenter` / `ScreenFreshnessState` |
+| **Broad Host redesign** | After stabilization |
+| **Full AI clustering / “knows each other” / local semantic tags** | Not started |
+| **VIP editor** | No backend guest-level notes contract |
 | Multi-tenant rewrite | Post-pilot |
-| SMS automation | Cost / owner decision |
-| Broad Host redesign | After stabilization |
-| New LLM / AI feature work | Host Intelligence local model is wording-only per [HOST_INTELLIGENCE.md](./HOST_INTELLIGENCE.md) |
+| SMS automation | Owner decision |
+| New LLM feature work | Host Intelligence local model is wording-only |
 
 ---
 
 ## Deploy artifacts
 
 - `Backend/*.zip` is **gitignored** — build locally when deploying.
-- Zip must wrap files in `tryzub-reservations-api/` folder for WordPress plugin update (not flat archive root).
+- Zip must wrap files in `tryzub-reservations-api/` folder for WordPress plugin update.

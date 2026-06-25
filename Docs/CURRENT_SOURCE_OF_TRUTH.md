@@ -1,6 +1,6 @@
 # Current Source of Truth — Tryzub Reservations
 
-**Last reviewed:** 2026-06-24  
+**Last reviewed:** 2026-06-25  
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md)
 
 Compact master rules. When this file conflicts with stale index/diagram docs, **this file and backend plugin docs win**.
@@ -12,7 +12,7 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 ## 1. Authority rules
 
 1. **Backend** ([README.md](../Backend/tryzub-reservations-api/README.md), [INTELLIGENCE.md](../Backend/tryzub-reservations-api/INTELLIGENCE.md)) is source of truth for API routes, DB schema, guest tokens, email types, intelligence payloads, and pipeline diagnostics.
-2. **SwiftData** (`ReservationRecord` and related records) is **local iOS operational cache only** — never authoritative over the server.
+2. **SwiftData** (`ReservationRecord`, `GuestProfileCacheRecord`, and related records) is **local iOS operational cache only** — never authoritative over the server.
 3. **iOS** reads and writes **managed reservations** via the private REST API. It does **not** use raw Flamingo for normal staff workflow.
 4. **Normal iOS refresh must not call** `POST /managed-reservations/import`.
 5. **Do not create a second sync manager.** `ReservationsController` + `ReservationSyncService` own refresh and mutation orchestration.
@@ -26,11 +26,15 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 1. **Cache-first startup** — show local SwiftData when available; network pass follows.
 2. **Active-window sync** — full replace vs delta upsert per `ReservationsController` policy (bounded-full after 5 deltas or 2 hours).
 3. **Sync cursor persistence** — active-window `server_time` cursors live in `ReservationsController.serverCursorByScope` and are **persisted in UserDefaults** (`tryzub.sync.serverCursors.v1`) so delta/full policy can resume after relaunch. Scope last-success timestamps and active-window bounds metadata are also persisted in UserDefaults. This is **not** an offline mutation queue.
-4. **SwiftData** stores reservation rows (operational cache only). **`lastSyncedAt`**, **`lastFreshnessCheckedAt`**, and **`cacheTrustSource`** are controller presentation/session fields rehydrated from local DB timestamps and startup state where applicable — not server truth.
-5. **Foreground / privacy unlock refresh** — implemented `b910bd1` via `autoRefreshDashboardIfAllowed` in `ReservationsListView`.
-6. **Stale local cache risk** — if refresh skipped, fails, or staff device holds old PATCH without `expected_updated_at`, UI can disagree with server.
-7. **Offline / degraded** — no offline manual create/edit queue in V1. Mutations are blocked when network is unavailable; cache remains visible for viewing. Offline notices only.
-8. **Checked/fetched UI** — Host already shows checked/updated/saved-data state via `HomeServiceStatusPresenter` and `ScreenFreshnessState`. Do not add duplicate Host stale-warning UI without device-proven gap.
+4. **SwiftData** stores reservation rows and guest profile list aggregates (operational cache only). **`lastSyncedAt`**, **`lastFreshnessCheckedAt`**, and **`cacheTrustSource`** are controller presentation/session fields rehydrated from local DB timestamps and startup state where applicable — not server truth.
+5. **Guest profile list sync** — iOS fetches `GET /guest-profiles` incrementally (`updated_since`) in background after startup deferral; **list only**, no bulk detail/history prefetch on sync.
+6. **Manual intake guest lookup** — local merge of `GuestProfileCacheRecord` + `ReservationRecord` history; **no network on phone keystroke**.
+7. **Manual create** — does **not** send `guest_key` (backend create contract lacks it); identity resolved server-side from contact fields after insert.
+8. **Foreground / privacy unlock refresh** — implemented `b910bd1` via `autoRefreshDashboardIfAllowed` in `ReservationsListView`.
+9. **Stale local cache risk** — if refresh skipped, fails, or staff device holds old PATCH without `expected_updated_at`, UI can disagree with server.
+10. **Offline / degraded** — no offline manual create/edit queue in V1. Mutations are blocked when network is unavailable; cache remains visible for viewing. Offline notices only.
+11. **Checked/fetched UI** — Host already shows checked/updated/saved-data state via `HomeServiceStatusPresenter` and `ScreenFreshnessState`. Do not add duplicate Host stale-warning UI without device-proven gap.
+12. **Guest search scale** — broad in-memory filter over cached profiles is acceptable for **Tryzub V1 pilot only**; indexed / predicate-based local search is required before broader product release.
 
 ---
 

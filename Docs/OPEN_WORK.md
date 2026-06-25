@@ -1,12 +1,13 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Last reviewed:** 2026-06-24  
-**Scope:** Stabilization only — no V2 automation unless noted
+**Root HEAD:** `0a89caa` (pending doc commit)  
+**Last reviewed:** 2026-06-25  
+**Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
 **Priority order:** [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) owns what to do next. This file tracks backlog items and implementation status. Production/device verification remains open even when code is implemented.
 
-**Not V1:** offline manual reservation queue; offline create/edit sync queue.
+**Not V1:** offline manual reservation queue; offline create/edit sync queue; full AI clustering / “knows each other”; VIP editor without backend contract.
 
 Every item includes risk, files, approach, acceptance test, and classification.
 
@@ -142,6 +143,32 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 
 ---
 
+## P1 — Guest memory (post-foundation)
+
+### P1-5: Guests tab + detail local-first guest cache wiring
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Staff search Guests tab misses backend-known profiles already on disk |
+| **Files** | `GuestLookupView.swift`, `GuestProfileFacade.swift`, `ReservationDetailView.swift`, `RegularGuestsView.swift` |
+| **Approach** | Pass `ModelContext` to `GuestLookupStore.updateCache`; read-through from `GuestProfileCacheRecord` before network |
+| **Acceptance** | After background sync, Guests tab finds a known profile without manual-form phone entry; detail uses cache when fresh |
+| **Class** | V1 product — iOS only |
+| **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #5 |
+
+### P1-6: Indexed / predicate-based local guest search
+
+| Field | Value |
+|-------|-------|
+| **Risk** | Full-table in-memory filter degrades as guest list grows |
+| **Files** | `GuestProfileRepository.swift`, `GuestLookupStore.swift` |
+| **Approach** | SwiftData predicates / phone-prefix index; avoid scanning all rows on each keystroke |
+| **Acceptance** | Lookup remains local-only; search latency stable with 500+ cached profiles |
+| **Class** | **Required before broader product release** — acceptable for Tryzub V1 pilot only as-is |
+| **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #6 |
+
+---
+
 ## P3 — Structural (post-stabilization)
 
 ### P3-1: Split `ReservationsListView.swift`
@@ -192,6 +219,10 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 
 ## Implemented — remove from active backlog
 
+- Guest profile SwiftData cache + background incremental list sync (`0f06852`)
+- Guest list `updated_since` on iOS API client + UserDefaults sync cursor (`0f06852`)
+- Manual intake: local guest cache merge, call-in/walk-in modes, known-guest prefill, phone UX (`0a89caa`)
+- V1 confirmation flow hardening (`cf6e641`)
 - Mail-first confirm + manual-email-log + PATCH (when backend confirmation is **off** on device)
 - Both backend `/confirm` and manual Mail paths exist; active path is setting-dependent (`EmailAutomationSettings`, default `backendConfirmationEnabled = true`)
 - Foreground / privacy-cover refresh (`b910bd1`) — code done; device verify open
