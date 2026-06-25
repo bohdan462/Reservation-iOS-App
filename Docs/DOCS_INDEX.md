@@ -10,6 +10,7 @@ Do not implement from stale index or diagram files listed under [Stale / archive
 
 | Doc | Purpose |
 |-----|---------|
+| [SECOND_ENGINEER_CONTEXT.md](./SECOND_ENGINEER_CONTEXT.md) | ChatGPT / second-engineer alignment: priorities, repo state, V1 rules, verification |
 | [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) | Non-negotiable architecture and workflow rules |
 | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) | V1 stabilization order (self-service verify → auth → pipeline → iOS freshness) |
 | [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) | Active slice: production stabilization and verification checklist |

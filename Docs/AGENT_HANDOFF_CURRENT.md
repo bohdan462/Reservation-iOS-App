@@ -14,17 +14,18 @@ Production stabilization: self-service cancellation, auth, pipeline, data freshn
 
 | Location | State |
 |----------|--------|
-| **Root branch** | `audit-current-state` — clean working tree |
-| **Root HEAD** | `7b3f3d4` — Stop tracking backend deploy zip artifacts |
-| **Root vs remote** | **4 commits ahead** of `origin/audit-current-state` (not pushed) |
-| **Backend submodule pointer** | `d46713a` — Prevent cached guest self-service status after cancellation |
-| **Backend branch** | `AI` — clean working tree |
-| **Backend HEAD** | `d46713a` |
-| **Backend vs remote** | **2 commits ahead** of `origin/AI` (not pushed) |
+| **Root branch** | `audit-current-state` |
+| **Root HEAD** | `2b2bc8f` — Align docs with current sync and confirmation behavior |
+| **Root vs remote** | Pushed to `origin/audit-current-state` at `2b2bc8f` (pending this doc commit) |
+| **Backend submodule pointer** | `078a44a` — Document guest self-service cache contract |
+| **Backend branch** | `AI` |
+| **Backend HEAD** | `078a44a` |
+| **Backend vs remote** | Pushed to `origin/AI` at `078a44a` |
 | **iOS** | `b910bd1` committed on root — foreground/privacy-cover refresh |
 
 **Recent root commits (newest first):**
 
+- `2b2bc8f` — align docs with sync/confirmation behavior
 - `7b3f3d4` — stop tracking `Backend/*.zip`; add gitignore rule
 - `518bdc3` — fix deploy zip WordPress folder layout (historical; zips no longer tracked)
 - `d3edd40` — submodule pointer → `d46713a` (cache fix)
@@ -32,12 +33,13 @@ Production stabilization: self-service cancellation, auth, pipeline, data freshn
 
 **Backend commits on pointer (newest first):**
 
+- `078a44a` — document guest self-service cache contract (README)
 - `d46713a` — guest self-service no-store headers, JS cache bust, POST cancel returns refreshed `data`
 - `854b82d` / `6a30203` — guest-facing confirmation/cancellation/page copy
 - `239b297` — guest cancellation email, cancelled dead-state UI, pipeline `developer_summary` flattening
 - `5a04af4` — auth role repair and diagnostics
 
-**Deploy zip:** not tracked in git (`Backend/*.zip` ignored). Production package must be built locally from backend `HEAD` and verified separately from repo pointer.
+**Deploy zip:** not tracked in git (`Backend/*.zip` ignored). Build locally from backend `HEAD` when deploying.
 
 ---
 
@@ -45,10 +47,14 @@ Production stabilization: self-service cancellation, auth, pipeline, data freshn
 
 Stabilize **production correctness** and **data fetch/freshness** before new product features.
 
-1. Verify guest self-service cancellation end-to-end after cache fix (`d46713a`).
-2. Confirm commit/push/deploy consistency (local vs remote vs WordPress).
-3. Verify manager auth and pipeline diagnostics on live WordPress.
+1. ~~Verify guest self-service cancellation end-to-end after cache fix (`d46713a`).~~ **Done in production** (cancel email + cancelled dead-state on reload).
+2. ~~Confirm commit/push/deploy consistency (local vs remote vs WordPress).~~ **Repo pushed** at `078a44a` / `2b2bc8f`; guest self-service behavior verified live.
+3. ~~Verify manager auth and pipeline diagnostics on live WordPress.~~ **App login works**; pipeline `unexplained_missing` traced to old pre-hardening test — non-blocking.
 4. Verify iOS data/fetch/storage behavior on device (foreground/privacy refresh at `b910bd1`).
+5. Confirm confirmation mode on the restaurant iPad (Mail vs backend `/confirm`).
+6. Final V1 smoke test on the restaurant iPad.
+
+**Not production-ready** until items 4–6 pass.
 
 **Parked for v1:** offline manual reservation queue, offline create/edit, Host stale-warning UI (checked/fetched status already exists), broad Host redesign, SMS, new LLM work.
 
@@ -67,17 +73,17 @@ Implemented in `Backend/tryzub-reservations-api/includes/reservation-self-servic
 | JS | Cancel success applies POST `data` immediately; reconcile GET is cache-busted and non-fatal on failure |
 | Product | Guest manage **token stays valid** after cancellation; page shows cancelled dead state |
 
-**Status:** committed locally (`d46713a`), submodule pointer updated, **not pushed**, **production dead-state after reload not yet verified** after latest upload.
+**Status:** committed and pushed (`d46713a` + `078a44a` README); **verified in production** — guest cancel email received, cancelled dead-state on reload confirmed.
 
 ---
 
-## Production deploy state (uncertainty)
+## Production deploy state
 
 | Item | Status |
 |------|--------|
-| Known uploaded zip SHA | **Unknown** — deploy zips are not in git |
-| Submodule / backend code truth | `d46713a` |
-| Mismatch risk | **High** if production zip was built from wrong layout (`git archive` flat root) or pre-`d46713a` commit |
+| Guest self-service cache fix | **Live and verified** — cancel + dead-state on reload |
+| App login | **Works** in production |
+| Deployed zip SHA in git | **Not tracked** — build locally when redeploying |
 | Zip build rule | Compress full folder: `zip -r tryzub-reservations-api.zip tryzub-reservations-api -x "tryzub-reservations-api/.git/*"` — must include `tryzub-reservations-api/` wrapper |
 
 ---
@@ -87,18 +93,19 @@ Implemented in `Backend/tryzub-reservations-api/includes/reservation-self-servic
 - Anonymous `GET /ping` → 200
 - Protected routes without auth → 401
 - Guest cancel route exists; empty/invalid token → safe 404
-- Real guest cancellation email received (proves cancel handler ran; email text is hardcoded — does not alone prove GET returns `cancelled`)
+- Guest cancellation email received
+- Guest token page after cache fix: reload shows cancelled dead state (no cancel button, `status=cancelled`)
+- App login (manager/developer protected routes) works
+- Pipeline diagnostics reviewed; `unexplained_missing` item is a known old pre-hardening test — **non-blocking for V1**
 
 ## Not yet verified in production
 
-- Manager `/ping` → `user.can_manage_tryzub_reservations: true`
-- `GET /restaurant-setup` authenticated → 200
-- `GET /intelligence/reservation-pipeline-diagnostics` authenticated
-- Guest token page **after cache fix**: reload shows `Reservation Cancelled`, no cancel button, `status=cancelled`
-- `GET /reservation-self` response headers include `Cache-Control: no-store`
-- POST cancel response includes refreshed `data.status=cancelled`
 - iOS foreground/privacy-cover refresh on physical device
-- No stale staff PATCH reverting guest cancellation (check activity log if curl shows `confirmed` after cancel)
+- Confirmation mode on restaurant iPad (Mail vs backend `/confirm` setting)
+- Final V1 smoke test (end-to-end staff ops on restaurant iPad)
+- No stale staff PATCH reverting guest cancellation (check activity log if status regresses)
+
+Optional spot-checks: manager `/ping` curl, `GET /restaurant-setup`, `Cache-Control: no-store` header audit on `/reservation-self`.
 
 ---
 
@@ -143,13 +150,10 @@ Implemented in `ReservationsListView.swift`:
 
 ## Next exact actions
 
-1. **Push** backend `AI` (`d46713a`) then root `audit-current-state` (submodule + doc commits when approved).
-2. **Build** deploy zip from full `tryzub-reservations-api/` folder (not bare `git archive`).
-3. **Deploy** to WordPress; purge `/manage-reservation/` cache.
-4. **Verify** guest cancelled dead-state on reload + no-store headers.
-5. **Verify** manager ping, restaurant setup, pipeline diagnostics with credentials.
-6. **Verify** iOS foreground/privacy refresh on device.
-7. Only then pick product slice: walk-ins/wait room vs guest persistence (see [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md)).
+1. **Device-test** iOS foreground/privacy refresh (`b910bd1`).
+2. **Confirm** confirmation mode on restaurant iPad matches pilot intent.
+3. **Run** final V1 smoke test on restaurant iPad.
+4. Only then pick product slice: walk-ins/wait room vs guest persistence (see [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md)).
 
 ---
 

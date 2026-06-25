@@ -2,9 +2,9 @@
 
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md) · [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) · [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md)
 
-Ordered slices for **V1 production stabilization**. Finish #1–#4 before new product features. One slice per commit series unless explicitly combined.
+Ordered slices for **V1 production stabilization**. Finish open items (#4, #4b, #4c) before new product features. One slice per commit series unless explicitly combined.
 
-**Current focus:** data storage/fetch/freshness correctness and backend production verification — not new guest or Host product work.
+**Current focus:** iOS device verification, confirmation mode on restaurant iPad, and final V1 smoke test — backend guest self-service, auth, and pipeline items verified in production.
 
 ---
 
@@ -12,7 +12,7 @@ Ordered slices for **V1 production stabilization**. Finish #1–#4 before new pr
 
 | Field | Value |
 |-------|-------|
-| **Status** | **current** — code committed `d46713a`; live verification pending |
+| **Status** | **done** — verified in production (cancel email + cancelled dead-state on reload) |
 | **Scope** | `reservation-self-service.php` (no-store headers, POST `data`, JS cache bust) |
 | **Prior work** | `239b297` cancellation email + dead-state UI; `854b82d`/`6a30203` copy |
 | **Why** | Production showed Confirmed + cancel button after successful guest cancel email (stale GET cache) |
@@ -25,10 +25,10 @@ Ordered slices for **V1 production stabilization**. Finish #1–#4 before new pr
 
 | Field | Value |
 |-------|-------|
-| **Status** | pending |
+| **Status** | **done** — app login works in production; optional curl spot-check remains |
 | **Scope** | Live WordPress — manager Application Password, `/ping`, protected routes |
-| **Why** | Anonymous checks pass; manager `can_manage_tryzub_reservations` not verified live |
-| **Verification** | `/ping` with manager creds; `/restaurant-setup` 200; role repair from `5a04af4` confirmed on production |
+| **Why** | Anonymous checks passed; app login now confirmed live |
+| **Verification** | App login works; optional `/ping` curl and `/restaurant-setup` 200 spot-check |
 | **Do not mix with** | Guest self-service UI changes |
 
 ---
@@ -37,10 +37,10 @@ Ordered slices for **V1 production stabilization**. Finish #1–#4 before new pr
 
 | Field | Value |
 |-------|-------|
-| **Status** | pending |
+| **Status** | **done** — reviewed; `unexplained_missing` is known old pre-hardening test, non-blocking for V1 |
 | **Scope** | `GET /intelligence/reservation-pipeline-diagnostics`, `/intelligence/system-status` |
-| **Why** | `239b297` flattened `developer_summary`; needs authenticated live check |
-| **Verification** | Developer role can load diagnostics; unexplained intake visible; no stale doc assumptions |
+| **Why** | `239b297` flattened `developer_summary`; live check complete |
+| **Verification** | Developer role can load diagnostics; historical unexplained row understood — not a current production mystery |
 | **Do not mix with** | iOS import paths |
 
 ---
@@ -49,7 +49,7 @@ Ordered slices for **V1 production stabilization**. Finish #1–#4 before new pr
 
 | Field | Value |
 |-------|-------|
-| **Status** | pending — code at `b910bd1`; device verification not done |
+| **Status** | **current** — code at `b910bd1`; device verification not done |
 | **Scope** | `ReservationsListView`, `ReservationsController`, `ReservationImportService`, `FreshnessCoordinator` |
 | **Why** | Foreground/privacy refresh implemented; cache-first + delta/full policy must be trusted in ops |
 | **Verification** | Background return + privacy unlock refresh board; no import on normal refresh; ghost rows cleared by bounded-full; checked/updated/saved-data UI reflects state (no duplicate stale-warning UI) |
@@ -57,11 +57,32 @@ Ordered slices for **V1 production stabilization**. Finish #1–#4 before new pr
 
 ---
 
-## 5. Walk-in / wait room creation
+## 4b. Confirmation mode on restaurant iPad
 
 | Field | Value |
 |-------|-------|
-| **Status** | pending — **after #1–#4** |
+| **Status** | **current** — not yet verified on pilot device |
+| **Scope** | Email Automation / This iPad Email Controls (`EmailAutomationSettings.backendConfirmationEnabled`) |
+| **Why** | Code default is backend `/confirm` enabled; pilot may intend Mail-first — must match restaurant intent |
+| **Verification** | Confirm active setting on restaurant iPad; send test confirmation; verify expected path (Mail vs server) |
+| **Do not mix with** | Backend schema changes |
+
+---
+
+## 4c. Final V1 smoke test
+
+| Field | Value |
+|-------|-------|
+| **Status** | **current** — after #4 and #4b |
+| **Scope** | End-to-end staff ops on restaurant iPad (refresh, reservations, confirm flow, guest self-service spot-check) |
+| **Why** | Individual backend checks passed; full ops pass still required before calling V1 ready |
+| **Do not mix with** | New product features |
+
+---
+
+| Field | Value |
+|-------|-------|
+| **Status** | pending — **after #4, #4b, #4c** |
 | **Scope** | `ManualReservationFormView` — pass `manual_walk_in` + seated default |
 | **Why** | Backend accepts walk-in; iOS never sends source type |
 | **Do not mix with** | Backend schema changes (not required for basic path) |
@@ -138,9 +159,11 @@ Ordered slices for **V1 production stabilization**. Finish #1–#4 before new pr
 
 | Slice | Commit / note |
 |-------|----------------|
-| Backend guest cancel email + page copy + pipeline flattening | `239b297`, `5a04af4`; root pointer was `3c44856` era |
-| iOS foreground / privacy stale refresh | `b910bd1` — verify on device (queue #4) |
-| Guest self-service cache fix (code) | `d46713a` — verify live (queue #1) |
+| Backend guest cancel email + page copy + pipeline flattening | `239b297`, `5a04af4` |
+| iOS foreground / privacy stale refresh (code) | `b910bd1` — verify on device (queue #4) |
+| Guest self-service cache fix | `d46713a` + `078a44a` README — **verified in production** |
+| Production auth (app login) | **Verified in production** |
+| Pipeline diagnostics review | **Done** — unexplained item is known old test |
 
 ---
 
