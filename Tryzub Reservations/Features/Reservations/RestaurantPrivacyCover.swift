@@ -391,18 +391,19 @@ final class RestaurantPrivacyCoverController: ObservableObject {
         isCoverPresented = false
     }
 
-    func recordInteraction() {
+    func recordInteraction(onCoverDismissed: (() -> Void)? = nil) {
         lastInteraction = Date()
         if isCoverPresented {
             withAnimation(.easeOut(duration: 0.28)) {
                 isCoverPresented = false
             }
             stopSnapshotRefresh()
+            onCoverDismissed?()
         }
     }
 
-    func dismissCover() {
-        recordInteraction()
+    func dismissCover(onCoverDismissed: (() -> Void)? = nil) {
+        recordInteraction(onCoverDismissed: onCoverDismissed)
     }
 
     func beginCoverSession(makeSnapshot: @escaping () -> RestaurantPrivacyCoverSnapshot) {
@@ -442,13 +443,16 @@ private struct RestaurantPrivacyCoverModifier: ViewModifier {
     @EnvironmentObject private var privacyCoverSettings: RestaurantPrivacyCoverSettingsStore
     @StateObject private var controller = RestaurantPrivacyCoverController()
     let makeSnapshot: () -> RestaurantPrivacyCoverSnapshot
+    let onCoverDismissed: (() -> Void)?
 
     func body(content: Content) -> some View {
         content
             .background {
                 PrivacyCoverInteractionObserver(
                     isActive: privacyCoverSettings.isActive,
-                    onInteraction: controller.recordInteraction
+                    onInteraction: {
+                        controller.recordInteraction(onCoverDismissed: onCoverDismissed)
+                    }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
@@ -457,7 +461,9 @@ private struct RestaurantPrivacyCoverModifier: ViewModifier {
                 if privacyCoverSettings.isActive, controller.isCoverPresented {
                     RestaurantPrivacyCoverView(
                         snapshot: controller.cachedSnapshot,
-                        onDismiss: controller.dismissCover
+                        onDismiss: {
+                            controller.dismissCover(onCoverDismissed: onCoverDismissed)
+                        }
                     )
                     .transition(.opacity.combined(with: .scale(scale: 1.02)))
                     .zIndex(100)
@@ -492,8 +498,16 @@ private struct RestaurantPrivacyCoverModifier: ViewModifier {
 }
 
 extension View {
-    func restaurantPrivacyCover(snapshot: @escaping () -> RestaurantPrivacyCoverSnapshot) -> some View {
-        modifier(RestaurantPrivacyCoverModifier(makeSnapshot: snapshot))
+    func restaurantPrivacyCover(
+        snapshot: @escaping () -> RestaurantPrivacyCoverSnapshot,
+        onCoverDismissed: (() -> Void)? = nil
+    ) -> some View {
+        modifier(
+            RestaurantPrivacyCoverModifier(
+                makeSnapshot: snapshot,
+                onCoverDismissed: onCoverDismissed
+            )
+        )
     }
 }
 

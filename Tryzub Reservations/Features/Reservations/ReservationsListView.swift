@@ -181,6 +181,7 @@ private struct ReservationsTabShell: View {
     @State private var navigationResetToken = UUID()
     @State private var lastStaffInteractionAt = Date()
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.modelContext) private var modelContext
 
     let environment: AppEnvironment
     let onLogout: () -> Void
@@ -329,19 +330,25 @@ private struct ReservationsTabShell: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 evaluateStaleNavigationReset()
+                refreshOperationalDataAfterUnlock(reason: "foreground")
             }
         }
         .task {
             await runStaleNavigationResetLoop()
         }
-        .restaurantPrivacyCover {
-            var snap = RestaurantPrivacyCoverDataController.snapshot(from: serviceWindowReservations)
-            let briefing = hostIntelligenceController.displayBriefingText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !briefing.isEmpty, briefing != "Nothing needs attention right now." {
-                snap.serviceSummary = RestaurantPrivacyCoverDataController.conciseServiceSummary(from: briefing)
+        .restaurantPrivacyCover(
+            snapshot: {
+                var snap = RestaurantPrivacyCoverDataController.snapshot(from: serviceWindowReservations)
+                let briefing = hostIntelligenceController.displayBriefingText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !briefing.isEmpty, briefing != "Nothing needs attention right now." {
+                    snap.serviceSummary = RestaurantPrivacyCoverDataController.conciseServiceSummary(from: briefing)
+                }
+                return snap
+            },
+            onCoverDismissed: {
+                refreshOperationalDataAfterUnlock(reason: "privacy_cover")
             }
-            return snap
-        }
+        )
         .environmentObject(restaurantSettingsStore)
         .environmentObject(hostTableConfigStore)
         .environmentObject(hostIntelligenceSettingsStore)
@@ -405,6 +412,21 @@ private struct ReservationsTabShell: View {
 
     private func noteStaffInteraction() {
         lastStaffInteractionAt = Date()
+    }
+
+    @MainActor
+    private func refreshOperationalDataAfterUnlock(reason: String) {
+        guard controller.hasReleasedStartupUI else { return }
+        guard !controller.isStartupNetworkPassInFlight else { return }
+        let source: VisibleLiveRefreshSource = selectedTab == .bookings ? .bookings : .host
+        Task { @MainActor in
+            await controller.autoRefreshDashboardIfAllowed(
+                context: modelContext,
+                isInteractionActive: ReservationsPresentedInteractionProbe.hasPresentedInteraction,
+                isAppActive: true,
+                source: source
+            )
+        }
     }
 
     @MainActor
