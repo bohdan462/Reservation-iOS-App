@@ -468,6 +468,10 @@ final class HostIntelligenceController: ObservableObject {
         hostBoardContext: hostBoardContext,
         settings: settings
       )
+      guard !Task.isCancelled else {
+        HostAILifecycleTrace.modelCancelled(reason: "task_cancelled")
+        return
+      }
       guard refreshGeneration == briefingRefreshGeneration,
             refreshDateKey == latestSelectedDateKey else {
         HostAILifecycleTrace.modelResultIgnored(reason: "date_changed")
@@ -545,6 +549,10 @@ final class HostIntelligenceController: ObservableObject {
       packet: packet,
       fallbackText: fallback
     )
+    guard !Task.isCancelled else {
+      HostAILifecycleTrace.modelCancelled(reason: "task_cancelled")
+      return
+    }
 
     let validation = HostBriefingWriterValidator.validationResult(
       result.text,

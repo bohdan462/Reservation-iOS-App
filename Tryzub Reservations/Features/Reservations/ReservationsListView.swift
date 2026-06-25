@@ -676,7 +676,7 @@ private struct HomeDashboardView: View {
                 failedImportCount: controller.importFailureCount,
                 isVisible: isActive,
                 isAppActive: scenePhase == .active && selectedDate.reservationDateString() == Date.reservationDateString(),
-                externalInteractionActive: showManualCreate || showImportFailures,
+                externalInteractionActive: showManualCreate || showImportFailures || !navigationPath.isEmpty,
                 onAddReservation: {
                     showManualCreate = true
                 },

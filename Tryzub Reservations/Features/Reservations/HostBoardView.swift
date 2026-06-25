@@ -37,7 +37,6 @@ struct HostBoardView: View {
     @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
     @EnvironmentObject private var emailAutomationSettingsStore: EmailAutomationSettingsStore
-    @EnvironmentObject private var activityStore: ReservationActivityStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var pendingAction: ReservationPendingAction?
@@ -189,13 +188,6 @@ struct HostBoardView: View {
         return (fallback, .fallback)
     }
 
-    private var activityFeedGuestNames: [Int: String] {
-        Dictionary(
-            reservations.map { ($0.remoteID, $0.guestName) },
-            uniquingKeysWith: { _, latest in latest }
-        )
-    }
-
     private var availabilitySummary: ReservationAvailabilitySummary? {
         controller.availabilitySummary(for: selectedDateKey)
     }
@@ -265,6 +257,13 @@ struct HostBoardView: View {
         return "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceSeatedStamp)-\(hostIntelligenceOperationalMinuteStamp)-\(hostIntelligenceSettingsStore.settings.hostDecisionFingerprint)-\(floorPlanStore.layoutFingerprint(for: selectedDateKey, allowsLegacyFallback: options.allowsFallback, localActiveTableCount: options.localActiveTableCount))"
     }
 
+    private var hostIntelligenceEvaluationTaskKey: String {
+        guard !liveHostModeEnabled, !externalInteractionActive else {
+            return "paused-\(liveHostModeEnabled)-\(externalInteractionActive)"
+        }
+        return hostIntelligenceEvaluationKey
+    }
+
     private var hostHistoryEnrichmentGenerationKey: String {
         "\(controller.historyCacheEnrichmentGeneration)"
     }
@@ -279,6 +278,13 @@ struct HostBoardView: View {
         )
         let options = hostFloorLegacyOptions
         return "\(selectedDateKey)-\(availabilityStamp)-\(guestIntelStamp)-\(analyticsStamp)-\(profilePackStamp)-\(floorPlanStore.layoutFingerprint(for: selectedDateKey, allowsLegacyFallback: options.allowsFallback, localActiveTableCount: options.localActiveTableCount))"
+    }
+
+    private var hostIntelligenceEnrichmentTaskKey: String {
+        guard !liveHostModeEnabled, !externalInteractionActive else {
+            return "paused-\(liveHostModeEnabled)-\(externalInteractionActive)"
+        }
+        return hostIntelligenceEnrichmentKey
     }
 
     private var hostBoardOperationalLoading: Bool {
@@ -376,16 +382,26 @@ struct HostBoardView: View {
                 }
             }
             .frame(width: safeWidth, height: safeHeight, alignment: .top)
-            .task(id: hostLayoutTraceID(width: safeWidth, isWideLayout: isWideLayout)) {
+            #if DEBUG
+            .onAppear {
                 traceHostLayout(width: safeWidth, isWideLayout: isWideLayout)
-            }
-            .task(id: "\(selectedDateKey)|\(renderContext.source.rawValue)") {
                 traceHostBoardRenderTransition(
                     source: renderContext.source,
                     snapshot: snapshot,
                     reservationsCount: reservations.count
                 )
             }
+            .onChange(of: hostLayoutTraceID(width: safeWidth, isWideLayout: isWideLayout)) { _, _ in
+                traceHostLayout(width: safeWidth, isWideLayout: isWideLayout)
+            }
+            .onChange(of: "\(selectedDateKey)|\(renderContext.source.rawValue)") { _, _ in
+                traceHostBoardRenderTransition(
+                    source: renderContext.source,
+                    snapshot: snapshot,
+                    reservationsCount: reservations.count
+                )
+            }
+            #endif
         }
         .alert(
             pendingActionTitle,
@@ -452,6 +468,7 @@ struct HostBoardView: View {
         }
         .task(id: boardSnapshotBuildKey) {
             guard !isRunningForPreviews else { return }
+            traceHostBoardStabilization(event: "snapshot_started", detail: "date=\(selectedDateKey)")
             let started = ContinuousClock.now
             let densityBounds = serviceDensityBounds
             let built = HostBoardSnapshot(
@@ -485,6 +502,7 @@ struct HostBoardView: View {
                     date: selectedDateKey,
                     lastStableCount: lastStableCount
                 )
+                traceHostBoardStabilization(event: "snapshot_skipped", detail: "reason=untrusted_empty")
                 return
             }
 
@@ -515,6 +533,7 @@ struct HostBoardView: View {
                 reservations: reservations.count,
                 visibleIDs: reservations.map(\.remoteID)
             )
+            traceHostBoardStabilization(event: "snapshot_completed", detail: "date=\(selectedDateKey)")
         }
         .onChange(of: selectedDateKey) { _, dateKey in
             controller.noteHostBoardSelectedDate(dateKey)
@@ -529,22 +548,49 @@ struct HostBoardView: View {
         .onChange(of: controller.capabilities.canViewDeveloperDiagnostics) { _, canView in
             hostIntelligenceController.updateDeveloperDiagnosticsAccess(canView)
         }
-        .task(id: "reminder-status-\(isVisible)-\(selectedDateKey)-\(emailAutomationSettingsStore.settings.automaticReminderProofEnabled)-\(emailAutomationSettingsStore.settings.manualReminderSendEnabled)-\(controller.restaurantSetup.manualBatchRemindersEnabled)") {
+        .task(id: "reminder-status-\(isVisible)-\(liveHostModeEnabled)-\(selectedDateKey)-\(emailAutomationSettingsStore.settings.automaticReminderProofEnabled)-\(emailAutomationSettingsStore.settings.manualReminderSendEnabled)-\(controller.restaurantSetup.manualBatchRemindersEnabled)") {
             guard isVisible,
+                  !liveHostModeEnabled,
                   selectedDateKey == Date.reservationDateString(),
                   emailAutomationSettingsStore.settings.automaticReminderProofEnabled
                     || emailAutomationSettingsStore.settings.manualReminderSendEnabled
                     || controller.restaurantSetup.manualBatchRemindersEnabled else { return }
             _ = await controller.refreshReminderStatus(for: selectedDateKey)
         }
-        .onChange(of: hostBoardViewStateBuildKey, initial: true) { _, _ in
+        .onChange(of: hostBoardViewStateObservationKey, initial: true) { _, _ in
+            guard !liveHostModeEnabled, !externalInteractionActive else {
+                traceHostBoardStabilization(event: "view_state_skipped", detail: "reason=presentation_hidden")
+                return
+            }
             refreshHostBoardViewState(reason: "semantic_key_changed")
         }
-        .onChange(of: serviceBriefingStamp, initial: true) { _, _ in
+        .onChange(of: serviceBriefingObservationKey, initial: true) { _, _ in
+            guard !liveHostModeEnabled, !externalInteractionActive else {
+                traceHostBoardStabilization(event: "service_briefing_skipped", detail: "reason=presentation_hidden")
+                return
+            }
             rebuildServiceBriefing()
         }
-        .task(id: hostIntelligenceCardPresentationKey) {
-            rebuildHostIntelligenceCardPresentation()
+        .task(id: hostIntelligenceCardTaskKey) {
+            guard isHostIntelligenceCardVisible else {
+                traceHostBoardStabilization(event: "card_presentation_skipped", detail: "reason=hidden")
+                return
+            }
+            let requestedKey = hostIntelligenceCardPresentationKey
+            traceHostBoardStabilization(event: "card_presentation_yielded")
+            await Task.yield()
+            guard !Task.isCancelled,
+                  isHostIntelligenceCardVisible,
+                  requestedKey == hostIntelligenceCardPresentationKey else {
+                traceHostBoardStabilization(event: "card_presentation_skipped", detail: "reason=cancelled_or_stale")
+                return
+            }
+            traceHostBoardStabilization(event: "card_presentation_started")
+            let published = rebuildHostIntelligenceCardPresentation(expectedKey: requestedKey)
+            traceHostBoardStabilization(
+                event: published ? "card_presentation_completed" : "card_presentation_skipped",
+                detail: published ? "" : "reason=key_changed"
+            )
         }
         // Single coordinated task replaces the two independent availability +
         // guest-intelligence tasks. Floor plan fetch is scheduled immediately on Host
@@ -560,46 +606,50 @@ struct HostBoardView: View {
                 floorPlanStore: floorPlanStore
             )
         }
-        .task(id: "host-activity-feed-\(isVisible)-\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(deferNetworkLoads)-\(controller.canStartNoncriticalStartupLoads)") {
-            guard !isRunningForPreviews else { return }
-            guard isVisible else { return }
-            guard !deferNetworkLoads, !shouldDeferStartupOptionalLoads else { return }
-            await activityStore.loadActivityFeed(
-                date: selectedDate,
-                guestNameByReservationID: activityFeedGuestNames
-            )
-        }
-        .task(id: hostIntelligenceEvaluationKey) {
+        .task(id: hostIntelligenceEvaluationTaskKey) {
             guard isVisible else {
                 hostIntelligenceController.reset()
+                return
+            }
+            guard !liveHostModeEnabled, !externalInteractionActive else {
+                traceHostBoardStabilization(event: "evaluate_skipped", detail: "reason=presentation_hidden")
                 return
             }
             HostReevalTrace.log(
                 trigger: "selected_day_reservation_change",
                 immediate: true
             )
+            traceHostBoardStabilization(event: "evaluate_started", detail: "date=\(selectedDateKey)")
             let bookingReport = buildBookingLoadReport(bounds: serviceDensityBounds)
             hostIntelligenceController.evaluate(
                 input: makeHostEngineInput(now: clockTick),
                 stability: hostEvaluationStabilityContext,
                 bookingLoadReport: bookingReport
             )
+            traceHostBoardStabilization(event: "evaluate_completed", detail: "date=\(selectedDateKey)")
         }
-        .task(id: hostHistoryEnrichmentGenerationKey) {
-            guard isVisible else { return }
-            HostReevalTrace.log(
-                trigger: "history_generation",
-                debounced: true
-            )
-        }
-        .onChange(of: hostIntelligenceEnrichmentKey) { _, _ in
-            HostReevalTrace.log(
-                trigger: "guest_intelligence_summary",
-                immediate: true
-            )
-        }
-        .task(id: hostIntelligenceEnrichmentKey) {
-            guard isVisible else { return }
+        .task(id: hostIntelligenceEnrichmentTaskKey) {
+            guard isVisible else {
+                traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=hidden")
+                return
+            }
+            guard !liveHostModeEnabled, !externalInteractionActive else {
+                traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=presentation_hidden")
+                return
+            }
+            let requestedKey = hostIntelligenceEnrichmentKey
+            traceHostBoardStabilization(event: "enrichment_debounced", detail: "duration_ms=350")
+            do {
+                try await Task.sleep(nanoseconds: 350_000_000)
+            } catch {
+                traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=cancelled")
+                return
+            }
+            guard !Task.isCancelled, requestedKey == hostIntelligenceEnrichmentKey else {
+                traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=cancelled_or_stale")
+                return
+            }
+            traceHostBoardStabilization(event: "enrichment_started", detail: "date=\(selectedDateKey)")
             let options = hostFloorLegacyOptions
             let floorSource = hostFloorTableSource
             let layoutStamp = floorPlanStore.layoutFingerprint(
@@ -630,6 +680,11 @@ struct HostBoardView: View {
                 ),
                 bookingLoadReport: bookingReport
             )
+            guard !Task.isCancelled, requestedKey == hostIntelligenceEnrichmentKey else {
+                traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=stale_completion")
+                return
+            }
+            traceHostBoardStabilization(event: "enrichment_completed", detail: "date=\(selectedDateKey)")
         }
         .onChange(of: hostBoardOperationalLoading) { _, isLoading in
             // Coalesce to the next runloop tick. refreshHomeServicePresentation publishes
@@ -665,12 +720,13 @@ struct HostBoardView: View {
         HStack(alignment: .top, spacing: 16) {
             HostBoardColumn(
                 title: "Seated",
-                subtitle: "\(snapshot.seated.count) seated",
+                subtitle: seatedGuestSubtitle(for: snapshot),
                 reservations: snapshot.seated,
                 emptyTitle: "No one seated",
                 emptySystemImage: "person.2.slash",
                 scrollsInternally: false,
                 referenceNow: snapshot.now,
+                showsServiceGroupHeader: true,
                 environment: environment,
                 onAction: handleAction,
                 onOpenReservation: onOpenReservation
@@ -688,6 +744,13 @@ struct HostBoardView: View {
             )
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+    }
+
+    private var hostBoardViewStateObservationKey: String {
+        guard !liveHostModeEnabled, !externalInteractionActive else {
+            return "presentation-hidden-\(liveHostModeEnabled)-\(externalInteractionActive)"
+        }
+        return hostBoardViewStateBuildKey
     }
 
     private var hostBoardViewStateBuildKey: String {
@@ -809,7 +872,9 @@ struct HostBoardView: View {
                     homeServiceHeader()
                 }
 
-                onDeviceSupportStatusBanner
+                if !liveHostModeEnabled {
+                    onDeviceSupportStatusBanner
+                }
 
                 closedOrOperationalBody(
                     snapshot: snapshot,
@@ -867,7 +932,8 @@ struct HostBoardView: View {
                     reviewCount: snapshot.needsReview.count
                 )
 
-                if snapshot.newReservations.count + snapshot.needsReview.count > 0 {
+                if !liveHostModeEnabled,
+                   snapshot.newReservations.count + snapshot.needsReview.count > 0 {
                     closedDayBookingAttentionCard(snapshot: snapshot)
                 }
 
@@ -895,18 +961,7 @@ struct HostBoardView: View {
             let usesWideStatusPanel = horizontalSizeClass == .regular && availableWidth >= 760
 
             VStack(alignment: .leading, spacing: 8) {
-                if liveHostModeEnabled {
-                    if snapshot.upcoming.isEmpty,
-                       snapshot.seated.isEmpty,
-                       selectedDateKey == Date.reservationDateString(),
-                       guestIntelligenceStore.isLoading(dateKey: selectedDateKey),
-                       guestIntelligenceStore.response(for: selectedDateKey) == nil {
-                        TryzubSectionLoadingCard(
-                            title: "Checking guest context…",
-                            systemImage: "person.2"
-                        )
-                    }
-                } else {
+                if !liveHostModeEnabled {
                     hostOperationalStatusPanel(snapshot: snapshot, isWideLayout: usesWideStatusPanel)
                     HostBoardPressureSection(
                         snapshot: snapshot,
@@ -915,13 +970,8 @@ struct HostBoardView: View {
                         onOpenReservation: onOpenReservation
                     )
                 }
-                hostIntelligenceSection
-
-                if liveHostModeEnabled {
-                    let noticeItems = liveHostNoticeItems(snapshot: snapshot)
-                    if !noticeItems.isEmpty {
-                        LiveHostNoticeBar(items: noticeItems)
-                    }
+                if !liveHostModeEnabled {
+                    hostIntelligenceSection
                 }
 
                 if isWideLayout {
@@ -1231,6 +1281,13 @@ struct HostBoardView: View {
     /// Stamp for the cached Service Briefing rebuild. Includes the clock minute so
     /// mode transitions (e.g. crossing close time) are picked up, plus the snapshot
     /// generation so reservation/status changes refresh it. All inputs are in-memory.
+    private var serviceBriefingObservationKey: String {
+        guard !liveHostModeEnabled, !externalInteractionActive else {
+            return "presentation-hidden-\(liveHostModeEnabled)-\(externalInteractionActive)"
+        }
+        return serviceBriefingStamp
+    }
+
     private var serviceBriefingStamp: String {
         let minute = Int(clockTick.timeIntervalSince1970 / 60)
         return [
@@ -1309,9 +1366,7 @@ struct HostBoardView: View {
 
     @ViewBuilder
     private var hostIntelligenceSection: some View {
-        if liveHostModeEnabled {
-            liveHostIntelligenceSection
-        } else if let serviceBriefingState, usesServiceBriefingCard(serviceBriefingState.mode) {
+        if let serviceBriefingState, usesServiceBriefingCard(serviceBriefingState.mode) {
             HostServiceBriefingCard(state: serviceBriefingState) { intent in
                 handleServiceActionIntent(intent)
             }
@@ -1322,33 +1377,6 @@ struct HostBoardView: View {
                 HostBookingLoadCompactStrip(item: bookingTopItem, knownOnlyNote: bookingKnownOnlyNote)
             }
         }
-    }
-
-    private func liveHostNoticeItems(snapshot: HostBoardSnapshot) -> [String] {
-        var items: [String] = []
-
-        if snapshot.newReservations.count > 0 {
-            let count = snapshot.newReservations.count
-            items.append("\(count) new reservation\(count == 1 ? "" : "s")")
-        }
-        if snapshot.needsReview.count > 0 {
-            let count = snapshot.needsReview.count
-            items.append("\(count) \(count == 1 ? "needs" : "need") review")
-        }
-        if snapshot.noTableCount > 0 {
-            let count = snapshot.noTableCount
-            items.append("\(count) no table\(count == 1 ? "" : "s")")
-        }
-        if let dueCount = hostReminderPanelContext?.status?.summary.eligible, dueCount > 0 {
-            items.append("\(dueCount) reminder\(dueCount == 1 ? "" : "s") not sent")
-        }
-
-        if !items.isEmpty, let next = snapshot.upcoming.first {
-            let firstName = next.guestName.split(separator: " ").first.map(String.init) ?? next.guestName
-            items.append("Next: \(firstName) · \(next.displayTime)")
-        }
-
-        return items
     }
 
     @ViewBuilder
@@ -1464,6 +1492,20 @@ struct HostBoardView: View {
 
     }
 
+    private var isHostIntelligenceCardVisible: Bool {
+        guard isVisible,
+              !liveHostModeEnabled,
+              !externalInteractionActive,
+              !isSelectedDateClosed else { return false }
+        guard let serviceBriefingState else { return true }
+        return !usesServiceBriefingCard(serviceBriefingState.mode)
+    }
+
+    private var hostIntelligenceCardTaskKey: String {
+        guard isHostIntelligenceCardVisible else { return "hidden" }
+        return "visible|\(hostIntelligenceCardPresentationKey)"
+    }
+
     private var hostIntelligenceCardPresentationKey: String {
         let snapshot = hostIntelligenceController.displaySnapshot
         let reminder = hostIntelligenceReminderInlineContext
@@ -1484,8 +1526,10 @@ struct HostBoardView: View {
         ].joined(separator: "|")
     }
 
-    private func rebuildHostIntelligenceCardPresentation() {
-        let key = hostIntelligenceCardPresentationKey
+    @discardableResult
+    private func rebuildHostIntelligenceCardPresentation(expectedKey: String? = nil) -> Bool {
+        let key = expectedKey ?? hostIntelligenceCardPresentationKey
+        guard key == hostIntelligenceCardPresentationKey else { return false }
         let snapshot = hostIntelligenceController.displaySnapshot
         let presentation = HostIntelligenceCardPresentation.build(
             key: key,
@@ -1498,10 +1542,11 @@ struct HostBoardView: View {
             usesSeparatedPrompts: hostIntelligenceController.settings.useSeparatedBriefingPrompts,
             includesReviewItem: true
         )
-        guard key == hostIntelligenceCardPresentationKey else { return }
+        guard key == hostIntelligenceCardPresentationKey else { return false }
         if presentation != hostIntelligenceCardPresentation {
             hostIntelligenceCardPresentation = presentation
         }
+        return true
     }
 
     private func handleHostIntelligenceAction(_ action: HostSuggestedAction) {
@@ -1554,12 +1599,13 @@ struct HostBoardView: View {
         VStack(alignment: .leading, spacing: 10) {
             HostBoardColumn(
                 title: "Seated",
-                subtitle: "\(snapshot.seated.count) seated",
+                subtitle: seatedGuestSubtitle(for: snapshot),
                 reservations: snapshot.seated,
                 emptyTitle: "No one seated",
                 emptySystemImage: "person.2.slash",
                 scrollsInternally: false,
                 referenceNow: snapshot.now,
+                showsServiceGroupHeader: true,
                 environment: environment,
                 onAction: handleAction,
                 onOpenReservation: onOpenReservation
@@ -1575,6 +1621,11 @@ struct HostBoardView: View {
                 onOpenReservation: onOpenReservation
             )
         }
+    }
+
+    private func seatedGuestSubtitle(for snapshot: HostBoardSnapshot) -> String {
+        let guestCount = snapshot.seated.reduce(0) { $0 + $1.partySize }
+        return "\(guestCount) \(guestCount == 1 ? "guest" : "guests") dining"
     }
 
     private func hostLayoutTraceID(width: CGFloat, isWideLayout: Bool) -> String {
@@ -1751,6 +1802,17 @@ struct HostBoardView: View {
         #endif
     }
 
+    private func traceHostBoardStabilization(
+        event: String,
+        detail: @autoclosure () -> String = ""
+    ) {
+        #if DEBUG
+        let detail = detail()
+        let suffix = detail.isEmpty ? "" : " \(detail)"
+        print("[HOST_BOARD_STABILIZATION] event=\(event)\(suffix)")
+        #endif
+    }
+
 }
 
 // MARK: - Host Board Snapshot Render Source
@@ -1788,29 +1850,6 @@ private enum HostBoardHeaderCollapse {
         let normalized = offset / scrollDistance
         // Ramp up faster at the start so shrink begins as soon as content tucks under the header.
         return min(1, normalized * 1.15)
-    }
-}
-
-private struct LiveHostNoticeBar: View {
-    let items: [String]
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "bolt.fill")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(TryzubGlassChrome.hostBoardAccentBlue)
-
-            Text(items.joined(separator: " · "))
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .hostBoardGlassPanel(cornerRadius: 12, strokeOpacity: 0.10)
-        .accessibilityElement(children: .combine)
     }
 }
 

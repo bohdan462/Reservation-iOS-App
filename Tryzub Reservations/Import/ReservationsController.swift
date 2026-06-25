@@ -4617,7 +4617,7 @@ final class ReservationsController: ObservableObject {
         let elapsed = max(0, Int(now.timeIntervalSince(seatedAt)))
         let minutes = elapsed / 60
         if minutes < 1 {
-            return "Seated just now"
+            return "Seated 0m"
         }
         if minutes < 60 {
             return "Seated \(minutes)m"
