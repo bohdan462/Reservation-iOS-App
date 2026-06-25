@@ -12,14 +12,14 @@ Do not implement from stale index or diagram files listed under [Stale / archive
 |-----|---------|
 | [SECOND_ENGINEER_CONTEXT.md](./SECOND_ENGINEER_CONTEXT.md) | ChatGPT / second-engineer alignment: priorities, repo state, V1 rules, verification |
 | [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) | Non-negotiable architecture and workflow rules |
-| [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) | V1 order: stabilization → guest person-map follow-ups → indexed search; guest cache + Slice 1 + backend Slice 2 lookup + Host production polish done |
-| [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) | Active handoff: stabilization open; guest memory + person-map Slice 1 + backend Slice 2 lookup shipped |
+| [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) | V1 order: stabilization → guest person-map 3R/3D/3M; Slices 1/2/3A/3B + Host polish done |
+| [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) | Active handoff: stabilization open; guest person-map Slices 1/2/3A/3B shipped |
 | [OPEN_WORK.md](./OPEN_WORK.md) | V1 stabilization backlog with acceptance tests |
 | [DIAGNOSTICS_AND_TESTING.md](./DIAGNOSTICS_AND_TESTING.md) | Roles, invariants, test checklists |
 
 **Deploy note:** `Backend/*.zip` is not tracked in git. Build plugin zip locally from submodule `HEAD` when deploying to WordPress.
 
-**Current root HEAD:** `b1a09e7` on `audit-current-state` (pending doc commit).
+**Current root HEAD:** `1dfa14a` on `audit-current-state` (pending doc commit).
 
 ---
 
