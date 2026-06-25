@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SwiftData
 
 enum GuestProfileFilter: String, CaseIterable, Identifiable {
     case all
@@ -118,7 +119,8 @@ final class GuestProfileStore: ObservableObject {
         filter: GuestProfileFilter?,
         sort: GuestProfileSort?,
         page: Int = 1,
-        perPage: Int = 25
+        perPage: Int = 25,
+        context: ModelContext? = nil
     ) async {
         let normalizedQuery = normalizedQueryValue(query)
         let normalizedPage = max(1, page)
@@ -164,6 +166,7 @@ final class GuestProfileStore: ObservableObject {
                 loadedAt: Date()
             )
             cacheListProfiles(response.profiles ?? [])
+            writeProfilesToDisk(response.profiles ?? [], context: context)
             if currentListRequestKey == cacheKey {
                 adoptListResponse(response)
                 listErrorMessage = nil
@@ -183,7 +186,11 @@ final class GuestProfileStore: ObservableObject {
         refreshListLoadingState()
     }
 
-    func loadProfile(byReservationID reservationID: Int, force: Bool = false) async -> GuestProfileDTO? {
+    func loadProfile(
+        byReservationID reservationID: Int,
+        force: Bool = false,
+        context: ModelContext? = nil
+    ) async -> GuestProfileDTO? {
         guard reservationID > 0 else { return nil }
 
         if !force, let cached = cachedEntry(forReservationID: reservationID), isFresh(cached.loadedAt) {
@@ -199,7 +206,7 @@ final class GuestProfileStore: ObservableObject {
 
         let task = Task<GuestProfileDTO?, Never> { [weak self] in
             guard let self else { return nil }
-            return await self.fetchProfile(byReservationID: reservationID, force: force)
+            return await self.fetchProfile(byReservationID: reservationID, force: force, context: context)
         }
 
         detailTasksByReservationID[reservationID] = task
@@ -212,7 +219,11 @@ final class GuestProfileStore: ObservableObject {
         return await task.value
     }
 
-    func loadProfile(guestKey: String, force: Bool = false) async -> GuestProfileDTO? {
+    func loadProfile(
+        guestKey: String,
+        force: Bool = false,
+        context: ModelContext? = nil
+    ) async -> GuestProfileDTO? {
         guard let normalizedKey = normalizedGuestKey(guestKey), !normalizedKey.isEmpty else { return nil }
 
         if !force, let cached = cachedEntry(forGuestKey: normalizedKey), isFresh(cached.loadedAt) {
@@ -228,7 +239,7 @@ final class GuestProfileStore: ObservableObject {
 
         let task = Task<GuestProfileDTO?, Never> { [weak self] in
             guard let self else { return nil }
-            return await self.fetchProfile(guestKey: normalizedKey, force: force)
+            return await self.fetchProfile(guestKey: normalizedKey, force: force, context: context)
         }
 
         detailTasksByGuestKey[normalizedKey] = task
@@ -267,6 +278,30 @@ final class GuestProfileStore: ObservableObject {
         isLoadingDetail = false
     }
 
+    func loadCachedProfiles(context: ModelContext, limit: Int = 100) throws -> [GuestProfileCacheRecord] {
+        var descriptor = FetchDescriptor<GuestProfileCacheRecord>(
+            sortBy: [
+                SortDescriptor(\.cleanVisitCount, order: .reverse),
+                SortDescriptor(\.totalReservations, order: .reverse),
+                SortDescriptor(\.fetchedAt, order: .reverse)
+            ]
+        )
+        descriptor.fetchLimit = max(1, limit)
+        return try context.fetch(descriptor)
+    }
+
+    func cachedProfile(guestKey: String, context: ModelContext) throws -> GuestProfileCacheRecord? {
+        try GuestProfileRepository().cachedProfile(guestKey: guestKey, context: context)
+    }
+
+    func searchCachedProfiles(
+        query: String,
+        limit: Int = 12,
+        context: ModelContext
+    ) throws -> [GuestProfileCacheRecord] {
+        try GuestProfileRepository().searchProfiles(query: query, limit: limit, context: context)
+    }
+
     // MARK: - Private
 
     private var listUnavailableMessage: String {
@@ -286,7 +321,11 @@ final class GuestProfileStore: ObservableObject {
         hasLoadedList = true
     }
 
-    private func fetchProfile(byReservationID reservationID: Int, force: Bool) async -> GuestProfileDTO? {
+    private func fetchProfile(
+        byReservationID reservationID: Int,
+        force: Bool,
+        context: ModelContext?
+    ) async -> GuestProfileDTO? {
         if !force, let cached = cachedEntry(forReservationID: reservationID), isFresh(cached.loadedAt) {
             detailErrorMessage = nil
             return cached.profile
@@ -295,6 +334,7 @@ final class GuestProfileStore: ObservableObject {
         do {
             let profile = try await apiClient.fetchGuestProfile(byReservationID: reservationID)
             adoptProfile(profile)
+            writeProfileToDisk(profile, hasDetailPayload: true, context: context)
             detailErrorMessage = nil
             return profile
         } catch {
@@ -308,7 +348,11 @@ final class GuestProfileStore: ObservableObject {
         }
     }
 
-    private func fetchProfile(guestKey: String, force: Bool) async -> GuestProfileDTO? {
+    private func fetchProfile(
+        guestKey: String,
+        force: Bool,
+        context: ModelContext?
+    ) async -> GuestProfileDTO? {
         if !force, let cached = cachedEntry(forGuestKey: guestKey), isFresh(cached.loadedAt) {
             detailErrorMessage = nil
             return cached.profile
@@ -317,6 +361,7 @@ final class GuestProfileStore: ObservableObject {
         do {
             let profile = try await apiClient.fetchGuestProfile(guestKey: guestKey)
             adoptProfile(profile)
+            writeProfileToDisk(profile, hasDetailPayload: true, context: context)
             detailErrorMessage = nil
             return profile
         } catch {
@@ -352,6 +397,32 @@ final class GuestProfileStore: ObservableObject {
             if let reservationID = resolvedReservationID(from: profile) {
                 profileByReservationID[reservationID] = entry
             }
+        }
+    }
+
+    private func writeProfilesToDisk(_ profiles: [GuestProfileDTO], context: ModelContext?) {
+        guard let context, !profiles.isEmpty else { return }
+        do {
+            try GuestProfileRepository().upsertProfiles(profiles, context: context)
+        } catch {
+            #if DEBUG
+            print("[GUEST_PROFILE_CACHE] list write failed: \(error)")
+            #endif
+        }
+    }
+
+    private func writeProfileToDisk(
+        _ profile: GuestProfileDTO,
+        hasDetailPayload: Bool,
+        context: ModelContext?
+    ) {
+        guard let context else { return }
+        do {
+            try GuestProfileRepository().upsertProfile(profile, hasDetailPayload: hasDetailPayload, context: context)
+        } catch {
+            #if DEBUG
+            print("[GUEST_PROFILE_CACHE] detail write failed: \(error)")
+            #endif
         }
     }
 

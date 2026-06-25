@@ -344,7 +344,8 @@ protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
         filter: String?,
         sort: String?,
         page: Int,
-        perPage: Int
+        perPage: Int,
+        updatedSince: String?
     ) async throws -> GuestProfileListResponseDTO
     func fetchGuestProfile(guestKey: String) async throws -> GuestProfileDTO
     func fetchGuestProfile(byReservationID reservationID: Int) async throws -> GuestProfileDTO
@@ -386,6 +387,23 @@ protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
 // MARK: - Default Protocol Convenience
 
 extension ReservationsAPIClientProtocol {
+    func fetchGuestProfiles(
+        query: String?,
+        filter: String?,
+        sort: String?,
+        page: Int,
+        perPage: Int
+    ) async throws -> GuestProfileListResponseDTO {
+        try await fetchGuestProfiles(
+            query: query,
+            filter: filter,
+            sort: sort,
+            page: page,
+            perPage: perPage,
+            updatedSince: nil
+        )
+    }
+
     func fetchReservations(
         page: Int,
         perPage: Int,
@@ -1116,7 +1134,8 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         filter: String? = nil,
         sort: String? = nil,
         page: Int = 1,
-        perPage: Int = 25
+        perPage: Int = 25,
+        updatedSince: String? = nil
     ) async throws -> GuestProfileListResponseDTO {
         var queryItems: [URLQueryItem] = [
             URLQueryItem(name: "page", value: String(page)),
@@ -1131,6 +1150,9 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         }
         if let sort = sort?.trimmingCharacters(in: .whitespacesAndNewlines), !sort.isEmpty {
             queryItems.append(URLQueryItem(name: "sort", value: sort))
+        }
+        if let updatedSince = updatedSince?.trimmingCharacters(in: .whitespacesAndNewlines), !updatedSince.isEmpty {
+            queryItems.append(URLQueryItem(name: "updated_since", value: updatedSince))
         }
 
         let url = try makeURL(path: "guest-profiles", queryItems: queryItems)
