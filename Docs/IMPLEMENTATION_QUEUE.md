@@ -2,9 +2,9 @@
 
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md) · [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) · [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md)
 
-Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), iOS Slices 3A/3B/3R, and Tryzub V1 Host production polish (#5b, #5c) are **done**.
+Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), backend 3M-B (#18), iOS Slices 3A/3B/3R/3M, and Tryzub V1 Host production polish (#5b, #5c) are **done**.
 
-**Current focus:** iOS device verification, confirmation mode on restaurant iPad, final V1 smoke test. **Next guest person-map code slice:** **3D** (full shared Guest history UI + Reservation Detail bridge).
+**Current focus:** iOS device verification, confirmation mode on restaurant iPad, release smoke test. **Deploy backend `63d0cfc` to WordPress** before production unknown walk-in verification. **Next guest person-map code slice:** **3D** (full shared Guest history UI + Reservation Detail bridge).
 
 ---
 
@@ -60,7 +60,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 |-------|-------|
 | **Status** | **current** — after #4 and #4b |
 | **Scope** | End-to-end staff ops on restaurant iPad |
-| **Include** | Guest profile background sync (`0f06852`); guest full-list sync completion (`d541488`); manual walk-in + known-guest intake (`0a89caa`); Guests tab + detail cache (`67e02d2`); Guests tab explicit all-record lookup + View history shell (`1dfa14a`); Regulars cache-first + View history (`50df843`); Host freshness (`71601fc`); Host Intelligence card stability (`39f7fcb`) |
+| **Include** | Guest profile background sync (`0f06852`); guest full-list sync completion (`d541488`); manual walk-in + known-guest intake (`0a89caa`); Guests tab + detail cache (`67e02d2`); Guests tab explicit all-record lookup + View history shell (`1dfa14a`); Regulars cache-first + View history (`50df843`); Manual Intake walk-in validation + guest lookup (`e775f52`); backend unknown walk-in (`63d0cfc`); Host freshness (`71601fc`); Host Intelligence card stability (`39f7fcb`) |
 | **Guest memory checks** | Full-list sync eventually marks complete; Guests/manual intake finds known guest outside old 500 cap; no backend call on every phone digit; Guests tab explicit search only (not per keystroke); incomplete full-list sync does not wait on TTL before retrying full sync |
 | **Host header checks** | Header shows `Last sync HH:mm`; stale secondary reason when refresh skipped/stale; Live-on today does not sit stale without explanation; manual refresh bumps `Last sync` on success |
 | **Host flicker checks** | Quiet Host board does not rebuild/flicker every minute from idle snapshot timing; Host Intelligence card chips do not disappear/reappear when intelligence refreshes; during service, seated/due/nearby rows still update timing |
@@ -219,10 +219,11 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 | Field | Value |
 |-------|-------|
-| **Status** | **later** |
-| **Scope** | `ManualReservationFormView`, `GuestLookupStore`, `GuestProfileStore.lookupProfiles` — local name search with multiple candidates; explicit all-record lookup; Use guest / View history; call-in requires name+phone; walk-in optional name/phone on iOS |
-| **Do not** | Call backend on every keystroke; auto-select name/possible matches |
-| **Depends on** | Slice 3M-B for true walk-in save without name/phone |
+| **Status** | **done** — `e775f52` (depends on backend `63d0cfc` for unknown walk-in save) |
+| **Scope** | `ManualReservationFormView`, `GuestLookupStore`, `GuestLookupModels`, `GuestProfileStore` |
+| **Delivered** | Walk-in optional identity (blank fields sent); call-in name+phone required; local name/phone/email search while typing; explicit Search all guest records; Use guest + View history → `GuestProfileDetailView`; removed phone-only suggestion UI |
+| **Do not** | Call backend on every keystroke; auto-select candidates |
+| **Do not overstate** | Full booking/notes timeline remains Slice 3D; detail JSON persistence remains Slice 3E; `schedulePhoneLookup` dead code cleanup remains P3 |
 
 ---
 
@@ -230,9 +231,10 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 | Field | Value |
 |-------|-------|
-| **Status** | **later** |
-| **Scope** | Backend `managed-reservations.php` (+ schema/policy as needed) for `manual_walk_in` with optional contact fields; iOS sends placeholders or empty per new contract |
-| **Note** | Today both iOS `ReservationFormValidator` and backend create reject missing name and fewer than 10 phone digits |
+| **Status** | **done** — backend `63d0cfc`, root pointer `c7f5a69`; **WordPress deployment pending** |
+| **Scope** | `managed-reservations.php`, `formatting.php`, `validation.php`, `intelligence-helpers.php`, `guest-profiles.php`, `emails.php`, backend `README.md` |
+| **Delivered** | `manual_walk_in` without name/phone/email; call-in still requires name+phone; placeholder masking; no fake `guest_key`/profiles; placeholder email not sendable |
+| **Note** | iOS `e775f52` sends blank identity fields — backend owns `Walk-in guest` display |
 
 ---
 
@@ -241,7 +243,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | Field | Value |
 |-------|-------|
 | **Status** | **later** |
-| **Scope** | `GuestProfileRepository`, `GuestProfileStore` — persist `booking_history` / `notes_history` JSON on detail fetch |
+| **Scope** | `GuestProfileRepository`, `GuestProfileStore` — persist `booking_history` / `notes_history` JSON on detail fetch for disk-first full profile reopen |
 | **Note** | Schema slots exist; list sync does not populate detail blobs; `hasDetailPayload` can be true while JSON fields remain nil today |
 
 ---
@@ -263,7 +265,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | **Status** | **done** — `1dfa14a` |
 | **Scope** | `GuestLookupView.swift`, `GuestProfileDetailView.swift` |
 | **Delivered** | Explicit Search all guest records; local typing unchanged; Likely guest / Possible match; View history + Book reservation; `GuestProfileDetailView` summary shell by `guestKey` |
-| **Do not overstate** | Not full booking/notes timeline; not Manual Intake/Reservation Detail integration; not disk-first full detail |
+| **Do not overstate** | Not full booking/notes timeline; not Reservation Detail integration; not disk-first full detail (3E) |
 
 ---
 
@@ -271,8 +273,8 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 | Field | Value |
 |-------|-------|
-| **Status** | **later** |
-| **Scope** | `GuestProfileDetailView` + extract/reuse from `GuestInsightsView` / `GuestServiceProfilePresentation` — booking history, notes history, source mix, preferences; wire Reservation Detail to shared destination when `guestKey` known |
+| **Status** | **later** — next guest person-map code slice |
+| **Scope** | `GuestProfileDetailView` + extract/reuse from `GuestInsightsView` / `GuestServiceProfilePresentation` — booking history timeline, guest/staff notes timeline, source mix, usual party/day/time; wire Reservation Detail to shared destination when `guestKey` known (3D-a); booking-history row → local `ReservationDetailView` when cached, otherwise read-only |
 | **Primary data** | Backend `GET /guest-profiles/{guest_key}` detail DTO (`bookingHistory`, `notesHistory`, etc.) |
 
 ---
@@ -306,6 +308,8 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | iOS guest person-map Slice 3A — lookup foundation | `823f42c` |
 | iOS guest person-map Slice 3B — Guests tab lookup UI + shared history shell | `1dfa14a` |
 | iOS guest person-map Slice 3R — Regulars cache-first + shared Guest history | `50df843` |
+| Backend guest person-map Slice 3M-B — unknown walk-in without guest identity | `63d0cfc` (backend), `c7f5a69` (root pointer); deploy pending |
+| iOS guest person-map Slice 3M — Manual Intake walk-in validation + guest lookup | `e775f52` |
 
 ---
 

@@ -1,7 +1,7 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `50df843` (pending doc commit)  
+**Root HEAD:** `e775f52` (pending doc commit)  
 **Last reviewed:** 2026-06-25  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
@@ -161,21 +161,21 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 | Field | Value |
 |-------|-------|
 | **Risk** | Known guest invisible when not yet in local cache or name-only weak match |
-| **Files** | Backend `guest-profiles.php`, `routes.php`; iOS `ReservationsAPIClient`, `GuestProfileStore`, `GuestLookupView` (Guests tab explicit search only; Manual Intake open in 3M) |
+| **Files** | Backend `guest-profiles.php`, `routes.php`; iOS `ReservationsAPIClient`, `GuestProfileStore`, `GuestLookupView`, `ManualReservationFormView` |
 | **Approach** | `GET /guest-profiles/lookup` with exact email/phone and possible name candidates |
 | **Acceptance** | Strong phone/email input returns canonical `guest_key` profile when backend has it; name-only never auto-canonical |
-| **Class** | **Done** — backend `1431a06` **deployed** to WordPress; iOS foundation `823f42c` + Guests tab UI `1dfa14a`; **device lookup smoke tests still open** |
-| **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #16, #20, #21 |
+| **Class** | **Done** — backend `1431a06` **deployed** to WordPress; iOS foundation `823f42c` + Guests tab UI `1dfa14a` + Manual Intake UI `e775f52`; **device lookup smoke tests still open** |
+| **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #16, #20, #21, #17 |
 
 ### P1-8: Manual Intake backend lookup + walk-in/call-in validation (Slice 3M)
 
 | Field | Value |
 |-------|-------|
 | **Risk** | Staff cannot find guest by name during intake; walk-in blocked without phone/name |
-| **Files** | `ManualReservationFormView.swift`, `GuestLookupStore.swift`, `GuestProfileStore.swift`; backend `managed-reservations.php` for optional walk-in contact (3M-B) |
-| **Approach** | Local name multi-candidate search; explicit all-record lookup; Use guest / View history; call-in requires name+phone; walk-in optional contact on iOS after backend contract |
-| **Acceptance** | No network on every digit; multiple name matches shown; staff must tap; walk-in save without phone/name only after 3M-B |
-| **Class** | Before broader product release — not V1 stabilization blocker |
+| **Files** | `ManualReservationFormView.swift`, `GuestLookupStore.swift`, `GuestLookupModels.swift`, `GuestProfileStore.swift`; backend `managed-reservations.php` (`63d0cfc`) |
+| **Approach** | Local name/phone/email search while typing; explicit all-record lookup; Use guest / View history; walk-in blank identity; call-in name+phone |
+| **Acceptance** | No network on every digit; multiple name matches shown; staff must tap; walk-in save without phone/name with backend `63d0cfc` deployed |
+| **Class** | **Done** — iOS `e775f52`; backend `63d0cfc` / `c7f5a69`; **deploy + device smoke tests still open** |
 | **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #17, #18 |
 
 ### P1-8b: Regulars cache-first + shared Guest history (Slice 3R)
@@ -195,9 +195,9 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 |-------|-------|
 | **Risk** | Staff cannot find guest when local full-list sync incomplete |
 | **Files** | `GuestLookupView.swift` (done for explicit search), `ManualReservationFormView.swift` (open) |
-| **Approach** | Guests tab: explicit Search all guest records (`1dfa14a`); Manual Intake fallback still open (3M) |
+| **Approach** | Guests tab + Manual Intake: explicit Search all guest records (`1dfa14a`, `e775f52`) |
 | **Acceptance** | No network on every digit |
-| **Class** | Guests portion **done** in 3B; Manual Intake portion open in 3M |
+| **Class** | **Done** in 3B + 3M |
 
 ### P1-9: Detail blob persistence for opened guest profiles
 
@@ -205,7 +205,7 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 |-------|-------|
 | **Risk** | Re-opened detail re-fetches full history; offline detail preview thin |
 | **Files** | `GuestProfileRepository.swift`, `GuestProfileStore.swift` |
-| **Approach** | Encode `booking_history` / `notes_history` into SwiftData on detail fetch |
+| **Approach** | Encode `booking_history` / `notes_history` into SwiftData on detail fetch for disk-first full profile reopen |
 | **Acceptance** | Second open of same guest uses disk detail blobs when fresh enough |
 | **Class** | Later slice — not V1 stabilization blocker |
 | **Queue** | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #19 (Slice 3E) |
@@ -283,6 +283,9 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 - Backend guest person-map Slice 2 — staff profile lookup (`1431a06` backend, `b1a09e7` root pointer)
 - iOS guest person-map Slice 3A — lookup API/client/store foundation (`823f42c`)
 - iOS guest person-map Slice 3B — Guests tab explicit all-record lookup + shared Guest history shell (`1dfa14a`)
+- iOS guest person-map Slice 3R — Regulars cache-first + shared Guest history (`50df843`)
+- Backend guest person-map Slice 3M-B — unknown walk-in without guest identity (`63d0cfc` backend, `c7f5a69` root pointer)
+- iOS guest person-map Slice 3M — Manual Intake walk-in validation + guest lookup (`e775f52`)
 - iOS guest person-map Slice 3R — Regulars cache-first + shared Guest history (`50df843`)
 - V1 confirmation flow hardening (`cf6e641`)
 - Mail-first confirm + manual-email-log + PATCH (when backend confirmation is **off** on device)
