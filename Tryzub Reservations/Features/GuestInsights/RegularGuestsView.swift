@@ -9,22 +9,28 @@ import SwiftUI
 // MARK: - Regulars / Guest Memory View
 
 struct RegularGuestsView: View {
-    @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
-    @EnvironmentObject private var guestProfileStore: GuestProfileStore
-
-    // Local SwiftData summaries remain an offline fallback when backend profiles are unavailable.
     @Query(sort: [
-        SortDescriptor(\ReservationRecord.reservationDate),
-        SortDescriptor(\ReservationRecord.reservationTime)
+        SortDescriptor(\GuestProfileCacheRecord.cleanVisitCount, order: .reverse),
+        SortDescriptor(\GuestProfileCacheRecord.totalReservations, order: .reverse),
+        SortDescriptor(\GuestProfileCacheRecord.fetchedAt, order: .reverse)
     ])
-    private var reservations: [ReservationRecord]
+    private var cachedProfiles: [GuestProfileCacheRecord]
 
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
     @State private var filter: RegularGuestFilter = .allSeenBefore
     @State private var sort: RegularGuestSort = .mostReservations
 
-    @StateObject private var store = RegularGuestsStore()
+    @AppStorage("tryzub.guestProfiles.fullListSyncCompleted.v1")
+    private var fullListSyncCompleted = false
+    @AppStorage("tryzub.guestProfiles.backendProfileTotal.v1")
+    private var backendProfileTotal = -1
+
+    let environment: AppEnvironment
+
+    init(environment: AppEnvironment) {
+        self.environment = environment
+    }
 
     var body: some View {
         ScrollView {
@@ -42,24 +48,6 @@ struct RegularGuestsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Name, phone, email, notes")
         .fontDesign(.rounded)
-        .task(id: cacheKey) {
-            store.updateRecords(
-                reservations,
-                cacheKey: cacheKey,
-                searchText: debouncedSearchText,
-                filter: filter,
-                sort: sort
-            )
-        }
-        .task(id: backendRequestKey) {
-            await guestProfileStore.loadProfiles(
-                query: debouncedSearchText,
-                filter: backendFilter(for: filter),
-                sort: backendSort(for: sort),
-                page: 1,
-                perPage: 25
-            )
-        }
         .task(id: searchText) {
             do {
                 try await Task.sleep(for: .milliseconds(250))
@@ -68,13 +56,6 @@ struct RegularGuestsView: View {
             }
             guard !Task.isCancelled else { return }
             debouncedSearchText = searchText
-            store.updateDisplay(searchText: searchText, filter: filter, sort: sort)
-        }
-        .onChange(of: filter) { _, newValue in
-            store.updateDisplay(searchText: debouncedSearchText, filter: newValue, sort: sort)
-        }
-        .onChange(of: sort) { _, newValue in
-            store.updateDisplay(searchText: debouncedSearchText, filter: filter, sort: newValue)
         }
     }
 
@@ -102,19 +83,11 @@ struct RegularGuestsView: View {
 
     private var summaryGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 142), spacing: 10)], spacing: 10) {
-            switch source {
-            case .backend, .emptyBackend, .loading:
-                let metrics = backendMetrics
-                RegularGuestMetricCard(title: "Profiles", value: "\(metrics.profileCount)", caption: "Restaurant history")
-                RegularGuestMetricCard(title: "Regulars", value: "\(metrics.regularCount)", caption: "Guest history")
-                RegularGuestMetricCard(title: "Notes found", value: "\(metrics.notesCount)", caption: "Reservation notes")
-                RegularGuestMetricCard(title: "Upcoming", value: "\(metrics.upcomingCount)", caption: "Future visits")
-            case .localFallback:
-                RegularGuestMetricCard(title: "Regulars", value: "\(store.metrics.regularCount)", caption: "5+ visits")
-                RegularGuestMetricCard(title: "Becoming", value: "\(store.metrics.becomingCount)", caption: "3-4 visits")
-                RegularGuestMetricCard(title: "Notes found", value: "\(store.metrics.notesCount)", caption: "Reservation notes")
-                RegularGuestMetricCard(title: "Possible matches", value: "\(store.metrics.possibleCount)", caption: "Review only")
-            }
+            let metrics = cacheMetrics
+            RegularGuestMetricCard(title: "Profiles", value: "\(metrics.profileCount)", caption: "Saved on iPad")
+            RegularGuestMetricCard(title: "Regulars", value: "\(metrics.regularCount)", caption: "Guest history")
+            RegularGuestMetricCard(title: "Notes found", value: "\(metrics.notesCount)", caption: "Reservation notes")
+            RegularGuestMetricCard(title: "Upcoming", value: "\(metrics.upcomingCount)", caption: "Future visits")
         }
     }
 
@@ -171,155 +144,67 @@ struct RegularGuestsView: View {
 
     @ViewBuilder
     private var results: some View {
-        switch source {
-        case .loading:
-            HStack {
-                Spacer()
-                ProgressView("Loading guest history…")
-                    .font(.caption)
-                Spacer()
-            }
-            .padding(.vertical, 24)
-        case .emptyBackend:
+        if cachedProfiles.isEmpty {
             ContentUnavailableView(
-                "No guest history found yet.",
+                "No guest profiles saved yet.",
                 systemImage: "person.2",
-                description: Text("Try a different search.")
+                description: Text("Guest profiles load in the background after sign-in.")
             )
             .frame(maxWidth: .infinity)
             .padding(.vertical, 24)
-        case .backend:
+        } else if displayedProfiles.isEmpty {
+            ContentUnavailableView(
+                "No guests found.",
+                systemImage: "person.2",
+                description: Text("Try a different filter or search.")
+            )
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 24)
+        } else {
             LazyVStack(spacing: 10) {
-                ForEach(guestProfileStore.listProfiles) { profile in
-                    BackendGuestProfileRow(profile: profile)
-                }
-            }
-        case .localFallback:
-            if store.isComputing && store.displayedSummaries.isEmpty {
-                HStack {
-                    Spacer()
-                    ProgressView("Loading guest history…")
-                        .font(.caption)
-                    Spacer()
-                }
-                .padding(.vertical, 24)
-            } else if store.displayedSummaries.isEmpty {
-                ContentUnavailableView(
-                    "No Guests Found",
-                    systemImage: "person.2",
-                    description: Text("Try a different filter or search.")
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 24)
-            } else {
-                LazyVStack(spacing: 10) {
-                    ForEach(store.displayedSummaries) { summary in
-                        if let representative = representativeRecord(for: summary) {
-                            NavigationLink {
-                                GuestInsightsView(
-                                    selectedReservation: representative,
-                                    allReservations: reservations
-                                )
-                                .environmentObject(guestIntelligenceStore)
-                            } label: {
-                                RegularGuestRow(summary: summary)
-                            }
-                            .buttonStyle(.plain)
-                        }
+                ForEach(displayedProfiles) { profile in
+                    NavigationLink {
+                        GuestProfileDetailView(
+                            guestKey: profile.guestKey,
+                            environment: environment
+                        )
+                    } label: {
+                        CachedGuestProfileRow(profile: profile)
                     }
+                    .buttonStyle(.plain)
                 }
             }
         }
-    }
-
-    private func representativeRecord(for summary: RegularGuestSummary) -> ReservationRecord? {
-        reservations.first { $0.remoteID == summary.representativeReservationID }
-    }
-
-    private var cacheKey: RegularGuestsCacheKey {
-        RegularGuestsCacheKey(reservations: reservations)
-    }
-
-    private var backendRequestKey: String {
-        [
-            debouncedSearchText,
-            backendFilter(for: filter)?.apiValue ?? "all",
-            backendSort(for: sort)?.apiValue ?? "default"
-        ].joined(separator: "|")
-    }
-
-    private var source: GuestMemorySource {
-        if guestProfileStore.isLoadingList && !guestProfileStore.hasLoadedList && guestProfileStore.listProfiles.isEmpty {
-            return .loading
-        }
-        if guestProfileStore.listErrorMessage != nil {
-            return .localFallback
-        }
-        if guestProfileStore.hasLoadedList && guestProfileStore.listProfiles.isEmpty {
-            return .emptyBackend
-        }
-        if !guestProfileStore.listProfiles.isEmpty {
-            return .backend
-        }
-        return .loading
     }
 
     private var sourceCopy: String {
-        switch source {
-        case .backend, .emptyBackend:
-            return "Guest history from restaurant records."
-        case .localFallback:
-            return "Offline view based on reservations saved on this device."
-        case .loading:
-            return "Loading guest history…"
-        }
+        profileCountStatusCopy
     }
 
     private var sourceCountCopy: String? {
-        switch source {
-        case .backend, .emptyBackend:
-            let visible = guestProfileStore.listProfiles.count
-            let total = guestProfileStore.listTotal
-            if total > visible {
-                return "Showing \(visible) of \(total) profiles."
-            }
-            return "Showing \(visible) \(visible == 1 ? "profile" : "profiles")."
-        case .localFallback, .loading:
-            return nil
+        if cachedProfiles.isEmpty {
+            return "Guest profiles load in the background after sign-in."
         }
+        if !fullListSyncCompleted {
+            return "Guest profiles load in the background after sign-in."
+        }
+        return nil
     }
 
     private var visibleCount: Int {
-        switch source {
-        case .backend:
-            return guestProfileStore.listProfiles.count
-        case .localFallback:
-            return store.displayedSummaries.count
-        case .loading, .emptyBackend:
-            return 0
-        }
+        displayedProfiles.count
     }
 
     private var filterOptions: [RegularGuestFilter] {
-        switch source {
-        case .localFallback:
-            return RegularGuestFilter.allCases
-        case .backend, .loading, .emptyBackend:
-            return [.allSeenBefore, .regulars, .notesFound, .upcoming]
-        }
+        [.allSeenBefore, .regulars, .notesFound, .upcoming]
     }
 
-    private var backendMetrics: BackendGuestProfileMetrics {
-        BackendGuestProfileMetrics(profiles: guestProfileStore.listProfiles)
+    private var cacheMetrics: CachedGuestProfileMetrics {
+        CachedGuestProfileMetrics(profiles: cachedProfiles)
     }
 
     private var sortOptions: [RegularGuestSort] {
-        switch source {
-        case .localFallback:
-            return RegularGuestSort.allCases
-        case .backend, .loading, .emptyBackend:
-            return [.mostReservations, .upcomingFirst]
-        }
+        [.mostReservations, .recentlyBooked, .upcomingFirst, .name]
     }
 
     private var sortLabel: String {
@@ -333,66 +218,176 @@ struct RegularGuestsView: View {
         return option == .allSeenBefore
     }
 
-    private func backendFilter(for filter: RegularGuestFilter) -> GuestProfileFilter? {
+    private var displayedProfiles: [GuestProfileCacheRecord] {
+        let query = GuestProfileCacheQuery(debouncedSearchText)
+        let filtered = cachedProfiles.filter { profile in
+            includes(profile, filter: filter)
+                && matches(profile, query: query)
+        }
+        return sorted(filtered, by: sort)
+    }
+
+    private var profileCountStatusCopy: String {
+        let count = cachedProfiles.count
+        if count == 0 {
+            return "No guest profiles saved yet."
+        }
+
+        if !fullListSyncCompleted {
+            if backendProfileTotal >= 0 {
+                return "\(count) of \(backendProfileTotal) guest profiles saved on this iPad. Still syncing…"
+            }
+            return "\(count) \(profileNoun(count)) saved on this iPad. Still syncing…"
+        }
+
+        return "\(count) \(profileNoun(count)) saved on this iPad."
+    }
+
+    private func includes(_ profile: GuestProfileCacheRecord, filter: RegularGuestFilter) -> Bool {
         switch filter {
         case .allSeenBefore:
-            return .all
-        case .regulars, .becomingRegular:
-            return .regular
-        case .notesFound, .staffNotesFound:
-            return .notes
+            return true
+        case .regulars:
+            return profile.isLikelyRegular
+        case .notesFound:
+            return hasNoteSignal(profile)
         case .upcoming:
-            return .upcoming
-        case .callIn, .possibleMatches, .cancellationOrNoShow:
-            return .all
+            return profile.upcomingCount > 0 || profile.nextReservationDate?.nilIfBlank != nil
+        case .becomingRegular, .staffNotesFound, .callIn, .possibleMatches, .cancellationOrNoShow:
+            return true
         }
     }
 
-    private func backendSort(for sort: RegularGuestSort) -> GuestProfileSort? {
-        switch sort {
-        case .mostReservations:
-            return .visitCount
-        case .recentlyBooked, .firstSeen:
-            return .lastSeen
-        case .mostNotes:
-            // Backend aggregate sorting does not expose note-count order yet.
-            return nil
-        case .upcomingFirst:
-            return .upcoming
-        case .name:
-            return .name
+    private func matches(_ profile: GuestProfileCacheRecord, query: GuestProfileCacheQuery) -> Bool {
+        guard query.isActive else { return true }
+        if query.phoneDigits.count >= 4, profile.matchesPhoneDigits(query.phoneDigits) {
+            return true
         }
+        return searchableText(for: profile).contains(query.text)
+    }
+
+    private func sorted(
+        _ profiles: [GuestProfileCacheRecord],
+        by sort: RegularGuestSort
+    ) -> [GuestProfileCacheRecord] {
+        profiles.sorted { lhs, rhs in
+            switch sort {
+            case .mostReservations, .mostNotes:
+                if lhs.cleanVisitCount != rhs.cleanVisitCount {
+                    return lhs.cleanVisitCount > rhs.cleanVisitCount
+                }
+                if lhs.totalReservations != rhs.totalReservations {
+                    return lhs.totalReservations > rhs.totalReservations
+                }
+                return dateSortKey(lhs) > dateSortKey(rhs)
+            case .recentlyBooked:
+                if dateSortKey(lhs) != dateSortKey(rhs) {
+                    return dateSortKey(lhs) > dateSortKey(rhs)
+                }
+                return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+            case .firstSeen:
+                let left = lhs.firstSeenDate ?? ""
+                let right = rhs.firstSeenDate ?? ""
+                if left != right {
+                    return left < right
+                }
+                return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+            case .upcomingFirst:
+                if lhs.hasUpcomingSignal != rhs.hasUpcomingSignal {
+                    return lhs.hasUpcomingSignal
+                }
+                if (lhs.nextReservationDate ?? "") != (rhs.nextReservationDate ?? "") {
+                    return (lhs.nextReservationDate ?? "9999-99-99") < (rhs.nextReservationDate ?? "9999-99-99")
+                }
+                return dateSortKey(lhs) > dateSortKey(rhs)
+            case .name:
+                return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+            }
+        }
+    }
+
+    private func searchableText(for profile: GuestProfileCacheRecord) -> String {
+        [
+            profile.displayName,
+            profile.email,
+            profile.primaryPhone,
+            profile.topLabelTitles,
+            profile.summaryLine,
+            profile.latestGuestNotePreview,
+            profile.latestStaffNotePreview
+        ]
+        .compactMap { $0?.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current).lowercased() }
+        .joined(separator: " ")
+    }
+
+    private func hasNoteSignal(_ profile: GuestProfileCacheRecord) -> Bool {
+        if profile.latestGuestNotePreview?.nilIfBlank != nil || profile.latestStaffNotePreview?.nilIfBlank != nil {
+            return true
+        }
+        if profile.hasDietaryNote {
+            return true
+        }
+        let text = [
+            profile.topLabelTitles,
+            profile.summaryLine
+        ]
+        .compactMap { $0?.lowercased() }
+        .joined(separator: " ")
+        return text.contains("note")
+            || text.contains("dietary")
+            || text.contains("allerg")
+            || text.contains("preference")
+    }
+
+    private func dateSortKey(_ profile: GuestProfileCacheRecord) -> String {
+        profile.lastSeenDate ?? profile.lastBookedAt ?? profile.firstSeenDate ?? ""
+    }
+
+    private func profileNoun(_ count: Int) -> String {
+        count == 1 ? "guest profile" : "guest profiles"
     }
 }
 
-private enum GuestMemorySource {
-    case backend
-    case localFallback
-    case loading
-    case emptyBackend
+private struct GuestProfileCacheQuery {
+    let text: String
+    let phoneDigits: String
+
+    init(_ rawValue: String) {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        text = trimmed
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .lowercased()
+        phoneDigits = GuestLookupPhoneNormalizer.digits(trimmed)
+    }
+
+    var isActive: Bool {
+        !text.isEmpty || phoneDigits.count >= 4
+    }
 }
 
-private struct BackendGuestProfileMetrics {
+private struct CachedGuestProfileMetrics {
     let profileCount: Int
     let regularCount: Int
     let notesCount: Int
     let upcomingCount: Int
 
-    init(profiles: [GuestProfileDTO]) {
+    init(profiles: [GuestProfileCacheRecord]) {
         profileCount = profiles.count
-        regularCount = profiles.filter { profile in
-            (profile.cleanVisitCount ?? 0) >= 3
-                || (profile.cleanVisitCount == nil
-                    && ["exact", "strong"].contains(profile.identityConfidence?.lowercased() ?? "")
-                    && profile.labels?.contains { $0.id == "regular_guest" } == true)
-        }.count
+        regularCount = profiles.filter(\.isLikelyRegular).count
         notesCount = profiles.filter { profile in
-            (profile.counts?.guestNotes ?? 0) + (profile.counts?.staffNotes ?? 0) > 0
-                || profile.labels?.contains { label in
-                    ["often_leaves_notes", "staff_notes_found", "birthday_note", "occasion_note", "group_details", "dietary_note", "may_expect_reply"].contains(label.id ?? "")
-                } == true
+            profile.latestGuestNotePreview?.nilIfBlank != nil
+                || profile.latestStaffNotePreview?.nilIfBlank != nil
+                || profile.hasDietaryNote
+                || profile.topLabelTitles?.localizedCaseInsensitiveContains("note") == true
+                || profile.summaryLine?.localizedCaseInsensitiveContains("note") == true
         }.count
-        upcomingCount = profiles.filter { ($0.upcomingCount ?? 0) > 0 || $0.nextReservation != nil }.count
+        upcomingCount = profiles.filter(\.hasUpcomingSignal).count
+    }
+}
+
+private extension GuestProfileCacheRecord {
+    var hasUpcomingSignal: Bool {
+        upcomingCount > 0 || nextReservationDate?.nilIfBlank != nil
     }
 }
 
@@ -464,6 +459,155 @@ private final class RegularGuestsStore: ObservableObject {
 }
 
 // MARK: - Regular Guest Row
+
+private struct CachedGuestProfileRow: View {
+    let profile: GuestProfileCacheRecord
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(spacing: 2) {
+                Text(initials)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, height: 44)
+                    .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                Text("\(visitCount)x")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(displayName)
+                        .font(.headline.weight(.medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Spacer(minLength: 0)
+
+                    if profile.isLikelyRegular {
+                        Text("Regular")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(Color(.tertiarySystemGroupedBackground), in: Capsule())
+                    }
+                }
+
+                Text(detailLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+
+                FlowLayout(spacing: 6) {
+                    ForEach(labelTitles, id: \.self) { title in
+                        GuestInsightBadge(title, systemImage: "tag")
+                    }
+                    if profile.latestGuestNotePreview?.nilIfBlank != nil {
+                        GuestInsightBadge("Guest notes", systemImage: "text.bubble")
+                    }
+                    if profile.latestStaffNotePreview?.nilIfBlank != nil {
+                        GuestInsightBadge("Staff notes", systemImage: "note.text")
+                    }
+                    if profile.hasDietaryNote {
+                        GuestInsightBadge("Dietary note", systemImage: "fork.knife")
+                    }
+                    if let nextReservationLine {
+                        GuestInsightBadge(nextReservationLine, systemImage: "calendar")
+                    }
+                }
+            }
+
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: ReservationUIStyle.cardCorner, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+    }
+
+    private var displayName: String {
+        profile.displayName.nilIfBlank ?? "Guest"
+    }
+
+    private var visitCount: Int {
+        max(profile.cleanVisitCount, profile.totalReservations)
+    }
+
+    private var initials: String {
+        let parts = displayName
+            .split(whereSeparator: \.isWhitespace)
+            .prefix(2)
+            .compactMap(\.first)
+        let value = String(parts).uppercased()
+        return value.isEmpty ? "?" : value
+    }
+
+    private var detailLine: String {
+        var parts: [String] = []
+
+        if let phone = profile.primaryPhone?.nilIfBlank ?? profile.normalizedPhone?.nilIfBlank {
+            parts.append(GuestLookupFormatting.phoneDisplay(phone))
+        } else if let email = profile.email?.nilIfBlank {
+            parts.append(email)
+        }
+
+        if profile.totalReservations > 0 {
+            parts.append("\(profile.totalReservations) \(profile.totalReservations == 1 ? "reservation" : "reservations")")
+        } else if profile.cleanVisitCount > 0 {
+            parts.append("\(profile.cleanVisitCount) \(profile.cleanVisitCount == 1 ? "visit" : "visits")")
+        }
+
+        if let lastSeen = profile.lastSeenDate?.nilIfBlank ?? profile.lastBookedAt?.nilIfBlank {
+            parts.append("Last seen \(GuestProfileCacheDateFormatter.display(lastSeen))")
+        }
+
+        if let summary = profile.summaryLine?.nilIfBlank {
+            parts.append(summary)
+        }
+
+        return parts.isEmpty ? profile.displaySubtitle : parts.joined(separator: " · ")
+    }
+
+    private var nextReservationLine: String? {
+        guard let date = profile.nextReservationDate?.nilIfBlank else {
+            return profile.upcomingCount > 0 ? "Upcoming" : nil
+        }
+        let time = profile.nextReservationTime?.nilIfBlank
+        let pieces = [GuestProfileCacheDateFormatter.display(date), time].compactMap { $0 }
+        return "Next " + pieces.joined(separator: " · ")
+    }
+
+    private var labelTitles: [String] {
+        guard let topLabelTitles = profile.topLabelTitles?.nilIfBlank else { return [] }
+        return Array(
+            topLabelTitles
+                .split(separator: ",")
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .prefix(4)
+        )
+    }
+}
+
+private enum GuestProfileCacheDateFormatter {
+    static func display(_ value: String) -> String {
+        guard let date = ReservationFormatters.reservationDateKey.date(from: value) else {
+            return value
+        }
+
+        return date.formatted(.dateTime.month(.abbreviated).day().year())
+    }
+}
 
 private struct RegularGuestRow: View {
     let summary: RegularGuestSummary
@@ -797,12 +941,19 @@ private struct RegularGuestMetricCard: View {
     }
 }
 
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 // MARK: - Previews
 
 #if DEBUG
 #Preview("Guest Memory") {
     NavigationStack {
-        RegularGuestsView()
+        RegularGuestsView(environment: AppEnvironment(apiClient: ReservationsAPIClient.preview, role: .developer))
     }
     .modelContainer(ReservationPreviewData.previewContainer)
     .environmentObject(GuestIntelligenceStore(apiClient: ReservationsAPIClient.preview))

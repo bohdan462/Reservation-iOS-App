@@ -2337,7 +2337,7 @@ private struct ReservationMoreView: View {
         case .serviceBoardGuide:
             ServiceBoardGuideView()
         case .regularGuests:
-            RegularGuestsView()
+            RegularGuestsView(environment: environment)
         case .hostIntelligenceSettings:
             HostIntelligenceSettingsView(
                 settingsStore: hostIntelligenceSettingsStore,

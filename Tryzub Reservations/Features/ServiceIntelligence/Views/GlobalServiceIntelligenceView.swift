@@ -349,7 +349,7 @@ struct GlobalServiceIntelligenceView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             NavigationLink {
-                RegularGuestsView()
+                RegularGuestsView(environment: environment)
             } label: {
                 Label("Open Guest Memory", systemImage: "arrow.up.right")
                     .font(.subheadline.weight(.medium))
