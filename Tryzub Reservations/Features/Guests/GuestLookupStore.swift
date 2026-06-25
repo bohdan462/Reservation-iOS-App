@@ -23,7 +23,7 @@ final class GuestLookupStore: ObservableObject {
     func updateCache(records: [ReservationRecord], cacheKey: GuestLookupCacheKey, context: ModelContext? = nil) {
         guard self.cacheKey != cacheKey else { return }
         self.cacheKey = cacheKey
-        let cachedProfiles = (try? context.map { try GuestProfileRepository().cachedProfiles(context: $0) }) ?? []
+        let cachedProfiles = (try? context.map { try GuestProfileRepository().allCachedProfiles(context: $0) }) ?? []
         searchIndex = GuestLookupSearchIndex.build(from: records, cachedProfiles: cachedProfiles)
     }
 

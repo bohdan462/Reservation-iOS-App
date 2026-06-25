@@ -96,6 +96,17 @@ struct GuestProfileRepository {
         return try context.fetch(descriptor)
     }
 
+    func allCachedProfiles(context: ModelContext) throws -> [GuestProfileCacheRecord] {
+        let descriptor = FetchDescriptor<GuestProfileCacheRecord>(
+            sortBy: [
+                SortDescriptor(\.cleanVisitCount, order: .reverse),
+                SortDescriptor(\.totalReservations, order: .reverse),
+                SortDescriptor(\.fetchedAt, order: .reverse)
+            ]
+        )
+        return try context.fetch(descriptor)
+    }
+
     func matchProfile(
         for reservation: ReservationRecord,
         context: ModelContext
@@ -141,7 +152,7 @@ struct GuestProfileRepository {
     }
 
     func cacheCount(context: ModelContext) throws -> Int {
-        try context.fetch(FetchDescriptor<GuestProfileCacheRecord>()).count
+        try context.fetchCount(FetchDescriptor<GuestProfileCacheRecord>())
     }
 
     // MARK: - Mapping

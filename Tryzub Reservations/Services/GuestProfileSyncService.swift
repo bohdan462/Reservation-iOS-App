@@ -6,6 +6,17 @@
 import Foundation
 import SwiftData
 
+struct GuestProfileSyncMetadata {
+    let lastSyncAttemptAt: Date?
+    let lastSyncSuccessAt: Date?
+    let lastUpdatedSince: String?
+    let fullListSyncCompleted: Bool
+    let lastFullListSyncAt: Date?
+    let backendProfileTotal: Int?
+    let cachedProfileCount: Int
+    let lastSyncFailureReason: String?
+}
+
 @MainActor
 final class GuestProfileSyncService {
     private let apiClient: any ReservationsAPIClientProtocol
@@ -17,6 +28,11 @@ final class GuestProfileSyncService {
     private let cursorKey = "tryzub.guestProfiles.lastUpdatedSince.v1"
     private let lastAttemptKey = "tryzub.guestProfiles.lastSyncAttemptAt.v1"
     private let lastSuccessKey = "tryzub.guestProfiles.lastSyncSuccessAt.v1"
+    private let fullListSyncCompletedKey = "tryzub.guestProfiles.fullListSyncCompleted.v1"
+    private let lastFullListSyncAtKey = "tryzub.guestProfiles.lastFullListSyncAt.v1"
+    private let backendProfileTotalKey = "tryzub.guestProfiles.backendProfileTotal.v1"
+    private let cachedProfileCountKey = "tryzub.guestProfiles.cachedProfileCount.v1"
+    private let lastFailureReasonKey = "tryzub.guestProfiles.lastSyncFailureReason.v1"
 
     init(
         apiClient: any ReservationsAPIClientProtocol,
@@ -28,16 +44,37 @@ final class GuestProfileSyncService {
         self.defaults = defaults
     }
 
+    var metadata: GuestProfileSyncMetadata {
+        GuestProfileSyncMetadata(
+            lastSyncAttemptAt: date(forKey: lastAttemptKey),
+            lastSyncSuccessAt: date(forKey: lastSuccessKey),
+            lastUpdatedSince: defaults.string(forKey: cursorKey).flatMap(normalizedText),
+            fullListSyncCompleted: defaults.bool(forKey: fullListSyncCompletedKey),
+            lastFullListSyncAt: date(forKey: lastFullListSyncAtKey),
+            backendProfileTotal: defaults.object(forKey: backendProfileTotalKey) as? Int,
+            cachedProfileCount: defaults.integer(forKey: cachedProfileCountKey),
+            lastSyncFailureReason: defaults.string(forKey: lastFailureReasonKey).flatMap(normalizedText)
+        )
+    }
+
     func syncProfilesIfNeeded(context: ModelContext, force: Bool = false) async {
-        if !force, let lastSuccess = lastSuccessDate, Date().timeIntervalSince(lastSuccess) < syncTTL {
+        let fullListSyncCompleted = defaults.bool(forKey: fullListSyncCompletedKey)
+        if fullListSyncCompleted,
+           !force,
+           let lastSuccess = lastSuccessDate,
+           Date().timeIntervalSince(lastSuccess) < syncTTL {
             return
         }
 
         defaults.set(Date().timeIntervalSince1970, forKey: lastAttemptKey)
 
-        let updatedSince = defaults.string(forKey: cursorKey).flatMap(normalizedText)
+        let updatedSince = fullListSyncCompleted
+            ? defaults.string(forKey: cursorKey).flatMap(normalizedText)
+            : nil
+        let isFullListSync = updatedSince == nil
         var page = 1
         var latestBackendUpdatedAt = updatedSince
+        var backendProfileTotal: Int?
 
         do {
             while !Task.isCancelled {
@@ -51,6 +88,9 @@ final class GuestProfileSyncService {
                 )
                 let profiles = response.profiles ?? []
                 try repository.upsertProfiles(profiles, context: context)
+                if isFullListSync, let total = response.total, total >= 0 {
+                    backendProfileTotal = total
+                }
 
                 if let pageLatest = profiles.compactMap(\.updatedAt).max() {
                     latestBackendUpdatedAt = max(latestBackendUpdatedAt ?? pageLatest, pageLatest)
@@ -64,12 +104,35 @@ final class GuestProfileSyncService {
                 await Task.yield()
             }
 
+            guard !Task.isCancelled else { return }
+            let cachedCount = try repository.cacheCount(context: context)
             if let latestBackendUpdatedAt {
                 defaults.set(latestBackendUpdatedAt, forKey: cursorKey)
             }
-            defaults.set(Date().timeIntervalSince1970, forKey: lastSuccessKey)
+            let successAt = Date()
+            defaults.set(successAt.timeIntervalSince1970, forKey: lastSuccessKey)
+            defaults.set(cachedCount, forKey: cachedProfileCountKey)
+            defaults.removeObject(forKey: lastFailureReasonKey)
+            if isFullListSync {
+                defaults.set(successAt.timeIntervalSince1970, forKey: lastFullListSyncAtKey)
+                if let backendProfileTotal {
+                    defaults.set(backendProfileTotal, forKey: backendProfileTotalKey)
+                    defaults.set(cachedCount >= backendProfileTotal, forKey: fullListSyncCompletedKey)
+                } else {
+                    defaults.removeObject(forKey: backendProfileTotalKey)
+                    defaults.set(false, forKey: fullListSyncCompletedKey)
+                }
+            } else if fullListSyncCompleted {
+                if let knownTotal = defaults.object(forKey: backendProfileTotalKey) as? Int,
+                   cachedCount < knownTotal {
+                    defaults.set(false, forKey: fullListSyncCompletedKey)
+                } else {
+                    defaults.set(true, forKey: fullListSyncCompletedKey)
+                }
+            }
         } catch {
             guard !Task.isCancelled else { return }
+            defaults.set(syncFailureReason(from: error), forKey: lastFailureReasonKey)
             #if DEBUG
             print("[GUEST_PROFILE_SYNC] failed: \(error)")
             #endif
@@ -78,6 +141,12 @@ final class GuestProfileSyncService {
 
     private var lastSuccessDate: Date? {
         let value = defaults.double(forKey: lastSuccessKey)
+        guard value > 0 else { return nil }
+        return Date(timeIntervalSince1970: value)
+    }
+
+    private func date(forKey key: String) -> Date? {
+        let value = defaults.double(forKey: key)
         guard value > 0 else { return nil }
         return Date(timeIntervalSince1970: value)
     }
@@ -103,5 +172,11 @@ final class GuestProfileSyncService {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func syncFailureReason(from error: Error) -> String {
+        let raw = String(describing: error).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return "Unknown error" }
+        return String(raw.prefix(240))
     }
 }
