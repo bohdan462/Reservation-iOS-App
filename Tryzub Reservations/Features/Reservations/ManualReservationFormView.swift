@@ -92,17 +92,6 @@ struct ManualReservationFormView: View {
             // Lazy form support load: setup provides manual-create defaults only.
             _ = try? await controller.loadRestaurantSetup()
         }
-        .onChange(of: draft.traceKey) { _, _ in
-            logManualAdd(
-                event: "draft_changed",
-                fields: [
-                    "hasName": "\(ReservationInputNormalizer.collapsedWhitespace(draft.guestName).isEmpty == false)",
-                    "hasDate": "true",
-                    "hasTime": "true",
-                    "party": "\(draft.partySize)"
-                ]
-            )
-        }
         .onChange(of: showCreateConfirmation) { oldValue, newValue in
             guard oldValue, !newValue else { return }
             if let reason = intentionalConfirmationDismissalReason {
@@ -118,7 +107,7 @@ struct ManualReservationFormView: View {
             Task { @MainActor in
                 await Task.yield()
                 guard !didFinishIntentionally, !isSaving else { return }
-                pendingCreateSummary = draft.createSummaryRows()
+                pendingCreateSummary = draft.createSummaryRows(intakeMode: intakeMode)
                 showCreateConfirmation = true
             }
         }
@@ -130,10 +119,9 @@ struct ManualReservationFormView: View {
 
     private func prepareCreateConfirmation() {
         guard validateRequiredFields() else { return }
-        pendingCreateSummary = draft.createSummaryRows()
+        pendingCreateSummary = draft.createSummaryRows(intakeMode: intakeMode)
         dismissKeyboard()
         logManualAdd(event: "show_confirm")
-        // Defer one run loop so keyboard teardown finishes before the sheet presents.
         Task { @MainActor in
             await Task.yield()
             FormTrace.event(surface: "manual_add", name: "confirmation_sheet_presented", extra: "mode=create")
@@ -625,22 +613,11 @@ private struct ReservationFormContent: View {
     }
 
     var body: some View {
-        ScrollViewReader { scrollProxy in
-            ScrollView {
-                formShell
-                    .padding(.bottom, ReservationLayout.scrollBottomInset + 96)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .onChange(of: focusedField) { _, newValue in
-                guard let newValue else { return }
-                Task { @MainActor in
-                    await Task.yield()
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        scrollProxy.scrollTo(newValue as ReservationFormField?, anchor: .center)
-                    }
-                }
-            }
+        ScrollView {
+            formShell
+                .padding(.bottom, ReservationLayout.scrollBottomInset + 96)
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(Color(.systemGroupedBackground))
         .navigationTitle(mode.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -730,14 +707,13 @@ private struct ReservationFormContent: View {
         }
         .onChange(of: focusedField) { _, newValue in
             guard let newValue else { return }
-            if [.guestName, .phone, .email].contains(newValue) {
-                guestLookupStore.scheduleSearch(currentGuestLookupText)
-            }
+            #if DEBUG
             FormTrace.event(
                 surface: "manual_add",
                 name: "focus_changed",
                 extra: "field=\(newValue.traceName)"
             )
+            #endif
         }
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
@@ -882,15 +858,6 @@ private struct ReservationFormContent: View {
                     guestEmailField
                 }
 
-                if mode.usesManualGuestInput {
-                    GuestTextMessageActionButtons(
-                        phone: draft.phone,
-                        confirmationBody: manualTextConfirmationBody,
-                        tableDueBody: manualTextTableDueBody,
-                        isCompact: !isWideForm,
-                        includesTableReady: mode.showsEditControls
-                    )
-                }
             }
         }
         .onAppear {
@@ -910,10 +877,10 @@ private struct ReservationFormContent: View {
         if mode.usesManualGuestInput {
             ManualGuestCandidateSection(
                 localResults: localGuestCandidates,
-                allRecordResults: allGuestRecordResults,
+                allRecordResults: cappedAllGuestRecordResults,
                 isSearchingAllGuestRecords: isSearchingAllGuestRecords,
                 message: guestCandidateMessage,
-                canSearchAllRecords: !isSearchingAllGuestRecords,
+                canSearchAllRecords: !isSearchingAllGuestRecords && isEligibleForAllGuestRecordSearch(currentGuestLookupText),
                 onSearchAllRecords: {
                     Task { await searchAllGuestRecords() }
                 },
@@ -942,6 +909,14 @@ private struct ReservationFormContent: View {
         return order
     }
 
+    private func moveFocusAfterSubmit(from field: ReservationFormField) {
+        if let next = field.next(in: focusFieldOrder) {
+            focusedField = next
+        } else {
+            focusedField = nil
+        }
+    }
+
     private var currentGuestLookupText: String {
         switch focusedField {
         case .phone:
@@ -964,24 +939,31 @@ private struct ReservationFormContent: View {
     private var localGuestCandidates: [GuestLookupResult] {
         let allRecordKeys = Set(allGuestRecordResults.compactMap(guestCandidateIdentityKey(for:)))
         let results = guestLookupStore.results.filter { !draftAlreadyMatchesGuest($0) }
-        guard !allRecordKeys.isEmpty else { return results }
-        return results.filter { result in
-            guard let key = guestCandidateIdentityKey(for: result) else { return true }
-            return !allRecordKeys.contains(key)
+        let filtered: [GuestLookupResult]
+        if allRecordKeys.isEmpty {
+            filtered = results
+        } else {
+            filtered = results.filter { result in
+                guard let key = guestCandidateIdentityKey(for: result) else { return true }
+                return !allRecordKeys.contains(key)
+            }
         }
+        return Array(filtered.prefix(6))
+    }
+
+    private var cappedAllGuestRecordResults: [GuestLookupResult] {
+        Array(allGuestRecordResults.prefix(6))
     }
 
     private var guestCandidateMessage: String? {
         if let guestRecordSearchMessage {
             return guestRecordSearchMessage
         }
-        if !currentGuestLookupText.trimmed.isEmpty, allGuestRecordSearchRequest == nil {
-            return "Enter a name, email, or at least 7 phone digits."
-        }
-        if guestLookupStore.isSearchActive || !allGuestRecordResults.isEmpty {
-            return nil
-        }
-        return "Saved guest matches appear here as you type. Search all guest records to check older visits too."
+        return nil
+    }
+
+    private func isEligibleForAllGuestRecordSearch(_ text: String) -> Bool {
+        ManualGuestServerLookupRequest(text: text) != nil
     }
 
     private var allGuestRecordSearchRequest: ManualGuestServerLookupRequest? {
@@ -1000,6 +982,7 @@ private struct ReservationFormContent: View {
 
     private func clearAllGuestRecordSearchIfNeeded() {
         guard lastSubmittedGuestSearch != currentGuestLookupText.trimmed else { return }
+        guard !allGuestRecordCandidates.isEmpty || guestRecordSearchMessage != nil else { return }
         allGuestRecordCandidates = []
         guestRecordSearchMessage = nil
     }
@@ -1030,7 +1013,7 @@ private struct ReservationFormContent: View {
     private func searchAllGuestRecords() async {
         guard let request = allGuestRecordSearchRequest else {
             allGuestRecordCandidates = []
-            guestRecordSearchMessage = "Enter a name, email, or at least 7 phone digits."
+            guestRecordSearchMessage = nil
             lastSubmittedGuestSearch = currentGuestLookupText.trimmed
             return
         }
@@ -1106,22 +1089,6 @@ private struct ReservationFormContent: View {
         return name.isEmpty ? nil : "name:\(name)"
     }
 
-    private var manualTextConfirmationBody: String {
-        ManualTextMessageService.confirmationBody(
-            guestName: draft.guestName,
-            reservationDate: draft.reservationDate,
-            reservationTime: draft.reservationTime,
-            partySize: draft.partySize
-        )
-    }
-
-    private var manualTextTableDueBody: String {
-        ManualTextMessageService.tableDueBody(
-            guestName: draft.guestName,
-            tableName: draft.tableName.nilIfBlank
-        )
-    }
-
     @ViewBuilder
     private var guestInputFields: some View {
         guestNameField
@@ -1138,7 +1105,8 @@ private struct ReservationFormContent: View {
             inputKind: .guestName,
             field: .guestName,
             focusedField: $focusedField,
-            error: guestNameFieldError
+            error: guestNameFieldError,
+            onSubmit: { moveFocusAfterSubmit(from: .guestName) }
         )
     }
 
@@ -1151,7 +1119,8 @@ private struct ReservationFormContent: View {
             inputKind: .guestPhone,
             field: .phone,
             focusedField: $focusedField,
-            error: phoneFieldError
+            error: phoneFieldError,
+            onSubmit: { moveFocusAfterSubmit(from: .phone) }
         )
     }
 
@@ -1164,7 +1133,8 @@ private struct ReservationFormContent: View {
             inputKind: .guestEmail,
             field: .email,
             focusedField: $focusedField,
-            error: emailFieldError
+            error: emailFieldError,
+            onSubmit: { moveFocusAfterSubmit(from: .email) }
         )
     }
 
@@ -2417,8 +2387,9 @@ private struct ReservationFormDraft {
         date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
     }
 
-    func createSummaryRows() -> [(String, String)] {
-        [
+    func createSummaryRows(intakeMode: ManualReservationIntakeMode) -> [(String, String)] {
+        var rows = [
+            ("Intake", intakeMode.title),
             ("Name", guestName.trimmed.isEmpty ? "Walk-in guest" : guestName.trimmed),
             ("Phone", phone.trimmed.isEmpty ? "No phone" : phone.trimmed),
             ("Email", email.trimmed.isEmpty ? "No email" : email.trimmed),
@@ -2426,20 +2397,18 @@ private struct ReservationFormDraft {
             ("Time", Self.displayTime(reservationTime)),
             ("Party", "\(partySize)")
         ]
-    }
 
-    func createReviewMessage() -> String {
-        let nameLine = guestName.trimmed.isEmpty ? "Walk-in guest" : guestName.trimmed
-        let phoneLine = phone.trimmed.isEmpty ? "No phone" : phone.trimmed
-        let emailLine = email.trimmed.isEmpty ? "No email" : email.trimmed
-        return """
-        Name: \(nameLine)
-        Phone: \(phoneLine)
-        Email: \(emailLine)
-        Date: \(Self.displayDate(reservationDate))
-        Time: \(Self.displayTime(reservationTime))
-        Party: \(partySize)
-        """
+        if let table = tableName.trimmed.nilIfBlank {
+            rows.append(("Table", table))
+        }
+        if let guestNotes = guestNotes.trimmed.nilIfBlank {
+            rows.append(("Guest notes", guestNotes))
+        }
+        if let staffNotes = staffNotes.trimmed.nilIfBlank {
+            rows.append(("Staff notes", staffNotes))
+        }
+
+        return rows
     }
 
     func changes(from original: ReservationFormDraft) -> [ReservationFormChange] {
@@ -2546,6 +2515,7 @@ private struct ReservationFormTextField: View {
     var field: ReservationFormField?
     var focusedField: FocusState<ReservationFormField?>.Binding?
     var error: String?
+    var onSubmit: (() -> Void)?
 
     private var isFocused: Bool {
         guard let field, let focusedField else { return false }
@@ -2554,18 +2524,8 @@ private struct ReservationFormTextField: View {
 
     private var displayBinding: Binding<String> {
         switch inputKind {
-        case .plain, .guestEmail, .tableName, .numericID:
+        case .plain, .guestName, .guestPhone, .guestEmail, .tableName, .numericID:
             return $text
-        case .guestName:
-            return Binding(
-                get: { text },
-                set: { text = ReservationInputNormalizer.sanitizedGuestName($0) }
-            )
-        case .guestPhone:
-            return Binding(
-                get: { text },
-                set: { text = ReservationInputNormalizer.sanitizedUSPhoneInput($0) }
-            )
         }
     }
 
@@ -2592,6 +2552,21 @@ private struct ReservationFormTextField: View {
         TextField(prompt, text: displayBinding)
             .staffFormFieldChrome(isFocused: isFocused)
             .modifier(ReservationFormTextFieldModifiers(inputKind: inputKind))
+            .submitLabel(submitLabel)
+            .onSubmit {
+                onSubmit?()
+            }
+    }
+
+    private var submitLabel: SubmitLabel {
+        switch field {
+        case .guestName, .phone, .email, .tableName, .supersededById:
+            return .next
+        case .guestNotes, .staffNotes:
+            return .done
+        case nil:
+            return .done
+        }
     }
 }
 
@@ -2703,11 +2678,11 @@ private struct ManualGuestCandidateSection: View {
                 }
 
                 if !localResults.isEmpty {
-                    candidateGroup(title: "Saved on this iPad", results: localResults)
+                    candidateGroup(results: localResults)
                 }
 
                 if !allRecordResults.isEmpty {
-                    candidateGroup(title: "All guest records", results: allRecordResults)
+                    candidateGroup(results: allRecordResults)
                 }
 
                 Button(action: onSearchAllRecords) {
@@ -2728,13 +2703,8 @@ private struct ManualGuestCandidateSection: View {
         }
     }
 
-    private func candidateGroup(title: String, results: [GuestLookupResult]) -> some View {
+    private func candidateGroup(results: [GuestLookupResult]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(TryzubColors.mutedText)
-                .textCase(.uppercase)
-
             ForEach(results) { result in
                 ManualGuestCandidateCard(
                     result: result,

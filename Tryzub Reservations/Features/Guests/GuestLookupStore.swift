@@ -131,18 +131,12 @@ private struct GuestLookupNormalizedQuery: Equatable {
     }
 
     var isActive: Bool {
-        queryDigits.count >= 4 || normalizedEmail.count >= 3 || normalizedName.count >= 2
+        queryDigits.count >= 7 || normalizedEmail.count >= 3 || normalizedName.count >= 2
     }
 
     var debounceMilliseconds: Int {
-        if normalizedEmail.count >= 5 { return 80 }
-        if normalizedEmail.count >= 3 { return 150 }
-        if queryDigits.count >= 7 { return 0 }
-        if queryDigits.count >= 5 { return 60 }
-        if queryDigits.count >= 4 { return 120 }
-        if normalizedName.count >= 5 { return 80 }
-        if normalizedName.count >= 3 { return 150 }
-        return 220
+        if queryDigits.count >= 7 { return 250 }
+        return 300
     }
 }
 
@@ -216,7 +210,7 @@ private struct GuestLookupSearchIndex {
                 }
                 return lhs.profile.displayName.localizedCaseInsensitiveCompare(rhs.profile.displayName) == .orderedAscending
             }
-            .prefix(25)
+            .prefix(8)
             .map(\.profile.result)
     }
 
