@@ -84,6 +84,18 @@ struct GuestProfileRepository {
         }.prefix(max(1, limit)))
     }
 
+    func cachedProfiles(limit: Int = 500, context: ModelContext) throws -> [GuestProfileCacheRecord] {
+        var descriptor = FetchDescriptor<GuestProfileCacheRecord>(
+            sortBy: [
+                SortDescriptor(\.cleanVisitCount, order: .reverse),
+                SortDescriptor(\.totalReservations, order: .reverse),
+                SortDescriptor(\.fetchedAt, order: .reverse)
+            ]
+        )
+        descriptor.fetchLimit = max(1, limit)
+        return try context.fetch(descriptor)
+    }
+
     func matchPhoneDigits(_ digits: String, context: ModelContext) throws -> GuestProfileCacheRecord? {
         let normalizedDigits = normalizedPhoneDigits(digits)
         guard normalizedDigits.count >= 7 else { return nil }
@@ -290,11 +302,7 @@ struct GuestProfileRepository {
     }
 
     private func normalizedPhoneDigits(_ value: String) -> String {
-        let digits = value.filter(\.isNumber)
-        if digits.count == 11, digits.first == "1" {
-            return String(digits.dropFirst())
-        }
-        return digits
+        GuestLookupPhoneNormalizer.digits(value)
     }
 
     private func preview(_ value: String, limit: Int = 120) -> String? {

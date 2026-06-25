@@ -16,6 +16,11 @@ struct GuestLookupResult: Identifiable, Equatable {
     let totalReservations: Int
     let latestGuestNotes: String?
     let latestStaffNotes: String?
+    let labelSummary: String?
+    let summaryLine: String?
+    let hasDietaryNote: Bool
+    let isRegularGuest: Bool
+    let isBackendProfile: Bool
 
     var prefill: ManualReservationPrefill {
         ManualReservationPrefill(
@@ -47,7 +52,7 @@ enum ManualReservationPrefillSource: String, Equatable {
 }
 
 enum GuestLookupPhoneNormalizer {
-    /// Digits-only US phone for guest lookup. Strips punctuation and leading country code `1`.
+    /// Digits-only US phone for guest lookup. Strips punctuation, removes leading country-code `1`s, and caps at 10 digits.
     static func digits(_ value: String) -> String {
         var digits = value.filter(\.isNumber)
         while digits.first == "1" {

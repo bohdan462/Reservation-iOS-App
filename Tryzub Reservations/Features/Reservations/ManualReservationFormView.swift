@@ -25,6 +25,7 @@ struct ManualReservationFormView: View {
     @State private var pendingCreateSummary: [(String, String)] = []
     @State private var intentionalConfirmationDismissalReason: String?
     @State private var didFinishIntentionally = false
+    @State private var intakeMode: ManualReservationIntakeMode = .callIn
 
     init(
         failure: ImportFailureDTO? = nil,
@@ -51,6 +52,7 @@ struct ManualReservationFormView: View {
                 errorMessage: errorMessage,
                 failure: failure,
                 reservation: nil,
+                intakeMode: $intakeMode,
                 showsGuestLookupDetailReminder: prefill?.source == .callInGuestLookup,
                 onCancel: {
                     didFinishIntentionally = true
@@ -66,7 +68,7 @@ struct ManualReservationFormView: View {
         .sheet(isPresented: $showCreateConfirmation) {
             ReservationFormConfirmationSheet(
                 title: "Add Reservation",
-                subtitle: "Review the call-in details before accepting this reservation.",
+                subtitle: "Review the details before accepting this reservation.",
                 confirmTitle: "Add Reservation",
                 isProcessing: isSaving,
                 onConfirm: {
@@ -168,7 +170,7 @@ struct ManualReservationFormView: View {
             let createdReservation = try await onCreateReservation(
                 draft.createRequest(
                     sourceSubmissionId: failure?.sourceSubmissionId,
-                    sourceType: failure == nil ? .manualCallIn : .importRepair,
+                    sourceType: createSourceType,
                     setup: controller.restaurantSetup
                 )
             )
@@ -217,6 +219,14 @@ struct ManualReservationFormView: View {
             return false
         }
     }
+
+    private var createSourceType: ReservationSourceType {
+        guard failure == nil else { return .importRepair }
+        if intakeMode == .walkIn {
+            return .manualWalkIn
+        }
+        return draft.usedKnownGuest ? .knownGuestManual : .manualCallIn
+    }
 }
 
 // MARK: - Edit Reservation Wrapper
@@ -256,6 +266,7 @@ struct ReservationEditFormView: View {
                 errorMessage: errorMessage,
                 failure: nil,
                 reservation: reservation,
+                intakeMode: .constant(.callIn),
                 showsGuestLookupDetailReminder: false,
                 onCancel: { dismiss() },
                 onSubmit: { prepareSaveConfirmation() },
@@ -477,6 +488,22 @@ private enum ReservationFormMode {
     }
 }
 
+private enum ManualReservationIntakeMode: String, CaseIterable, Identifiable {
+    case callIn
+    case walkIn
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .callIn:
+            return "Call-in"
+        case .walkIn:
+            return "Walk-in"
+        }
+    }
+}
+
 private enum ReservationFormField: Hashable, CaseIterable {
     case guestName
     case phone
@@ -517,6 +544,7 @@ private struct ReservationFormContent: View {
     let errorMessage: String?
     let failure: ImportFailureDTO?
     var reservation: ReservationRecord?
+    @Binding var intakeMode: ManualReservationIntakeMode
     var showsGuestLookupDetailReminder = false
     let onCancel: () -> Void
     let onSubmit: () -> Void
@@ -535,6 +563,14 @@ private struct ReservationFormContent: View {
         ]
     )
     private var guestLookupRecords: [ReservationRecord]
+    @Query(
+        sort: [
+            SortDescriptor(\GuestProfileCacheRecord.cleanVisitCount, order: .reverse),
+            SortDescriptor(\GuestProfileCacheRecord.totalReservations, order: .reverse),
+            SortDescriptor(\GuestProfileCacheRecord.fetchedAt, order: .reverse)
+        ]
+    )
+    private var cachedGuestProfiles: [GuestProfileCacheRecord]
     @StateObject private var guestPhoneLookupStore = GuestLookupStore()
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @StateObject private var hostIntelligenceSettingsStore = HostIntelligenceSettingsStore()
@@ -641,13 +677,17 @@ private struct ReservationFormContent: View {
         .task(id: guestLookupCacheKey) {
             guestPhoneLookupStore.updateCache(
                 records: guestLookupRecords,
-                cacheKey: guestLookupCacheKey
+                cacheKey: guestLookupCacheKey,
+                context: modelContext
             )
             guestPhoneLookupStore.schedulePhoneLookup(draft.phone)
         }
         .onChange(of: draft.phone) { _, _ in
             suppressedGuestPhoneSuggestionID = nil
             guestPhoneLookupStore.schedulePhoneLookup(draft.phone)
+        }
+        .onChange(of: intakeMode) { _, newMode in
+            applyIntakeModeDefaults(newMode)
         }
         .onChange(of: draft.reservationDate.reservationDateString()) { _, newDateKey in
             cachedDayReservationsDateKey = nil
@@ -728,15 +768,24 @@ private struct ReservationFormContent: View {
         VStack(alignment: .leading, spacing: ReservationFormLayout.sectionSpacing) {
             formBanners
 
+            if mode == .manualCreate {
+                intakeModeControl
+            }
+
             if isWideForm {
                 formColumnPair {
                     contactCard
                 } right: {
                     dateCard
                 }
+                knownGuestSuggestionCard
 
                 serviceChoicesGrid
                 slotContextBanner
+
+                if showsWalkInDetailsCard {
+                    walkInDetailsCard
+                }
 
                 if mode.showsEditControls {
                     formColumnPair {
@@ -749,17 +798,29 @@ private struct ReservationFormContent: View {
                 }
             } else {
                 contactCard
+                knownGuestSuggestionCard
                 dateCard
                 serviceChoicesGrid
                 slotContextBanner
 
                 if mode.showsEditControls {
                     editDetailsCard
+                } else if showsWalkInDetailsCard {
+                    walkInDetailsCard
                 }
 
                 notesSection
             }
         }
+    }
+
+    private var intakeModeControl: some View {
+        Picker("Intake mode", selection: $intakeMode) {
+            ForEach(ManualReservationIntakeMode.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
     }
 
     @ViewBuilder
@@ -800,18 +861,6 @@ private struct ReservationFormContent: View {
                     guestEmailField
                 }
 
-                if let suggestion = visibleGuestPhoneSuggestion {
-                    GuestPhoneLookupSuggestionRow(
-                        result: suggestion,
-                        onUse: {
-                            applyGuestPhoneSuggestion(suggestion)
-                        },
-                        onDismiss: {
-                            suppressedGuestPhoneSuggestionID = suggestion.id
-                        }
-                    )
-                }
-
                 if mode.usesManualGuestInput {
                     GuestTextMessageActionButtons(
                         phone: draft.phone,
@@ -835,12 +884,30 @@ private struct ReservationFormContent: View {
         }
     }
 
+    @ViewBuilder
+    private var knownGuestSuggestionCard: some View {
+        if let suggestion = visibleGuestPhoneSuggestion {
+            GuestPhoneLookupSuggestionRow(
+                result: suggestion,
+                onUse: {
+                    applyGuestPhoneSuggestion(suggestion)
+                },
+                onDismiss: {
+                    suppressedGuestPhoneSuggestionID = suggestion.id
+                }
+            )
+        }
+    }
+
     private var guestLookupCacheKey: GuestLookupCacheKey {
-        GuestLookupCacheKey(records: guestLookupRecords)
+        GuestLookupCacheKey(records: guestLookupRecords, cachedProfiles: cachedGuestProfiles)
     }
 
     private var focusFieldOrder: [ReservationFormField] {
         var order: [ReservationFormField] = [.guestName, .phone, .email, .guestNotes, .staffNotes]
+        if showsWalkInDetailsCard {
+            order.append(.tableName)
+        }
         if mode.showsEditControls {
             order.append(contentsOf: [.tableName, .supersededById])
         }
@@ -860,7 +927,8 @@ private struct ReservationFormContent: View {
         guard mode.usesManualGuestInput else { return }
         guestPhoneLookupStore.updateCache(
             records: guestLookupRecords,
-            cacheKey: guestLookupCacheKey
+            cacheKey: guestLookupCacheKey,
+            context: modelContext
         )
         guestPhoneLookupStore.schedulePhoneLookup(draft.phone)
     }
@@ -913,15 +981,53 @@ private struct ReservationFormContent: View {
                 )
             )
         }
-        draft.guestName = result.displayName
+        if shouldReplaceGuestName {
+            draft.guestName = result.displayName
+        }
         if let phoneDigits = result.phoneDigits {
             draft.phone = ReservationInputNormalizer.sanitizedUSPhoneInput(phoneDigits)
         }
         if let email = result.email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
-            draft.email = email
+            if draft.email.trimmed.isEmpty {
+                draft.email = email
+            }
         }
+        if draft.guestNotes.trimmed.isEmpty, let guestNotes = result.latestGuestNotes?.trimmed.nilIfBlank {
+            draft.guestNotes = guestNotes
+        }
+        if draft.staffNotes.trimmed.isEmpty {
+            let staffNotes = knownGuestStaffNotes(from: result)
+            if let staffNotes {
+                draft.staffNotes = staffNotes
+            }
+        }
+        draft.usedKnownGuest = true
         suppressedGuestPhoneSuggestionID = nil
         ReservationHaptics.selection()
+    }
+
+    private var shouldReplaceGuestName: Bool {
+        let name = draft.guestName.trimmed.lowercased()
+        return name.isEmpty || ["guest", "unknown", "walk-in", "walk in"].contains(name)
+    }
+
+    private func knownGuestStaffNotes(from result: GuestLookupResult) -> String? {
+        var lines: [String] = []
+        if result.isRegularGuest {
+            lines.append("Known guest: regular guest.")
+        }
+        if result.hasDietaryNote {
+            lines.append("Dietary note: check guest notes.")
+        }
+        if let summary = result.summaryLine?.trimmed.nilIfBlank {
+            lines.append("Preference: \(summary)")
+        } else if let labels = result.labelSummary?.trimmed.nilIfBlank, !result.isRegularGuest {
+            lines.append("Preference: \(labels)")
+        }
+        if let latestStaffNotes = result.latestStaffNotes?.trimmed.nilIfBlank {
+            lines.append(latestStaffNotes)
+        }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     private var manualTextConfirmationBody: String {
@@ -1247,6 +1353,23 @@ private struct ReservationFormContent: View {
         }
         let descriptor = FetchDescriptor<ReservationRecord>(predicate: predicate)
         return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    private var showsWalkInDetailsCard: Bool {
+        mode == .manualCreate && intakeMode == .walkIn
+    }
+
+    private var walkInDetailsCard: some View {
+        ReservationFormSection(title: "Walk-in", systemImage: "figure.walk.arrival") {
+            ReservationFormTextField(
+                title: "Table optional",
+                text: $draft.tableName,
+                prompt: "Unassigned",
+                inputKind: .tableName,
+                field: .tableName,
+                focusedField: $focusedField
+            )
+        }
     }
 
     private var editDetailsCard: some View {
@@ -1597,6 +1720,7 @@ private struct ReservationFormContent: View {
 
         switch mode {
         case .manualCreate:
+            applyIntakeModeDefaults(intakeMode)
             draft.applyDefaultStaffServiceSlot(
                 setup: controller.restaurantSetup,
                 availability: controller.cachedRestaurantDayAvailability(
@@ -1622,6 +1746,26 @@ private struct ReservationFormContent: View {
             }
         case .edit:
             break
+        }
+    }
+
+    private func applyIntakeModeDefaults(_ mode: ManualReservationIntakeMode) {
+        guard self.mode == .manualCreate else { return }
+        switch mode {
+        case .callIn:
+            draft.status = .confirmed
+        case .walkIn:
+            draft.status = .seated
+            draft.applyDefaultStaffServiceSlot(
+                setup: controller.restaurantSetup,
+                keepGuestFields: true,
+                availability: controller.cachedRestaurantDayAvailability(
+                    date: Date().reservationDateString()
+                ),
+                publicSlots: controller.cachedReservationSlots(
+                    date: Date().reservationDateString()
+                )
+            )
         }
     }
 
@@ -1724,7 +1868,7 @@ private enum ReservationInputNormalizer {
     }
 
     static func phoneDigits(_ value: String) -> String {
-        value.filter(\.isNumber)
+        GuestLookupPhoneNormalizer.digits(value)
     }
 
     static func normalizedEmail(_ value: String) -> String {
@@ -1911,6 +2055,7 @@ private struct ReservationFormDraft {
     var tableName: String
     var status: ReservationStatus
     var supersededById: String
+    var usedKnownGuest: Bool
 
     var traceKey: String {
         [
@@ -1921,7 +2066,8 @@ private struct ReservationFormDraft {
             ReservationFormatters.apiTime.string(from: reservationTime),
             "\(partySize)",
             "\(guestNotes.count)",
-            "\(staffNotes.count)"
+            "\(staffNotes.count)",
+            "\(usedKnownGuest)"
         ].joined(separator: "|")
     }
 
@@ -1937,6 +2083,7 @@ private struct ReservationFormDraft {
         tableName = ""
         status = .confirmed
         supersededById = ""
+        usedKnownGuest = false
 
         if let failure {
             staffNotes = "Created manually from failed Flamingo import \(failure.sourceSubmissionId.map(String.init) ?? "unknown")."
@@ -1948,6 +2095,7 @@ private struct ReservationFormDraft {
             guestName = prefill.guestName
             phone = prefill.phoneDigits.map(ReservationInputNormalizer.sanitizedUSPhoneInput) ?? ""
             email = prefill.email ?? ""
+            usedKnownGuest = prefill.source == .callInGuestLookup
         }
     }
 
@@ -1963,6 +2111,7 @@ private struct ReservationFormDraft {
         tableName = reservation.tableName ?? ""
         status = reservation.statusValue
         supersededById = reservation.supersededById.map(String.init) ?? ""
+        usedKnownGuest = false
     }
 
     func createRequest(
@@ -2302,7 +2451,7 @@ private struct ReservationFormTextFieldModifiers: ViewModifier {
                 .textInputAutocapitalization(.words)
         case .guestPhone:
             content
-                .textContentType(.telephoneNumber)
+                .textContentType(.none)
                 .keyboardType(.phonePad)
         case .guestEmail:
             content
@@ -2389,19 +2538,28 @@ private struct GuestPhoneLookupSuggestionRow: View {
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 4) {
+                Text("Known guest found")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(ReservationUIStyle.selectedControlColor)
+                    .textCase(.uppercase)
+
                 Text(result.displayName)
                     .font(.subheadline.weight(.semibold))
                     .fixedSize(horizontal: false, vertical: true)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     if let phoneDigits = result.phoneDigits {
                         Text(GuestLookupFormatting.phoneDisplay(phoneDigits))
                     }
                     if let email = result.email {
                         Text(email)
                     }
-                    if result.totalReservations > 0 {
-                        Text("\(result.totalReservations) reservations")
+                    if let memoryLine = knownGuestMemoryLine(result) {
+                        Text(memoryLine)
+                    }
+                    if let preview = knownGuestPreviewLine(result) {
+                        Text(preview)
+                            .foregroundStyle(.primary)
                     }
                 }
                 .font(.caption.weight(.medium))
@@ -2435,6 +2593,28 @@ private struct GuestPhoneLookupSuggestionRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Known guest \(result.displayName)")
         .accessibilityHint("Double tap Use to fill guest details")
+    }
+
+    private func knownGuestMemoryLine(_ result: GuestLookupResult) -> String? {
+        var parts: [String] = []
+        if result.totalReservations > 0 {
+            parts.append("\(result.totalReservations) reservations")
+        }
+        if let labelSummary = result.labelSummary?.nilIfBlank {
+            parts.append(labelSummary)
+        } else if result.isRegularGuest {
+            parts.append("Regular guest")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func knownGuestPreviewLine(_ result: GuestLookupResult) -> String? {
+        if result.hasDietaryNote {
+            return "Dietary note: check guest notes."
+        }
+        return result.summaryLine?.nilIfBlank
+            ?? result.latestGuestNotes?.nilIfBlank
+            ?? result.latestStaffNotes?.nilIfBlank
     }
 }
 

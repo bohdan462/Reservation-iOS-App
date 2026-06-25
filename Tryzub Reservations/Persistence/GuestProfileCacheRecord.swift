@@ -131,10 +131,6 @@ final class GuestProfileCacheRecord {
     }
 
     private static func normalizedPhoneDigits(_ value: String) -> String {
-        let digits = value.filter(\.isNumber)
-        if digits.count == 11, digits.first == "1" {
-            return String(digits.dropFirst())
-        }
-        return digits
+        GuestLookupPhoneNormalizer.digits(value)
     }
 }

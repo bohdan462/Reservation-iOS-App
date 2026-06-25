@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import SwiftData
 
 // MARK: - Guest Lookup Store
 
@@ -19,10 +20,11 @@ final class GuestLookupStore: ObservableObject {
     private var lastExecutedQuery: GuestLookupNormalizedQuery?
     private var lastExecutedPhoneDigits: String?
 
-    func updateCache(records: [ReservationRecord], cacheKey: GuestLookupCacheKey) {
+    func updateCache(records: [ReservationRecord], cacheKey: GuestLookupCacheKey, context: ModelContext? = nil) {
         guard self.cacheKey != cacheKey else { return }
         self.cacheKey = cacheKey
-        searchIndex = GuestLookupSearchIndex.build(from: records)
+        let cachedProfiles = (try? context.map { try GuestProfileRepository().cachedProfiles(context: $0) }) ?? []
+        searchIndex = GuestLookupSearchIndex.build(from: records, cachedProfiles: cachedProfiles)
     }
 
     func scheduleSearch(_ query: String) {
@@ -148,8 +150,11 @@ private struct GuestLookupSearchIndex {
 
     static let empty = GuestLookupSearchIndex(profiles: [], phonePrefixToProfileIndexes: [:])
 
-    static func build(from records: [ReservationRecord]) -> GuestLookupSearchIndex {
-        let profiles = buildProfiles(from: records)
+    static func build(
+        from records: [ReservationRecord],
+        cachedProfiles: [GuestProfileCacheRecord] = []
+    ) -> GuestLookupSearchIndex {
+        let profiles = buildProfiles(from: records, cachedProfiles: cachedProfiles)
         var phonePrefixToProfileIndexes: [String: [Int]] = [:]
 
         for (index, profile) in profiles.enumerated() {
@@ -275,9 +280,14 @@ private struct GuestLookupSearchIndex {
         return 3
     }
 
-    private static func buildProfiles(from records: [ReservationRecord]) -> [GuestLookupProfile] {
+    private static func buildProfiles(
+        from records: [ReservationRecord],
+        cachedProfiles: [GuestProfileCacheRecord]
+    ) -> [GuestLookupProfile] {
         let visibleRecords = records.filter { !$0.isHidden }
         var profilesByKey: [String: GuestLookupProfileBuilder] = [:]
+        var keyByPhone: [String: String] = [:]
+        var keyByEmail: [String: String] = [:]
 
         for record in visibleRecords {
             let normalizedName = GuestLookupNormalizer.normalizedName(record.guestName)
@@ -300,10 +310,44 @@ private struct GuestLookupSearchIndex {
                 displayName: GuestLookupNormalizer.displayName(record.guestName),
                 normalizedName: normalizedName,
                 phoneDigits: phoneDigits,
-                email: email?.isManualPlaceholderEmail == true ? nil : email
+                email: email?.isManualPlaceholderEmail == true ? nil : email,
+                isBackendProfile: false
             )
             builder.add(record)
             profilesByKey[key] = builder
+            if let phoneDigits, phoneDigits.count >= 7 {
+                keyByPhone[phoneDigits] = key
+            }
+            if let email, !email.isManualPlaceholderEmail {
+                keyByEmail[email] = key
+            }
+        }
+
+        for cachedProfile in cachedProfiles {
+            let phoneDigits = cachedProfile.normalizedPhone?.nilIfBlank
+            let email = cachedProfile.email?.nilIfBlank
+            let key = phoneDigits.flatMap { keyByPhone[$0] }
+                ?? email.flatMap { keyByEmail[$0] }
+                ?? "backend:\(cachedProfile.guestKey)"
+            let normalizedName = GuestLookupNormalizer.normalizedName(cachedProfile.displayName)
+
+            var builder = profilesByKey[key] ?? GuestLookupProfileBuilder(
+                key: key,
+                displayName: cachedProfile.displayName,
+                normalizedName: normalizedName,
+                phoneDigits: phoneDigits,
+                email: email,
+                isBackendProfile: true
+            )
+            builder.apply(cachedProfile)
+            profilesByKey[key] = builder
+
+            if let phoneDigits, phoneDigits.count >= 7 {
+                keyByPhone[phoneDigits] = key
+            }
+            if let email {
+                keyByEmail[email] = key
+            }
         }
 
         return profilesByKey.values.map(\.profile)
@@ -317,12 +361,18 @@ struct GuestLookupCacheKey: Hashable {
     let maxRemoteID: Int
     let maxUpdatedAt: Date?
     let maxLastSyncedAt: Date?
+    let cachedProfileCount: Int
+    let maxCachedProfileFetchedAt: Date?
+    let maxCachedProfileUpdatedAt: String?
 
-    init(records: [ReservationRecord]) {
+    init(records: [ReservationRecord], cachedProfiles: [GuestProfileCacheRecord] = []) {
         count = records.count
         maxRemoteID = records.map(\.remoteID).max() ?? 0
         maxUpdatedAt = records.compactMap(\.updatedAt).max()
         maxLastSyncedAt = records.map(\.lastSyncedAt).max()
+        cachedProfileCount = cachedProfiles.count
+        maxCachedProfileFetchedAt = cachedProfiles.map(\.fetchedAt).max()
+        maxCachedProfileUpdatedAt = cachedProfiles.compactMap(\.backendUpdatedAt).max()
     }
 }
 
@@ -388,6 +438,11 @@ private struct GuestLookupProfile {
     let totalReservations: Int
     let latestGuestNotes: String?
     let latestStaffNotes: String?
+    let labelSummary: String?
+    let summaryLine: String?
+    let hasDietaryNote: Bool
+    let isRegularGuest: Bool
+    let isBackendProfile: Bool
 
     var result: GuestLookupResult {
         GuestLookupResult(
@@ -398,7 +453,12 @@ private struct GuestLookupProfile {
             lastReservationDate: lastReservationDate,
             totalReservations: totalReservations,
             latestGuestNotes: latestGuestNotes,
-            latestStaffNotes: latestStaffNotes
+            latestStaffNotes: latestStaffNotes,
+            labelSummary: labelSummary,
+            summaryLine: summaryLine,
+            hasDietaryNote: hasDietaryNote,
+            isRegularGuest: isRegularGuest,
+            isBackendProfile: isBackendProfile
         )
     }
 
@@ -454,6 +514,11 @@ private struct GuestLookupProfileBuilder {
     var totalReservations = 0
     var latestGuestNotes: String?
     var latestStaffNotes: String?
+    var labelSummary: String?
+    var summaryLine: String?
+    var hasDietaryNote = false
+    var isRegularGuest = false
+    var isBackendProfile = false
 
     mutating func add(_ record: ReservationRecord) {
         totalReservations += 1
@@ -482,6 +547,28 @@ private struct GuestLookupProfileBuilder {
         }
     }
 
+    mutating func apply(_ cachedProfile: GuestProfileCacheRecord) {
+        isBackendProfile = true
+        displayName = cachedProfile.displayName
+        normalizedName = GuestLookupNormalizer.normalizedName(cachedProfile.displayName)
+        if let digits = cachedProfile.normalizedPhone?.nilIfBlank {
+            phoneDigits = digits
+        }
+        if let email = cachedProfile.email?.nilIfBlank {
+            self.email = email
+        }
+        if let lastSeenDate = cachedProfile.lastSeenDate?.nilIfBlank {
+            lastReservationDate = max(lastReservationDate ?? lastSeenDate, lastSeenDate)
+        }
+        totalReservations = max(totalReservations, cachedProfile.totalReservations)
+        latestGuestNotes = cachedProfile.latestGuestNotePreview?.nilIfBlank ?? latestGuestNotes
+        latestStaffNotes = cachedProfile.latestStaffNotePreview?.nilIfBlank ?? latestStaffNotes
+        labelSummary = cachedProfile.topLabelTitles?.nilIfBlank ?? labelSummary
+        summaryLine = cachedProfile.summaryLine?.nilIfBlank ?? summaryLine
+        hasDietaryNote = hasDietaryNote || cachedProfile.hasDietaryNote
+        isRegularGuest = isRegularGuest || cachedProfile.isLikelyRegular
+    }
+
     var profile: GuestLookupProfile {
         GuestLookupProfile(
             key: key,
@@ -492,7 +579,12 @@ private struct GuestLookupProfileBuilder {
             lastReservationDate: lastReservationDate,
             totalReservations: totalReservations,
             latestGuestNotes: latestGuestNotes,
-            latestStaffNotes: latestStaffNotes
+            latestStaffNotes: latestStaffNotes,
+            labelSummary: labelSummary,
+            summaryLine: summaryLine,
+            hasDietaryNote: hasDietaryNote,
+            isRegularGuest: isRegularGuest,
+            isBackendProfile: isBackendProfile
         )
     }
 }
