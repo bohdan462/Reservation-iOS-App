@@ -289,13 +289,13 @@ enum ReservationHostAction: String, Identifiable {
 
         switch self {
         case .confirmOnly:
-            let helper = reservation.email.nilIfBlank == nil
-                ? "\n\nNo guest email on this reservation. Mark confirmed without email."
-                : ""
-            let manualFlow = reservation.hasUsableConfirmationEmail
-                ? "This opens Mail. The reservation is marked confirmed only after the email is sent."
-                : "Mark confirmed without email."
-            return "\(manualFlow)\(helper)"
+            guard reservation.hasUsableConfirmationEmail else {
+                return "No guest email on this reservation. Mark confirmed without email."
+            }
+            if Self.isBackendConfirmEmailEnabled {
+                return "This sends the confirmation email through the backend and marks the reservation confirmed."
+            }
+            return "This opens Mail so staff can review and send the confirmation. The reservation is marked confirmed after Mail reports sent."
         case .confirmAndSendEmail:
             if Self.isBackendConfirmEmailEnabled {
                 return "\(summary)\n\nThis asks the backend to send the confirmation email and record the result."

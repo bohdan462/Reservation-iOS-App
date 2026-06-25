@@ -1653,7 +1653,7 @@ private struct ReservationScheduleView: View {
             #endif
             await controller.autoRefreshDashboardIfAllowed(
                 context: modelContext,
-                isInteractionActive: false,
+                isInteractionActive: ReservationsPresentedInteractionProbe.hasPresentedInteraction,
                 isAppActive: scenePhase == .active,
                 source: .bookings
             )
@@ -2102,6 +2102,7 @@ private struct ReservationMoreView: View {
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @EnvironmentObject private var hostIntelligenceSettingsStore: HostIntelligenceSettingsStore
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
+    @ObservedObject private var emailAutomationSettingsStore = EmailAutomationSettingsStore.shared
     @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var showManualCreate = false
     @State private var showFailedImports = false
@@ -2157,6 +2158,19 @@ private struct ReservationMoreView: View {
                     if controller.capabilities.canManageRestaurantSettings {
                         NavigationLink(value: ReservationMoreDestination.restaurantSettings) {
                             Label("Restaurant Settings", systemImage: "gearshape")
+                        }
+
+                        NavigationLink(value: ReservationMoreDestination.emailControls) {
+                            Label {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Email Controls")
+                                    Text(emailControlsModeSubtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } icon: {
+                                Image(systemName: "envelope.badge")
+                            }
                         }
 
                         NavigationLink(value: ReservationMoreDestination.todayAvailability) {
@@ -2306,6 +2320,8 @@ private struct ReservationMoreView: View {
             HiddenReservationsView(environment: environment)
         case .restaurantSettings:
             RestaurantSettingsView(settingsStore: settingsStore)
+        case .emailControls:
+            EmailAutomationSettingsView(settingsStore: EmailAutomationSettingsStore.shared)
         case .todayAvailability:
             TodayAvailabilityView(settingsStore: settingsStore)
         case .weeklyHours:
@@ -2341,6 +2357,12 @@ private struct ReservationMoreView: View {
             )
         }
     }
+
+    private var emailControlsModeSubtitle: String {
+        emailAutomationSettingsStore.settings.backendConfirmationEnabled
+            ? "Backend sends confirmation emails"
+            : "Staff reviews confirmation in Mail"
+    }
 }
 
 private enum ReservationMoreDestination: Hashable {
@@ -2349,6 +2371,7 @@ private enum ReservationMoreDestination: Hashable {
     case cancelledDetail(remoteID: Int)
     case hidden
     case restaurantSettings
+    case emailControls
     case todayAvailability
     case weeklyHours
     case blockedTimeSlots

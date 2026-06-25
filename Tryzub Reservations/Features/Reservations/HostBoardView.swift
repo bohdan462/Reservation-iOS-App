@@ -412,7 +412,7 @@ struct HostBoardView: View {
             actions: {
                 if let pendingAction {
                     if pendingAction.action == .confirmOnly {
-                        Button("Confirm only") {
+                        Button(pendingAction.reservation.hasUsableConfirmationEmail ? "Open to confirm" : "Confirm only") {
                             Task {
                                 await perform(.confirmOnly, on: pendingAction.reservation)
                             }

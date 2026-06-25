@@ -3209,6 +3209,37 @@ final class ReservationsController: ObservableObject {
         let service = ReservationMutationService(client: environment.apiClient, repository: repository)
 
         do {
+            guard let latestReservation = await reconcileReservation(id: id, context: context) else {
+                postNotice(
+                    severity: .warning,
+                    source: .mutation,
+                    title: "Couldn’t check latest reservation",
+                    message: "Refresh and try confirming again."
+                )
+                return
+            }
+
+            switch latestReservation.status {
+            case .cancelled:
+                postNotice(
+                    severity: .info,
+                    source: .mutation,
+                    title: "Reservation already cancelled",
+                    message: "This reservation was already cancelled. Refreshing it now."
+                )
+                return
+            case .completed, .noShow:
+                postNotice(
+                    severity: .info,
+                    source: .mutation,
+                    title: "Reservation already closed",
+                    message: "This reservation is already closed."
+                )
+                return
+            case .new, .needsReview, .confirmed, .seated:
+                break
+            }
+
             let response = try await service.confirmReservation(id: id)
             EmailWorkflowDiagnosticsStore.shared.recordConfirm(response)
             if let reservation = response.data {

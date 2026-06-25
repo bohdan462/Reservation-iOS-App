@@ -2484,6 +2484,8 @@ private struct DetailMetadataItem: View {
 // MARK: - Reservation Action Bar
 
 private struct DetailActionBar: View {
+    @EnvironmentObject private var emailAutomationSettingsStore: EmailAutomationSettingsStore
+
     let reservation: ReservationRecord
     let capabilities: AppCapabilities
     let isBusy: Bool
@@ -2557,6 +2559,11 @@ private struct DetailActionBar: View {
 
     private var pendingConfirmationActions: some View {
         VStack(spacing: 10) {
+            Text(primaryConfirmationModeMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
             pendingConfirmationButton(
                 title: primaryConfirmationTitle,
                 systemImage: primaryConfirmationSystemImage,
@@ -2569,9 +2576,19 @@ private struct DetailActionBar: View {
 
     private var primaryConfirmationTitle: String {
         if reservation.hasUsableConfirmationEmail {
-            return ReservationEmailWorkflow.isBackendConfirmEmailEnabled ? "Confirm & Send" : "Confirm Manually"
+            return emailAutomationSettingsStore.settings.backendConfirmationEnabled ? "Confirm & Send" : "Confirm Manually"
         }
         return ReservationHostAction.confirmOnly.shortTitle
+    }
+
+    private var primaryConfirmationModeMessage: String {
+        guard reservation.hasUsableConfirmationEmail else {
+            return "No guest email. Confirm manually."
+        }
+
+        return emailAutomationSettingsStore.settings.backendConfirmationEnabled
+            ? "Confirmation email will be sent by backend."
+            : "Confirmation opens Mail for review."
     }
 
     private var primaryConfirmationSystemImage: String {
