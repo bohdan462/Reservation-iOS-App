@@ -1,6 +1,8 @@
 # Tryzub Reservations — Architecture Diagrams
 
-> **UPDATE_REQUIRED:** Audit sections (§13–16) may be stale. Prefer [AUDIT_CURRENT_STATE.md](./AUDIT_CURRENT_STATE.md) and [IOS_ARCHITECTURE.md](./IOS_ARCHITECTURE.md) for current behavior. Branch `audit-current-state`, 2026-06-14.
+> **Diagram reference only. Verify against [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md), [IOS_ARCHITECTURE.md](./IOS_ARCHITECTURE.md), and current code.**
+
+> **UPDATE_REQUIRED:** Audit sections (§13–16) may be stale. Prefer [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) and [IOS_ARCHITECTURE.md](./IOS_ARCHITECTURE.md) for current behavior. Branch `audit-current-state`, 2026-06-14.
 
 **Source of truth:** WordPress REST API at `https://tryzubchicago.com/wp-json/tryzub/v1`  
 **Local cache:** SwiftData `ReservationRecord` only — never authoritative  

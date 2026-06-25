@@ -1,5 +1,7 @@
 # Tryzub Reservations — Project Map
 
+> **Reference index only. Not source of truth. Start with [DOCS_INDEX.md](./DOCS_INDEX.md) and [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md).**
+
 > **Audit:** `audit-current-state` (2026-06-14) — see [DOCS_INDEX.md](./DOCS_INDEX.md). Confirm flow and shift reminders sections here may be stale; prefer [RESERVATION_WORKFLOWS.md](./RESERVATION_WORKFLOWS.md).
 
 One-restaurant internal iOS app. **WordPress REST API is source of truth.** **SwiftData is cache only.**

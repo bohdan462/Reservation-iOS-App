@@ -79,7 +79,7 @@ Host Intelligence **displays on** the Host board; it does **not** own selected-d
 - [HOST_TAB_ARCHITECTURE.md](./HOST_TAB_ARCHITECTURE.md) — Host board file map
 - [HOST_TAB_STATE_FLOW.md](./HOST_TAB_STATE_FLOW.md) — date + snapshot rules
 - [INTELLIGENCE.md](./INTELLIGENCE.md) — backend APIs
-- [AUDIT_CURRENT_STATE.md](./AUDIT_CURRENT_STATE.md) §7
+- [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) (Host Intelligence rules)
 
 ## Historical
 
