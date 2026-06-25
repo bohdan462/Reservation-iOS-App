@@ -1,6 +1,7 @@
 *.xcuserstate
 *.xcbkptlist
 .DS_Store
+Backend/*.zip
 LocalCredentials.swift
 LocalConfig.plist
 
