@@ -7,6 +7,26 @@ import Foundation
 import OSLog
 import SwiftData
 
+enum VisibleAutoRefreshSkipReason: Equatable {
+    case paused
+    case pausedWhileEditing
+    case waitingBusy
+    case retrySoon
+
+    var staffLabel: String {
+        switch self {
+        case .paused:
+            return "Paused"
+        case .pausedWhileEditing:
+            return "Paused while editing"
+        case .waitingBusy:
+            return "Waiting — busy"
+        case .retrySoon:
+            return "Retry soon"
+        }
+    }
+}
+
 @MainActor
 final class ReservationsController: ObservableObject {
     #if DEBUG
@@ -49,6 +69,8 @@ final class ReservationsController: ObservableObject {
     @Published private(set) var isAutoRefreshing = false {
         didSet { publishOperationState() }
     }
+
+    @Published private(set) var lastVisibleAutoRefreshSkipReason: VisibleAutoRefreshSkipReason?
 
     // Remote reservation IDs currently being patched or confirmed.
     @Published private(set) var actionInProgressIDs: Set<Int> = [] {
@@ -1047,7 +1069,20 @@ final class ReservationsController: ObservableObject {
         lastSyncedAt = now
         lastFreshnessCheckedAt = now
         cacheTrustSource = .serverSync
+        updateVisibleAutoRefreshSkipReason(nil)
         refreshHomeServicePresentation()
+    }
+
+    private func updateVisibleAutoRefreshSkipReason(_ reason: VisibleAutoRefreshSkipReason?) {
+        guard lastVisibleAutoRefreshSkipReason != reason else { return }
+        lastVisibleAutoRefreshSkipReason = reason
+        refreshHomeServicePresentation()
+    }
+
+    private func isHomeServiceTrustStale(now: Date) -> Bool {
+        let reference = [lastSyncedAt, lastFreshnessCheckedAt].compactMap { $0 }.max()
+        guard let reference else { return true }
+        return now.timeIntervalSince(reference) > TryzubStaffStatusResolver.staleSyncThreshold
     }
 
     private func persistSyncMetadata() {
@@ -1423,15 +1458,18 @@ final class ReservationsController: ObservableObject {
         context: ModelContext,
         isInteractionActive: Bool,
         isAppActive: Bool,
-        source: VisibleLiveRefreshSource = .host
+        source: VisibleLiveRefreshSource = .host,
+        preferVisibleLiveRefresh: Bool = false
     ) async {
         guard isAppActive else {
+            updateVisibleAutoRefreshSkipReason(.paused)
             MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "app_inactive")
             ReservationAPILogger.skip(reason: .autoSkipInactive, message: "app is not active")
             return
         }
 
         guard !isInteractionActive else {
+            updateVisibleAutoRefreshSkipReason(.pausedWhileEditing)
             MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "interaction_active")
             ReservationAPILogger.skip(reason: .autoSkipBusy, message: "host interaction is active")
             return
@@ -1440,6 +1478,7 @@ final class ReservationsController: ObservableObject {
         guard !hasActiveReservationRefresh,
               !hasActiveMutation,
               !isCheckingImportFailureCount else {
+            updateVisibleAutoRefreshSkipReason(.waitingBusy)
             MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "controller_busy")
             ReservationAPILogger.skip(reason: .autoSkipBusy, message: "controller is busy")
             return
@@ -1450,6 +1489,9 @@ final class ReservationsController: ObservableObject {
 
         if let lastAttempt = lastAutoRefreshAttemptAt,
            now.timeIntervalSince(lastAttempt) < autoRefreshInterval {
+            if !isHomeServiceTrustStale(now: now) {
+                updateVisibleAutoRefreshSkipReason(nil)
+            }
             MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "interval_throttle")
             ReservationAPILogger.skip(reason: .autoSkipBusy, message: "auto-refresh interval has not passed")
             return
@@ -1457,6 +1499,7 @@ final class ReservationsController: ObservableObject {
 
         if let lastFailure = lastAutoRefreshFailureAt,
            now.timeIntervalSince(lastFailure) < autoRefreshFailureCooldown {
+            updateVisibleAutoRefreshSkipReason(.retrySoon)
             MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "failure_cooldown")
             ReservationAPILogger.skip(reason: .autoSkipCooldown, message: "auto-refresh failure cooldown active")
             return
@@ -1487,22 +1530,36 @@ final class ReservationsController: ObservableObject {
                 ttl: activeWindowAutoRefreshTTL
             )
         } else if isScopeFresh(scope, freshnessInterval: activeWindowAutoRefreshTTL) {
-            MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "full_fresh_no_cursor")
-            recordActiveWindowFreshness(.useCache(reason: "fresh_automatic"))
-            recordRefreshDecision(scope: scope, mode: .automatic, outcome: "skipped_fresh")
-            ActiveWindowFreshnessTrace.autoCheck(
-                source: "autoRefreshDashboard",
-                decision: "skip",
-                reason: "recent_success_no_cursor",
-                elapsed: elapsedSinceSuccess,
-                ttl: activeWindowAutoRefreshTTL
-            )
-            ReservationAPILogger.skip(
-                reason: .scopeSkipFresh,
-                message: "\(scope.description) auto refresh skipped: full sync fresh and no delta cursor"
-            )
-            return
+            if preferVisibleLiveRefresh {
+                updateVisibleAutoRefreshSkipReason(nil)
+                MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "full", reason: "live_no_cursor")
+                ActiveWindowFreshnessTrace.autoCheck(
+                    source: "autoRefreshDashboard",
+                    decision: "fetch",
+                    reason: "visible_live_full_no_cursor",
+                    elapsed: elapsedSinceSuccess,
+                    ttl: activeWindowAutoRefreshTTL
+                )
+            } else {
+                updateVisibleAutoRefreshSkipReason(nil)
+                MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "skip", reason: "full_fresh_no_cursor")
+                recordActiveWindowFreshness(.useCache(reason: "fresh_automatic"))
+                recordRefreshDecision(scope: scope, mode: .automatic, outcome: "skipped_fresh")
+                ActiveWindowFreshnessTrace.autoCheck(
+                    source: "autoRefreshDashboard",
+                    decision: "skip",
+                    reason: "recent_success_no_cursor",
+                    elapsed: elapsedSinceSuccess,
+                    ttl: activeWindowAutoRefreshTTL
+                )
+                ReservationAPILogger.skip(
+                    reason: .scopeSkipFresh,
+                    message: "\(scope.description) auto refresh skipped: full sync fresh and no delta cursor"
+                )
+                return
+            }
         } else {
+            updateVisibleAutoRefreshSkipReason(nil)
             MultiDeviceSyncTrace.visibleLiveRefresh(source: source, decision: "full", reason: "no_cursor_stale")
             ActiveWindowFreshnessTrace.autoCheck(
                 source: "autoRefreshDashboard",
@@ -4445,6 +4502,7 @@ final class ReservationsController: ObservableObject {
             lastFreshnessCheckedAt: lastFreshnessCheckedAt,
             startupBackgroundWorkState: startupBackgroundWorkState,
             hostOperationalLoading: hostOperationalLoading,
+            autoRefreshSkipReason: lastVisibleAutoRefreshSkipReason?.staffLabel,
             now: now
         )
         if homeServiceStatusPresentation != presentation {

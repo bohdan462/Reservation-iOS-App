@@ -346,6 +346,7 @@ enum HomeServiceStatusPresenter {
         lastFreshnessCheckedAt: Date?,
         startupBackgroundWorkState: StartupBackgroundWorkState,
         hostOperationalLoading: Bool,
+        autoRefreshSkipReason: String? = nil,
         now: Date = Date()
     ) -> HomeServiceStatusPresentation {
         let secondaryFromStartup = startupBackgroundWorkState.staffProgressLabel
@@ -396,26 +397,40 @@ enum HomeServiceStatusPresenter {
         }
 
         if cacheTrustSource == .serverSync, let lastSyncedAt {
+            let dotStyle = dotStyleForTrust(
+                lastSyncedAt: lastSyncedAt,
+                lastFreshnessCheckedAt: lastFreshnessCheckedAt,
+                now: now
+            )
             return HomeServiceStatusPresentation(
-                primarySyncText: "Updated \(lastSyncedAt.formatted(date: .omitted, time: .shortened))",
-                secondaryProgressText: secondaryProgressText,
-                dotStyle: dotStyleForTrust(
+                primarySyncText: "Last sync \(lastSyncedAt.formatted(date: .omitted, time: .shortened))",
+                secondaryProgressText: staleSecondaryText(
+                    current: secondaryProgressText,
+                    skipReason: autoRefreshSkipReason,
                     lastSyncedAt: lastSyncedAt,
                     lastFreshnessCheckedAt: lastFreshnessCheckedAt,
                     now: now
-                )
+                ),
+                dotStyle: dotStyle
             )
         }
 
         if let lastFreshnessCheckedAt {
+            let dotStyle = dotStyleForTrust(
+                lastSyncedAt: lastSyncedAt,
+                lastFreshnessCheckedAt: lastFreshnessCheckedAt,
+                now: now
+            )
             return HomeServiceStatusPresentation(
                 primarySyncText: "Checked \(lastFreshnessCheckedAt.formatted(date: .omitted, time: .shortened))",
-                secondaryProgressText: secondaryProgressText,
-                dotStyle: dotStyleForTrust(
+                secondaryProgressText: staleSecondaryText(
+                    current: secondaryProgressText,
+                    skipReason: autoRefreshSkipReason,
                     lastSyncedAt: lastSyncedAt,
                     lastFreshnessCheckedAt: lastFreshnessCheckedAt,
                     now: now
-                )
+                ),
+                dotStyle: dotStyle
             )
         }
 
@@ -434,17 +449,52 @@ enum HomeServiceStatusPresenter {
         )
     }
 
+    private static func staleSecondaryText(
+        current: String?,
+        skipReason: String?,
+        lastSyncedAt: Date?,
+        lastFreshnessCheckedAt: Date?,
+        now: Date
+    ) -> String? {
+        if let current {
+            return current
+        }
+        guard isTrustStale(
+            lastSyncedAt: lastSyncedAt,
+            lastFreshnessCheckedAt: lastFreshnessCheckedAt,
+            now: now
+        ) else {
+            return nil
+        }
+        if let skipReason, !skipReason.isEmpty {
+            return skipReason
+        }
+        return "May be out of date · tap refresh"
+    }
+
     private static func dotStyleForTrust(
         lastSyncedAt: Date?,
         lastFreshnessCheckedAt: Date?,
         now: Date
     ) -> TryzubStaffStatusDotStyle {
-        let reference = [lastSyncedAt, lastFreshnessCheckedAt].compactMap { $0 }.max()
-        guard let reference else { return .yellowStatic }
-        if now.timeIntervalSince(reference) > TryzubStaffStatusResolver.staleSyncThreshold {
+        if isTrustStale(
+            lastSyncedAt: lastSyncedAt,
+            lastFreshnessCheckedAt: lastFreshnessCheckedAt,
+            now: now
+        ) {
             return .yellowStatic
         }
         return .greenStatic
+    }
+
+    private static func isTrustStale(
+        lastSyncedAt: Date?,
+        lastFreshnessCheckedAt: Date?,
+        now: Date
+    ) -> Bool {
+        let reference = [lastSyncedAt, lastFreshnessCheckedAt].compactMap { $0 }.max()
+        guard let reference else { return true }
+        return now.timeIntervalSince(reference) > TryzubStaffStatusResolver.staleSyncThreshold
     }
 }
 

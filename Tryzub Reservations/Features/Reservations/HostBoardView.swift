@@ -304,6 +304,43 @@ struct HostBoardView: View {
         return "op-minute-\(hour * 60 + minute)"
     }
 
+    private var hostBoardSnapshotTimingRefreshStamp: String {
+        guard selectedDateKey == Date.reservationDateString() else {
+            return "snapshot-time-stable"
+        }
+        guard hasHostBoardTimeSensitiveRows(now: clockTick) else {
+            return "snapshot-time-stable"
+        }
+        return hostIntelligenceOperationalMinuteStamp
+    }
+
+    private func hasHostBoardTimeSensitiveRows(now: Date) -> Bool {
+        reservations.contains { reservation in
+            switch reservation.statusValue {
+            case .seated:
+                return true
+            case .new, .needsReview, .confirmed:
+                guard let reservationAt = hostBoardReservationDateTime(for: reservation) else {
+                    return false
+                }
+                let secondsUntilReservation = reservationAt.timeIntervalSince(now)
+                return secondsUntilReservation <= TimeInterval(90 * 60)
+            case .completed, .cancelled, .noShow:
+                return false
+            }
+        }
+    }
+
+    private func hostBoardReservationDateTime(for reservation: ReservationRecord) -> Date? {
+        let rawTime = reservation.reservationTime.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reservation.reservationDate.isEmpty, !rawTime.isEmpty else { return nil }
+        if let date = ReservationFormatters.serverDateTime.date(from: "\(reservation.reservationDate) \(rawTime)") {
+            return date
+        }
+        let minuteTime = rawTime.count >= 5 ? String(rawTime.prefix(5)) : rawTime
+        return ReservationFormatters.serverDateMinute.date(from: "\(reservation.reservationDate) \(minuteTime)")
+    }
+
     private var hostEvaluationStabilityContext: HostEvaluationStabilityContext {
         let dateNavigationRecent: Bool = {
             guard let navigationAt = controller.hostBoardDateNavigationAt else { return false }
@@ -334,7 +371,7 @@ struct HostBoardView: View {
 
     private var boardSnapshotBuildKey: String {
         let options = hostFloorLegacyOptions
-        return "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceOperationalMinuteStamp)-\(hostTableConfigStore.tableConfigFingerprint)-\(floorPlanStore.layoutFingerprint(for: selectedDateKey, allowsLegacyFallback: options.allowsFallback, localActiveTableCount: options.localActiveTableCount))"
+        return "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostBoardSnapshotTimingRefreshStamp)-\(hostTableConfigStore.tableConfigFingerprint)-\(floorPlanStore.layoutFingerprint(for: selectedDateKey, allowsLegacyFallback: options.allowsFallback, localActiveTableCount: options.localActiveTableCount))"
     }
 
     var body: some View {
@@ -1753,7 +1790,9 @@ struct HostBoardView: View {
                 context: modelContext,
                 isInteractionActive: hasOpenInteraction,
                 isAppActive: isAppActive,
-                source: .host
+                source: .host,
+                preferVisibleLiveRefresh: liveHostModeEnabled
+                    && selectedDate.reservationDateString() == Date.reservationDateString()
             )
         }
     }
