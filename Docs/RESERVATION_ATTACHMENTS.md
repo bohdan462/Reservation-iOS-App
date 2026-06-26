@@ -6,7 +6,7 @@
 
 **Audience:** GPT-5.5 Agent (backend/iOS), Composer 2.5 (audit/docs), Bohdan (deploy/device test).
 
-**Status:** Backend **deployed and production-smoked** (plugin **0.5.5**, DB **1.12.0**, backend `a2422d3`). iOS still **local-only** until Slice C+. **Next code slice: iOS Attachment Slice C** (DTO/API/cache only — not Detail UI polish yet).
+**Status:** Backend **deployed and production-smoked** (plugin **0.5.5**, DB **1.12.0**, backend `a2422d3`). iOS **Slice C foundation** landed at root `17a0bee` (DTO/API/cache). Reservation Detail UI remains **local-only** — `AttachmentFeatureFlag.remoteUploadEnabled` still **false**. **Next code slice: iOS Attachment Slice D** (Detail orchestration/UI wiring).
 
 ---
 
@@ -331,17 +331,19 @@ Keep `AttachmentFileStore` as **local cache only**.
 
 | | |
 |--|--|
+| **Status** | **Done** — root `17a0bee` |
 | **Goal** | Network client, DTOs, sync merge into `ReservationAttachmentRecord`, disk cache download |
-| **iOS files** | `Network/ReservationsAPIClient*.swift`, new DTO, `ReservationAttachmentRecord.swift`, small sync helper (no second client) |
+| **iOS files** | `Network/ReservationsAPIClient*.swift`, new DTO, `ReservationAttachmentRecord.swift`, `AttachmentFileStore` (no second client) |
 | **Do not touch** | Reservation Detail UI beyond wiring flags; Host/Bookings rows |
-| **Acceptance** | Simulator/integration: upload + list + download bytes to disk against deployed backend |
-| **Commit** | iOS root; `remoteUploadEnabled` still false until D |
+| **Acceptance** | Device + Simulator builds pass; API methods exist; `remoteUploadEnabled` still **false**; no Detail remote wiring |
+| **Commit** | `17a0bee` — Add reservation attachment iOS sync foundation |
 
 ### Slice D — Reservation Detail UI sync
 
 | | |
 |--|--|
-| **Goal** | Detail open loads server list; upload/delete/patch call backend; progress/errors; enable remote upload flag |
+| **Status** | **Current** — not started |
+| **Goal** | Detail open loads server list; upload/delete/patch call backend; progress/errors; enable remote upload flag only when wired |
 | **iOS files** | `ReservationDetailView.swift`, `ReservationAttachment.swift`, `AttachmentFeatureFlag` |
 | **Do not touch** | Confirm/Mail flows, walk-in, device smoke areas |
 | **Acceptance** | Single device: full CRUD against backend; local cache matches server |

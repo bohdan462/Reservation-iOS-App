@@ -1,7 +1,7 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `401390e` (device smoke Phases 1–4 docs; attachment handoff pending review)  
+**Root HEAD:** `17a0bee` (iOS attachment Slice C foundation; Slice D next)  
 **Last reviewed:** 2026-06-26  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
@@ -32,18 +32,19 @@ Checklist: [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md
 
 ---
 
-## Reservation attachments — backend live; iOS sync next
+## Reservation attachments — backend + iOS foundation done; Detail wiring next
 
 **Handoff:** [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md)
 
 | State | Detail |
 |------|--------|
 | **Backend** | **Deployed + production-smoked** — `a2422d3` (plugin 0.5.5, DB 1.12.0) |
-| **iOS app** | Reservation Detail attachments still **local-only** until Slice C+ |
-| **Production privacy** | Direct image URL **404**; auth REST content **200**; unauth content **401**; directory marker cached **200 text/html** — host hardening recommended |
-| **Boss requirement** | Cross-device sync blocked on **iOS Slice C/D** — backend ready |
+| **iOS Slice C** | **Done** — `17a0bee` (DTO/API/cache, remote metadata, download cache helpers) |
+| **iOS UI today** | Reservation Detail attachments still **local-only in behavior** — not cross-device visible |
+| **`remoteUploadEnabled`** | Still **false** until Slice D explicitly wires remote upload |
+| **Boss requirement** | Cross-device staff visibility blocked on **Slice D** UI orchestration |
 
-**Next code slice:** iOS Attachment Slice C (DTO/API/cache only — not Detail UI polish).
+**Next code slice:** iOS Attachment Slice D — Reservation Detail remote list/upsert/download/upload/delete with local-only preservation and clear progress/errors. Do not change backend unless a real API issue is discovered.
 
 Every item includes risk, files, approach, acceptance test, and classification.
 
