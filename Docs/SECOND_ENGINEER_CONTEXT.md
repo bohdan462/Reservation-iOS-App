@@ -45,8 +45,8 @@ Latest known **pushed** state:
 | Backend branch | `AI` |
 | Backend HEAD | `63d0cfc` — Allow unknown manual walk-ins without guest identity |
 | Root branch | `audit-current-state` |
-| Root HEAD | `3da3a68` — device smoke Phases 1–4 + prior slices |
-| Remote | `origin/audit-current-state` @ `3da3a68` |
+| Root HEAD | `401390e` — device smoke Phases 1–4 docs |
+| Remote | `origin/audit-current-state` @ `401390e` |
 | Backend guest person-map Slice 2 lookup | `1431a06` (backend), `b1a09e7` (root pointer); **deployed** to WordPress |
 | Backend guest person-map Slice 3M-B unknown walk-in | `63d0cfc` (backend), `c7f5a69` (root pointer); **deployed** to WordPress |
 | iOS guest person-map Slice 3A lookup foundation | `823f42c` |
@@ -125,17 +125,21 @@ git submodule status
 
 **Not production-ready** until items 18–21 pass.
 
+### Reservation attachments (boss request — not synced)
+
+31. **Reservation attachments** — local-only MVP on Reservation Detail; **backend private sync not implemented**. See [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next code: Backend Slice A only** — no iOS until backend deploys.
+
 ### Before broader product release (not V1 stabilization blocker)
 
-22. **Slice 3D — full shared Guest history UI** — booking history timeline, guest/staff notes timeline, source mix, usual party/day/time in `GuestProfileDetailView`; Reservation Detail bridge (3D-a); booking-history row routing. **Parked until device smoke verification accepted or Bohdan resumes.**
-23. **Slice 3E — detail JSON persistence** — disk-first full profile reopen. **Parked until device smoke verification accepted or Bohdan resumes.**
-24. **Indexed / predicate-based local guest search** — replace broad in-memory filtering; acceptable for **current Tryzub V1 data size** only.
-25. **`ReservationDetail` guest fetch dedupe** — partially improved; full dedupe later.
-26. **Guest profile re-sync on foreground/mutations** — optional follow-up; currently once per session at startup deferral.
-27. **Backend lookup device smoke tests** — route deployed at `1431a06`; checklist **not yet passed**.
-28. **Backend unknown walk-in device smoke tests** — `63d0cfc` **deployed**; checklist **not yet passed**.
-29. **P3 cleanup** — remove unused `GuestLookupStore.schedulePhoneLookup`; backend README wording cleanup if README still says pilot/MVP.
-30. **P2 follow-ups** — phone normalization 10 vs 11 digit; dedicated validation error for blank lookup instead of `invalidURL`.
+32. **Slice 3D — full shared Guest history UI** — booking history timeline, guest/staff notes timeline, source mix, usual party/day/time in `GuestProfileDetailView`; Reservation Detail bridge (3D-a); booking-history row routing. **Parked until device smoke verification accepted or Bohdan resumes.**
+33. **Slice 3E — detail JSON persistence** — disk-first full profile reopen. **Parked until device smoke verification accepted or Bohdan resumes.**
+34. **Indexed / predicate-based local guest search** — replace broad in-memory filtering; acceptable for **current Tryzub V1 data size** only.
+35. **`ReservationDetail` guest fetch dedupe** — partially improved; full dedupe later.
+36. **Guest profile re-sync on foreground/mutations** — optional follow-up; currently once per session at startup deferral.
+37. **Backend lookup device smoke tests** — route deployed at `1431a06`; checklist **not yet passed**.
+38. **Backend unknown walk-in device smoke tests** — `63d0cfc` **deployed**; checklist **not yet passed**.
+39. **P3 cleanup** — remove unused `GuestLookupStore.schedulePhoneLookup`; backend README wording cleanup if README still says pilot/MVP.
+40. **P2 follow-ups** — phone normalization 10 vs 11 digit; dedicated validation error for blank lookup instead of `invalidURL`.
 
 **Parked:** offline queue, SMS, broad Host redesign, full AI clustering / “knows each other” / local semantic tags, VIP editor without backend contract.
 
@@ -162,6 +166,7 @@ git submodule status
 | Guest token after cancel | Token stays valid; cancelled dead state |
 | No zip in git | Build locally |
 | Normal iOS refresh | Must **not** call `POST /managed-reservations/import` |
+| Reservation attachments | **Local-only today** — not backend-synced; target is private backend storage + staff-auth API ([RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md)); **no public URLs**; guest self-service must never expose attachments |
 
 ---
 
@@ -270,9 +275,10 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
 2. **Run device smoke verification** — [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10 (code Phases 1–4 landed).
 3. Confirm confirmation mode on physical device.
 4. Release smoke test — include guest full-list sync, Guests + Manual Intake explicit lookup + View history (no per-digit backend), unknown walk-in save (`63d0cfc` deployed), Manual Intake review sheet + no pre-create messages (`ad5d274`), Host `Last sync`, stale reasons, reduced idle flicker, intelligence-card chips stable during refresh, seated/due timing, manual refresh, device smoke checklist items.
-5. Before broader product release → **3D** full Guest history UI + Reservation Detail bridge, **3E** detail JSON persistence / disk-first full profile reopen, **indexed local guest search**; run backend lookup + unknown walk-in device smoke tests.
-6. Later → guest profile re-sync on foreground/mutations; `ReservationDetail` guest fetch dedupe; remove `schedulePhoneLookup` (P3); backend README pilot/MVP wording cleanup if needed.
-7. Do **not** start offline queue, SMS, AI clustering, or VIP editor without backend contract.
+5. **Reservation attachments** — when boss priority applies: read [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md); start **Backend Slice A only**; deploy before any iOS sync work.
+6. Before broader product release → **3D** full Guest history UI + Reservation Detail bridge, **3E** detail JSON persistence / disk-first full profile reopen, **indexed local guest search**; run backend lookup + unknown walk-in device smoke tests.
+7. Later → guest profile re-sync on foreground/mutations; `ReservationDetail` guest fetch dedupe; remove `schedulePhoneLookup` (P3); backend README pilot/MVP wording cleanup if needed.
+8. Do **not** start offline queue, SMS, AI clustering, or VIP editor without backend contract.
 
 ---
 
@@ -289,4 +295,4 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
 
 ---
 
-*Last aligned: 2026-06-26 (device smoke Phases 1–4 `804c130` → `3da3a68` landed; backend `63d0cfc` deployed; physical verification open). Update when repo HEAD or verification status changes materially.*
+*Last aligned: 2026-06-26 (attachment handoff doc added; backend Slice A next; device smoke verification still open). Update when repo HEAD or verification status changes materially.*

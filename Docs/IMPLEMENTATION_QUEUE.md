@@ -4,7 +4,7 @@
 
 Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), backend 3M-B (#18), iOS Slices 3A/3B/3R/3M, Manual Intake input polish (#17b), Tryzub V1 Host production polish (#5b, #5c), and **device smoke Phases 1–4 (#24–#27)** are **done in code**.
 
-**Current focus:** physical device verification + release smoke test (backend `63d0cfc` **deployed**). **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
+**Current focus:** (1) physical device verification + release smoke test (backend `63d0cfc` **deployed**); (2) **reservation attachments backend-sync** — see [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next attachment code slice:** **Attachment Slice A** (backend only). **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
 
 ---
 
@@ -347,6 +347,58 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 |-------|-------|
 | **Status** | **later** — optional follow-up |
 | **Scope** | `AppReservationSession`, `GuestProfileSyncService` — currently syncs once per session after startup deferral |
+
+---
+
+## 28. Reservation Attachments Slice A — backend private storage + DB/routes
+
+| Field | Value |
+|-------|-------|
+| **Status** | **current** — not started |
+| **Scope** | Backend `AI` from `63d0cfc`: `tryzub_reservation_attachments` table, private disk storage, staff-auth list/upload/patch/delete/content routes, activity log |
+| **Handoff** | [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md) §8 Slice A |
+| **Do not touch** | iOS, guest self-service, confirmation/reminder flows |
+| **Do not start iOS** until Slice A deployed and Slice B manual tests pass |
+
+---
+
+## 29. Reservation Attachments Slice B — deploy + backend manual tests
+
+| Field | Value |
+|-------|-------|
+| **Status** | **current** — blocked on Slice A |
+| **Scope** | WordPress deploy, private path hardening, curl checklist on staging/production |
+| **Handoff** | [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md) §9 |
+
+---
+
+## 30. Reservation Attachments Slice C — iOS DTO/API/cache
+
+| Field | Value |
+|-------|-------|
+| **Status** | **current** — blocked on Slice B |
+| **Scope** | `ReservationsAPIClient`, attachment DTOs, `ReservationAttachmentRecord` remote fields, `AttachmentFileStore` download cache |
+| **Do not touch** | Second API client; SwiftData blobs |
+
+---
+
+## 31. Reservation Attachments Slice D — Reservation Detail sync UI
+
+| Field | Value |
+|-------|-------|
+| **Status** | **current** — blocked on Slice C |
+| **Scope** | `ReservationDetailView`, upload progress, server list/delete/patch, enable `remoteUploadEnabled` |
+| **Do not touch** | Confirm/Mail, device smoke code |
+
+---
+
+## 32. Reservation Attachments Slice E — two-device verification
+
+| Field | Value |
+|-------|-------|
+| **Status** | **current** — blocked on Slice D |
+| **Scope** | Multi-device + fresh-install recovery tests; fix-only follow-ups |
+| **Handoff** | [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md) §9 |
 
 ---
 

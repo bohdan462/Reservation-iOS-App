@@ -6,7 +6,7 @@
 
 ## Title
 
-V1 stabilization: device smoke code landed — physical verification + release smoke (3D/3E parked)
+V1 stabilization + reservation attachments handoff (local-only today; backend Slice A next)
 
 ---
 
@@ -15,8 +15,8 @@ V1 stabilization: device smoke code landed — physical verification + release s
 | Location | State |
 |----------|--------|
 | **Root branch** | `audit-current-state` |
-| **Root HEAD** | `3da3a68` — Fix Phase 4 device smoke email settings cleanup |
-| **Root vs remote** | Pushed to `origin/audit-current-state` at `3da3a68` |
+| **Root HEAD** | `401390e` — Update docs after device smoke Phases 1–4 |
+| **Root vs remote** | Pushed to `origin/audit-current-state` at `401390e` |
 | **Backend submodule pointer** | `63d0cfc` — Allow unknown manual walk-ins without guest identity |
 | **Backend branch** | `AI` |
 | **Backend HEAD** | `63d0cfc` |
@@ -24,6 +24,7 @@ V1 stabilization: device smoke code landed — physical verification + release s
 
 **Recent root commits (newest first):**
 
+- `401390e` — Update docs after device smoke Phases 1–4
 - `3da3a68` — Fix Phase 4 device smoke email settings cleanup
 - `5762ecb` — Fix Phase 3 device smoke row indicators
 - `8eab6c4` — Fix Phase 2 device smoke walk-in workflow
@@ -67,6 +68,8 @@ V1 stabilization: device smoke code landed — physical verification + release s
 ## Current slice goal
 
 **Stabilization still open** (physical device verification + release smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R/3M-B/3M**, **Manual Intake input polish**, **device smoke code Phases 1–4**, and **Tryzub V1 Host production polish** are shipped in code. **Current focus:** physical device verification + release smoke — see [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10. **Slice 3D/3E parked** until smoke verification is accepted or Bohdan resumes.
+
+**Reservation attachments (boss request):** Reservation Detail has **local-only** attachment UI today — **not backend-synced**. Full plan: [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next implementation: Backend Attachment Slice A only** — do **not** start iOS sync until backend contract exists and deploys. Physical device smoke remains a separate open track.
 
 **Guest Person Map target:** one shared **Guest history** destination by `guestKey` (`GuestProfileDetailView`). Wiring status:
 

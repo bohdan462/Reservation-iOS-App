@@ -47,6 +47,8 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 22. **Regulars / Guest Memory** — `RegularGuestsView` is cache-first (`50df843`): `@Query` on `GuestProfileCacheRecord`, local search/filter/sort, tap opens `GuestProfileDetailView(guestKey:)`; no network page-25 primary list; full history UI remains Slice 3D.
 23. **Device smoke code Phases 1–4 (`804c130` → `3da3a68`)** — layout/hit-testing, walk-in workflow, row indicators, email settings cleanup **landed in code**. Physical device verification still open. Slice **3D/3E parked** until smoke verification accepted or Bohdan resumes.
 24. **Email settings ownership** — Backend reminders and auto-confirm rules live in **Restaurant Settings** (`RestaurantSettingsStore`, `/restaurant-setup`). Local-only switches live under **This Device Email** (`EmailAutomationSettingsStore`, UserDefaults). More → Email Controls removed (`3da3a68`).
+25. **Reservation attachments (today)** — Reservation Detail has **local-only** photo attachments (`ReservationAttachmentRecord` + `AttachmentFileStore` on device). **Not backend-synced.** Not safe as operational source of truth across devices or after reinstall. See [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md).
+26. **Reservation attachments (target)** — Backend private storage + `tryzub_reservation_attachments` + staff-auth list/upload/delete/content routes. **Not implemented** at backend `63d0cfc`. **No public URLs.** Guest self-service must never expose attachments. **Next code slice: Backend Attachment Slice A only** — do not start iOS sync until backend deploys.
 
 ---
 

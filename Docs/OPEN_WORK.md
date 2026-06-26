@@ -1,7 +1,7 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `3da3a68` (device smoke Phases 1–4 landed; pushed to `origin/audit-current-state`)  
+**Root HEAD:** `401390e` (device smoke Phases 1–4 docs; attachment handoff pending review)  
 **Last reviewed:** 2026-06-26  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
@@ -29,6 +29,21 @@
 | P2-10 | Email Controls vs Restaurant Settings | `3da3a68` | **Open** |
 
 Checklist: [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10.
+
+---
+
+## Reservation attachments — local-only risk (boss request)
+
+**Handoff:** [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md)
+
+| Risk | Detail |
+|------|--------|
+| **Local-only attachments mislead staff** | Reservation Detail shows photos that exist **only on that device** — other staff/devices cannot see them |
+| **Reinstall / device swap loses images** | No backend recovery; operational receipts/deposits may be lost |
+| **Boss requirement blocked** | Cross-device sync, delete propagation, fresh-install recovery, and private serving require **backend Slice A** before iOS sync |
+| **False sense of sync** | Staff may assume photos are “on the reservation” like notes synced via managed reservation API — they are not today |
+
+**Next code slice:** Backend Attachment Slice A only — do not begin iOS until backend contract deploys.
 
 Every item includes risk, files, approach, acceptance test, and classification.
 
