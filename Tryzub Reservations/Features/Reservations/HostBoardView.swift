@@ -36,6 +36,7 @@ struct HostBoardView: View {
     @EnvironmentObject private var hostIntelligenceController: HostIntelligenceController
     @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
+    @EnvironmentObject private var activityStore: ReservationActivityStore
     @EnvironmentObject private var emailAutomationSettingsStore: EmailAutomationSettingsStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -504,6 +505,9 @@ struct HostBoardView: View {
             guard !isRunningForPreviews else { return }
             await runClockLoop()
         }
+        .task(id: "activity-feed-\(isVisible)-\(deferNetworkLoads)-\(selectedDateKey)-\(hostActivityFeedWarmKey)") {
+            await warmVisibleActivityFeedIfNeeded()
+        }
         .task(id: boardSnapshotBuildKey) {
             guard !isRunningForPreviews else { return }
             traceHostBoardStabilization(event: "snapshot_started", detail: "date=\(selectedDateKey)")
@@ -789,6 +793,27 @@ struct HostBoardView: View {
             return "presentation-hidden-\(liveHostModeEnabled)-\(externalInteractionActive)"
         }
         return hostBoardViewStateBuildKey
+    }
+
+    private var hostActivityFeedWarmKey: String {
+        reservations
+            .map { "\($0.remoteID):\($0.guestName)" }
+            .joined(separator: ",")
+    }
+
+    private var guestNameByVisibleReservationID: [Int: String] {
+        reservations.reduce(into: [Int: String]()) { result, reservation in
+            result[reservation.remoteID] = reservation.guestName
+        }
+    }
+
+    private func warmVisibleActivityFeedIfNeeded() async {
+        guard isVisible, !deferNetworkLoads, !isRunningForPreviews else { return }
+        await activityStore.loadActivityFeed(
+            date: selectedDate,
+            perPage: 100,
+            guestNameByReservationID: guestNameByVisibleReservationID
+        )
     }
 
     private var hostBoardViewStateBuildKey: String {

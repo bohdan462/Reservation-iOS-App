@@ -539,6 +539,8 @@ struct ReservationRowView<Accessory: View>: View {
 //            items.append(ReservationRowDetailLabelData(text: phoneText, systemImage: "phone"))
 //        }
 
+        items.append(contentsOf: rowIndicatorItems(for: presentation))
+
         return items
     }
 
@@ -609,6 +611,8 @@ struct ReservationRowView<Accessory: View>: View {
             )
         }
 
+        items.append(contentsOf: rowIndicatorItems(for: presentation))
+
         return items
     }
 
@@ -631,13 +635,56 @@ struct ReservationRowView<Accessory: View>: View {
             parts.append(staffNotesIndicator)
         }
 
-        return [
+        var items = [
             ReservationRowDetailLabelData(
                 text: parts.joined(separator: " • "),
                 systemImage: presentation.status == .needsReview ? "exclamationmark.triangle" : "info.circle",
                 allowsWrapping: true
             )
         ]
+        items.append(contentsOf: rowIndicatorItems(for: presentation))
+        return items
+    }
+
+    private func rowIndicatorItems(for presentation: ReservationRowPresentation) -> [ReservationRowDetailLabelData] {
+        var items: [ReservationRowDetailLabelData] = []
+
+        if displayStyle == .standard,
+           presentation.status == .confirmed,
+           showsAutoConfirmedAdornment {
+            items.append(
+                ReservationRowDetailLabelData(
+                    text: "",
+                    systemImage: "sparkles",
+                    accessibilityLabel: "Auto-confirmed",
+                    tint: .secondary
+                )
+            )
+        }
+
+        if reservation.confirmationEmailSentAt?.nilIfBlank != nil {
+            items.append(
+                ReservationRowDetailLabelData(
+                    text: "",
+                    systemImage: "envelope.badge",
+                    accessibilityLabel: "Confirmation email sent",
+                    tint: .secondary
+                )
+            )
+        }
+
+        if reservation.reminderEmailSentAt?.nilIfBlank != nil {
+            items.append(
+                ReservationRowDetailLabelData(
+                    text: "",
+                    systemImage: "bell.badge",
+                    accessibilityLabel: "Reminder email sent",
+                    tint: .secondary
+                )
+            )
+        }
+
+        return items
     }
 
     private func rowStroke(for style: ReservationRowStyle) -> some View {
@@ -879,19 +926,7 @@ private struct ReservationRowDetailsLine: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            if let item = items[safe: 0] {
-                metaView(item)
-            }
-            if let item = items[safe: 1] {
-                metaView(item)
-            }
-            if let item = items[safe: 2] {
-                metaView(item)
-            }
-            if let item = items[safe: 3] {
-                metaView(item)
-            }
-            if let item = items[safe: 4] {
+            ForEach(Array(items.prefix(7))) { item in
                 metaView(item)
             }
         }

@@ -1175,6 +1175,7 @@ private struct ReservationScheduleView: View {
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hiddenReservations: HiddenReservationsStore
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
+    @EnvironmentObject private var activityStore: ReservationActivityStore
     @Query
     private var reservations: [ReservationRecord]
     @Query
@@ -1594,6 +1595,9 @@ private struct ReservationScheduleView: View {
                     )
                 }
             }
+            .task(id: activityFeedWarmTaskKey) {
+                await warmVisibleBookingsActivityFeeds()
+            }
             .onChange(of: scope) { _, newScope in
                 allModeLoadGeneration += 1
                 dateScope = BookingDateScope.defaultScope(for: newScope)
@@ -1880,6 +1884,51 @@ private struct ReservationScheduleView: View {
         if usesAllModeCache { return allCachedReservations }
         if scope == .all { return allModeRecords }
         return reservations
+    }
+
+    private var activityFeedWarmDateKeys: [String] {
+        if dateScope.isSingleDateScope {
+            return [bookingsSelectedDateKey]
+        }
+
+        if scope == .all, dateScope == .allHistory {
+            return []
+        }
+
+        return Array(sections.map(\.id).prefix(5))
+    }
+
+    private var activityFeedWarmTaskKey: String {
+        let rowsKey = displayedReservations
+            .prefix(80)
+            .map { "\($0.remoteID):\($0.guestName)" }
+            .joined(separator: ",")
+        return "activity-feed-\(isActive)-\(scope.rawValue)-\(dateScope.id)-\(activityFeedWarmDateKeys.joined(separator: ","))-\(rowsKey)"
+    }
+
+    private func warmVisibleBookingsActivityFeeds() async {
+        guard isActive else { return }
+
+        for dateKey in activityFeedWarmDateKeys {
+            guard !Task.isCancelled,
+                  let date = ReservationFormatters.reservationDateKey.date(from: dateKey) else {
+                continue
+            }
+
+            await activityStore.loadActivityFeed(
+                date: date,
+                perPage: 100,
+                guestNameByReservationID: guestNameByReservationID(forActivityDate: dateKey)
+            )
+        }
+    }
+
+    private func guestNameByReservationID(forActivityDate dateKey: String) -> [Int: String] {
+        displayedReservations
+            .filter { $0.reservationDate == dateKey }
+            .reduce(into: [Int: String]()) { result, reservation in
+                result[reservation.remoteID] = reservation.guestName
+            }
     }
 
     @ViewBuilder
@@ -2993,6 +3042,7 @@ private struct ReservationNavigationRow: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
+    @EnvironmentObject private var activityStore: ReservationActivityStore
 
     let reservation: ReservationRecord
     let environment: AppEnvironment
@@ -3021,7 +3071,8 @@ private struct ReservationNavigationRow: View {
             capabilities: controller.capabilities,
             onTableTap: controller.capabilities.canEditReservationDetails && !controller.isNetworkDegraded
                 ? { tableAssignmentReservation = reservation }
-                : nil
+                : nil,
+            showsAutoConfirmedAdornment: showsAutoConfirmedAdornment
         ) {
             if showsRowActions {
                 ReservationActionButtons(
@@ -3210,6 +3261,13 @@ private struct ReservationNavigationRow: View {
 
     private var seatedDurationDotStyle: TryzubStaffStatusDotStyle? {
         controller.seatedDurationDotStyle(for: reservation)
+    }
+
+    private var showsAutoConfirmedAdornment: Bool {
+        activityStore.hasBackendAutoConfirmEvidence(
+            for: reservation.remoteID,
+            serviceDateKey: reservation.reservationDate
+        )
     }
 
     // MARK: - Available Staff Actions
