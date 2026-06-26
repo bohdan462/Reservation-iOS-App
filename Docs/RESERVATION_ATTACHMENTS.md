@@ -6,7 +6,7 @@
 
 **Audience:** GPT-5.5 Agent (backend/iOS), Composer 2.5 (audit/docs), Bohdan (deploy/device test).
 
-**Status:** Backend **deployed and production-smoked** (plugin **0.5.5**, DB **1.12.0**, backend `a2422d3`). iOS **Slice C** at `17a0bee` (DTO/API/cache). iOS **Slice D** at `d947721` (Reservation Detail shared attachment list/upload/download/delete). `AttachmentFeatureFlag.remoteUploadEnabled` is **true**. **Live/cross-device verification still open** — do not claim passed. **Next practical step: Slice E** live verification checklist (not new backend work).
+**Status:** Backend **deployed and production-smoked** (plugin **0.5.5**, DB **1.12.0**, backend `a2422d3`). iOS **Slice C** at `17a0bee` (DTO/API/cache). iOS **Slice D** at `d947721` (Detail shared list/upload/download/delete). iOS **Slice E** at `9d2784d` (attachment management UI polish). `AttachmentFeatureFlag.remoteUploadEnabled` is **true**. Build **11** tracked (`eed6530`); **already submitted to TestFlight** — next upload should be **build 12**. **Live/cross-device verification still open** — do not claim passed. **Next practical step:** live verification checklist + TestFlight build 12 prep (not new attachment backend work).
 
 ---
 
@@ -349,15 +349,26 @@ Keep `AttachmentFileStore` as **local cache only**.
 | **Commit** | `d947721` — Wire reservation detail shared attachments |
 | **Notes** | Old pre-sync **local-only** attachments remain on the original device only — **not** auto-uploaded. Staff should **reattach important old images** after update if they need shared visibility. Known follow-up if observed: upload/list race can duplicate rows if metadata refresh completes before upload applies `remoteID`. |
 
-### Slice E — Two-device sync verification
+### Slice E — Attachment management UI polish
 
 | | |
 |--|--|
-| **Status** | **Current** — code wired; live verification not run |
-| **Goal** | Device A upload → Device B sees; B delete → A refresh clears; fresh install recovery |
-| **Files** | Fix-only across iOS/backend from E test failures |
-| **Acceptance** | Full §9 device checklist — **must not be claimed passed until run** |
-| **Note** | Physical devices; separate from device smoke Phases 1–4 but may share same hardware session |
+| **Status** | **Done** — root `9d2784d` |
+| **Goal** | Staff-friendly rows; manage/details sheet; edit tag + note; fit-to-screen preview; manage delete; PATCH for shared rows |
+| **iOS files** | `ReservationDetailView.swift` |
+| **Acceptance** | UUID/original filenames hidden from default row UI; shared edit calls backend PATCH; local-only edit stays local; `deletedRemote` skipped by note signals; builds pass |
+| **Commit** | `9d2784d` — Polish reservation attachment management UI |
+| **Notes** | Save to Photos supported (build 11 adds `NSPhotoLibraryAddUsageDescription`). Old pre-sync local-only attachments remain device-only — staff should **reattach** if shared visibility needed. |
+
+### Live verification — cross-device checklist (open)
+
+| | |
+|--|--|
+| **Status** | **Open** — do not claim passed |
+| **Goal** | Device A upload → Device B sees; B delete → A refresh clears; fresh install recovery; edit label/caption sync |
+| **Files** | Fix-only across iOS/backend from test failures |
+| **Acceptance** | Full §9 device checklist |
+| **Note** | Separate from device smoke Phases 1–4; may share same hardware session |
 
 ### Slice F — Intelligence readiness (no summarization)
 

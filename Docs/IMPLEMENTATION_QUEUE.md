@@ -4,7 +4,7 @@
 
 Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), backend 3M-B (#18), iOS Slices 3A/3B/3R/3M, Manual Intake input polish (#17b), Tryzub V1 Host production polish (#5b, #5c), and **device smoke Phases 1–4 (#24–#27)** are **done in code**.
 
-**Current focus:** (1) physical device verification + release smoke test (backend `63d0cfc` **deployed**); (2) **reservation attachments** — backend Slice A+B **done** (`a2422d3` **deployed**, production-smoked); iOS Slice C **done** (`17a0bee`); iOS Slice D **done** (`d947721`); see [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next attachment step:** **Slice E** live/cross-device verification (not new backend work). **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
+**Current focus:** (1) physical device verification + release smoke test (backend `63d0cfc` **deployed**); (2) **reservation attachments** — backend Slice A+B **done** (`a2422d3` **deployed**, production-smoked); iOS Slice C **done** (`17a0bee`); iOS Slice D **done** (`d947721`); iOS Slice E **done** (`9d2784d`); see [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next attachment step:** live/cross-device verification + TestFlight **build 12** prep (not new backend work). **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
 
 ---
 
@@ -391,11 +391,21 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 
 ---
 
-## 32. Reservation Attachments Slice E — two-device verification
+## 32. Reservation Attachments Slice E — management UI polish
 
 | Field | Value |
 |-------|-------|
-| **Status** | **current** — Slice D done; live verification not run |
+| **Status** | **done** — `9d2784d` |
+| **Scope** | Staff-friendly attachment rows; manage/details sheet; tag + note edit; fit-to-screen preview; manage delete; shared PATCH via `updateReservationAttachment`; local-only SwiftData edit; `deletedRemote` skipped by note signals |
+| **Notes** | Build 11 project settings tracked separately (`eed6530`); TestFlight build 11 already submitted — next upload build 12 |
+
+---
+
+## 33. Reservation Attachments — live cross-device verification
+
+| Field | Value |
+|-------|-------|
+| **Status** | **current** — Slice E polish done; live verification not run |
 | **Scope** | Multi-device + fresh-install recovery tests; fix-only follow-ups (incl. upload/list race if observed) |
 | **Handoff** | [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md) §9 |
 
@@ -430,7 +440,9 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 | Device smoke Phase 4 — email settings cleanup | `3da3a68` |
 | Reservation attachments backend Slice A+B | `a2422d3` (backend), production-smoked |
 | Reservation attachments iOS Slice C — DTO/API/cache | `17a0bee` |
-| Reservation attachments iOS Slice D — Detail sync UI | `d947721` — `remoteUploadEnabled` true; live verification open |
+| Reservation attachments iOS Slice D — Detail sync UI | `d947721` — `remoteUploadEnabled` true |
+| Reservation attachments iOS Slice E — management UI polish | `9d2784d` |
+| Build 11 project settings | `eed6530` — TestFlight build 11 submitted; next upload build 12 |
 
 ---
 

@@ -1,7 +1,7 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `d947721` (iOS attachment Slice D wired; Slice E verification next)  
+**Root HEAD:** `eed6530` (iOS attachment Slice E polish; live verification next)  
 **Last reviewed:** 2026-06-26  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
@@ -41,12 +41,13 @@ Checklist: [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md
 | **Backend** | **Deployed + production-smoked** — `a2422d3` (plugin 0.5.5, DB 1.12.0) |
 | **iOS Slice C** | **Done** — `17a0bee` (DTO/API/cache, remote metadata, download cache helpers) |
 | **iOS Slice D** | **Done** — `d947721` (Detail shared list/upload/download/delete) |
+| **iOS Slice E** | **Done** — `9d2784d` (management UI polish: rows, manage sheet, edit, preview, delete) |
 | **`remoteUploadEnabled`** | **true** — gated at runtime by reservation id + staff credentials |
-| **Live verification** | **Open** — cross-device / fresh-install workflow not run; do not claim passed |
-| **Old local-only attachments** | Pre-sync images may remain on original device only; staff should **reattach** important old images for shared visibility |
-| **Known follow-up** | Upload/list race can duplicate rows if metadata refresh completes before upload applies `remoteID` — fix if observed |
+| **Build** | **11** tracked (`eed6530`); TestFlight build 11 submitted — next upload **build 12** |
+| **Live verification** | **Open** — cross-device / fresh-install workflow not fully passed/recorded |
+| **Old local-only attachments** | Pre-sync images may remain on original device only; staff should **reattach** for shared visibility |
 
-**Next step:** Attachment **Slice E** live/cross-device verification checklist — not new backend work.
+**Next step:** Live/cross-device attachment verification checklist + TestFlight build 12 prep — not new backend work.
 
 Every item includes risk, files, approach, acceptance test, and classification.
 

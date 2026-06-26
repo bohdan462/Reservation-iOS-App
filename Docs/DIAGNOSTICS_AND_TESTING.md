@@ -17,7 +17,7 @@
 2. `isBackendConfirmEmailEnabled == false` in production restaurant test build (unless explicitly changed)
 3. Local model never PATCHes reservations
 4. Activity history — iOS never POSTs activity events
-5. Reservation attachments — `AttachmentFeatureFlag.remoteUploadEnabled` is **true** after Slice D (`d947721`); normal reservation refresh must not auto-download attachment bytes; live cross-device verification still open
+5. Reservation attachments — `AttachmentFeatureFlag.remoteUploadEnabled` is **true** (Slice D `d947721`; Slice E polish `9d2784d`); normal reservation refresh must not auto-download attachment bytes; live cross-device verification still open
 
 ## Confirmation test (current MVP)
 
@@ -159,7 +159,7 @@ Requires physical device (iPhone and/or iPad as noted per item):
 - [ ] Manual Intake walk-in + guest lookup + input polish on physical device (`e775f52`, `ad5d274`; backend `63d0cfc` **deployed**)
 - [ ] Backend unknown walk-in contract smoke tests on WordPress (`63d0cfc` **deployed**)
 - [ ] Device smoke Phases 1–4 verification on physical device (`804c130` → `3da3a68` — code landed)
-- [ ] Reservation attachment Slice E — live cross-device list/upload/download/delete against deployed backend (`a2422d3`); Slice D wired at `d947721`; old local-only attachments may need reattach; upload/list race follow-up if observed; **not yet run — do not claim passed**
+- [ ] Reservation attachment live verification — cross-device list/upload/edit/download/delete against deployed backend (`a2422d3`); iOS wired through Slice E (`9d2784d`); old local-only attachments may need reattach; upload/list race follow-up if observed; **not fully passed/recorded — do not claim passed**
 - [ ] More → Restaurant Settings: **This Device Email** + backend reminders/auto-confirm (no Email Controls)
 - [ ] Logout clears session
 
