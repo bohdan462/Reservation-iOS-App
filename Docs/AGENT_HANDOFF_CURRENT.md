@@ -6,17 +6,17 @@
 
 ## Title
 
-V1 stabilization: device smoke fixes + release verification (3D/3E parked)
+V1 stabilization: device smoke code landed — physical verification + release smoke (3D/3E parked)
 
 ---
 
-## Git state (2026-06-25)
+## Git state (2026-06-26)
 
 | Location | State |
 |----------|--------|
 | **Root branch** | `audit-current-state` |
-| **Root HEAD** | `fceebb3` — docs (latest iOS `ad5d274`) |
-| **Root vs remote** | Pushed to `origin/audit-current-state` at `fceebb3` |
+| **Root HEAD** | `3da3a68` — Fix Phase 4 device smoke email settings cleanup |
+| **Root vs remote** | Pushed to `origin/audit-current-state` at `3da3a68` |
 | **Backend submodule pointer** | `63d0cfc` — Allow unknown manual walk-ins without guest identity |
 | **Backend branch** | `AI` |
 | **Backend HEAD** | `63d0cfc` |
@@ -24,6 +24,11 @@ V1 stabilization: device smoke fixes + release verification (3D/3E parked)
 
 **Recent root commits (newest first):**
 
+- `3da3a68` — Fix Phase 4 device smoke email settings cleanup
+- `5762ecb` — Fix Phase 3 device smoke row indicators
+- `8eab6c4` — Fix Phase 2 device smoke walk-in workflow
+- `804c130` — Fix Phase 1 device smoke layout issues
+- `eca9db6` — Add device smoke findings handoff and align current-state docs
 - `fceebb3` — docs after Manual Intake input polish + backend deploy
 - `75dce15` — docs after Manual Intake input polish + backend deploy
 - `ad5d274` — Manual Intake input polish + removed pre-create confirmation/message actions
@@ -61,7 +66,7 @@ V1 stabilization: device smoke fixes + release verification (3D/3E parked)
 
 ## Current slice goal
 
-**Stabilization still open** (physical device verification + release smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R/3M-B/3M**, **Manual Intake input polish**, and **Tryzub V1 Host production polish** are shipped. **Next code work:** device smoke P1/P2 fixes — see [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md). **Slice 3D/3E parked** until smoke fixes land.
+**Stabilization still open** (physical device verification + release smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R/3M-B/3M**, **Manual Intake input polish**, **device smoke code Phases 1–4**, and **Tryzub V1 Host production polish** are shipped in code. **Current focus:** physical device verification + release smoke — see [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10. **Slice 3D/3E parked** until smoke verification is accepted or Bohdan resumes.
 
 **Guest Person Map target:** one shared **Guest history** destination by `guestKey` (`GuestProfileDetailView`). Wiring status:
 
@@ -172,6 +177,31 @@ Post-3M staff-operations polish for live-service Manual Intake:
 7. Review sheet summary improved — intake mode, Walk-in guest / No phone / No email, table and notes when set.
 8. **Walk-in/call-in 3M behavior preserved** — blank walk-in identity, call-in name+phone required, Use guest, View history, explicit Search all guest records.
 
+### Completed (device smoke Phase 1 — iOS `804c130`)
+
+1. **Live button hit area** — reliable tap target on Host header.
+2. **Bottom tab clearance** — last list row scrolls above floating tab bar (`topLevelTabScrollBottomInset`).
+3. **Manual Intake keyboard-safe candidates** — guest candidate tray stays visible above iPhone keyboard.
+
+### Completed (device smoke Phase 2 — iOS `8eab6c4`)
+
+1. **Fast seated-now walk-ins** — live walk-in defaults to now + seated; review sheet preserved.
+2. **Seated duration** — seated walk-ins show duration from seated timestamp.
+3. **Attach known guest to walk-in** — detail/edit lookup; source stays `manual_walk_in`.
+4. **Walk-in edit validation** — name-only/no-phone saves; call-in rules unchanged.
+5. **Floor Plan table assignment** — when backend layout exists, table pick via floor plan (no raw table string).
+
+### Completed (device smoke Phase 3 — iOS `5762ecb`)
+
+1. **Row indicators** — auto-confirmed, confirmation email sent, reminder sent on Host/Bookings rows without opening detail.
+2. **Activity feed warming** — date-scoped `ReservationActivityStore` warm on list appear; email fields from `ReservationRecord` sync.
+
+### Completed (device smoke Phase 4 — iOS `3da3a68`)
+
+1. **Removed More → Email Controls** — no duplicate settings path.
+2. **Restaurant Settings ownership** — Backend Reminders and Backend Auto-Confirm remain in Restaurant Settings.
+3. **This Device Email** — local-only `EmailAutomationSettingsStore` switches under Restaurant Settings; screen renamed from Email Controls; no sending behavior changed.
+
 ### Completed (guest person-map Slice 2 — backend `1431a06`, root pointer `b1a09e7`)
 
 Staff targeted guest lookup doorway — part of the guest person-map / “know your guest” system:
@@ -215,7 +245,8 @@ Staff targeted guest lookup doorway — part of the guest person-map / “know y
 
 1. Verify iOS data/fetch/storage on device (foreground/privacy refresh at `b910bd1`).
 2. Confirm confirmation mode on physical device (Mail vs backend `/confirm`).
-3. Final V1 device smoke test — must include guest full-list sync, Guests/intake lookup, Host header/flicker + intelligence-card checks, and fixes in [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) (see [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #4c).
+3. **Run device smoke verification** — [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10 (Phases 1–4 code landed).
+4. Final V1 device smoke test — must include guest full-list sync, Guests/intake lookup, Host header/flicker + intelligence-card checks, and device smoke checklist ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #4c).
 
 **Not production-ready** until stabilization items 1–3 pass.
 
@@ -260,7 +291,7 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 
 - iOS foreground/privacy-cover refresh on physical device
 - Confirmation mode on physical device
-- Final V1 device smoke test — include guest full-list sync completion, Guests/intake lookup beyond old 500 cap, walk-in/known-guest, Host `Last sync` + stale reasons + reduced idle flicker + intelligence-card chip stability; **P1/P2 fixes** in [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md)
+- Final V1 device smoke test — include guest full-list sync completion, Guests/intake lookup beyond old 500 cap, walk-in/known-guest, Host `Last sync` + stale reasons + reduced idle flicker + intelligence-card chip stability; **device smoke verification** in [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10 (code Phases 1–4 landed)
 - Guest profile background sync on physical device (post-`0f06852` install)
 - Manual walk-in + known-guest intake on physical device (post-`0a89caa` install)
 - Guests tab + detail cache wiring on physical device (post-`67e02d2` install)
@@ -324,8 +355,9 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 
 1. **Device-test** iOS foreground/privacy refresh (`b910bd1`).
 2. **Confirm** confirmation mode on physical device.
-3. **Run** release smoke test — include guest full-list sync, Guests + Manual Intake lookup (no per-digit backend), unknown walk-in save (backend `63d0cfc` deployed), Manual Intake review sheet + no pre-create messages (`ad5d274`), walk-in/known-guest, Host header (`Last sync`), stale secondary reasons, Live-on-today refresh, quiet-board idle flicker, intelligence-card chips stable during refresh, seated/due timing updates, manual refresh bumps `Last sync`.
-4. Before broader product release → **indexed local guest search** ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #6).
+3. **Run device smoke verification** — [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10.
+4. **Run** release smoke test — include guest full-list sync, Guests + Manual Intake lookup (no per-digit backend), unknown walk-in save (backend `63d0cfc` deployed), Manual Intake review sheet + no pre-create messages (`ad5d274`), walk-in/known-guest, Host header (`Last sync`), stale secondary reasons, Live-on-today refresh, quiet-board idle flicker, intelligence-card chips stable during refresh, seated/due timing updates, manual refresh bumps `Last sync`, device smoke checklist items.
+5. Before broader product release → **indexed local guest search** ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #6).
 
 ---
 

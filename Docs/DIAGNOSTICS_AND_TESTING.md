@@ -2,7 +2,7 @@
 
 **Status:** Current source of truth (supersedes `IOS_ADMIN_TESTING.md`)  
 **Branch:** `audit-current-state`  
-**Audit date:** 2026-06-14
+**Audit date:** 2026-06-26
 
 ## Roles
 
@@ -103,6 +103,25 @@ Requires staff auth for backend lookup routes.
 6. **During service** (seated or due soon): seated duration / due labels still update over time
 7. Manual **Refresh** from Host ⋯ menu bumps `Last sync` on success
 
+## Device smoke verification (`804c130` → `3da3a68`)
+
+**Status:** code Phases 1–4 **landed**; **physical device verification not yet passed**. Full checklist: [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10.
+
+Requires physical device (iPhone and/or iPad as noted per item):
+
+- [ ] Live button tappable on **iPad** without Home button
+- [ ] Last row clears floating tab bar on **iPhone and iPad** (Bookings + Host)
+- [ ] Manual Intake candidates stay visible above **iPhone** keyboard
+- [ ] Live walk-in create → review sheet → save as seated now
+- [ ] Seated duration appears on new walk-ins
+- [ ] Attach known guest on walk-in edit; source remains walk-in
+- [ ] Walk-in edit name-only/no-phone saves
+- [ ] Floor Plan assignment when backend layout exists; no raw table string
+- [ ] Auto-confirm / confirmation / reminder indicators on list rows without opening detail
+- [ ] More no longer shows Email Controls; Restaurant Settings has **This Device Email** + backend reminder/auto-confirm
+
+**Do not claim:** device smoke passed; code landed ≠ verification complete.
+
 ## Floor / table test
 
 1. Floor tab with backend layout → assign via sheet
@@ -138,6 +157,8 @@ Requires staff auth for backend lookup routes.
 - [ ] Backend guest profile lookup smoke tests after WordPress deploy (`1431a06`) — staff auth only
 - [ ] Manual Intake walk-in + guest lookup + input polish on physical device (`e775f52`, `ad5d274`; backend `63d0cfc` **deployed**)
 - [ ] Backend unknown walk-in contract smoke tests on WordPress (`63d0cfc` **deployed**)
+- [ ] Device smoke Phases 1–4 verification on physical device (`804c130` → `3da3a68` — code landed)
+- [ ] More → Restaurant Settings: **This Device Email** + backend reminders/auto-confirm (no Email Controls)
 - [ ] Logout clears session
 
 ## Cache reset (developer)

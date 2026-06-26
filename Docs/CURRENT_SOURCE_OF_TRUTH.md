@@ -1,6 +1,6 @@
 # Current Source of Truth — Tryzub Reservations
 
-**Last reviewed:** 2026-06-25  
+**Last reviewed:** 2026-06-26  
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md)
 
 Compact master rules. When this file conflicts with stale index/diagram docs, **this file and backend plugin docs win**.
@@ -45,13 +45,15 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 20. **Host Intelligence card presentation** — keeps last stable card/chips during async presentation rebuild (`39f7fcb`); no empty interstitial during key mismatch. Removed intelligence-card empty flicker path — final device verification still open.
 21. **Guests tab + detail** — `GuestLookupView` reads `GuestProfileCacheRecord` from disk first (`67e02d2`); explicit all-record lookup (`1dfa14a`); `ReservationDetailView` disk cache preview before memory/network; full guest history remains network/detail-only — detail blobs not yet persisted for every profile (Slice 3E); Reservation Detail still uses `GuestInsightsView`, not shared `GuestProfileDetailView`.
 22. **Regulars / Guest Memory** — `RegularGuestsView` is cache-first (`50df843`): `@Query` on `GuestProfileCacheRecord`, local search/filter/sort, tap opens `GuestProfileDetailView(guestKey:)`; no network page-25 primary list; full history UI remains Slice 3D.
+23. **Device smoke code Phases 1–4 (`804c130` → `3da3a68`)** — layout/hit-testing, walk-in workflow, row indicators, email settings cleanup **landed in code**. Physical device verification still open. Slice **3D/3E parked** until smoke verification accepted or Bohdan resumes.
+24. **Email settings ownership** — Backend reminders and auto-confirm rules live in **Restaurant Settings** (`RestaurantSettingsStore`, `/restaurant-setup`). Local-only switches live under **This Device Email** (`EmailAutomationSettingsStore`, UserDefaults). More → Email Controls removed (`3da3a68`).
 
 ---
 
 ## 3. Current confirmation truth
 
 1. **Both paths exist:** backend confirmation (`POST /managed-reservations/{id}/confirm`) and **manual Mail** staff confirmation.
-2. **Active device behavior depends on Email Automation / Email Controls** (`EmailAutomationSettings.backendConfirmationEnabled`). Code default is **`true`** — do **not** assume Mail-first unless the device setting is confirmed on the physical device.
+2. **Active device behavior depends on This Device Email** (`EmailAutomationSettings.backendConfirmationEnabled`, local UserDefaults). Code default is **`true`** — do **not** assume Mail-first unless the device setting is confirmed on the physical device.
 3. **Manual Mail path** (when backend confirmation is off or staff uses reviewable send): `beginPrimaryConfirmFlow` → guest manage link → Mail composer → `manual-email-log` → PATCH `confirmed` on `.sent` only.
 4. **Backend confirmation path** (when enabled): `POST /confirm` sends through backend/provider; must only confirm after backend send success when a usable guest email exists. **Not production-verified** until live tests pass.
 5. **Agents must not switch confirmation flows** on the test device unless explicitly asked.

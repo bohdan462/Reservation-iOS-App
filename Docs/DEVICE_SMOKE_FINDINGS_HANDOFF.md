@@ -1,10 +1,10 @@
 # Device Smoke Findings Handoff — GPT-5.5 Agent High
 
-**Purpose:** Release-blocking and important UX issues found during physical device smoke testing. This handoff is for **GPT-5.5 Agent High** code work **before** Slice 3D / 3E.
+**Purpose:** Release-blocking and important UX issues found during physical device smoke testing. **Code fixes Phases 1–4 are implemented and pushed**; physical device verification remains open. Slice 3D / 3E stay parked until release smoke verification is accepted or Bohdan explicitly resumes them.
 
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md) · [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) · [DIAGNOSTICS_AND_TESTING.md](./DIAGNOSTICS_AND_TESTING.md)
 
-**Audience:** GPT-5.5 Agent High (implementation). Composer 2.5 (audit/docs only unless asked).
+**Audience:** Bohdan (device verification), Composer 2.5 (audit/docs). GPT-5.5 Agent High only if follow-up code is requested.
 
 ---
 
@@ -13,18 +13,31 @@
 | Area | State |
 |------|--------|
 | Root branch | `audit-current-state` |
-| Root HEAD (docs) | `fceebb3` — Update docs after Manual Intake input polish and backend deploy |
-| Remote | `origin/audit-current-state` @ `fceebb3` |
-| Latest iOS implementation | `ad5d274` — Polish Manual Intake input flow and remove pre-create confirmation messages |
-| Prior iOS slices | `e775f52` (Manual Intake walk-in + guest lookup), `2b59c73` / `75dce15` (docs) |
+| Root HEAD | `3da3a68` — Fix Phase 4 device smoke email settings cleanup |
+| Remote | `origin/audit-current-state` @ `3da3a68` |
+| Device smoke code phases | **Phases 1–4 committed and pushed** (see §1a) |
+| Prior iOS slices | `ad5d274` (Manual Intake input polish), `e775f52` (Manual Intake walk-in + guest lookup) |
 | Backend HEAD | `63d0cfc` — Allow unknown manual walk-ins without guest identity |
 | Backend pointer | `c7f5a69` |
 | Backend status | **Implemented, root-pointed, pushed, and deployed to WordPress** |
 | Backend lookup | `1431a06` deployed |
-| Device smoke tests | **Findings captured — not yet fixed; do not claim passed** |
-| Next guest person-map code | **3D / 3E parked** until these findings are fixed or explicitly parked by Bohdan |
+| Device smoke tests | **Code landed — physical verification still open; do not claim passed** |
+| Next guest person-map code | **3D / 3E parked** until release smoke verification is accepted or Bohdan explicitly resumes |
 
-Working tree should be clean before Agent starts. Agent must not edit backend or create zip files.
+Working tree should be clean before further Agent work. Agent must not edit backend or create zip files.
+
+---
+
+## 1a. Device smoke code phases landed
+
+| Phase | Commit | Summary |
+|-------|--------|---------|
+| **Phase 1** | `804c130` | Live button hit area, bottom tab clearance, keyboard-safe guest candidates |
+| **Phase 2** | `8eab6c4` | Fast seated-now walk-ins, seated duration, attach known guest to walk-in, walk-in validation, Floor Plan table assignment |
+| **Phase 3** | `5762ecb` | Row indicators for auto-confirmed, confirmation email sent, reminder sent |
+| **Phase 4** | `3da3a68` | Removed duplicate Email Controls path; local-only email settings under Restaurant Settings as **This Device Email** |
+
+**Status:** implemented and pushed; **physical device verification still open**.
 
 ---
 
@@ -65,18 +78,18 @@ No new screenshot files are tracked in git; reproduce on physical device using c
 
 ## 4. Priority table
 
-| ID | Priority | Title | Release impact |
-|----|----------|-------|----------------|
-| 1 | **P1** | iPad Live button hit area | Host Live mode unreliable on iPad |
-| 2 | **P1** | List bottom row under floating tab bar | Last reservation hidden |
-| 3 | **P1** | Walk-in uses full reservation form | Slow live-service walk-in |
-| 4 | **P1** | Some walk-ins missing seated duration | Host ops blind to table time |
-| 5 | **P1** | Walk-in table must use Floor Plan | Layout truth diverges |
-| 6 | **P1** | Attach known guest to existing walk-in | Guest identity lost after create |
-| 7 | **P1** | Walk-in edit blocked by call-in phone rule | Cannot fix guest name on walk-in |
-| 8 | **P1** | Row indicators stale until detail open | Staff miss confirm/reminder state |
-| 9 | **P2** | Manual Intake candidates under keyboard | Guest lookup hard on iPhone |
-| 10 | **P2** | Email Controls vs Restaurant Settings | Duplicate/confusing settings |
+| ID | Priority | Title | Code | Device verify |
+|----|----------|-------|------|---------------|
+| 1 | **P1** | iPad Live button hit area | `804c130` Phase 1 | **Open** |
+| 2 | **P1** | List bottom row under floating tab bar | `804c130` Phase 1 | **Open** |
+| 3 | **P1** | Walk-in uses full reservation form | `8eab6c4` Phase 2 | **Open** |
+| 4 | **P1** | Some walk-ins missing seated duration | `8eab6c4` Phase 2 | **Open** |
+| 5 | **P1** | Walk-in table must use Floor Plan | `8eab6c4` Phase 2 | **Open** |
+| 6 | **P1** | Attach known guest to existing walk-in | `8eab6c4` Phase 2 | **Open** |
+| 7 | **P1** | Walk-in edit blocked by call-in phone rule | `8eab6c4` Phase 2 | **Open** |
+| 8 | **P1** | Row indicators stale until detail open | `5762ecb` Phase 3 | **Open** |
+| 9 | **P2** | Manual Intake candidates under keyboard | `804c130` Phase 1 | **Open** |
+| 10 | **P2** | Email Controls vs Restaurant Settings | `3da3a68` Phase 4 | **Open** |
 
 ---
 
@@ -296,23 +309,25 @@ No new screenshot files are tracked in git; reproduce on physical device using c
 
 ### P2-10 — Email Controls may duplicate Restaurant Settings
 
-**Observed:** More screen has **Email Controls** while Restaurant Settings already has Backend Reminders and Backend Auto-Confirm.
+**Observed:** More screen had **Email Controls** while Restaurant Settings already has Backend Reminders and Backend Auto-Confirm.
 
 **Expected:** One clear settings path for reminders, auto-confirm, and confirmation email controls.
 
-**Likely files:**
+**Code status:** **Implemented** — `3da3a68` Phase 4. More → Email Controls removed. Restaurant Settings owns **Backend Reminders** and **Backend Auto-Confirm**; local-only switches live under **This Device Email** (summary card + edit screen). No sending behavior changed.
 
-- `Tryzub Reservations/Features/Reservations/ReservationsListView.swift` — More → Email Controls navigation
-- `Tryzub Reservations/Features/Reservations/EmailAutomationSettingsView.swift`
-- `Tryzub Reservations/Features/Reservations/RestaurantSettingsStore.swift` — Backend Reminders / Auto-Confirm sections
-- `Tryzub Reservations/Features/Reservations/AutoConfirmPolicyEditorView.swift`
+**Likely files (landed):**
 
-**Reuse:** `RestaurantSettingsStore` PATCH `/restaurant-setup`; do not add a third settings store.
+- `Tryzub Reservations/Features/Reservations/ReservationsListView.swift` — removed More → Email Controls
+- `Tryzub Reservations/Features/Reservations/EmailAutomationSettingsView.swift` — renamed to **This Device Email**
+- `Tryzub Reservations/Features/Reservations/RestaurantSettingsStore.swift` — **This Device Email** card + backend sections
+
+**Reuse:** `RestaurantSettingsStore` PATCH `/restaurant-setup`; `EmailAutomationSettingsStore` remains local UserDefaults only.
 
 **Acceptance:**
 
-- [ ] Audit documented: which screen owns each toggle
-- [ ] Staff see one primary path (likely Restaurant Settings); duplicate entry removed or clearly labeled as shortcut to same store
+- [ ] More no longer shows Email Controls
+- [ ] Restaurant Settings contains **This Device Email** plus backend reminder/auto-confirm settings
+- [ ] Staff cannot confuse local device switches with backend automation rules
 - [ ] No conflicting persisted values
 
 ---
@@ -337,15 +352,15 @@ No new screenshot files are tracked in git; reproduce on physical device using c
 
 ---
 
-## 7. Recommended implementation order
+## 7. Implementation order (code landed)
 
-### Phase 1 — Layout and hit-testing
+### Phase 1 — Layout and hit-testing — **`804c130`**
 
 1. P1-1 iPad Live button tap target / overlay z-order
 2. P1-2 List bottom inset above floating tab bar
 3. P2-9 Manual Intake keyboard-safe candidate area
 
-### Phase 2 — Walk-in workflow
+### Phase 2 — Walk-in workflow — **`8eab6c4`**
 
 4. P1-3 Quick seated-now walk-in defaults
 5. P1-4 Seated duration for every seated walk-in (tie to create/seated timestamp)
@@ -353,13 +368,15 @@ No new screenshot files are tracked in git; reproduce on physical device using c
 7. P1-7 Walk-in edit validation (not call-in rules)
 8. P1-5 Floor Plan table assignment when layout exists
 
-### Phase 3 — Timely row indicators
+### Phase 3 — Timely row indicators — **`5762ecb`**
 
 9. P1-8 Auto-confirm, confirmation email sent, reminder sent on list rows without detail open
 
-### Phase 4 — Settings cleanup
+### Phase 4 — Settings cleanup — **`3da3a68`**
 
-10. P2-10 Email Controls vs Restaurant Settings audit/consolidation
+10. P2-10 Email Controls vs Restaurant Settings consolidation
+
+**Next:** physical device verification (§10), then release smoke. Do **not** start Slice 3D/3E until smoke verification is accepted or Bohdan explicitly resumes.
 
 ---
 
@@ -391,22 +408,22 @@ Composer or Bohdan should verify:
 
 ---
 
-## 10. Device smoke checklist after Agent fix
+## 10. Device smoke verification checklist (still open)
 
-Run on **physical device** (iPhone and/or iPad as noted):
+Run on **physical device** (iPhone and/or iPad as noted). Code for all items is landed; checkboxes remain until Bohdan verifies on hardware.
 
-1. Host → Live button toggles reliably (**iPad** focus for P1-1)
-2. Bookings + Host: scroll to last row — fully visible above tab bar
-3. Manual Intake walk-in: quick seated-now path; review sheet → confirm → save
-4. Seated walk-in shows “Seated Xm” and increments
-5. Walk-in with floor layout: table pick from Floor Plan only
-6. Create anonymous walk-in → detail → attach known guest; source stays walk-in
-7. Edit walk-in with name only (no phone) → saves
-8. List rows show auto-confirm / confirmation sent / reminder sent without opening detail first
-9. Manual Intake: candidates visible above keyboard on **iPhone**
-10. Settings: single clear path for reminders / auto-confirm / email controls
-11. Regression: unknown walk-in party/time only still saves (backend `63d0cfc`)
-12. Regression: Reservation Detail confirm/email workflow still works post-create
+- [ ] Live button tappable on **iPad** without Home button (portrait and landscape)
+- [ ] Last row clears floating tab bar on **iPhone and iPad** (Bookings + Host)
+- [ ] Manual Intake candidates stay visible above **iPhone** keyboard
+- [ ] Live walk-in create → review sheet → save as seated now
+- [ ] Seated duration appears on new walk-ins and increments
+- [ ] Attach known guest on walk-in edit; source remains walk-in
+- [ ] Walk-in edit name-only/no-phone saves
+- [ ] Floor Plan assignment path used when backend layout exists; no raw table string
+- [ ] Auto-confirm / confirmation / reminder indicators show on list rows without opening detail
+- [ ] More no longer shows Email Controls; Restaurant Settings contains **This Device Email** plus backend reminder/auto-confirm settings
+- [ ] Regression: unknown walk-in party/time only still saves (backend `63d0cfc`)
+- [ ] Regression: Reservation Detail confirm/email workflow still works post-create
 
 **Do not claim** device smoke passed until Bohdan confirms on physical hardware.
 
@@ -414,14 +431,14 @@ Run on **physical device** (iPhone and/or iPad as noted):
 
 ## 11. Final state summary for next conversation
 
-**Shipped:** Tryzub V1 guest person-map through 3M-B/3M, Manual Intake input polish (`ad5d274`), backend unknown walk-in deployed (`63d0cfc`).
+**Shipped:** Tryzub V1 guest person-map through 3M-B/3M, Manual Intake input polish (`ad5d274`), backend unknown walk-in deployed (`63d0cfc`), device smoke code Phases 1–4 (`804c130` → `3da3a68`).
 
-**Open:** Physical **device smoke fixes** (this handoff P1/P2). Confirmation mode on device. Release smoke test.
+**Open:** Physical **device smoke verification** (this handoff P1/P2). Confirmation mode on device. Release smoke test.
 
-**Parked until smoke fixes land:** Slice **3D** (full Guest history UI + Reservation Detail bridge), Slice **3E** (detail JSON persistence / disk-first full profile reopen).
+**Parked until smoke verification accepted or Bohdan resumes:** Slice **3D** (full Guest history UI + Reservation Detail bridge), Slice **3E** (detail JSON persistence / disk-first full profile reopen).
 
-**Agent next step:** Implement Phase 1 → Phase 4 in order above; one commit slice per phase or per issue as Bohdan prefers.
+**Next step:** Physical device verification + release smoke — not further device-smoke Agent code unless verification finds regressions.
 
 ---
 
-*Created: 2026-06-25. Align with root `fceebb3`, iOS `ad5d274`, backend `63d0cfc` deployed.*
+*Created: 2026-06-25. Updated: 2026-06-26. Align with root `3da3a68`, backend `63d0cfc` deployed, backend lookup `1431a06` deployed.*

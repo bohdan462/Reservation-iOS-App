@@ -45,7 +45,8 @@ Latest known **pushed** state:
 | Backend branch | `AI` |
 | Backend HEAD | `63d0cfc` — Allow unknown manual walk-ins without guest identity |
 | Root branch | `audit-current-state` |
-| Root HEAD | `fceebb3` — docs (latest iOS `ad5d274`) |
+| Root HEAD | `3da3a68` — device smoke Phases 1–4 + prior slices |
+| Remote | `origin/audit-current-state` @ `3da3a68` |
 | Backend guest person-map Slice 2 lookup | `1431a06` (backend), `b1a09e7` (root pointer); **deployed** to WordPress |
 | Backend guest person-map Slice 3M-B unknown walk-in | `63d0cfc` (backend), `c7f5a69` (root pointer); **deployed** to WordPress |
 | iOS guest person-map Slice 3A lookup foundation | `823f42c` |
@@ -53,6 +54,10 @@ Latest known **pushed** state:
 | iOS guest person-map Slice 3R Regulars cache-first | `50df843` |
 | iOS guest person-map Slice 3M Manual Intake lookup + walk-in validation | `e775f52` |
 | Manual Intake input polish (post-3M) | `ad5d274` |
+| Device smoke Phase 1 — layout / hit-testing | `804c130` |
+| Device smoke Phase 2 — walk-in workflow | `8eab6c4` |
+| Device smoke Phase 3 — row indicators | `5762ecb` |
+| Device smoke Phase 4 — email settings cleanup | `3da3a68` |
 | Guest person-map Slice 1 (sync completeness + full cache lookup) | `d541488` |
 | Host freshness / idle snapshot polish | `71601fc` |
 | Host Intelligence card presentation stability | `39f7fcb` |
@@ -81,13 +86,13 @@ git rev-parse --short HEAD
 git submodule status
 ```
 
-**Production:** Guest self-service cancel + dead-state verified live. App login works. Guest profile aggregates exist server-side; iOS syncs list to `GuestProfileCacheRecord` after `0f06852`. Guests tab reads disk cache first after `67e02d2`; explicit all-record lookup + View history after `1dfa14a`. Regulars / Guest Memory cache-first after `50df843`. Manual Intake walk-in validation + guest lookup after `e775f52`; input polish after `ad5d274`. Backend unknown walk-in contract **deployed** at `63d0cfc` / `c7f5a69`. Backend guest profile lookup route **deployed** at `1431a06`; iOS calls from Guests tab + Manual Intake explicit search (`1dfa14a`, `e775f52`) — **device smoke tests still open**. Tryzub V1 Host production polish shipped at `71601fc` + `39f7fcb` — release device verification still open.
+**Production:** Guest self-service cancel + dead-state verified live. App login works. Guest profile aggregates exist server-side; iOS syncs list to `GuestProfileCacheRecord` after `0f06852`. Guests tab reads disk cache first after `67e02d2`; explicit all-record lookup + View history after `1dfa14a`. Regulars / Guest Memory cache-first after `50df843`. Manual Intake walk-in validation + guest lookup after `e775f52`; input polish after `ad5d274`. Backend unknown walk-in contract **deployed** at `63d0cfc` / `c7f5a69`. Backend guest profile lookup route **deployed** at `1431a06`. Device smoke code Phases 1–4 **landed** (`804c130` → `3da3a68`) — **physical device verification still open**. Tryzub V1 Host production polish shipped at `71601fc` + `39f7fcb`.
 
 ---
 
 ## 3. V1 focus (this weekend)
 
-**Stabilize device verification; guest memory, guest person-map Slices 1/2/3A/3B/3R/3M-B/3M, Manual Intake input polish, and Tryzub V1 Host production polish are shipped.**
+**Stabilize physical device verification; guest memory, guest person-map Slices 1/2/3A/3B/3R/3M-B/3M, Manual Intake input polish, device smoke code Phases 1–4, and Tryzub V1 Host production polish are shipped in code.**
 
 **Guest Person Map target:** one shared **Guest history** destination by `guestKey` (`GuestProfileDetailView`). Guests tab wired (`1dfa14a`). Regulars / Guest Memory wired (`50df843`). Manual Intake candidates wired (`e775f52`). Reservation Detail — open (Slice 3D-a). Full booking/notes timeline UI is Slice 3D; current detail view is summary shell only.
 
@@ -109,27 +114,28 @@ git submodule status
 14. ~~Backend guest person-map Slice 3M-B — unknown walk-in~~ — `63d0cfc` / `c7f5a69` (blank walk-in identity; placeholder masking; no fake profiles; **deployed**).
 15. ~~iOS guest person-map Slice 3M — Manual Intake lookup + walk-in validation~~ — `e775f52` (local search; explicit all-record lookup; Use guest + View history; walk-in blank identity).
 16. ~~Manual Intake input polish~~ — `ad5d274` (review sheet before create; no pre-create messages; keyboard Next/Done; debounced lookup; 3M preserved).
+17. ~~Device smoke code Phases 1–4~~ — `804c130` (layout/hit-testing), `8eab6c4` (walk-in workflow), `5762ecb` (row indicators), `3da3a68` (email settings cleanup).
 
 ### Still open (stabilization)
 
-17. **iOS data/fetch on device** — foreground/privacy refresh (`b910bd1`).
-18. **Confirmation mode on physical device** — Mail vs backend `/confirm`.
-19. **Release smoke test** — end-to-end staff ops on physical device (include guest full-list sync, Guests + Manual Intake lookup + input polish, unknown walk-in save with backend `63d0cfc` deployed, Host header/flicker + intelligence-card checks).
-20. **Device smoke P1/P2 fixes** — [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) (layout, walk-in workflow, row indicators, settings cleanup).
+18. **iOS data/fetch on device** — foreground/privacy refresh (`b910bd1`).
+19. **Confirmation mode on physical device** — Mail vs backend `/confirm`.
+20. **Release smoke test** — end-to-end staff ops on physical device (include guest full-list sync, Guests + Manual Intake lookup + input polish, unknown walk-in save with backend `63d0cfc` deployed, Host header/flicker + intelligence-card checks, **device smoke verification checklist** in [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md)).
+21. **Device smoke P1/P2 verification** — code landed; physical hardware checks still open ([DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10).
 
-**Not production-ready** until items 17–20 pass.
+**Not production-ready** until items 18–21 pass.
 
 ### Before broader product release (not V1 stabilization blocker)
 
-21. **Slice 3D — full shared Guest history UI** — booking history timeline, guest/staff notes timeline, source mix, usual party/day/time in `GuestProfileDetailView`; Reservation Detail bridge (3D-a); booking-history row routing. **Parked until device smoke fixes land.**
-22. **Slice 3E — detail JSON persistence** — disk-first full profile reopen. **Parked until device smoke fixes land.**
-23. **Indexed / predicate-based local guest search** — replace broad in-memory filtering; acceptable for **current Tryzub V1 data size** only.
-24. **`ReservationDetail` guest fetch dedupe** — partially improved; full dedupe later.
-25. **Guest profile re-sync on foreground/mutations** — optional follow-up; currently once per session at startup deferral.
-26. **Backend lookup device smoke tests** — route deployed at `1431a06`; checklist **not yet passed**.
-27. **Backend unknown walk-in device smoke tests** — `63d0cfc` **deployed**; checklist **not yet passed**.
-28. **P3 cleanup** — remove unused `GuestLookupStore.schedulePhoneLookup`; backend README wording cleanup if README still says pilot/MVP.
-29. **P2 follow-ups** — phone normalization 10 vs 11 digit; dedicated validation error for blank lookup instead of `invalidURL`.
+22. **Slice 3D — full shared Guest history UI** — booking history timeline, guest/staff notes timeline, source mix, usual party/day/time in `GuestProfileDetailView`; Reservation Detail bridge (3D-a); booking-history row routing. **Parked until device smoke verification accepted or Bohdan resumes.**
+23. **Slice 3E — detail JSON persistence** — disk-first full profile reopen. **Parked until device smoke verification accepted or Bohdan resumes.**
+24. **Indexed / predicate-based local guest search** — replace broad in-memory filtering; acceptable for **current Tryzub V1 data size** only.
+25. **`ReservationDetail` guest fetch dedupe** — partially improved; full dedupe later.
+26. **Guest profile re-sync on foreground/mutations** — optional follow-up; currently once per session at startup deferral.
+27. **Backend lookup device smoke tests** — route deployed at `1431a06`; checklist **not yet passed**.
+28. **Backend unknown walk-in device smoke tests** — `63d0cfc` **deployed**; checklist **not yet passed**.
+29. **P3 cleanup** — remove unused `GuestLookupStore.schedulePhoneLookup`; backend README wording cleanup if README still says pilot/MVP.
+30. **P2 follow-ups** — phone normalization 10 vs 11 digit; dedicated validation error for blank lookup instead of `invalidURL`.
 
 **Parked:** offline queue, SMS, broad Host redesign, full AI clustering / “knows each other” / local semantic tags, VIP editor without backend contract.
 
@@ -222,7 +228,7 @@ git submodule status
 | Pipeline unexplained item | Known old test — non-blocking |
 | iOS foreground/privacy refresh on device | **Open** |
 | Confirmation mode on physical device | **Open** |
-| Device smoke P1/P2 fixes | **Open** — [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) |
+| Device smoke P1/P2 code | **Landed** — Phases 1–4 (`804c130` → `3da3a68`); **physical verification open** — [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) |
 | Final V1 smoke test | **Open** |
 | Guest profile sync on physical device | **Open** (post-`0f06852`) |
 | Manual walk-in / known-guest intake on physical device | **Open** (post-`0a89caa`) |
@@ -261,9 +267,9 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
 ## 9. What to tell Bohdan when he asks “what’s next?”
 
 1. Device-test iOS refresh (`b910bd1`).
-2. **Device smoke P1/P2 fixes** — [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) for GPT-5.5 Agent High.
+2. **Run device smoke verification** — [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10 (code Phases 1–4 landed).
 3. Confirm confirmation mode on physical device.
-4. Release smoke test — include guest full-list sync, Guests + Manual Intake explicit lookup + View history (no per-digit backend), unknown walk-in save (`63d0cfc` deployed), Manual Intake review sheet + no pre-create messages (`ad5d274`), Host `Last sync`, stale reasons, reduced idle flicker, intelligence-card chips stable during refresh, seated/due timing, manual refresh.
+4. Release smoke test — include guest full-list sync, Guests + Manual Intake explicit lookup + View history (no per-digit backend), unknown walk-in save (`63d0cfc` deployed), Manual Intake review sheet + no pre-create messages (`ad5d274`), Host `Last sync`, stale reasons, reduced idle flicker, intelligence-card chips stable during refresh, seated/due timing, manual refresh, device smoke checklist items.
 5. Before broader product release → **3D** full Guest history UI + Reservation Detail bridge, **3E** detail JSON persistence / disk-first full profile reopen, **indexed local guest search**; run backend lookup + unknown walk-in device smoke tests.
 6. Later → guest profile re-sync on foreground/mutations; `ReservationDetail` guest fetch dedupe; remove `schedulePhoneLookup` (P3); backend README pilot/MVP wording cleanup if needed.
 7. Do **not** start offline queue, SMS, AI clustering, or VIP editor without backend contract.
@@ -283,4 +289,4 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
 
 ---
 
-*Last aligned: 2026-06-25 (backend 3M-B `63d0cfc` deployed + iOS 3M `e775f52` + Manual Intake input polish `ad5d274`; device smoke findings handoff added). Update when repo HEAD or verification status changes materially.*
+*Last aligned: 2026-06-26 (device smoke Phases 1–4 `804c130` → `3da3a68` landed; backend `63d0cfc` deployed; physical verification open). Update when repo HEAD or verification status changes materially.*

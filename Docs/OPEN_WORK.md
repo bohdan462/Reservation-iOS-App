@@ -1,15 +1,34 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `fceebb3` (latest iOS `ad5d274`; pushed to `origin/audit-current-state`)  
-**Last reviewed:** 2026-06-25  
+**Root HEAD:** `3da3a68` (device smoke Phases 1–4 landed; pushed to `origin/audit-current-state`)  
+**Last reviewed:** 2026-06-26  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
 **Priority order:** [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) owns what to do next. This file tracks backlog items and implementation status. Production/device verification remains open even when code is implemented.
 
 **Not V1:** offline manual reservation queue; offline create/edit sync queue; full AI clustering / “knows each other”; VIP editor without backend contract.
 
-**Device smoke findings (P1/P2):** [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) — next Agent code work; Slice 3D/3E parked until fixed.
+**Device smoke findings (P1/P2):** [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) — **code Phases 1–4 landed** (`804c130` → `3da3a68`); **physical verification open**; Slice 3D/3E parked until smoke verification accepted.
+
+---
+
+## Device smoke P1/P2 (code landed — verification open)
+
+| ID | Title | Code | Device verify |
+|----|-------|------|---------------|
+| P1-1 | iPad Live button hit area | `804c130` | **Open** |
+| P1-2 | List bottom row under tab bar | `804c130` | **Open** |
+| P1-3 | Walk-in full-form UX | `8eab6c4` | **Open** |
+| P1-4 | Walk-in seated duration | `8eab6c4` | **Open** |
+| P1-5 | Floor Plan table assignment | `8eab6c4` | **Open** |
+| P1-6 | Attach known guest to walk-in | `8eab6c4` | **Open** |
+| P1-7 | Walk-in edit validation | `8eab6c4` | **Open** |
+| P1-8 | Row indicators stale | `5762ecb` | **Open** |
+| P2-9 | Manual Intake keyboard candidates | `804c130` | **Open** |
+| P2-10 | Email Controls vs Restaurant Settings | `3da3a68` | **Open** |
+
+Checklist: [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10.
 
 Every item includes risk, files, approach, acceptance test, and classification.
 
@@ -300,6 +319,10 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 - Backend guest person-map Slice 3M-B — unknown walk-in without guest identity (`63d0cfc` backend, `c7f5a69` root pointer; **deployed**)
 - iOS guest person-map Slice 3M — Manual Intake walk-in validation + guest lookup (`e775f52`)
 - Manual Intake input polish — review sheet, no pre-create messages, keyboard/debounce (`ad5d274`)
+- Device smoke Phase 1 — layout / hit-testing (`804c130`)
+- Device smoke Phase 2 — walk-in workflow (`8eab6c4`)
+- Device smoke Phase 3 — row indicators (`5762ecb`)
+- Device smoke Phase 4 — email settings cleanup (`3da3a68`)
 - V1 confirmation flow hardening (`cf6e641`)
 - Mail-first confirm + manual-email-log + PATCH (when backend confirmation is **off** on device)
 - Both backend `/confirm` and manual Mail paths exist; active path is setting-dependent (`EmailAutomationSettings`, default `backendConfirmationEnabled = true`)

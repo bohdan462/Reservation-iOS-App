@@ -2,9 +2,9 @@
 
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md) · [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) · [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md)
 
-Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), backend 3M-B (#18), iOS Slices 3A/3B/3R/3M, Manual Intake input polish (#17b), and Tryzub V1 Host production polish (#5b, #5c) are **done**.
+Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), backend 3M-B (#18), iOS Slices 3A/3B/3R/3M, Manual Intake input polish (#17b), Tryzub V1 Host production polish (#5b, #5c), and **device smoke Phases 1–4 (#24–#27)** are **done in code**.
 
-**Current focus:** iOS device smoke fixes ([DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md)), confirmation mode on physical device, release smoke test (backend `63d0cfc` **deployed**). **Next guest person-map code slice:** **3D** (parked until smoke fixes land).
+**Current focus:** physical device verification + release smoke test (backend `63d0cfc` **deployed**). **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
 
 ---
 
@@ -60,10 +60,61 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 |-------|-------|
 | **Status** | **current** — after #4 and #4b |
 | **Scope** | End-to-end staff ops on physical device (iPhone and iPad) |
-| **Include** | Guest profile background sync (`0f06852`); guest full-list sync completion (`d541488`); manual walk-in + known-guest intake (`0a89caa`); Guests tab + detail cache (`67e02d2`); Guests tab explicit all-record lookup + View history shell (`1dfa14a`); Regulars cache-first + View history (`50df843`); Manual Intake walk-in validation + guest lookup (`e775f52`); Manual Intake input polish (`ad5d274`); backend unknown walk-in (`63d0cfc`, deployed); Host freshness (`71601fc`); Host Intelligence card stability (`39f7fcb`) |
+| **Include** | Guest profile background sync (`0f06852`); guest full-list sync completion (`d541488`); manual walk-in + known-guest intake (`0a89caa`); Guests tab + detail cache (`67e02d2`); Guests tab explicit all-record lookup + View history shell (`1dfa14a`); Regulars cache-first + View history (`50df843`); Manual Intake walk-in validation + guest lookup (`e775f52`); Manual Intake input polish (`ad5d274`); backend unknown walk-in (`63d0cfc`, deployed); Host freshness (`71601fc`); Host Intelligence card stability (`39f7fcb`); **device smoke Phases 1–4 verification** ([DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10) |
 | **Guest memory checks** | Full-list sync eventually marks complete; Guests/manual intake finds known guest outside old 500 cap; no backend call on every phone digit; Guests tab explicit search only (not per keystroke); incomplete full-list sync does not wait on TTL before retrying full sync |
 | **Host header checks** | Header shows `Last sync HH:mm`; stale secondary reason when refresh skipped/stale; Live-on today does not sit stale without explanation; manual refresh bumps `Last sync` on success |
 | **Host flicker checks** | Quiet Host board does not rebuild/flicker every minute from idle snapshot timing; Host Intelligence card chips do not disappear/reappear when intelligence refreshes; during service, seated/due/nearby rows still update timing |
+
+---
+
+## 4d. Device smoke verification (Phases 1–4 code landed)
+
+| Field | Value |
+|-------|-------|
+| **Status** | **current** — code at `804c130` → `3da3a68`; physical verification not done |
+| **Scope** | Layout/hit-testing, walk-in workflow, row indicators, email settings cleanup |
+| **Checklist** | [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10 |
+| **Do not overstate** | Code landed ≠ device smoke passed |
+
+---
+
+## 24. Device smoke Phase 1 — layout and hit-testing
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done** — `804c130` |
+| **Scope** | Live button hit area; bottom tab clearance; Manual Intake keyboard-safe guest candidates |
+| **Do not overstate** | Physical device verification still open (#4d) |
+
+---
+
+## 25. Device smoke Phase 2 — walk-in workflow
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done** — `8eab6c4` |
+| **Scope** | Seated-now walk-ins; seated duration; attach known guest; walk-in validation; Floor Plan table assignment |
+| **Do not overstate** | Physical device verification still open (#4d) |
+
+---
+
+## 26. Device smoke Phase 3 — row indicators
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done** — `5762ecb` |
+| **Scope** | Auto-confirmed, confirmation email sent, reminder sent on list rows without detail open |
+| **Do not overstate** | Physical device verification still open (#4d) |
+
+---
+
+## 27. Device smoke Phase 4 — email settings cleanup
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done** — `3da3a68` |
+| **Scope** | Removed More → Email Controls; **This Device Email** under Restaurant Settings; backend reminders/auto-confirm unchanged |
+| **Do not overstate** | No sending behavior changed; physical device verification still open (#4d) |
 
 ---
 
@@ -284,7 +335,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 | Field | Value |
 |-------|-------|
-| **Status** | **later** — next guest person-map code slice |
+| **Status** | **later** — **parked** until device smoke verification accepted or Bohdan resumes |
 | **Scope** | `GuestProfileDetailView` + extract/reuse from `GuestInsightsView` / `GuestServiceProfilePresentation` — booking history timeline, guest/staff notes timeline, source mix, usual party/day/time; wire Reservation Detail to shared destination when `guestKey` known (3D-a); booking-history row → local `ReservationDetailView` when cached, otherwise read-only |
 | **Primary data** | Backend `GET /guest-profiles/{guest_key}` detail DTO (`bookingHistory`, `notesHistory`, etc.) |
 
@@ -322,6 +373,10 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | Backend guest person-map Slice 3M-B — unknown walk-in without guest identity | `63d0cfc` (backend), `c7f5a69` (root pointer); **deployed** |
 | iOS guest person-map Slice 3M — Manual Intake walk-in validation + guest lookup | `e775f52` |
 | Manual Intake input polish — review sheet, no pre-create messages, keyboard/debounce | `ad5d274` |
+| Device smoke Phase 1 — layout / hit-testing | `804c130` |
+| Device smoke Phase 2 — walk-in workflow | `8eab6c4` |
+| Device smoke Phase 3 — row indicators | `5762ecb` |
+| Device smoke Phase 4 — email settings cleanup | `3da3a68` |
 
 ---
 
