@@ -6,7 +6,7 @@
 
 ## Title
 
-V1 stabilization + reservation attachments handoff (local-only today; backend Slice A next)
+V1 stabilization + reservation attachments (backend deployed; iOS Slice C next)
 
 ---
 
@@ -15,15 +15,17 @@ V1 stabilization + reservation attachments handoff (local-only today; backend Sl
 | Location | State |
 |----------|--------|
 | **Root branch** | `audit-current-state` |
-| **Root HEAD** | `401390e` — Update docs after device smoke Phases 1–4 |
-| **Root vs remote** | Pushed to `origin/audit-current-state` at `401390e` |
-| **Backend submodule pointer** | `63d0cfc` — Allow unknown manual walk-ins without guest identity |
+| **Root HEAD** | `fa15d22` — Point backend to private reservation attachment backend |
+| **Root vs remote** | Pushed to `origin/audit-current-state` at `fa15d22` |
+| **Backend submodule pointer** | `a2422d3` — Add private reservation attachment backend |
 | **Backend branch** | `AI` |
-| **Backend HEAD** | `63d0cfc` |
-| **Backend vs remote** | Pushed to `origin/AI` at `63d0cfc` |
+| **Backend HEAD** | `a2422d3` |
+| **Backend vs remote** | Pushed to `origin/AI` at `a2422d3` |
 
 **Recent root commits (newest first):**
 
+- `fa15d22` — Point backend to private reservation attachment backend
+- `864db8e` — Add reservation attachments backend-sync handoff docs
 - `401390e` — Update docs after device smoke Phases 1–4
 - `3da3a68` — Fix Phase 4 device smoke email settings cleanup
 - `5762ecb` — Fix Phase 3 device smoke row indicators
@@ -54,6 +56,7 @@ V1 stabilization + reservation attachments handoff (local-only today; backend Sl
 
 **Backend commits on pointer (newest first):**
 
+- `a2422d3` — private reservation attachments (plugin 0.5.5, DB 1.12.0): staff-auth CRUD + private storage + content route
 - `63d0cfc` — unknown `manual_walk_in` without guest identity; placeholder masking; call-in still requires name + phone
 - `1431a06` — `GET /guest-profiles/lookup` staff targeted search with safe strong-only best match
 - `078a44a` — document guest self-service cache contract (README)
@@ -69,7 +72,7 @@ V1 stabilization + reservation attachments handoff (local-only today; backend Sl
 
 **Stabilization still open** (physical device verification + release smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R/3M-B/3M**, **Manual Intake input polish**, **device smoke code Phases 1–4**, and **Tryzub V1 Host production polish** are shipped in code. **Current focus:** physical device verification + release smoke — see [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10. **Slice 3D/3E parked** until smoke verification is accepted or Bohdan resumes.
 
-**Reservation attachments (boss request):** Reservation Detail has **local-only** attachment UI today — **not backend-synced**. Full plan: [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next implementation: Backend Attachment Slice A only** — do **not** start iOS sync until backend contract exists and deploys. Physical device smoke remains a separate open track.
+**Reservation attachments (boss request):** Backend **deployed and production-smoked** (`a2422d3`, plugin **0.5.5**, DB **1.12.0**). Core staff attachment API passed on production. Direct **image** URL **404**; unauthenticated REST content **401**; directory marker cached **200 text/html** — host hardening recommended, not blocking. iOS Reservation Detail attachment UI remains **local-only** until Slice C+. Full plan: [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next implementation: iOS Attachment Slice C only** (DTO/API/cache — not Detail UI polish). Physical device smoke remains a separate open track.
 
 **Guest Person Map target:** one shared **Guest history** destination by `guestKey` (`GuestProfileDetailView`). Wiring status:
 

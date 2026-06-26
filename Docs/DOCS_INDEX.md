@@ -15,13 +15,13 @@ Do not implement from stale index or diagram files listed under [Stale / archive
 | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) | V1 order: stabilization → guest person-map 3D; Slices 1/2/3A/3B/3R/3M-B/3M + Manual Intake input polish + Host polish + device smoke Phases 1–4 done in code |
 | [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) | Active handoff: physical device verification open; guest person-map through 3M-B/3M + device smoke Phases 1–4 shipped in code |
 | [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) | Device smoke P1/P2: code Phases 1–4 landed; physical verification open (3D/3E parked) |
-| [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md) | Reservation image attachments: local-only today; backend private sync plan (Slice A next) |
+| [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md) | Reservation attachments: backend deployed (`a2422d3`); iOS Slice C next |
 | [OPEN_WORK.md](./OPEN_WORK.md) | V1 stabilization backlog with acceptance tests |
 | [DIAGNOSTICS_AND_TESTING.md](./DIAGNOSTICS_AND_TESTING.md) | Roles, invariants, test checklists |
 
 **Deploy note:** `Backend/*.zip` is not tracked in git. Build plugin zip locally from submodule `HEAD` when deploying to WordPress.
 
-**Current root HEAD:** `401390e` on `audit-current-state` (device smoke Phases 1–4 docs aligned; attachment handoff added uncommitted until review).
+**Current root HEAD:** `fa15d22` on `audit-current-state` (backend attachment pointer; Slice B production-smoked; iOS Slice C next).
 
 ---
 

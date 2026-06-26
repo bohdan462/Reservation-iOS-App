@@ -4,7 +4,7 @@
 
 Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), backend 3M-B (#18), iOS Slices 3A/3B/3R/3M, Manual Intake input polish (#17b), Tryzub V1 Host production polish (#5b, #5c), and **device smoke Phases 1–4 (#24–#27)** are **done in code**.
 
-**Current focus:** (1) physical device verification + release smoke test (backend `63d0cfc` **deployed**); (2) **reservation attachments backend-sync** — see [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next attachment code slice:** **Attachment Slice A** (backend only). **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
+**Current focus:** (1) physical device verification + release smoke test (backend `63d0cfc` **deployed**); (2) **reservation attachments iOS sync** — backend Slice A+B **done** (`a2422d3` **deployed**, production-smoked); see [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next attachment code slice:** **Attachment Slice C** (iOS DTO/API/cache only). **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
 
 ---
 
@@ -354,11 +354,9 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 
 | Field | Value |
 |-------|-------|
-| **Status** | **current** — not started |
-| **Scope** | Backend `AI` from `63d0cfc`: `tryzub_reservation_attachments` table, private disk storage, staff-auth list/upload/patch/delete/content routes, activity log |
+| **Status** | **done** — backend `a2422d3`, root pointer `fa15d22` |
+| **Scope** | Backend `AI`: `tryzub_reservation_attachments` table, private disk storage, staff-auth list/upload/patch/delete/content routes, activity log |
 | **Handoff** | [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md) §8 Slice A |
-| **Do not touch** | iOS, guest self-service, confirmation/reminder flows |
-| **Do not start iOS** until Slice A deployed and Slice B manual tests pass |
 
 ---
 
@@ -366,9 +364,10 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 
 | Field | Value |
 |-------|-------|
-| **Status** | **current** — blocked on Slice A |
-| **Scope** | WordPress deploy, private path hardening, curl checklist on staging/production |
+| **Status** | **done** — deployed + production-smoked 2026-06-26 |
+| **Scope** | WordPress deploy, private path hardening, curl checklist on production |
 | **Handoff** | [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md) §9 |
+| **Notes** | Core staff API passed; direct **image** URL 404; unauthenticated REST content 401; directory marker cached 200 text/html — host hardening recommended, not blocking. HEIC/oversize/PDF optional; iOS V1 JPEG upload only. |
 
 ---
 
@@ -376,7 +375,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 
 | Field | Value |
 |-------|-------|
-| **Status** | **current** — blocked on Slice B |
+| **Status** | **current** |
 | **Scope** | `ReservationsAPIClient`, attachment DTOs, `ReservationAttachmentRecord` remote fields, `AttachmentFileStore` download cache |
 | **Do not touch** | Second API client; SwiftData blobs |
 

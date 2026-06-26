@@ -6,7 +6,7 @@
 
 **Audience:** GPT-5.5 Agent (backend/iOS), Composer 2.5 (audit/docs), Bohdan (deploy/device test).
 
-**Status:** **Not implemented for production sync.** Local-only MVP exists on iOS. **Next code slice: Backend Attachment Slice A only.**
+**Status:** Backend **deployed and production-smoked** (plugin **0.5.5**, DB **1.12.0**, backend `a2422d3`). iOS still **local-only** until Slice C+. **Next code slice: iOS Attachment Slice C** (DTO/API/cache only — not Detail UI polish yet).
 
 ---
 
@@ -321,9 +321,10 @@ Keep `AttachmentFileStore` as **local cache only**.
 
 | | |
 |--|--|
+| **Status** | **Done** — deployed to WordPress; production smoke **2026-06-26** |
 | **Goal** | Deploy to WordPress; document private path + htaccess; curl checklist passed on production/staging |
 | **Files** | Backend README, optional `Docs/DIAGNOSTICS_AND_TESTING.md` addendum later |
-| **Do not touch** | iOS until B green |
+| **Production smoke** | Core staff attachment API **passed** (list/upload/metadata/content/PATCH/DELETE/guest self-service). **Direct image URL → 404** (no public bytes). **Unauthenticated REST content → 401**. **Directory marker URL → cached 200 text/html** — not blocking; host/nginx hardening for `tryzub-private/` remains recommended. HEIC/oversize/PDF optional; **iOS V1 should upload JPEG only**. |
 | **Acceptance** | All backend tests in §9 backend subset pass on deployed server |
 
 ### Slice C — iOS DTO / API / cache metadata

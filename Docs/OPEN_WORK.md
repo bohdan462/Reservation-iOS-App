@@ -32,18 +32,18 @@ Checklist: [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md
 
 ---
 
-## Reservation attachments — local-only risk (boss request)
+## Reservation attachments — backend live; iOS sync next
 
 **Handoff:** [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md)
 
-| Risk | Detail |
+| State | Detail |
 |------|--------|
-| **Local-only attachments mislead staff** | Reservation Detail shows photos that exist **only on that device** — other staff/devices cannot see them |
-| **Reinstall / device swap loses images** | No backend recovery; operational receipts/deposits may be lost |
-| **Boss requirement blocked** | Cross-device sync, delete propagation, fresh-install recovery, and private serving require **backend Slice A** before iOS sync |
-| **False sense of sync** | Staff may assume photos are “on the reservation” like notes synced via managed reservation API — they are not today |
+| **Backend** | **Deployed + production-smoked** — `a2422d3` (plugin 0.5.5, DB 1.12.0) |
+| **iOS app** | Reservation Detail attachments still **local-only** until Slice C+ |
+| **Production privacy** | Direct image URL **404**; auth REST content **200**; unauth content **401**; directory marker cached **200 text/html** — host hardening recommended |
+| **Boss requirement** | Cross-device sync blocked on **iOS Slice C/D** — backend ready |
 
-**Next code slice:** Backend Attachment Slice A only — do not begin iOS until backend contract deploys.
+**Next code slice:** iOS Attachment Slice C (DTO/API/cache only — not Detail UI polish).
 
 Every item includes risk, files, approach, acceptance test, and classification.
 
