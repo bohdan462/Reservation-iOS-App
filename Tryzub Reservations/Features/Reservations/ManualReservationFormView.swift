@@ -515,6 +515,15 @@ private enum ReservationFormField: Hashable, CaseIterable {
         }
     }
 
+    var isGuestLookupField: Bool {
+        switch self {
+        case .guestName, .phone, .email:
+            return true
+        case .guestNotes, .staffNotes, .tableName, .supersededById:
+            return false
+        }
+    }
+
     func next(in order: [ReservationFormField]) -> ReservationFormField? {
         guard let index = order.firstIndex(of: self), index + 1 < order.count else { return nil }
         return order[index + 1]
@@ -619,6 +628,11 @@ private struct ReservationFormContent: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Color(.systemGroupedBackground))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if pinsGuestCandidateSectionAboveKeyboard {
+                keyboardPinnedGuestCandidateSection
+            }
+        }
         .navigationTitle(mode.title)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(for: ManualGuestProfileRoute.self) { route in
@@ -795,7 +809,9 @@ private struct ReservationFormContent: View {
                 }
             } else {
                 contactCard
-                guestCandidateSection
+                if !pinsGuestCandidateSectionAboveKeyboard {
+                    guestCandidateSection
+                }
                 dateCard
                 serviceChoicesGrid
                 slotContextBanner
@@ -934,6 +950,33 @@ private struct ReservationFormContent: View {
 
     private var allGuestRecordResults: [GuestLookupResult] {
         allGuestRecordCandidates.map(\.lookupResult)
+    }
+
+    private var pinsGuestCandidateSectionAboveKeyboard: Bool {
+        guard !isWideForm, mode.usesManualGuestInput else { return false }
+        guard focusedField?.isGuestLookupField == true else { return false }
+        return hasGuestCandidateContent
+    }
+
+    private var hasGuestCandidateContent: Bool {
+        !localGuestCandidates.isEmpty
+            || !cappedAllGuestRecordResults.isEmpty
+            || guestCandidateMessage != nil
+            || isSearchingAllGuestRecords
+    }
+
+    private var keyboardPinnedGuestCandidateSection: some View {
+        ScrollView {
+            guestCandidateSection
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+        }
+        .frame(maxHeight: 280)
+        .scrollIndicators(.visible)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) {
+            Divider().opacity(0.45)
+        }
     }
 
     private var localGuestCandidates: [GuestLookupResult] {

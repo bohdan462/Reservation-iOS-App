@@ -405,6 +405,7 @@ struct HostBoardView: View {
                                 .padding(.top, HostBoardHeaderCollapse.lerp(8, 4, hostBoardHeaderCollapse))
                                 .padding(.bottom, HostBoardHeaderCollapse.lerp(4, 1, hostBoardHeaderCollapse))
                                 .background(Color.clear)
+                                .zIndex(10)
                         }
                     } else {
                         hostBoardScrollView(
@@ -926,7 +927,7 @@ struct HostBoardView: View {
             .padding(.top, includesHeader ? (isWideLayout ? 8 : 6) : 4)
             .padding(.bottom, ReservationLayout.scrollBottomInset + 12)
         }
-        .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
+        .contentMargins(.bottom, ReservationLayout.topLevelTabScrollBottomInset, for: .scrollContent)
         .scrollIndicators(.hidden)
         .scrollContentBackground(.hidden)
         .background(Color.clear)
@@ -1980,6 +1981,7 @@ private struct HomeServiceHeader: View {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
         }
+        .zIndex(10)
         .scaleEffect(HostBoardHeaderCollapse.lerp(1, 0.96, effectiveCollapse), anchor: .top)
         .animation(.smooth(duration: 0.32), value: effectiveCollapse)
     }
@@ -2141,8 +2143,14 @@ private struct HomeServiceHeader: View {
                         isSelected: liveHostModeEnabled,
                         strokeOpacity: 0.10
                     )
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 4)
+                    .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             }
             .buttonStyle(.plain)
+            .frame(minWidth: 64, minHeight: 44)
+            .contentShape(Rectangle())
+            .zIndex(3)
             .accessibilityLabel("Live Host mode")
             .accessibilityValue(liveHostModeEnabled ? "On" : "Off")
 
@@ -2206,6 +2214,7 @@ private struct HomeServiceHeader: View {
 
             
         }
+        .zIndex(2)
 //        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 

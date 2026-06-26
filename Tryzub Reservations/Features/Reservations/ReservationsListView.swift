@@ -1495,7 +1495,7 @@ private struct ReservationScheduleView: View {
             .searchable(text: $searchText, prompt: "Search name, phone, email, table")
             .listStyle(.plain)
             .contentMargins(.horizontal, 0, for: .scrollContent)
-            .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
+            .contentMargins(.bottom, ReservationLayout.topLevelTabScrollBottomInset, for: .scrollContent)
             .refreshable {
                 guard isActive else { return }
                 if scope == .all {
@@ -1991,7 +1991,7 @@ private struct ReservationReviewQueueView: View {
             .searchable(text: $searchText, prompt: "Name, phone, email")
             .listStyle(.plain)
             .contentMargins(.horizontal, 0, for: .scrollContent)
-            .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
+            .contentMargins(.bottom, ReservationLayout.topLevelTabScrollBottomInset, for: .scrollContent)
             .refreshable {
                 guard isActive else { return }
                 // Staff manual queue refresh: controller fetches new + needs_review.
@@ -2260,7 +2260,7 @@ private struct ReservationMoreView: View {
                 }
             }
             .navigationTitle("More")
-            .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
+            .contentMargins(.bottom, ReservationLayout.topLevelTabScrollBottomInset, for: .scrollContent)
             .navigationDestination(for: ReservationMoreDestination.self) { destination in
                 moreDestination(destination)
             }
@@ -2586,7 +2586,7 @@ private struct CancelledReservationsView: View {
         .navigationTitle("Cancelled Reservations")
         .navigationBarTitleDisplayMode(.inline)
         .listStyle(.plain)
-        .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
+        .contentMargins(.bottom, ReservationLayout.topLevelTabScrollBottomInset, for: .scrollContent)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -2780,7 +2780,7 @@ private struct HiddenReservationsView: View {
             }
         }
         .listStyle(.plain)
-        .contentMargins(.bottom, ReservationLayout.scrollBottomInset, for: .scrollContent)
+        .contentMargins(.bottom, ReservationLayout.topLevelTabScrollBottomInset, for: .scrollContent)
         .navigationTitle("Hidden Reservations")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

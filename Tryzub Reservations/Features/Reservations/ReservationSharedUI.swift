@@ -638,6 +638,8 @@ enum ReservationLayout {
     static let floatingTabBarClearance: CGFloat = 16
     /// Small bottom inset for scroll content on top-level tab screens.
     static let scrollBottomInset: CGFloat = 16
+    /// Extra breathing room for reservation rows above the app tab bar.
+    static let topLevelTabScrollBottomInset: CGFloat = 72
 }
 
 /// Consistent spacing for time/table slot chip grids across the app.
