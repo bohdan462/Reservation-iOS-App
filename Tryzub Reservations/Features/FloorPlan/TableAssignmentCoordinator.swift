@@ -8,8 +8,10 @@
 //  Decision rule:
 //    1. If a backend floor layout exists and the entered label resolves to a known tableKey
 //       → use PATCH /managed-reservations/{id}/tables (canonical, conflict-protected).
-//    2. Otherwise → fall back to PATCH /managed-reservations/{id} with tableName
-//       (legacy, no conflict checks). Trace always says why.
+//    2. If no backend layout exists → fall back to PATCH /managed-reservations/{id}
+//       with tableName (legacy, no conflict checks). Trace always says why.
+//    3. If a backend layout exists but the label cannot resolve, do not write a raw
+//       table string.
 //
 //  Traces:
 //    [TABLE_ASSIGNMENT_TRACE] path=floor_plan_backend  reservation=... table=...
@@ -30,7 +32,7 @@ enum TableAssignmentCoordinator {
     ///
     /// Uses the canonical `/managed-reservations/{id}/tables` endpoint when the app
     /// has a backend floor layout and the label resolves to a known `tableKey`.
-    /// Falls back to the legacy `tableName` PATCH in all other cases.
+    /// Falls back to the legacy `tableName` PATCH only when no backend layout exists.
     ///
     /// Assignment is always **manual** — no automatic assignment happens here.
     static func assign(
@@ -40,8 +42,19 @@ enum TableAssignmentCoordinator {
         controller: ReservationsController,
         context: ModelContext
     ) async {
+        let normalizedTableName = tableName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedTableName.isEmpty {
+            await clear(
+                reservationID: reservationID,
+                floorPlanStore: floorPlanStore,
+                controller: controller,
+                context: context
+            )
+            return
+        }
+
         if floorPlanStore.hasBackendLayout {
-            if let tableKey = floorPlanStore.tableKey(forLabel: tableName) {
+            if let tableKey = floorPlanStore.tableKey(forLabel: normalizedTableName) {
                 TableAssignmentTrace.canonicalFloorPlan(
                     reservationID: reservationID,
                     tableKeys: [tableKey]
@@ -59,8 +72,9 @@ enum TableAssignmentCoordinator {
                 TableAssignmentTrace.fallback(
                     reservationID: reservationID,
                     reason: "key_not_found",
-                    detail: tableName
+                    detail: normalizedTableName
                 )
+                return
             }
         } else {
             TableAssignmentTrace.fallback(
@@ -71,10 +85,10 @@ enum TableAssignmentCoordinator {
         }
 
         // Legacy path - no conflict checks.
-        TableAssignmentTrace.legacyPatch(reservationID: reservationID, tableName: tableName)
+        TableAssignmentTrace.legacyPatch(reservationID: reservationID, tableName: normalizedTableName)
         _ = try? await controller.updateReservation(
             id: reservationID,
-            request: ReservationUpdateRequest(tableName: tableName),
+            request: ReservationUpdateRequest(tableName: normalizedTableName),
             context: context
         )
     }

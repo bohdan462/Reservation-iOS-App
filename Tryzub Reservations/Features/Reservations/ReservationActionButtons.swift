@@ -832,17 +832,30 @@ struct TableAssignmentSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    TextField("Table", text: $tableName)
-                        .font(.title3.weight(.semibold))
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
-                        .padding(.horizontal, 12)
-                        .frame(height: 44)
-                        .background(TryzubColors.secondaryCardBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
-                                .stroke(TryzubColors.border, lineWidth: 1)
-                        }
+                    if usesCanonicalFloorPlanTables {
+                        Label(selectedFloorPlanTableText, systemImage: "square.grid.3x3")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(TryzubColors.mutedText)
+                            .padding(.horizontal, 12)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .background(TryzubColors.secondaryCardBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                                    .stroke(TryzubColors.border, lineWidth: 1)
+                            }
+                    } else {
+                        TextField("Table", text: $tableName)
+                            .font(.title3.weight(.semibold))
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+                            .padding(.horizontal, 12)
+                            .frame(height: 44)
+                            .background(TryzubColors.secondaryCardBackground, in: RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: ReservationUIStyle.controlCorner, style: .continuous)
+                                    .stroke(TryzubColors.border, lineWidth: 1)
+                            }
+                    }
 
                     LazyVGrid(
                         columns: ReservationSlotGridStyle.fourColumns,
@@ -897,7 +910,7 @@ struct TableAssignmentSheet: View {
                             Text("Save")
                         }
                     }
-                    .disabled(isSaving || controller.isNetworkDegraded)
+                    .disabled(isSaving || controller.isNetworkDegraded || isSaveDisabled)
                 }
             }
         }
@@ -931,16 +944,30 @@ struct TableAssignmentSheet: View {
     }
 
     private var tableSuggestions: [String] {
-        if floorPlanStore.hasBackendLayout {
+        if usesCanonicalFloorPlanTables {
             let backendTables = floorPlanStore.viewState.tables.isEmpty
                 ? floorPlanStore.layoutTables
                 : floorPlanStore.viewState.tables
             let names = backendTables.filter(\.isActive).map(\.label)
-            if !names.isEmpty { return names }
+            return names
         }
         return hostTableConfigStore.assignmentTableNames(
             legacyFallback: ReservationTableOptionsStore.options(from: tableOptionsRawValue)
         )
+    }
+
+    private var usesCanonicalFloorPlanTables: Bool {
+        floorPlanStore.hasBackendLayout
+    }
+
+    private var selectedFloorPlanTableText: String {
+        tableName.trimmed.nilIfBlank.map { "Selected table \($0)" } ?? "Choose a Floor Plan table"
+    }
+
+    private var isSaveDisabled: Bool {
+        guard usesCanonicalFloorPlanTables else { return false }
+        guard !tableName.trimmed.isEmpty else { return false }
+        return floorPlanStore.tableKey(forLabel: tableName) == nil
     }
 
     private var effectiveTableConfigsForAssignment: [RestaurantTableConfig] {
@@ -984,6 +1011,10 @@ struct TableAssignmentSheet: View {
     private func save() async {
         guard !controller.isNetworkDegraded else {
             errorMessage = "Offline — edits require internet."
+            return
+        }
+        guard !isSaveDisabled else {
+            errorMessage = "Choose a Floor Plan table before saving."
             return
         }
 

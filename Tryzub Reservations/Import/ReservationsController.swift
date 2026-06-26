@@ -2721,6 +2721,7 @@ final class ReservationsController: ObservableObject {
             let repository = ReservationRepository(context: context)
             let service = ReservationMutationService(client: environment.apiClient, repository: repository)
             let reservation = try await service.createReservation(request)
+            updateLocalSeatedTimestamp(after: reservation)
             markScopesTouched(after: reservation)
             MultiDeviceSyncTrace.manualCreateSuccess(
                 remoteID: reservation.id,
@@ -2772,6 +2773,7 @@ final class ReservationsController: ObservableObject {
             let repository = ReservationRepository(context: context)
             let service = ReservationMutationService(client: environment.apiClient, repository: repository)
             let acceptedReservation = try await service.createReservation(request)
+            updateLocalSeatedTimestamp(after: acceptedReservation)
             markScopesTouched(after: acceptedReservation)
             MultiDeviceSyncTrace.manualCreateSuccess(
                 remoteID: acceptedReservation.id,
@@ -4725,8 +4727,8 @@ final class ReservationsController: ObservableObject {
     }
 
     private func seatedTimestampFallback(for reservation: ReservationRecord) -> Date? {
-        guard let value = reservation.apiUpdatedAt?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else {
+        let value = (reservation.apiUpdatedAt ?? reservation.createdAt).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else {
             return nil
         }
 

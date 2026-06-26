@@ -18,6 +18,7 @@ struct ManualReservationFormView: View {
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var floorPlanStore: FloorPlanStore
     @State private var draft: ReservationFormDraft
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -118,6 +119,7 @@ struct ManualReservationFormView: View {
     }
 
     private func prepareCreateConfirmation() {
+        prepareLiveWalkInForSubmission()
         guard validateRequiredFields() else { return }
         pendingCreateSummary = draft.createSummaryRows(intakeMode: intakeMode)
         dismissKeyboard()
@@ -136,6 +138,7 @@ struct ManualReservationFormView: View {
     // Intent: Staff creates a fast call-in/manual reservation.
     // Network: Caller performs POST /managed-reservations.
     private func createReservation() async {
+        prepareLiveWalkInForSubmission()
         guard validateRequiredFields() else { return }
 
         FormTrace.event(surface: "manual_add", name: "submit_started")
@@ -216,6 +219,15 @@ struct ManualReservationFormView: View {
         }
         return draft.usedKnownGuest ? .knownGuestManual : .manualCallIn
     }
+
+    private func prepareLiveWalkInForSubmission() {
+        guard failure == nil, intakeMode == .walkIn else { return }
+        draft.applyLiveWalkInDefaults(
+            setup: controller.restaurantSetup,
+            keepGuestFields: true,
+            clearsTable: floorPlanStore.hasBackendLayout
+        )
+    }
 }
 
 // MARK: - Edit Reservation Wrapper
@@ -226,6 +238,7 @@ struct ReservationEditFormView: View {
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var controller: ReservationsController
+    @EnvironmentObject private var floorPlanStore: FloorPlanStore
     @Environment(\.modelContext) private var modelContext
     @State private var draft: ReservationFormDraft
     @State private var originalDraft: ReservationFormDraft
@@ -362,7 +375,11 @@ struct ReservationEditFormView: View {
         }
 
         do {
-            _ = try await onSave(draft.updateRequest(intakeMode: reservation.sourceTypeValue == .manualWalkIn ? .walkIn : .callIn))
+            var request = draft.updateRequest(intakeMode: reservation.sourceTypeValue == .manualWalkIn ? .walkIn : .callIn)
+            if floorPlanStore.hasBackendLayout {
+                request.tableName = nil
+            }
+            _ = try await onSave(request)
             ReservationHaptics.success()
             pendingChanges = []
             showSaveConfirmation = false
@@ -551,6 +568,7 @@ private struct ReservationFormContent: View {
 
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var guestProfileStore: GuestProfileStore
+    @EnvironmentObject private var floorPlanStore: FloorPlanStore
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Query(
@@ -587,6 +605,7 @@ private struct ReservationFormContent: View {
     @State private var cachedDayReservationsDateKey: String?
     @State private var cachedDayReservations: [ReservationRecord] = []
     @State private var slotContextRefreshTask: Task<Void, Never>?
+    @State private var tableAssignmentReservation: ReservationRecord?
     @FocusState private var focusedField: ReservationFormField?
 
     private var dayAvailability: RestaurantDayAvailabilityDTO? {
@@ -621,6 +640,18 @@ private struct ReservationFormContent: View {
         horizontalSizeClass == .regular
     }
 
+    private var isLiveWalkInCreate: Bool {
+        mode == .manualCreate && intakeMode == .walkIn
+    }
+
+    private var isManualWalkInEdit: Bool {
+        mode == .edit && reservation?.sourceTypeValue == .manualWalkIn
+    }
+
+    private var usesGuestLookup: Bool {
+        mode.usesManualGuestInput || isManualWalkInEdit
+    }
+
     var body: some View {
         ScrollView {
             formShell
@@ -637,6 +668,18 @@ private struct ReservationFormContent: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(for: ManualGuestProfileRoute.self) { route in
             GuestProfileDetailView(guestKey: route.guestKey, environment: controller.environment)
+        }
+        .sheet(item: $tableAssignmentReservation) { reservation in
+            TableAssignmentSheet(reservation: reservation) { tableName in
+                await TableAssignmentCoordinator.assign(
+                    reservationID: reservation.remoteID,
+                    tableName: tableName,
+                    floorPlanStore: floorPlanStore,
+                    controller: controller,
+                    context: modelContext
+                )
+                draft.tableName = tableName
+            }
         }
         .toolbar {
             if mode.showsNavigationCancel {
@@ -784,15 +827,25 @@ private struct ReservationFormContent: View {
             }
 
             if isWideForm {
-                formColumnPair {
-                    contactCard
-                } right: {
-                    dateCard
+                if isLiveWalkInCreate {
+                    formColumnPair {
+                        contactCard
+                    } right: {
+                        partyCard
+                    }
+                } else {
+                    formColumnPair {
+                        contactCard
+                    } right: {
+                        dateCard
+                    }
                 }
                 guestCandidateSection
 
-                serviceChoicesGrid
-                slotContextBanner
+                if !isLiveWalkInCreate {
+                    serviceChoicesGrid
+                    slotContextBanner
+                }
 
                 if showsWalkInDetailsCard {
                     walkInDetailsCard
@@ -812,9 +865,13 @@ private struct ReservationFormContent: View {
                 if !pinsGuestCandidateSectionAboveKeyboard {
                     guestCandidateSection
                 }
-                dateCard
-                serviceChoicesGrid
-                slotContextBanner
+                if isLiveWalkInCreate {
+                    partyCard
+                } else {
+                    dateCard
+                    serviceChoicesGrid
+                    slotContextBanner
+                }
 
                 if mode.showsEditControls {
                     editDetailsCard
@@ -877,7 +934,7 @@ private struct ReservationFormContent: View {
             }
         }
         .onAppear {
-            guard mode.usesManualGuestInput else { return }
+            guard usesGuestLookup else { return }
             if draft.guestName.contains(where: \.isNumber) {
                 draft.guestName = ReservationInputNormalizer.sanitizedGuestName(draft.guestName)
             }
@@ -890,7 +947,7 @@ private struct ReservationFormContent: View {
 
     @ViewBuilder
     private var guestCandidateSection: some View {
-        if mode.usesManualGuestInput {
+        if usesGuestLookup {
             ManualGuestCandidateSection(
                 localResults: localGuestCandidates,
                 allRecordResults: cappedAllGuestRecordResults,
@@ -916,10 +973,12 @@ private struct ReservationFormContent: View {
 
     private var focusFieldOrder: [ReservationFormField] {
         var order: [ReservationFormField] = [.guestName, .phone, .email, .guestNotes, .staffNotes]
-        if showsWalkInDetailsCard {
+        if showsWalkInDetailsCard && !floorPlanStore.hasBackendLayout {
             order.append(.tableName)
         }
-        if mode.showsEditControls {
+        if mode.showsEditControls && floorPlanStore.hasBackendLayout {
+            order.append(.supersededById)
+        } else if mode.showsEditControls {
             order.append(contentsOf: [.tableName, .supersededById])
         }
         return order
@@ -953,7 +1012,7 @@ private struct ReservationFormContent: View {
     }
 
     private var pinsGuestCandidateSectionAboveKeyboard: Bool {
-        guard !isWideForm, mode.usesManualGuestInput else { return false }
+        guard !isWideForm, usesGuestLookup else { return false }
         guard focusedField?.isGuestLookupField == true else { return false }
         return hasGuestCandidateContent
     }
@@ -1014,7 +1073,7 @@ private struct ReservationFormContent: View {
     }
 
     private func refreshGuestLookup() {
-        guard mode.usesManualGuestInput else { return }
+        guard usesGuestLookup else { return }
         guestLookupStore.updateCache(
             records: guestLookupRecords,
             cacheKey: guestLookupCacheKey,
@@ -1158,7 +1217,7 @@ private struct ReservationFormContent: View {
         ReservationFormTextField(
             title: "Phone",
             text: $draft.phone,
-            prompt: mode.usesManualGuestInput ? "(312) 345-5674" : "Phone",
+            prompt: usesGuestLookup ? "(312) 345-5674" : "Phone",
             inputKind: .guestPhone,
             field: .phone,
             focusedField: $focusedField,
@@ -1450,14 +1509,21 @@ private struct ReservationFormContent: View {
 
     private var walkInDetailsCard: some View {
         ReservationFormSection(title: "Walk-in", systemImage: "figure.walk.arrival") {
-            ReservationFormTextField(
-                title: "Table optional",
-                text: $draft.tableName,
-                prompt: "Unassigned",
-                inputKind: .tableName,
-                field: .tableName,
-                focusedField: $focusedField
-            )
+            if floorPlanStore.hasBackendLayout {
+                Label("Assign from Floor Plan after creating this walk-in.", systemImage: "square.grid.3x3")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(TryzubColors.mutedText)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ReservationFormTextField(
+                    title: "Table optional",
+                    text: $draft.tableName,
+                    prompt: "Unassigned",
+                    inputKind: .tableName,
+                    field: .tableName,
+                    focusedField: $focusedField
+                )
+            }
         }
     }
 
@@ -1483,15 +1549,47 @@ private struct ReservationFormContent: View {
                 }
             }
 
-            HStack(spacing: ReservationFormLayout.fieldSpacing) {
-                ReservationFormTextField(
-                    title: "Table",
-                    text: $draft.tableName,
-                    prompt: "Unassigned",
-                    inputKind: .tableName,
-                    field: .tableName,
-                    focusedField: $focusedField
-                )
+            if floorPlanStore.hasBackendLayout, let reservation {
+                VStack(alignment: .leading, spacing: ReservationFormLayout.fieldSpacing) {
+                    Button {
+                        tableAssignmentReservation = reservation
+                        ReservationHaptics.selection()
+                    } label: {
+                        HStack(spacing: 10) {
+                            Label(draft.tableName.trimmed.nilIfBlank ?? "Assign table", systemImage: "square.grid.3x3")
+                                .font(.subheadline.weight(.semibold))
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(TryzubColors.mutedText)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 42)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(controller.isNetworkDegraded)
+                }
+            } else {
+                HStack(spacing: ReservationFormLayout.fieldSpacing) {
+                    ReservationFormTextField(
+                        title: "Table",
+                        text: $draft.tableName,
+                        prompt: "Unassigned",
+                        inputKind: .tableName,
+                        field: .tableName,
+                        focusedField: $focusedField
+                    )
+                    ReservationFormTextField(
+                        title: "Superseded by",
+                        text: $draft.supersededById,
+                        prompt: "ID",
+                        inputKind: .numericID,
+                        field: .supersededById,
+                        focusedField: $focusedField
+                    )
+                }
+            }
+
+            if floorPlanStore.hasBackendLayout {
                 ReservationFormTextField(
                     title: "Superseded by",
                     text: $draft.supersededById,
@@ -1609,7 +1707,7 @@ private struct ReservationFormContent: View {
 
     private var guestNameFieldError: String? {
         guard hasAttemptedSave else { return nil }
-        guard mode != .manualCreate || intakeMode == .callIn else { return nil }
+        guard intakeMode == .callIn else { return nil }
         let guestName = ReservationInputNormalizer.collapsedWhitespace(draft.guestName)
         guard guestName.count < 2 else { return nil }
         return "Add the guest name before saving."
@@ -1617,7 +1715,7 @@ private struct ReservationFormContent: View {
 
     private var phoneFieldError: String? {
         guard hasAttemptedSave else { return nil }
-        guard mode != .manualCreate || intakeMode == .callIn else { return nil }
+        guard intakeMode == .callIn else { return nil }
         let phoneDigits = ReservationInputNormalizer.phoneDigits(draft.phone)
         guard !ReservationFormValidator.isPlausibleUSPhone(phoneDigits) else { return nil }
         return "Add a valid phone number before saving this call-in."
@@ -1625,14 +1723,17 @@ private struct ReservationFormContent: View {
 
     private var emailFieldError: String? {
         guard hasAttemptedSave else { return nil }
-        guard mode != .manualCreate || intakeMode == .callIn else { return nil }
+        guard intakeMode == .callIn else { return nil }
         let email = ReservationInputNormalizer.normalizedEmail(draft.email)
         guard !email.isEmpty, !ReservationFormValidator.isPlausibleEmail(email) else { return nil }
         return "Enter a valid email address or leave email blank."
     }
 
     private var availabilityBlockingMessage: String? {
-        availabilityValidationMessage
+        if isLiveWalkInCreate {
+            return nil
+        }
+        return availabilityValidationMessage
     }
 
     private var validationErrorMessage: String? {
@@ -1814,15 +1915,17 @@ private struct ReservationFormContent: View {
         switch mode {
         case .manualCreate:
             applyIntakeModeDefaults(intakeMode)
-            draft.applyDefaultStaffServiceSlot(
-                setup: controller.restaurantSetup,
-                availability: controller.cachedRestaurantDayAvailability(
-                    date: draft.reservationDate.reservationDateString()
-                ),
-                publicSlots: controller.cachedReservationSlots(
-                    date: draft.reservationDate.reservationDateString()
+            if intakeMode == .callIn {
+                draft.applyDefaultStaffServiceSlot(
+                    setup: controller.restaurantSetup,
+                    availability: controller.cachedRestaurantDayAvailability(
+                        date: draft.reservationDate.reservationDateString()
+                    ),
+                    publicSlots: controller.cachedReservationSlots(
+                        date: draft.reservationDate.reservationDateString()
+                    )
                 )
-            )
+            }
         case .fixFailedImport:
             draft.status = .confirmed
             if staffTimeChoices(for: draft.reservationDate).isEmpty {
@@ -1849,21 +1952,17 @@ private struct ReservationFormContent: View {
             draft.status = .confirmed
         case .walkIn:
             draft.status = .seated
-            draft.applyDefaultStaffServiceSlot(
+            draft.applyLiveWalkInDefaults(
                 setup: controller.restaurantSetup,
                 keepGuestFields: true,
-                availability: controller.cachedRestaurantDayAvailability(
-                    date: Date().reservationDateString()
-                ),
-                publicSlots: controller.cachedReservationSlots(
-                    date: Date().reservationDateString()
-                )
+                clearsTable: floorPlanStore.hasBackendLayout
             )
         }
     }
 
     private func syncSelectedTimeToAvailableChoicesIfNeeded() {
         guard mode == .manualCreate || mode == .fixFailedImport else { return }
+        guard !isLiveWalkInCreate else { return }
         let choices = staffTimeChoices(for: draft.reservationDate).filter(isTimeChoiceAllowed)
         guard let first = choices.first else { return }
         if !choices.contains(where: { isSameTime($0, draft.reservationTime) }) {
@@ -2111,13 +2210,15 @@ private enum ReservationFormValidator {
             throw ReservationFormValidationError(message: "Party size must be at least 1.")
         }
 
-        if let message = timeValidationMessage(
-            draft: draft,
-            setup: setup,
-            originalDraft: originalDraft,
-            applyLeadTime: applyLeadTime
-        ) {
-            throw ReservationFormValidationError(message: message)
+        if intakeMode == .callIn {
+            if let message = timeValidationMessage(
+                draft: draft,
+                setup: setup,
+                originalDraft: originalDraft,
+                applyLeadTime: applyLeadTime
+            ) {
+                throw ReservationFormValidationError(message: message)
+            }
         }
 
         return ReservationFormState(
@@ -2336,6 +2437,26 @@ private struct ReservationFormDraft {
 
     mutating func applyDefaultServiceSlot(setup: RestaurantSetup, keepGuestFields: Bool = false) {
         applyDefaultStaffServiceSlot(setup: setup, keepGuestFields: keepGuestFields)
+    }
+
+    mutating func applyLiveWalkInDefaults(
+        setup: RestaurantSetup,
+        keepGuestFields: Bool = false,
+        clearsTable: Bool = false,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) {
+        reservationDate = calendar.startOfDay(for: now)
+        reservationTime = now
+        status = .seated
+
+        if !keepGuestFields {
+            partySize = max(setup.defaultPartySize, 1)
+        }
+
+        if clearsTable {
+            tableName = ""
+        }
     }
 
     mutating func applyDefaultStaffServiceSlot(

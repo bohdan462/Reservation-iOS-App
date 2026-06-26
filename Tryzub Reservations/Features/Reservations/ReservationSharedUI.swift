@@ -577,8 +577,8 @@ enum TryzubSeatedDurationResolver {
             return seatedAt
         }
 
-        guard let value = reservation.apiUpdatedAt?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else {
+        let value = (reservation.apiUpdatedAt ?? reservation.createdAt).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else {
             return nil
         }
 

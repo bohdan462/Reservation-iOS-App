@@ -335,34 +335,13 @@ struct ReservationDetailView: View {
         }
         .sheet(item: $tableAssignmentReservation) { reservation in
             TableAssignmentSheet(reservation: reservation) { tableName in
-                // Use canonical PATCH /managed-reservations/{id}/tables when a backend
-                // floor layout exists. This enforces table conflict rules.
-                // Fall back to legacy table_name PATCH when no layout is available.
-                if floorPlanStore.hasBackendLayout,
-                   let tableKey = floorPlanStore.tableKey(forLabel: tableName) {
-                    TableAssignmentTrace.canonicalFloorPlan(
-                        reservationID: reservation.remoteID,
-                        tableKeys: [tableKey]
-                    )
-                    await floorPlanStore.assign(
-                        reservationID: reservation.remoteID,
-                        tableKeys: [tableKey],
-                        controller: controller,
-                        context: modelContext
-                    )
-                } else {
-                    // Legacy path: no floor layout or table key not found.
-                    // Does NOT enforce backend table conflict rules.
-                    TableAssignmentTrace.legacyPatch(
-                        reservationID: reservation.remoteID,
-                        tableName: tableName
-                    )
-                    _ = try await controller.updateReservation(
-                        id: reservation.remoteID,
-                        request: ReservationUpdateRequest(tableName: tableName),
-                        context: modelContext
-                    )
-                }
+                await TableAssignmentCoordinator.assign(
+                    reservationID: reservation.remoteID,
+                    tableName: tableName,
+                    floorPlanStore: floorPlanStore,
+                    controller: controller,
+                    context: modelContext
+                )
                 if seatAfterTableAssignment {
                     seatAfterTableAssignment = false
                     await controller.updateStatus(
