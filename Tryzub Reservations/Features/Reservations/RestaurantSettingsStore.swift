@@ -744,6 +744,7 @@ struct RestaurantSettingsView: View {
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hostTableConfigStore: HostTableConfigStore
     @ObservedObject var settingsStore: RestaurantSettingsStore
+    @ObservedObject private var emailAutomationSettingsStore = EmailAutomationSettingsStore.shared
 
     @State private var draft = RestaurantSetupDraft(setup: .default)
     @State private var savedDraft = RestaurantSetupDraft(setup: .default)
@@ -821,6 +822,7 @@ struct RestaurantSettingsView: View {
                     SettingsHelperText("Email sending setup is handled separately after domain/DNS confirmation.")
                 }
 
+                thisDeviceEmailCard
                 backendRemindersReadOnlyCard
                 backendAutoConfirmReadOnlyCard
                 emailLimitsReadOnlyCard
@@ -890,7 +892,7 @@ struct RestaurantSettingsView: View {
                 ("Morning time", setup.morningReminderTime),
                 ("Lead time", reminderLeadHoursLabel(setup.reminderLeadHours))
             ])
-            SettingsHelperText("These settings are stored on the backend and affect all iPads.")
+            SettingsHelperText("These settings are stored on the backend and affect all devices.")
 
             if !setup.manualBatchRemindersEnabled {
                 SettingsNoticeCard(
@@ -915,6 +917,26 @@ struct RestaurantSettingsView: View {
                 }
                 .padding(.top, 4)
             }
+        }
+    }
+
+    private var thisDeviceEmailCard: some View {
+        SettingsCard(title: "This Device Email", systemImage: "envelope.badge") {
+            SettingsKeyValueGrid(items: [
+                ("Confirmation mode", emailAutomationSettingsStore.settings.backendConfirmationEnabled ? "Backend" : "Manual Mail"),
+                ("Reminder proof", emailAutomationSettingsStore.settings.automaticReminderProofEnabled ? "On" : "Off"),
+                ("Reminder batch send", emailAutomationSettingsStore.settings.manualReminderSendEnabled ? "On" : "Off"),
+                ("Manual Mail fallback", emailAutomationSettingsStore.settings.manualMailFallbackEnabled ? "On" : "Off")
+            ])
+            SettingsHelperText("Local safety switches for this device only. Backend reminders and auto-confirm rules stay below.")
+
+            NavigationLink {
+                EmailAutomationSettingsView(settingsStore: EmailAutomationSettingsStore.shared)
+            } label: {
+                Label("Edit This Device Email", systemImage: "slider.horizontal.3")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .padding(.top, 4)
         }
     }
 

@@ -30,15 +30,15 @@ struct EmailAutomationSettingsView: View {
 
             Section {
                 Toggle(
-                    "Use backend email for Confirm & Send",
+                    "Use backend confirmation on this device",
                     isOn: binding(\.backendConfirmationEnabled)
                 )
                 Toggle(
-                    "Automatic reminder proof",
+                    "Show automatic reminder proof on this device",
                     isOn: binding(\.automaticReminderProofEnabled)
                 )
                 Toggle(
-                    "Allow to send batch reminders",
+                    "Allow reminder batch send on this device",
                     isOn: binding(\.manualReminderSendEnabled)
                 )
                 .disabled(!backendManualBatchEnabled)
@@ -50,13 +50,13 @@ struct EmailAutomationSettingsView: View {
                 }
 
                 Toggle(
-                    "Manual Mail fallback",
+                    "Allow Manual Mail fallback on this device",
                     isOn: binding(\.manualMailFallbackEnabled)
                 )
             } header: {
-                Text("Controls")
+                Text("This device")
             } footer: {
-                Text("This is a local safety switch. Backend Reminders must also allow manual batch reminders.")
+                Text("These switches are stored on this device. Restaurant Settings owns backend reminders and auto-confirm rules.")
             }
 
             Section {
@@ -82,9 +82,9 @@ struct EmailAutomationSettingsView: View {
                         .font(.subheadline.weight(.semibold))
                 }
             } header: {
-                Text("Backend reminder status")
+                Text("Backend reminders")
             } footer: {
-                Text("Backend Reminders are global server settings and affect all devices.")
+                Text("Backend reminders are global server settings and affect all devices.")
             }
 
             Section("Resend usage") {
@@ -106,7 +106,7 @@ struct EmailAutomationSettingsView: View {
                 }
             }
         }
-        .navigationTitle("Email Controls")
+        .navigationTitle("This Device Email")
         .navigationBarTitleDisplayMode(.inline)
     }
 
