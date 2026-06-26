@@ -1,7 +1,7 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `ad5d274` (pending doc commit)  
+**Root HEAD:** `ad5d274` (docs `75dce15` pushed to `origin/audit-current-state`)  
 **Last reviewed:** 2026-06-25  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 

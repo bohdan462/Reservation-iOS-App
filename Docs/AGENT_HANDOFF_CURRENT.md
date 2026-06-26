@@ -16,7 +16,7 @@ V1 stabilization: device verification + release smoke test (guest person-map 3M-
 |----------|--------|
 | **Root branch** | `audit-current-state` |
 | **Root HEAD** | `ad5d274` — Polish Manual Intake input flow and remove pre-create confirmation messages |
-| **Root vs remote** | Pushed to `origin/audit-current-state` at `ad5d274` (pending this doc commit) |
+| **Root vs remote** | Pushed to `origin/audit-current-state` at `75dce15` (docs; latest iOS `ad5d274`) |
 | **Backend submodule pointer** | `63d0cfc` — Allow unknown manual walk-ins without guest identity |
 | **Backend branch** | `AI` |
 | **Backend HEAD** | `63d0cfc` |

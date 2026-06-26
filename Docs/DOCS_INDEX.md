@@ -19,7 +19,7 @@ Do not implement from stale index or diagram files listed under [Stale / archive
 
 **Deploy note:** `Backend/*.zip` is not tracked in git. Build plugin zip locally from submodule `HEAD` when deploying to WordPress.
 
-**Current root HEAD:** `ad5d274` on `audit-current-state` (pending doc commit).
+**Current root HEAD:** `75dce15` on `audit-current-state` (latest iOS `ad5d274`).
 
 ---
 
