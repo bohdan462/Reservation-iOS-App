@@ -6,7 +6,7 @@
 
 **Audience:** GPT-5.5 Agent (backend/iOS), Composer 2.5 (audit/docs), Bohdan (deploy/device test).
 
-**Status:** Backend **deployed and production-smoked** (plugin **0.5.5**, DB **1.12.0**, backend `a2422d3`). iOS **Slice C foundation** landed at root `17a0bee` (DTO/API/cache). Reservation Detail UI remains **local-only** — `AttachmentFeatureFlag.remoteUploadEnabled` still **false**. **Next code slice: iOS Attachment Slice D** (Detail orchestration/UI wiring).
+**Status:** Backend **deployed and production-smoked** (plugin **0.5.5**, DB **1.12.0**, backend `a2422d3`). iOS **Slice C** at `17a0bee` (DTO/API/cache). iOS **Slice D** at `d947721` (Reservation Detail shared attachment list/upload/download/delete). `AttachmentFeatureFlag.remoteUploadEnabled` is **true**. **Live/cross-device verification still open** — do not claim passed. **Next practical step: Slice E** live verification checklist (not new backend work).
 
 ---
 
@@ -46,7 +46,7 @@ Reservation Detail already has an **Attachments** section (`ReservationDetailVie
 - `Persistence/ReservationAttachmentRecord.swift` — SwiftData metadata
 - `Persistence/AttachmentFileStore.swift` — disk I/O
 - `Features/Reservations/ReservationDetailView.swift` — UI
-- `AttachmentFeatureFlag.remoteUploadEnabled = false`
+- `AttachmentFeatureFlag.remoteUploadEnabled = true` (gated at runtime by reservation id + staff credentials in Detail)
 
 **Data model today:**
 
@@ -342,19 +342,21 @@ Keep `AttachmentFileStore` as **local cache only**.
 
 | | |
 |--|--|
-| **Status** | **Current** — not started |
-| **Goal** | Detail open loads server list; upload/delete/patch call backend; progress/errors; enable remote upload flag only when wired |
-| **iOS files** | `ReservationDetailView.swift`, `ReservationAttachment.swift`, `AttachmentFeatureFlag` |
-| **Do not touch** | Confirm/Mail flows, walk-in, device smoke areas |
-| **Acceptance** | Single device: full CRUD against backend; local cache matches server |
+| **Status** | **Done** — root `d947721` |
+| **Goal** | Detail-scoped list/upsert/download/upload/delete; progress/errors; enable remote upload flag when wired |
+| **iOS files** | `ReservationDetailView.swift`, `ReservationAttachment.swift`, `AttachmentFileStore.swift` |
+| **Acceptance** | Device + Simulator builds pass; Detail wires shared attachments; API calls detail-scoped only; no normal refresh attachment downloads; no public URL usage |
+| **Commit** | `d947721` — Wire reservation detail shared attachments |
+| **Notes** | Old pre-sync **local-only** attachments remain on the original device only — **not** auto-uploaded. Staff should **reattach important old images** after update if they need shared visibility. Known follow-up if observed: upload/list race can duplicate rows if metadata refresh completes before upload applies `remoteID`. |
 
 ### Slice E — Two-device sync verification
 
 | | |
 |--|--|
+| **Status** | **Current** — code wired; live verification not run |
 | **Goal** | Device A upload → Device B sees; B delete → A refresh clears; fresh install recovery |
 | **Files** | Fix-only across iOS/backend from E test failures |
-| **Acceptance** | Full §9 device checklist |
+| **Acceptance** | Full §9 device checklist — **must not be claimed passed until run** |
 | **Note** | Physical devices; separate from device smoke Phases 1–4 but may share same hardware session |
 
 ### Slice F — Intelligence readiness (no summarization)

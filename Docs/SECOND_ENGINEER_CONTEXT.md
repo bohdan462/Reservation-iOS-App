@@ -45,8 +45,8 @@ Latest known **pushed** state:
 | Backend branch | `AI` |
 | Backend HEAD | `a2422d3` — Add private reservation attachment backend |
 | Root branch | `audit-current-state` |
-| Root HEAD | `17a0bee` — iOS attachment Slice C foundation |
-| Remote | `origin/audit-current-state` @ `17a0bee` |
+| Root HEAD | `d947721` — iOS attachment Slice D (Detail shared attachments wired) |
+| Remote | `origin/audit-current-state` @ `d947721` |
 | Backend guest person-map Slice 2 lookup | `1431a06` (backend), `b1a09e7` (root pointer); **deployed** to WordPress |
 | Backend guest person-map Slice 3M-B unknown walk-in | `63d0cfc` (backend), `c7f5a69` (root pointer); **deployed** to WordPress |
 | iOS guest person-map Slice 3A lookup foundation | `823f42c` |
@@ -125,9 +125,9 @@ git submodule status
 
 **Not production-ready** until items 18–21 pass.
 
-### Reservation attachments (iOS Slice C done — Slice D next)
+### Reservation attachments (iOS Slice D done — Slice E verification next)
 
-31. **Reservation attachments** — Backend **deployed + production-smoked** (`a2422d3`). iOS **Slice C foundation** at `17a0bee` (DTO/API/cache). Reservation Detail UI still **local-only** in behavior; `remoteUploadEnabled` **false**. See [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next code: iOS Slice D** (Detail remote orchestration/UI).
+31. **Reservation attachments** — Backend **deployed + production-smoked** (`a2422d3`). iOS **Slice C** at `17a0bee`; iOS **Slice D** at `d947721` (Detail shared list/upload/download/delete). `remoteUploadEnabled` **true**. **Live/cross-device verification not run.** Old pre-sync local-only attachments may need reattach for shared visibility. See [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next: Slice E** live verification.
 
 ### Before broader product release (not V1 stabilization blocker)
 
@@ -166,7 +166,7 @@ git submodule status
 | Guest token after cancel | Token stays valid; cancelled dead state |
 | No zip in git | Build locally |
 | Normal iOS refresh | Must **not** call `POST /managed-reservations/import` |
-| Reservation attachments | **Backend deployed** (`a2422d3`, production-smoked); **iOS Slice C** at `17a0bee`; Detail UI still **local-only** — **Slice D next**; `remoteUploadEnabled` **false** ([RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md)); **no public image URLs** |
+| Reservation attachments | **Backend deployed** (`a2422d3`, production-smoked); **iOS Slice C** `17a0bee`; **iOS Slice D** `d947721`; `remoteUploadEnabled` **true**; **live verification open**; old local-only may need reattach ([RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md)); **no public image URLs** |
 
 ---
 
@@ -275,7 +275,7 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
 2. **Run device smoke verification** — [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10 (code Phases 1–4 landed).
 3. Confirm confirmation mode on physical device.
 4. Release smoke test — include guest full-list sync, Guests + Manual Intake explicit lookup + View history (no per-digit backend), unknown walk-in save (`63d0cfc` deployed), Manual Intake review sheet + no pre-create messages (`ad5d274`), Host `Last sync`, stale reasons, reduced idle flicker, intelligence-card chips stable during refresh, seated/due timing, manual refresh, device smoke checklist items.
-5. **Reservation attachments** — backend **deployed + production-smoked** (`a2422d3`); iOS Slice C **done** (`17a0bee`); **next: iOS Slice D** (Detail remote wiring). See [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md).
+5. **Reservation attachments** — backend **deployed + production-smoked** (`a2422d3`); iOS Slice C **done** (`17a0bee`); iOS Slice D **done** (`d947721`); **next: Slice E** live/cross-device verification (not new backend). Old local-only attachments may need reattach. See [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md).
 6. Before broader product release → **3D** full Guest history UI + Reservation Detail bridge, **3E** detail JSON persistence / disk-first full profile reopen, **indexed local guest search**; run backend lookup + unknown walk-in device smoke tests.
 7. Later → guest profile re-sync on foreground/mutations; `ReservationDetail` guest fetch dedupe; remove `schedulePhoneLookup` (P3); backend README pilot/MVP wording cleanup if needed.
 8. Do **not** start offline queue, SMS, AI clustering, or VIP editor without backend contract.
@@ -295,4 +295,4 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
 
 ---
 
-*Last aligned: 2026-06-26 (iOS attachment Slice C at `17a0bee`; Slice D next; device smoke verification still open). Update when repo HEAD or verification status changes materially.*
+*Last aligned: 2026-06-26 (iOS attachment Slice D at `d947721`; Slice E live verification next; device smoke verification still open). Update when repo HEAD or verification status changes materially.*

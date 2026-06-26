@@ -6,7 +6,7 @@
 
 ## Title
 
-V1 stabilization + reservation attachments (iOS Slice C done; Slice D next)
+V1 stabilization + reservation attachments (iOS Slice D done; Slice E verification next)
 
 ---
 
@@ -15,8 +15,8 @@ V1 stabilization + reservation attachments (iOS Slice C done; Slice D next)
 | Location | State |
 |----------|--------|
 | **Root branch** | `audit-current-state` |
-| **Root HEAD** | `17a0bee` — Add reservation attachment iOS sync foundation |
-| **Root vs remote** | Pushed to `origin/audit-current-state` at `17a0bee` |
+| **Root HEAD** | `d947721` — Wire reservation detail shared attachments |
+| **Root vs remote** | Pushed to `origin/audit-current-state` at `d947721` |
 | **Backend submodule pointer** | `a2422d3` — Add private reservation attachment backend |
 | **Backend branch** | `AI` |
 | **Backend HEAD** | `a2422d3` |
@@ -24,6 +24,8 @@ V1 stabilization + reservation attachments (iOS Slice C done; Slice D next)
 
 **Recent root commits (newest first):**
 
+- `d947721` — Wire reservation detail shared attachments
+- `641e218` — Document reservation attachment iOS sync foundation
 - `17a0bee` — Add reservation attachment iOS sync foundation
 - `b986732` — Record reservation attachment backend smoke status
 - `fa15d22` — Point backend to private reservation attachment backend
@@ -74,7 +76,7 @@ V1 stabilization + reservation attachments (iOS Slice C done; Slice D next)
 
 **Stabilization still open** (physical device verification + release smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R/3M-B/3M**, **Manual Intake input polish**, **device smoke code Phases 1–4**, and **Tryzub V1 Host production polish** are shipped in code. **Current focus:** physical device verification + release smoke — see [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10. **Slice 3D/3E parked** until smoke verification is accepted or Bohdan resumes.
 
-**Reservation attachments (boss request):** Backend **deployed and production-smoked** (`a2422d3`, plugin **0.5.5**, DB **1.12.0**). iOS **Slice C foundation** landed at `17a0bee` (DTO/API/cache, label mapping, download cache helpers). **`AttachmentFeatureFlag.remoteUploadEnabled` remains false.** Reservation Detail attachment UI behavior is still **local-only** — not cross-device visible until Slice D wires remote list/upload/download/delete with progress/errors. Full plan: [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next implementation: iOS Attachment Slice D only** — do not change backend unless a real API bug is found. Physical device smoke remains a separate open track.
+**Reservation attachments (boss request):** Backend **deployed and production-smoked** (`a2422d3`, plugin **0.5.5**, DB **1.12.0**). iOS **Slice C** at `17a0bee` (DTO/API/cache). iOS **Slice D** at `d947721` — Reservation Detail shared attachment list/upload/download/delete wired; `AttachmentFeatureFlag.remoteUploadEnabled` **true**; API calls detail-scoped only; no normal refresh attachment downloads; no public URL usage. **Live/cross-device verification not run** — do not claim passed. Old pre-sync local-only attachments may remain device-local; staff should reattach important old images for shared visibility. Known follow-up if observed: upload/list race can duplicate rows. Full plan: [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next: Slice E live verification** — do not change backend unless a real API bug is found. Physical device smoke remains a separate open track.
 
 **Guest Person Map target:** one shared **Guest history** destination by `guestKey` (`GuestProfileDetailView`). Wiring status:
 

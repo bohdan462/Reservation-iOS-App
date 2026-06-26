@@ -4,7 +4,7 @@
 
 Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), backend 3M-B (#18), iOS Slices 3A/3B/3R/3M, Manual Intake input polish (#17b), Tryzub V1 Host production polish (#5b, #5c), and **device smoke Phases 1–4 (#24–#27)** are **done in code**.
 
-**Current focus:** (1) physical device verification + release smoke test (backend `63d0cfc` **deployed**); (2) **reservation attachments** — backend Slice A+B **done** (`a2422d3` **deployed**, production-smoked); iOS Slice C **done** (`17a0bee`); see [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next attachment code slice:** **Attachment Slice D** (Reservation Detail remote orchestration/UI). **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
+**Current focus:** (1) physical device verification + release smoke test (backend `63d0cfc` **deployed**); (2) **reservation attachments** — backend Slice A+B **done** (`a2422d3` **deployed**, production-smoked); iOS Slice C **done** (`17a0bee`); iOS Slice D **done** (`d947721`); see [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next attachment step:** **Slice E** live/cross-device verification (not new backend work). **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
 
 ---
 
@@ -385,9 +385,9 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 
 | Field | Value |
 |-------|-------|
-| **Status** | **current** |
-| **Scope** | `ReservationDetailView` orchestration: remote list/upsert/download/upload/delete, local-only preservation, progress/errors; enable `remoteUploadEnabled` only when wired |
-| **Do not touch** | Confirm/Mail, device smoke code, backend (unless real API bug found) |
+| **Status** | **done** — `d947721` |
+| **Scope** | `ReservationDetailView` orchestration: remote list/upsert/download/upload/delete, local-only preservation, progress/errors; `remoteUploadEnabled` **true** |
+| **Notes** | API calls detail-scoped only; no normal refresh attachment downloads; old pre-sync local-only attachments not auto-shared — staff may need to reattach; live/cross-device verification still open |
 
 ---
 
@@ -395,8 +395,8 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 
 | Field | Value |
 |-------|-------|
-| **Status** | **current** — blocked on Slice D |
-| **Scope** | Multi-device + fresh-install recovery tests; fix-only follow-ups |
+| **Status** | **current** — Slice D done; live verification not run |
+| **Scope** | Multi-device + fresh-install recovery tests; fix-only follow-ups (incl. upload/list race if observed) |
 | **Handoff** | [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md) §9 |
 
 ---
@@ -429,7 +429,8 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 | Device smoke Phase 3 — row indicators | `5762ecb` |
 | Device smoke Phase 4 — email settings cleanup | `3da3a68` |
 | Reservation attachments backend Slice A+B | `a2422d3` (backend), production-smoked |
-| Reservation attachments iOS Slice C — DTO/API/cache | `17a0bee` — `remoteUploadEnabled` false; Detail UI not wired |
+| Reservation attachments iOS Slice C — DTO/API/cache | `17a0bee` |
+| Reservation attachments iOS Slice D — Detail sync UI | `d947721` — `remoteUploadEnabled` true; live verification open |
 
 ---
 
