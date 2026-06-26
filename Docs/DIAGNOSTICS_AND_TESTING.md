@@ -74,7 +74,7 @@ Requires staff auth (`tryzub_can_read_reservations`). Backend `1431a06` is live 
 
 ## Manual Intake walk-in + guest lookup (`63d0cfc` + `e775f52` + `ad5d274`)
 
-**Status:** checklist only — backend `63d0cfc` **deployed** to WordPress (root pointer `c7f5a69`); iOS `e775f52` + input polish `ad5d274` shipped; **device smoke tests not yet passed** — **ready to test on restaurant iPad**.
+**Status:** checklist only — backend `63d0cfc` **deployed** to WordPress (root pointer `c7f5a69`); iOS `e775f52` + input polish `ad5d274` shipped; **device smoke tests not yet passed** — **ready to test on physical device**. P1/P2 findings: [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md).
 
 Requires staff auth for backend lookup routes.
 
@@ -136,7 +136,7 @@ Requires staff auth for backend lookup routes.
 - [ ] Bookings search + detail
 - [ ] Activity history on detail + More
 - [ ] Backend guest profile lookup smoke tests after WordPress deploy (`1431a06`) — staff auth only
-- [ ] Manual Intake walk-in + guest lookup + input polish on test iPad (`e775f52`, `ad5d274`; backend `63d0cfc` **deployed**)
+- [ ] Manual Intake walk-in + guest lookup + input polish on physical device (`e775f52`, `ad5d274`; backend `63d0cfc` **deployed**)
 - [ ] Backend unknown walk-in contract smoke tests on WordPress (`63d0cfc` **deployed**)
 - [ ] Logout clears session
 

@@ -13,13 +13,14 @@ Do not implement from stale index or diagram files listed under [Stale / archive
 | [SECOND_ENGINEER_CONTEXT.md](./SECOND_ENGINEER_CONTEXT.md) | ChatGPT / second-engineer alignment: priorities, repo state, V1 rules, verification |
 | [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) | Non-negotiable architecture and workflow rules |
 | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) | V1 order: stabilization → guest person-map 3D; Slices 1/2/3A/3B/3R/3M-B/3M + Manual Intake input polish + Host polish done |
-| [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) | Active handoff: stabilization open; guest person-map through 3M-B/3M + Manual Intake input polish shipped |
+| [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) | Active handoff: device smoke fixes open; guest person-map through 3M-B/3M + Manual Intake input polish shipped |
+| [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) | Physical device smoke P1/P2 findings for GPT-5.5 Agent High (3D/3E parked) |
 | [OPEN_WORK.md](./OPEN_WORK.md) | V1 stabilization backlog with acceptance tests |
 | [DIAGNOSTICS_AND_TESTING.md](./DIAGNOSTICS_AND_TESTING.md) | Roles, invariants, test checklists |
 
 **Deploy note:** `Backend/*.zip` is not tracked in git. Build plugin zip locally from submodule `HEAD` when deploying to WordPress.
 
-**Current root HEAD:** `75dce15` on `audit-current-state` (latest iOS `ad5d274`).
+**Current root HEAD:** `fceebb3` on `audit-current-state` (latest iOS `ad5d274`).
 
 ---
 

@@ -6,7 +6,7 @@
 
 ## Title
 
-V1 stabilization: device verification + release smoke test (guest person-map 3M-B/3M + Manual Intake input polish shipped; 3D open)
+V1 stabilization: device smoke fixes + release verification (3D/3E parked)
 
 ---
 
@@ -15,8 +15,8 @@ V1 stabilization: device verification + release smoke test (guest person-map 3M-
 | Location | State |
 |----------|--------|
 | **Root branch** | `audit-current-state` |
-| **Root HEAD** | `ad5d274` — Polish Manual Intake input flow and remove pre-create confirmation messages |
-| **Root vs remote** | Pushed to `origin/audit-current-state` at `75dce15` (docs; latest iOS `ad5d274`) |
+| **Root HEAD** | `fceebb3` — docs (latest iOS `ad5d274`) |
+| **Root vs remote** | Pushed to `origin/audit-current-state` at `fceebb3` |
 | **Backend submodule pointer** | `63d0cfc` — Allow unknown manual walk-ins without guest identity |
 | **Backend branch** | `AI` |
 | **Backend HEAD** | `63d0cfc` |
@@ -24,6 +24,8 @@ V1 stabilization: device verification + release smoke test (guest person-map 3M-
 
 **Recent root commits (newest first):**
 
+- `fceebb3` — docs after Manual Intake input polish + backend deploy
+- `75dce15` — docs after Manual Intake input polish + backend deploy
 - `ad5d274` — Manual Intake input polish + removed pre-create confirmation/message actions
 - `2b59c73` — docs after Manual Intake guest lookup and walk-in support
 - `e775f52` — Manual Intake walk-in validation + guest lookup (Slice 3M)
@@ -59,7 +61,7 @@ V1 stabilization: device verification + release smoke test (guest person-map 3M-
 
 ## Current slice goal
 
-**Stabilization still open** (device verification + release smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R/3M-B/3M**, **Manual Intake input polish**, and **Tryzub V1 Host production polish** are shipped.
+**Stabilization still open** (physical device verification + release smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R/3M-B/3M**, **Manual Intake input polish**, and **Tryzub V1 Host production polish** are shipped. **Next code work:** device smoke P1/P2 fixes — see [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md). **Slice 3D/3E parked** until smoke fixes land.
 
 **Guest Person Map target:** one shared **Guest history** destination by `guestKey` (`GuestProfileDetailView`). Wiring status:
 
@@ -212,8 +214,8 @@ Staff targeted guest lookup doorway — part of the guest person-map / “know y
 ### Still open (V1 stabilization)
 
 1. Verify iOS data/fetch/storage on device (foreground/privacy refresh at `b910bd1`).
-2. Confirm confirmation mode on restaurant iPad (Mail vs backend `/confirm`).
-3. Final V1 smoke test on restaurant iPad — must now include guest full-list sync, Guests/intake lookup, Host header/flicker + intelligence-card checks (see [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #4c).
+2. Confirm confirmation mode on physical device (Mail vs backend `/confirm`).
+3. Final V1 device smoke test — must include guest full-list sync, Guests/intake lookup, Host header/flicker + intelligence-card checks, and fixes in [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) (see [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #4c).
 
 **Not production-ready** until stabilization items 1–3 pass.
 
@@ -257,20 +259,20 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 ## Not yet verified in production / device
 
 - iOS foreground/privacy-cover refresh on physical device
-- Confirmation mode on restaurant iPad
-- Final V1 smoke test (staff ops on restaurant iPad) — include guest full-list sync completion, Guests/intake lookup beyond old 500 cap, walk-in/known-guest, Host `Last sync` + stale reasons + reduced idle flicker + intelligence-card chip stability
-- Guest profile background sync on test iPad (post-`0f06852` install)
-- Manual walk-in + known-guest intake on test iPad (post-`0a89caa` install)
-- Guests tab + detail cache wiring on test iPad (post-`67e02d2` install)
-- Host freshness/flicker polish on test iPad (post-`71601fc` install)
-- Host Intelligence card presentation stability on test iPad (post-`39f7fcb` install)
-- Guest profile full-list sync + full-cache lookup on test iPad (post-`d541488` install)
+- Confirmation mode on physical device
+- Final V1 device smoke test — include guest full-list sync completion, Guests/intake lookup beyond old 500 cap, walk-in/known-guest, Host `Last sync` + stale reasons + reduced idle flicker + intelligence-card chip stability; **P1/P2 fixes** in [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md)
+- Guest profile background sync on physical device (post-`0f06852` install)
+- Manual walk-in + known-guest intake on physical device (post-`0a89caa` install)
+- Guests tab + detail cache wiring on physical device (post-`67e02d2` install)
+- Host freshness/flicker polish on physical device (post-`71601fc` install)
+- Host Intelligence card presentation stability on physical device (post-`39f7fcb` install)
+- Guest profile full-list sync + full-cache lookup on physical device (post-`d541488` install)
 - Backend guest profile lookup route **deployed** on WordPress (`1431a06`) — **device smoke tests still open** (exact email/phone lookup; name-only possible match; conflicting phone/email does not auto-pick; guest key opens full detail; unauthenticated lookup blocked)
-- Guests tab explicit all-record lookup + View history shell on test iPad (post-`1dfa14a` install)
-- Regulars cache-first + View history on test iPad (post-`50df843` install)
-- Manual Intake walk-in blank identity save on test iPad (post-`e775f52` / `ad5d274`; backend `63d0cfc` **deployed** — ready to test)
-- Manual Intake local + all-record guest lookup + View history on test iPad (post-`e775f52` / `ad5d274`)
-- Manual Intake input polish on test iPad (post-`ad5d274`) — review sheet before create; no pre-create message buttons; Next/Done keyboard; debounced local lookup
+- Guests tab explicit all-record lookup + View history shell on physical device (post-`1dfa14a` install)
+- Regulars cache-first + View history on physical device (post-`50df843` install)
+- Manual Intake walk-in blank identity save on physical device (post-`e775f52` / `ad5d274`; backend `63d0cfc` **deployed** — ready to test)
+- Manual Intake local + all-record guest lookup + View history on physical device (post-`e775f52` / `ad5d274`)
+- Manual Intake input polish on physical device (post-`ad5d274`) — review sheet before create; no pre-create message buttons; Next/Done keyboard; debounced local lookup
 - Backend unknown walk-in contract on WordPress (`63d0cfc` **deployed**) — blank walk-in create; no fake guest profile; placeholder email not sendable; **device smoke tests still open**
 
 ---
@@ -321,7 +323,7 @@ Replace broad in-memory guest filtering with **indexed / predicate-based local s
 ## Next exact actions
 
 1. **Device-test** iOS foreground/privacy refresh (`b910bd1`).
-2. **Confirm** confirmation mode on restaurant iPad.
+2. **Confirm** confirmation mode on physical device.
 3. **Run** release smoke test — include guest full-list sync, Guests + Manual Intake lookup (no per-digit backend), unknown walk-in save (backend `63d0cfc` deployed), Manual Intake review sheet + no pre-create messages (`ad5d274`), walk-in/known-guest, Host header (`Last sync`), stale secondary reasons, Live-on-today refresh, quiet-board idle flicker, intelligence-card chips stable during refresh, seated/due timing updates, manual refresh bumps `Last sync`.
 4. Before broader product release → **indexed local guest search** ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) #6).
 

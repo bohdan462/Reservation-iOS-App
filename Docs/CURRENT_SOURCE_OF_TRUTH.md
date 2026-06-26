@@ -51,7 +51,7 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 ## 3. Current confirmation truth
 
 1. **Both paths exist:** backend confirmation (`POST /managed-reservations/{id}/confirm`) and **manual Mail** staff confirmation.
-2. **Active device behavior depends on Email Automation / This iPad Email Controls** (`EmailAutomationSettings.backendConfirmationEnabled`). Code default is **`true`** — do **not** assume Mail-first unless the device setting is confirmed on the restaurant test iPad.
+2. **Active device behavior depends on Email Automation / Email Controls** (`EmailAutomationSettings.backendConfirmationEnabled`). Code default is **`true`** — do **not** assume Mail-first unless the device setting is confirmed on the physical device.
 3. **Manual Mail path** (when backend confirmation is off or staff uses reviewable send): `beginPrimaryConfirmFlow` → guest manage link → Mail composer → `manual-email-log` → PATCH `confirmed` on `.sent` only.
 4. **Backend confirmation path** (when enabled): `POST /confirm` sends through backend/provider; must only confirm after backend send success when a usable guest email exists. **Not production-verified** until live tests pass.
 5. **Agents must not switch confirmation flows** on the test device unless explicitly asked.

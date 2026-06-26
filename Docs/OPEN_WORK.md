@@ -1,13 +1,15 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `ad5d274` (docs `75dce15` pushed to `origin/audit-current-state`)  
+**Root HEAD:** `fceebb3` (latest iOS `ad5d274`; pushed to `origin/audit-current-state`)  
 **Last reviewed:** 2026-06-25  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
 **Priority order:** [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) owns what to do next. This file tracks backlog items and implementation status. Production/device verification remains open even when code is implemented.
 
 **Not V1:** offline manual reservation queue; offline create/edit sync queue; full AI clustering / “knows each other”; VIP editor without backend contract.
+
+**Device smoke findings (P1/P2):** [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) — next Agent code work; Slice 3D/3E parked until fixed.
 
 Every item includes risk, files, approach, acceptance test, and classification.
 

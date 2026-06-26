@@ -4,7 +4,7 @@
 
 Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), backend 3M-B (#18), iOS Slices 3A/3B/3R/3M, Manual Intake input polish (#17b), and Tryzub V1 Host production polish (#5b, #5c) are **done**.
 
-**Current focus:** iOS device verification, confirmation mode on restaurant iPad, release smoke test (backend `63d0cfc` **deployed** — unknown walk-in ready to test). **Next guest person-map code slice:** **3D** (full shared Guest history UI + Reservation Detail bridge).
+**Current focus:** iOS device smoke fixes ([DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md)), confirmation mode on physical device, release smoke test (backend `63d0cfc` **deployed**). **Next guest person-map code slice:** **3D** (parked until smoke fixes land).
 
 ---
 
@@ -44,7 +44,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 
 ---
 
-## 4b. Confirmation mode on restaurant iPad
+## 4b. Confirmation mode on physical device
 
 | Field | Value |
 |-------|-------|
@@ -59,7 +59,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c) remain open. Guest
 | Field | Value |
 |-------|-------|
 | **Status** | **current** — after #4 and #4b |
-| **Scope** | End-to-end staff ops on restaurant iPad |
+| **Scope** | End-to-end staff ops on physical device (iPhone and iPad) |
 | **Include** | Guest profile background sync (`0f06852`); guest full-list sync completion (`d541488`); manual walk-in + known-guest intake (`0a89caa`); Guests tab + detail cache (`67e02d2`); Guests tab explicit all-record lookup + View history shell (`1dfa14a`); Regulars cache-first + View history (`50df843`); Manual Intake walk-in validation + guest lookup (`e775f52`); Manual Intake input polish (`ad5d274`); backend unknown walk-in (`63d0cfc`, deployed); Host freshness (`71601fc`); Host Intelligence card stability (`39f7fcb`) |
 | **Guest memory checks** | Full-list sync eventually marks complete; Guests/manual intake finds known guest outside old 500 cap; no backend call on every phone digit; Guests tab explicit search only (not per keystroke); incomplete full-list sync does not wait on TTL before retrying full sync |
 | **Host header checks** | Header shows `Last sync HH:mm`; stale secondary reason when refresh skipped/stale; Live-on today does not sit stale without explanation; manual refresh bumps `Last sync` on success |
