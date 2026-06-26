@@ -4,6 +4,7 @@
 //
 
 import MessageUI
+import Photos
 import PhotosUI
 import SwiftUI
 import SwiftData
@@ -267,7 +268,7 @@ struct ReservationDetailView: View {
     @State private var pendingPhotoData: Data?
     @State private var pendingLabel: AttachmentLabel = .other
     @State private var showLabelPicker = false
-    @State private var previewAttachmentRecord: ReservationAttachmentRecord?
+    @State private var managingAttachmentRecord: ReservationAttachmentRecord?
     @State private var attachmentError: String?
     @State private var attachmentInfoMessage: String?
     @State private var hasRequestedSharedAttachmentRefresh = false
@@ -275,6 +276,7 @@ struct ReservationDetailView: View {
     @State private var uploadingAttachmentIDs: Set<String> = []
     @State private var downloadingAttachmentIDs: Set<String> = []
     @State private var deletingAttachmentIDs: Set<String> = []
+    @State private var savingAttachmentIDs: Set<String> = []
     @State private var pendingRemoteAttachmentDelete: ReservationAttachmentRecord?
 
     var body: some View {
@@ -328,10 +330,30 @@ struct ReservationDetailView: View {
                 pendingPhotoData = nil
             }
         }
-        .fullScreenCover(item: $previewAttachmentRecord) { record in
-            AttachmentPreviewScreen(record: record) {
-                previewAttachmentRecord = nil
-            }
+        .sheet(item: $managingAttachmentRecord) { record in
+            AttachmentManageScreen(
+                record: record,
+                isUploading: uploadingAttachmentIDs.contains(record.id),
+                isDownloading: downloadingAttachmentIDs.contains(record.id),
+                isDeleting: deletingAttachmentIDs.contains(record.id),
+                isSaving: savingAttachmentIDs.contains(record.id),
+                onSave: { label, note in
+                    await saveAttachmentEdits(
+                        recordID: record.id,
+                        label: label,
+                        note: note
+                    )
+                },
+                onDownload: {
+                    await downloadAttachment(recordID: record.id)
+                },
+                onDelete: {
+                    await deleteAttachmentAndReport(recordID: record.id)
+                },
+                onDismiss: {
+                    managingAttachmentRecord = nil
+                }
+            )
         }
         .confirmationDialog(
             "Delete shared attachment?",
@@ -785,7 +807,7 @@ struct ReservationDetailView: View {
 
         // Merge attachment signals (label-based + OCR-based).
         var localAttSignalMap: [String: [ReservationSignal]] = [:]
-        for attachment in attachments {
+        for attachment in attachments where attachment.syncState != .deletedRemote {
             let attInput = AttachmentSignalAnalyzer.Input(
                 reservationID: String(reservation.remoteID),
                 attachmentID: attachment.id,
@@ -793,6 +815,7 @@ struct ReservationDetailView: View {
                 extractedText: attachment.extractedText
             )
             let attSignals = AttachmentSignalAnalyzer.analyze(attInput)
+                .filter { $0.type != .attachmentNeedsReview }
             localAttSignalMap[attachment.id] = attSignals
             for s in attSignals {
                 AttachmentOCRTrace.labelSignal(
@@ -1157,12 +1180,6 @@ struct ReservationDetailView: View {
                     .foregroundStyle(.secondary)
                 }
 
-                if let message = attachmentInfoMessage {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
                 if let error = attachmentError {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(error)
@@ -1185,7 +1202,6 @@ struct ReservationDetailView: View {
                     ForEach(visibleAttachments) { record in
                         AttachmentRow(
                             record: record,
-                            signals: attachmentSignalsByID[record.id] ?? [],
                             isUploading: uploadingAttachmentIDs.contains(record.id),
                             isDownloading: downloadingAttachmentIDs.contains(record.id),
                             isDeleting: deletingAttachmentIDs.contains(record.id),
@@ -1396,7 +1412,7 @@ struct ReservationDetailView: View {
             let response = try await environment.apiClient.listReservationAttachments(
                 reservationID: reservation.remoteID
             )
-            let merged = try ReservationAttachmentRecord.upsertRemoteMetadata(
+            _ = try ReservationAttachmentRecord.upsertRemoteMetadata(
                 response.attachments,
                 reservationID: reservation.remoteID,
                 in: modelContext
@@ -1408,8 +1424,9 @@ struct ReservationDetailView: View {
                 }
             }
             try modelContext.save()
+            recomputeNoteSignals()
             attachmentError = nil
-            attachmentInfoMessage = merged.isEmpty ? nil : "Shared with staff"
+            attachmentInfoMessage = nil
         } catch {
             attachmentError = "Could not load shared attachments. Check connection and try again."
         }
@@ -1510,8 +1527,9 @@ struct ReservationDetailView: View {
             record.applyRemoteMetadata(dto)
             record.markDownloaded(filename: filename)
             try modelContext.save()
+            recomputeNoteSignals()
             attachmentError = nil
-            attachmentInfoMessage = "Shared with staff"
+            attachmentInfoMessage = nil
         } catch {
             if let record = attachmentRecord(id: recordID) {
                 record.syncState = .uploadFailed
@@ -1523,22 +1541,83 @@ struct ReservationDetailView: View {
     }
 
     private func handleAttachmentTap(_ record: ReservationAttachmentRecord) {
-        if record.cachedImageFilename != nil {
-            previewAttachmentRecord = record
-            return
-        }
-        guard record.hasRemoteIdentity else {
-            attachmentError = "Image is saved on this device but the file is not available."
-            return
-        }
-        Task { await downloadAttachment(recordID: record.id) }
+        managingAttachmentRecord = record
     }
 
     @MainActor
-    private func downloadAttachment(recordID: String) async {
+    private func saveAttachmentEdits(
+        recordID: String,
+        label: AttachmentLabel,
+        note: String?
+    ) async -> Bool {
+        guard let record = attachmentRecord(id: recordID) else { return false }
+        guard !uploadingAttachmentIDs.contains(recordID),
+              !downloadingAttachmentIDs.contains(recordID),
+              !deletingAttachmentIDs.contains(recordID),
+              !savingAttachmentIDs.contains(recordID) else { return false }
+
+        let normalizedNote = note?.nilIfBlank
+        let oldLabelRaw = record.labelRaw
+        let oldNote = record.note
+        let oldRemoteCaption = record.remoteCaption
+
+        if let remoteID = record.remoteID {
+            guard canUseSharedAttachments else {
+                attachmentError = "Could not save attachment."
+                return false
+            }
+
+            savingAttachmentIDs.insert(recordID)
+            defer { savingAttachmentIDs.remove(recordID) }
+
+            do {
+                let dto = try await environment.apiClient.updateReservationAttachment(
+                    reservationID: reservation.remoteID,
+                    attachmentID: remoteID,
+                    label: label,
+                    caption: normalizedNote
+                )
+                record.applyRemoteMetadata(dto)
+                try modelContext.save()
+                recomputeNoteSignals()
+                attachmentError = nil
+                attachmentInfoMessage = nil
+                return true
+            } catch {
+                record.labelRaw = oldLabelRaw
+                record.note = oldNote
+                record.remoteCaption = oldRemoteCaption
+                try? modelContext.save()
+                attachmentError = "Could not save attachment."
+                attachmentInfoMessage = nil
+                return false
+            }
+        }
+
+        record.labelRaw = label.rawValue
+        record.note = normalizedNote
+        record.remoteCaption = nil
+        do {
+            try modelContext.save()
+            recomputeNoteSignals()
+            attachmentError = nil
+            attachmentInfoMessage = "Saved on this device"
+            return true
+        } catch {
+            record.labelRaw = oldLabelRaw
+            record.note = oldNote
+            record.remoteCaption = oldRemoteCaption
+            attachmentError = "Could not save attachment."
+            attachmentInfoMessage = nil
+            return false
+        }
+    }
+
+    @MainActor
+    private func downloadAttachment(recordID: String) async -> Bool {
         guard let record = attachmentRecord(id: recordID),
-              let remoteID = record.remoteID else { return }
-        guard !downloadingAttachmentIDs.contains(recordID) else { return }
+              let remoteID = record.remoteID else { return false }
+        guard !downloadingAttachmentIDs.contains(recordID) else { return false }
 
         downloadingAttachmentIDs.insert(recordID)
         defer { downloadingAttachmentIDs.remove(recordID) }
@@ -1557,11 +1636,13 @@ struct ReservationDetailView: View {
             record.markDownloaded(filename: filename)
             try modelContext.save()
             scheduleOCR(for: record)
+            recomputeNoteSignals()
             attachmentError = nil
             attachmentInfoMessage = nil
-            previewAttachmentRecord = record
+            return true
         } catch {
             attachmentError = "Could not download image."
+            return false
         }
     }
 
@@ -1576,23 +1657,48 @@ struct ReservationDetailView: View {
     private func deleteAttachment(_ record: ReservationAttachmentRecord) {
         pendingRemoteAttachmentDelete = nil
         guard record.hasRemoteIdentity else {
-            AttachmentFileStore.delete(filename: record.filename)
-            if let cacheFilename = record.localFullImageCacheFilename, cacheFilename != record.filename {
-                try? AttachmentFileStore.removeDownloadedAttachment(filename: cacheFilename)
-            }
-            modelContext.delete(record)
-            try? modelContext.save()
+            deleteLocalAttachment(record)
             return
         }
 
-        Task { await deleteSharedAttachment(recordID: record.id) }
+        Task { _ = await deleteSharedAttachment(recordID: record.id) }
     }
 
     @MainActor
-    private func deleteSharedAttachment(recordID: String) async {
+    private func deleteAttachmentAndReport(recordID: String) async -> Bool {
+        guard let record = attachmentRecord(id: recordID) else { return false }
+        if record.hasRemoteIdentity {
+            let deleted = await deleteSharedAttachment(recordID: recordID)
+            if deleted, managingAttachmentRecord?.id == recordID {
+                managingAttachmentRecord = nil
+            }
+            return deleted
+        }
+        deleteLocalAttachment(record)
+        if managingAttachmentRecord?.id == recordID {
+            managingAttachmentRecord = nil
+        }
+        return true
+    }
+
+    @MainActor
+    private func deleteLocalAttachment(_ record: ReservationAttachmentRecord) {
+        AttachmentFileStore.delete(filename: record.filename)
+        if let cacheFilename = record.localFullImageCacheFilename, cacheFilename != record.filename {
+            try? AttachmentFileStore.removeDownloadedAttachment(filename: cacheFilename)
+        }
+        modelContext.delete(record)
+        try? modelContext.save()
+        recomputeNoteSignals()
+        attachmentError = nil
+        attachmentInfoMessage = nil
+    }
+
+    @MainActor
+    private func deleteSharedAttachment(recordID: String) async -> Bool {
         guard let record = attachmentRecord(id: recordID),
-              let remoteID = record.remoteID else { return }
-        guard !deletingAttachmentIDs.contains(recordID) else { return }
+              let remoteID = record.remoteID else { return false }
+        guard !deletingAttachmentIDs.contains(recordID) else { return false }
 
         deletingAttachmentIDs.insert(recordID)
         defer { deletingAttachmentIDs.remove(recordID) }
@@ -1608,10 +1714,13 @@ struct ReservationDetailView: View {
             AttachmentFileStore.delete(filename: record.filename)
             modelContext.delete(record)
             try modelContext.save()
+            recomputeNoteSignals()
             attachmentError = nil
             attachmentInfoMessage = nil
+            return true
         } catch {
             attachmentError = "Could not delete shared attachment."
+            return false
         }
     }
 
@@ -3260,11 +3369,9 @@ private struct DetailNoteRow: View {
 
 // MARK: - Attachment sub-views (Phase 5)
 
-/// Single attachment row: thumbnail, label, date, OCR status, signal pills, delete swipe.
+/// Single attachment row: thumbnail, label, quiet status, delete swipe.
 private struct AttachmentRow: View {
     let record: ReservationAttachmentRecord
-    /// Signals already computed for this attachment by the parent view's recomputeNoteSignals().
-    let signals: [ReservationSignal]
     let isUploading: Bool
     let isDownloading: Bool
     let isDeleting: Bool
@@ -3274,15 +3381,16 @@ private struct AttachmentRow: View {
     @State private var thumbnail: UIImage?
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             thumbnailView
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Image(systemName: record.label.systemImage)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(record.label.rawValue)
+                    Text(record.label.attachmentTitle)
                         .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
                 }
                 if let detailText {
                     Text(detailText)
@@ -3290,21 +3398,11 @@ private struct AttachmentRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
-                if !signals.isEmpty {
-                    attachmentSignalPills
-                } else {
-                    Text(record.label.reviewInstruction)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
                 HStack(spacing: 6) {
                     Text(record.displayDate)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                     statusLabel
-                    if AttachmentFeatureFlag.ocrEnabled {
-                        ocrStatusLabel
-                    }
                 }
             }
             Spacer(minLength: 0)
@@ -3334,9 +3432,6 @@ private struct AttachmentRow: View {
         if let caption = record.remoteCaption?.nilIfBlank ?? record.note?.nilIfBlank {
             return caption
         }
-        if let filename = record.originalFilename?.nilIfBlank {
-            return filename
-        }
         return nil
     }
 
@@ -3355,7 +3450,7 @@ private struct AttachmentRow: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         } else if record.syncState == .uploadFailed {
-            Label("Saved on this device", systemImage: "exclamationmark.triangle")
+            Label("Could not share", systemImage: "exclamationmark.triangle")
                 .font(.caption2)
                 .foregroundStyle(.orange)
         } else if record.hasRemoteIdentity, record.cachedImageFilename == nil {
@@ -3374,51 +3469,17 @@ private struct AttachmentRow: View {
     }
 
     @ViewBuilder
-    private var attachmentSignalPills: some View {
-        FlowLayout(spacing: 4) {
-            ForEach(signals.prefix(3)) { signal in
-                Text(signal.title)
-                    .font(.caption2.weight(.medium))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(signalPillColor(signal.priority).opacity(0.14))
-                    .foregroundStyle(signalPillColor(signal.priority))
-                    .clipShape(Capsule())
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var ocrStatusLabel: some View {
-        // Show only when OCR ran and found text. No "Reading..." — OCR is a silent background benefit.
-        if record.ocrRanAt != nil, record.extractedText != nil {
-            Label("Text read", systemImage: "doc.text.magnifyingglass")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func signalPillColor(_ priority: SignalPriority) -> Color {
-        switch priority {
-        case .critical: return .red
-        case .high:     return .orange
-        case .medium:   return .blue
-        case .low, .info: return .secondary
-        }
-    }
-
-    @ViewBuilder
     private var thumbnailView: some View {
         if let image = thumbnail {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 52, height: 52)
+                .frame(width: 58, height: 58)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         } else {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color(.systemFill))
-                .frame(width: 52, height: 52)
+                .frame(width: 58, height: 58)
                 .overlay {
                     if isDownloading {
                         ProgressView()
@@ -3440,6 +3501,391 @@ private struct AttachmentRow: View {
     }
 }
 
+private struct AttachmentManageScreen: View {
+    let record: ReservationAttachmentRecord
+    let isUploading: Bool
+    let isDownloading: Bool
+    let isDeleting: Bool
+    let isSaving: Bool
+    let onSave: (AttachmentLabel, String?) async -> Bool
+    let onDownload: () async -> Bool
+    let onDelete: () async -> Bool
+    let onDismiss: () -> Void
+
+    @State private var selectedLabel: AttachmentLabel
+    @State private var noteDraft: String
+    @State private var image: UIImage?
+    @State private var localError: String?
+    @State private var localSuccess: String?
+    @State private var isWorking = false
+    @State private var showDeleteConfirmation = false
+    @State private var showFullPreview = false
+
+    init(
+        record: ReservationAttachmentRecord,
+        isUploading: Bool,
+        isDownloading: Bool,
+        isDeleting: Bool,
+        isSaving: Bool,
+        onSave: @escaping (AttachmentLabel, String?) async -> Bool,
+        onDownload: @escaping () async -> Bool,
+        onDelete: @escaping () async -> Bool,
+        onDismiss: @escaping () -> Void
+    ) {
+        self.record = record
+        self.isUploading = isUploading
+        self.isDownloading = isDownloading
+        self.isDeleting = isDeleting
+        self.isSaving = isSaving
+        self.onSave = onSave
+        self.onDownload = onDownload
+        self.onDelete = onDelete
+        self.onDismiss = onDismiss
+        _selectedLabel = State(initialValue: record.label)
+        _noteDraft = State(initialValue: record.attachmentNoteText ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            GeometryReader { proxy in
+                let isWide = proxy.size.width >= 720
+                let previewHeight = isWide ? min(proxy.size.height * 0.68, 560) : min(proxy.size.width * 0.68, 340)
+                ScrollView {
+                    Group {
+                        if isWide {
+                            HStack(alignment: .top, spacing: 18) {
+                                previewPanel(height: previewHeight)
+                                    .frame(maxWidth: 560)
+                                VStack(alignment: .leading, spacing: 14) {
+                                    editPanel
+                                    actionPanel
+                                    deleteButton
+                                    bottomMetadata
+                                }
+                                .frame(maxWidth: 380)
+                            }
+                        } else {
+                            VStack(alignment: .leading, spacing: 14) {
+                                previewPanel(height: previewHeight)
+                                editPanel
+                                actionPanel
+                                deleteButton
+                                bottomMetadata
+                            }
+                        }
+                    }
+                    .frame(maxWidth: isWide ? 980 : nil, alignment: .center)
+                    .padding(isWide ? 24 : 16)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Attachment details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { onDismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        saveEdits()
+                    }
+                    .disabled(saveDisabled)
+                }
+            }
+            .confirmationDialog(
+                record.hasRemoteIdentity ? "Delete shared attachment?" : "Delete attachment?",
+                isPresented: $showDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete attachment", role: .destructive) {
+                    deleteAttachment()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(record.hasRemoteIdentity ? "This removes the image for staff on every device." : "This removes the image from this device.")
+            }
+            .fullScreenCover(isPresented: $showFullPreview) {
+                AttachmentPreviewScreen(record: record) {
+                    showFullPreview = false
+                }
+            }
+            .onAppear {
+                reloadImage()
+            }
+            .onChange(of: record.localFullImageCacheFilename) { _, _ in
+                reloadImage()
+            }
+        }
+    }
+
+    private var canEdit: Bool {
+        !isUploading && !isDownloading && !isDeleting && !isSaving && !isWorking
+    }
+
+    private var hasChanges: Bool {
+        selectedLabel != record.label || normalizedNoteDraft != record.attachmentNoteText
+    }
+
+    private var saveDisabled: Bool {
+        !canEdit || !hasChanges
+    }
+
+    private var normalizedNoteDraft: String? {
+        noteDraft.nilIfBlank
+    }
+
+    @ViewBuilder
+    private func previewPanel(height: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.black)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: height)
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: height)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .onTapGesture {
+                            showFullPreview = true
+                        }
+                } else {
+                    VStack(spacing: 10) {
+                        Image(systemName: record.hasRemoteIdentity ? "arrow.down.circle" : record.label.systemImage)
+                            .font(.largeTitle)
+                            .foregroundStyle(.white.opacity(0.85))
+                        if record.hasRemoteIdentity {
+                            Button {
+                                downloadImage()
+                            } label: {
+                                Label(isDownloading ? "Loading image…" : "Tap to download", systemImage: "arrow.down.circle")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!canEdit)
+                        } else {
+                            Text("Image file is not available on this device.")
+                                .font(.subheadline)
+                                .foregroundStyle(.white.opacity(0.82))
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+                    .padding()
+                }
+                if isDownloading {
+                    ProgressView()
+                        .tint(.white)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            if image != nil {
+                Button {
+                    showFullPreview = true
+                } label: {
+                    Label("Open image", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption.weight(.medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(TryzubColors.primaryControl)
+            }
+        }
+    }
+
+    private var editPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AttachmentTagPicker(selection: $selectedLabel)
+                .disabled(!canEdit)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Note")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $noteDraft)
+                    .frame(minHeight: 112)
+                    .scrollContentBackground(.hidden)
+                    .padding(10)
+                    .background(.thinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .disabled(!canEdit)
+            }
+        }
+        .padding(14)
+        .hostBoardGlassPanel(cornerRadius: 18)
+    }
+
+    private var actionPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let error = localError {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            if let success = localSuccess {
+                Label(success, systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            }
+            if image != nil {
+                Button {
+                    saveToPhotos()
+                } label: {
+                    Label("Save to Photos", systemImage: "square.and.arrow.down")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(!canEdit)
+            }
+        }
+    }
+
+    private var bottomMetadata: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(record.staffStatusText, systemImage: record.staffStatusIcon)
+            Text(record.displayDate)
+        }
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+    }
+
+    private var deleteButton: some View {
+        Button(role: .destructive) {
+            showDeleteConfirmation = true
+        } label: {
+            Label(isDeleting ? "Deleting…" : "Delete attachment", systemImage: "trash")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .disabled(!canEdit)
+    }
+
+    private func saveEdits() {
+        Task {
+            isWorking = true
+            defer { isWorking = false }
+            let saved = await onSave(selectedLabel, normalizedNoteDraft)
+            if saved {
+                localError = nil
+                localSuccess = "Saved"
+            } else {
+                selectedLabel = record.label
+                noteDraft = record.attachmentNoteText ?? ""
+                localSuccess = nil
+                localError = "Could not save attachment."
+            }
+        }
+    }
+
+    private func downloadImage() {
+        Task {
+            isWorking = true
+            defer { isWorking = false }
+            let downloaded = await onDownload()
+            if downloaded {
+                localError = nil
+                localSuccess = "Downloaded"
+                reloadImage()
+            } else {
+                localSuccess = nil
+                localError = "Could not download image."
+            }
+        }
+    }
+
+    private func saveToPhotos() {
+        guard let image else {
+            localError = "Could not save image."
+            return
+        }
+        Task {
+            isWorking = true
+            defer { isWorking = false }
+            let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+            guard status == .authorized || status == .limited else {
+                localSuccess = nil
+                localError = "Allow Photos access to save this image."
+                return
+            }
+            do {
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetChangeRequest.creationRequestForAsset(from: image)
+                }
+                localError = nil
+                localSuccess = "Saved to Photos"
+            } catch {
+                localSuccess = nil
+                localError = "Could not save image."
+            }
+        }
+    }
+
+    private func deleteAttachment() {
+        Task {
+            isWorking = true
+            defer { isWorking = false }
+            let deleted = await onDelete()
+            if !deleted {
+                localSuccess = nil
+                localError = "Could not delete attachment."
+            }
+        }
+    }
+
+    private func reloadImage() {
+        guard let filename = record.cachedImageFilename else {
+            image = nil
+            return
+        }
+        image = AttachmentFileStore.load(filename: filename)
+    }
+
+}
+
+private struct AttachmentTagPicker: View {
+    @Binding var selection: AttachmentLabel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tag")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Menu {
+                ForEach(AttachmentLabel.allCases) { label in
+                    Button {
+                        selection = label
+                    } label: {
+                        Label(label.rawValue, systemImage: label.systemImage)
+                    }
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: selection.systemImage)
+                        .font(.headline)
+                        .frame(width: 24)
+                        .foregroundStyle(TryzubColors.primaryControl)
+                    Text(selection.rawValue)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .hostBoardGlassPanel(cornerRadius: 14)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
 /// Full-screen attachment preview with a close button.
 private struct AttachmentPreviewScreen: View {
     let record: ReservationAttachmentRecord
@@ -3451,11 +3897,11 @@ private struct AttachmentPreviewScreen: View {
         NavigationStack {
             Group {
                 if let image {
-                    ScrollView([.horizontal, .vertical]) {
+                    GeometryReader { proxy in
                         Image(uiImage: image)
                             .resizable()
                             .scaledToFit()
-                            .frame(maxWidth: .infinity)
+                            .frame(width: proxy.size.width, height: proxy.size.height)
                     }
                     .background(Color.black)
                 } else {
@@ -3478,6 +3924,62 @@ private struct AttachmentPreviewScreen: View {
                     image = AttachmentFileStore.load(filename: filename)
                 }
             }
+        }
+    }
+}
+
+private extension AttachmentLabel {
+    var attachmentTitle: String {
+        switch self {
+        case .deposit: return "Deposit"
+        case .preorder: return "Preorder"
+        case .banquet: return "Banquet photo"
+        case .guestScreenshot: return "Guest screenshot"
+        case .receipt: return "Receipt"
+        case .setup: return "Setup photo"
+        case .signedAgreement: return "Signed agreement"
+        case .referenceImage: return "Reference image"
+        case .other: return "Attachment"
+        }
+    }
+}
+
+private extension ReservationAttachmentRecord {
+    var attachmentNoteText: String? {
+        remoteCaption?.nilIfBlank ?? note?.nilIfBlank
+    }
+
+    var staffStatusText: String {
+        switch syncState {
+        case .uploading:
+            return "Uploading…"
+        case .uploadFailed:
+            return "Could not share"
+        case .remoteOnly:
+            return "Tap to download"
+        case .synced, .downloaded:
+            return hasRemoteIdentity ? "Shared with staff" : "Saved on this device"
+        case .deletedRemote:
+            return "Deleted"
+        case .localOnly:
+            return "Saved on this device"
+        }
+    }
+
+    var staffStatusIcon: String {
+        switch syncState {
+        case .uploading:
+            return "arrow.up.circle"
+        case .uploadFailed:
+            return "exclamationmark.triangle"
+        case .remoteOnly:
+            return "arrow.down.circle"
+        case .synced, .downloaded:
+            return hasRemoteIdentity ? "person.2" : "iphone"
+        case .deletedRemote:
+            return "trash"
+        case .localOnly:
+            return "iphone"
         }
     }
 }
