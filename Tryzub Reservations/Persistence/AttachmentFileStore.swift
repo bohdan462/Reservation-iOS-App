@@ -170,9 +170,15 @@ enum AttachmentFileStore {
 
 enum AttachmentFileStoreError: LocalizedError {
     case compressionFailed
+    case missingFile
 
     var errorDescription: String? {
+        switch self {
+        case .compressionFailed:
         "Could not compress the photo."
+        case .missingFile:
+            "Could not find the saved photo."
+        }
     }
 }
 

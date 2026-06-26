@@ -12,7 +12,7 @@
 //
 //  Remote attachment endpoints are staff-authenticated under:
 //    /wp-json/tryzub/v1/managed-reservations/{id}/attachments
-//  Slice C adds DTO/API/cache foundations only; UI remains local-first until Slice D.
+//  Reservation Detail uses these routes for shared staff attachments.
 //
 
 import Foundation
@@ -90,13 +90,12 @@ enum AttachmentLabel: String, Codable, CaseIterable, Identifiable {
 }
 
 /// Controls whether attachment upload/photo picker is active.
-/// Local storage is ready. Backend upload endpoint is not yet live.
 enum AttachmentFeatureFlag {
     /// Local device storage: always true — images are stored in Application Support.
     static let localStorageEnabled: Bool = true
 
-    /// Remote upload to backend: false until Slice D wires the Reservation Detail UI.
-    static let remoteUploadEnabled: Bool = false
+    /// Remote upload to backend: enabled after Reservation Detail list/upload/download/delete wiring.
+    static let remoteUploadEnabled: Bool = true
 
     /// Apple Vision OCR text extraction from attached images.
     /// Safe to enable — runs on-device, no network, no PII leaves the device.

@@ -269,6 +269,13 @@ struct ReservationDetailView: View {
     @State private var showLabelPicker = false
     @State private var previewAttachmentRecord: ReservationAttachmentRecord?
     @State private var attachmentError: String?
+    @State private var attachmentInfoMessage: String?
+    @State private var hasRequestedSharedAttachmentRefresh = false
+    @State private var isRefreshingSharedAttachments = false
+    @State private var uploadingAttachmentIDs: Set<String> = []
+    @State private var downloadingAttachmentIDs: Set<String> = []
+    @State private var deletingAttachmentIDs: Set<String> = []
+    @State private var pendingRemoteAttachmentDelete: ReservationAttachmentRecord?
 
     var body: some View {
         GeometryReader { proxy in
@@ -297,10 +304,11 @@ struct ReservationDetailView: View {
             autoSeedStructuredNoteFromSignals()
             // Schedule OCR for any existing attachments that haven't been scanned yet.
             if AttachmentFeatureFlag.ocrEnabled {
-                for attachment in attachments where attachment.ocrRanAt == nil {
+                for attachment in attachments where attachment.ocrRanAt == nil && attachment.cachedImageFilename != nil {
                     scheduleOCR(for: attachment)
                 }
             }
+            refreshSharedAttachmentsIfNeeded()
             // Model note enrichment (tone + missed signals) — additive, non-blocking.
             Task { await enrichNoteSignalsWithModel() }
         }
@@ -324,6 +332,25 @@ struct ReservationDetailView: View {
             AttachmentPreviewScreen(record: record) {
                 previewAttachmentRecord = nil
             }
+        }
+        .confirmationDialog(
+            "Delete shared attachment?",
+            isPresented: Binding(
+                get: { pendingRemoteAttachmentDelete != nil },
+                set: { if !$0 { pendingRemoteAttachmentDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let pendingRemoteAttachmentDelete {
+                Button("Delete shared attachment", role: .destructive) {
+                    deleteAttachment(pendingRemoteAttachmentDelete)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingRemoteAttachmentDelete = nil
+            }
+        } message: {
+            Text("This removes the image for staff on every device.")
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -841,8 +868,8 @@ struct ReservationDetailView: View {
     private func scheduleOCR(for record: ReservationAttachmentRecord) {
         guard AttachmentFeatureFlag.ocrEnabled else { return }
         guard record.extractedText == nil else { return }
+        guard let filename = record.cachedImageFilename else { return }
 
-        let filename = record.filename
         let recordID = record.id
         let reservationID = reservation.remoteID
 
@@ -1106,30 +1133,71 @@ struct ReservationDetailView: View {
         }
     }
 
+    private var visibleAttachments: [ReservationAttachmentRecord] {
+        attachments.filter { $0.syncState != .deletedRemote }
+    }
+
+    private var canUseSharedAttachments: Bool {
+        AttachmentFeatureFlag.remoteUploadEnabled
+            && reservation.remoteID > 0
+            && environment.apiClient.hasConfiguredCredentials
+    }
+
     private var attachmentsCard: some View {
-        DetailSectionCard(title: "Attachments", systemImage: "paperclip") {
+        DetailSectionCard(title: "Shared attachments", systemImage: "paperclip") {
             VStack(alignment: .leading, spacing: 10) {
 
-                if let error = attachmentError {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
+                if isRefreshingSharedAttachments {
+                    Label {
+                        Text("Loading shared attachments…")
+                    } icon: {
+                        ProgressView()
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
 
-                if !attachments.isEmpty {
-                    ForEach(attachments) { record in
+                if let message = attachmentInfoMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let error = attachmentError {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                        if canUseSharedAttachments {
+                            Button {
+                                Task { await refreshSharedAttachments(force: true) }
+                            } label: {
+                                Label("Retry", systemImage: "arrow.clockwise")
+                                    .font(.caption.weight(.medium))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(TryzubColors.primaryControl)
+                        }
+                    }
+                }
+
+                if !visibleAttachments.isEmpty {
+                    ForEach(visibleAttachments) { record in
                         AttachmentRow(
                             record: record,
                             signals: attachmentSignalsByID[record.id] ?? [],
-                            onTap: { previewAttachmentRecord = record },
-                            onDelete: { deleteAttachment(record) }
+                            isUploading: uploadingAttachmentIDs.contains(record.id),
+                            isDownloading: downloadingAttachmentIDs.contains(record.id),
+                            isDeleting: deletingAttachmentIDs.contains(record.id),
+                            onTap: { handleAttachmentTap(record) },
+                            onDelete: { requestDeleteAttachment(record) }
                         )
-                        if record.id != attachments.last?.id {
+                        if record.id != visibleAttachments.last?.id {
                             Divider().opacity(0.4)
                         }
                     }
                 } else {
-                    Text("No photos attached yet.")
+                    Text("No shared attachments yet.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -1310,6 +1378,43 @@ struct ReservationDetailView: View {
         }
     }
 
+    private func refreshSharedAttachmentsIfNeeded() {
+        guard !hasRequestedSharedAttachmentRefresh else { return }
+        hasRequestedSharedAttachmentRefresh = true
+        Task { await refreshSharedAttachments(force: false) }
+    }
+
+    @MainActor
+    private func refreshSharedAttachments(force: Bool) async {
+        guard canUseSharedAttachments else { return }
+        guard force || !isRefreshingSharedAttachments else { return }
+
+        isRefreshingSharedAttachments = true
+        defer { isRefreshingSharedAttachments = false }
+
+        do {
+            let response = try await environment.apiClient.listReservationAttachments(
+                reservationID: reservation.remoteID
+            )
+            let merged = try ReservationAttachmentRecord.upsertRemoteMetadata(
+                response.attachments,
+                reservationID: reservation.remoteID,
+                in: modelContext
+            )
+            let activeRemoteIDs = Set(response.attachments.map(\.id))
+            for record in attachments where record.remoteID != nil {
+                if let remoteID = record.remoteID, !activeRemoteIDs.contains(remoteID) {
+                    record.markRemoteDeleted()
+                }
+            }
+            try modelContext.save()
+            attachmentError = nil
+            attachmentInfoMessage = merged.isEmpty ? nil : "Shared with staff"
+        } catch {
+            attachmentError = "Could not load shared attachments. Check connection and try again."
+        }
+    }
+
     private func loadPhoto(_ item: PhotosPickerItem) {
         Task {
             do {
@@ -1328,6 +1433,19 @@ struct ReservationDetailView: View {
         }
     }
 
+    private func attachmentRecord(id: String) -> ReservationAttachmentRecord? {
+        if let record = attachments.first(where: { $0.id == id }) {
+            return record
+        }
+        var descriptor = FetchDescriptor<ReservationAttachmentRecord>(
+            predicate: #Predicate { record in
+                record.id == id
+            }
+        )
+        descriptor.fetchLimit = 1
+        return try? modelContext.fetch(descriptor).first
+    }
+
     private func saveAttachment(label: AttachmentLabel) {
         guard let data = pendingPhotoData,
               let image = UIImage(data: data) else {
@@ -1342,7 +1460,13 @@ struct ReservationDetailView: View {
         do {
             try AttachmentFileStore.save(image: image, filename: record.filename)
             modelContext.insert(record)
+            if canUseSharedAttachments {
+                record.syncState = .uploading
+                uploadingAttachmentIDs.insert(record.id)
+            }
+            try? modelContext.save()
             attachmentError = nil
+            attachmentInfoMessage = canUseSharedAttachments ? "Uploading…" : "Saved on this device"
             AttachmentOCRTrace.attached(
                 reservationID: reservation.remoteID,
                 filename: record.filename,
@@ -1351,6 +1475,15 @@ struct ReservationDetailView: View {
             // Immediate label-based signals appear via recomputeNoteSignals() on next @Query update.
             // Schedule background OCR to enrich signals with actual image text.
             scheduleOCR(for: record)
+            if canUseSharedAttachments {
+                Task {
+                    await uploadAttachment(
+                        recordID: record.id,
+                        filename: record.filename,
+                        label: label
+                    )
+                }
+            }
         } catch {
             attachmentError = error.localizedDescription
         }
@@ -1358,9 +1491,128 @@ struct ReservationDetailView: View {
         pendingPhotoData = nil
     }
 
+    @MainActor
+    private func uploadAttachment(recordID: String, filename: String, label: AttachmentLabel) async {
+        defer { uploadingAttachmentIDs.remove(recordID) }
+
+        do {
+            guard let jpegData = try AttachmentFileStore.loadDownloadedAttachmentData(filename: filename) else {
+                throw AttachmentFileStoreError.missingFile
+            }
+            let dto = try await environment.apiClient.uploadReservationAttachment(
+                reservationID: reservation.remoteID,
+                jpegData: jpegData,
+                originalFilename: filename,
+                label: label,
+                caption: nil
+            )
+            guard let record = attachmentRecord(id: recordID) else { return }
+            record.applyRemoteMetadata(dto)
+            record.markDownloaded(filename: filename)
+            try modelContext.save()
+            attachmentError = nil
+            attachmentInfoMessage = "Shared with staff"
+        } catch {
+            if let record = attachmentRecord(id: recordID) {
+                record.syncState = .uploadFailed
+                try? modelContext.save()
+            }
+            attachmentError = "Saved on this device. Could not share yet."
+            attachmentInfoMessage = nil
+        }
+    }
+
+    private func handleAttachmentTap(_ record: ReservationAttachmentRecord) {
+        if record.cachedImageFilename != nil {
+            previewAttachmentRecord = record
+            return
+        }
+        guard record.hasRemoteIdentity else {
+            attachmentError = "Image is saved on this device but the file is not available."
+            return
+        }
+        Task { await downloadAttachment(recordID: record.id) }
+    }
+
+    @MainActor
+    private func downloadAttachment(recordID: String) async {
+        guard let record = attachmentRecord(id: recordID),
+              let remoteID = record.remoteID else { return }
+        guard !downloadingAttachmentIDs.contains(recordID) else { return }
+
+        downloadingAttachmentIDs.insert(recordID)
+        defer { downloadingAttachmentIDs.remove(recordID) }
+
+        do {
+            let data = try await environment.apiClient.downloadReservationAttachmentContent(
+                reservationID: reservation.remoteID,
+                attachmentID: remoteID
+            )
+            let filename = try AttachmentFileStore.saveDownloadedAttachmentData(
+                data,
+                reservationID: reservation.remoteID,
+                attachmentID: remoteID,
+                preferredExtension: AttachmentFileStore.preferredExtension(forMimeType: record.mimeType)
+            )
+            record.markDownloaded(filename: filename)
+            try modelContext.save()
+            scheduleOCR(for: record)
+            attachmentError = nil
+            attachmentInfoMessage = nil
+            previewAttachmentRecord = record
+        } catch {
+            attachmentError = "Could not download image."
+        }
+    }
+
+    private func requestDeleteAttachment(_ record: ReservationAttachmentRecord) {
+        if record.hasRemoteIdentity {
+            pendingRemoteAttachmentDelete = record
+        } else {
+            deleteAttachment(record)
+        }
+    }
+
     private func deleteAttachment(_ record: ReservationAttachmentRecord) {
-        AttachmentFileStore.delete(filename: record.filename)
-        modelContext.delete(record)
+        pendingRemoteAttachmentDelete = nil
+        guard record.hasRemoteIdentity else {
+            AttachmentFileStore.delete(filename: record.filename)
+            if let cacheFilename = record.localFullImageCacheFilename, cacheFilename != record.filename {
+                try? AttachmentFileStore.removeDownloadedAttachment(filename: cacheFilename)
+            }
+            modelContext.delete(record)
+            try? modelContext.save()
+            return
+        }
+
+        Task { await deleteSharedAttachment(recordID: record.id) }
+    }
+
+    @MainActor
+    private func deleteSharedAttachment(recordID: String) async {
+        guard let record = attachmentRecord(id: recordID),
+              let remoteID = record.remoteID else { return }
+        guard !deletingAttachmentIDs.contains(recordID) else { return }
+
+        deletingAttachmentIDs.insert(recordID)
+        defer { deletingAttachmentIDs.remove(recordID) }
+
+        do {
+            try await environment.apiClient.deleteReservationAttachment(
+                reservationID: reservation.remoteID,
+                attachmentID: remoteID
+            )
+            if let cacheFilename = record.localFullImageCacheFilename {
+                try? AttachmentFileStore.removeDownloadedAttachment(filename: cacheFilename)
+            }
+            AttachmentFileStore.delete(filename: record.filename)
+            modelContext.delete(record)
+            try modelContext.save()
+            attachmentError = nil
+            attachmentInfoMessage = nil
+        } catch {
+            attachmentError = "Could not delete shared attachment."
+        }
     }
 
     private func detailsCard(_ presentation: ReservationDetailPresentation) -> some View {
@@ -3013,6 +3265,9 @@ private struct AttachmentRow: View {
     let record: ReservationAttachmentRecord
     /// Signals already computed for this attachment by the parent view's recomputeNoteSignals().
     let signals: [ReservationSignal]
+    let isUploading: Bool
+    let isDownloading: Bool
+    let isDeleting: Bool
     let onTap: () -> Void
     let onDelete: () -> Void
 
@@ -3029,6 +3284,12 @@ private struct AttachmentRow: View {
                     Text(record.label.rawValue)
                         .font(.subheadline.weight(.semibold))
                 }
+                if let detailText {
+                    Text(detailText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
                 if !signals.isEmpty {
                     attachmentSignalPills
                 } else {
@@ -3040,6 +3301,7 @@ private struct AttachmentRow: View {
                     Text(record.displayDate)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                    statusLabel
                     if AttachmentFeatureFlag.ocrEnabled {
                         ocrStatusLabel
                     }
@@ -3055,11 +3317,59 @@ private struct AttachmentRow: View {
             } label: {
                 Label("Delete", systemImage: "trash")
             }
+            .disabled(isUploading || isDownloading || isDeleting)
         }
         .onAppear {
-            if thumbnail == nil {
-                thumbnail = AttachmentFileStore.thumbnail(filename: record.filename)
-            }
+            reloadThumbnail()
+        }
+        .onChange(of: record.localFullImageCacheFilename) { _, _ in
+            reloadThumbnail()
+        }
+        .onChange(of: record.syncStateRaw) { _, _ in
+            reloadThumbnail()
+        }
+    }
+
+    private var detailText: String? {
+        if let caption = record.remoteCaption?.nilIfBlank ?? record.note?.nilIfBlank {
+            return caption
+        }
+        if let filename = record.originalFilename?.nilIfBlank {
+            return filename
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private var statusLabel: some View {
+        if isUploading {
+            Label("Uploading…", systemImage: "arrow.up.circle")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } else if isDownloading {
+            Label("Loading image…", systemImage: "arrow.down.circle")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } else if isDeleting {
+            Label("Deleting…", systemImage: "trash")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } else if record.syncState == .uploadFailed {
+            Label("Saved on this device", systemImage: "exclamationmark.triangle")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+        } else if record.hasRemoteIdentity, record.cachedImageFilename == nil {
+            Label("Tap to download", systemImage: "arrow.down.circle")
+                .font(.caption2)
+                .foregroundStyle(TryzubColors.primaryControl)
+        } else if record.hasRemoteIdentity {
+            Label("Shared with staff", systemImage: "person.2")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } else {
+            Label("Saved on this device", systemImage: "iphone")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -3110,11 +3420,23 @@ private struct AttachmentRow: View {
                 .fill(Color(.systemFill))
                 .frame(width: 52, height: 52)
                 .overlay {
-                    Image(systemName: record.label.systemImage)
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
+                    if isDownloading {
+                        ProgressView()
+                    } else {
+                        Image(systemName: record.hasRemoteIdentity && record.cachedImageFilename == nil ? "arrow.down.circle" : record.label.systemImage)
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    }
                 }
         }
+    }
+
+    private func reloadThumbnail() {
+        guard let filename = record.cachedImageFilename else {
+            thumbnail = nil
+            return
+        }
+        thumbnail = AttachmentFileStore.thumbnail(filename: filename)
     }
 }
 
@@ -3152,7 +3474,9 @@ private struct AttachmentPreviewScreen: View {
                 }
             }
             .onAppear {
-                image = AttachmentFileStore.load(filename: record.filename)
+                if let filename = record.cachedImageFilename {
+                    image = AttachmentFileStore.load(filename: filename)
+                }
             }
         }
     }
