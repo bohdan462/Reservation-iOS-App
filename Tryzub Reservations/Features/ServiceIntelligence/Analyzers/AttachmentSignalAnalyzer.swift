@@ -116,7 +116,7 @@ enum AttachmentSignalAnalyzer {
                 source: .attachment,
                 priority: .medium
             )
-        case .guestScreenshot, .other:
+        case .guestScreenshot, .signedAgreement, .referenceImage, .other:
             return ReservationSignal(
                 id: "att-label-\(input.attachmentID)-review",
                 reservationID: input.reservationID,

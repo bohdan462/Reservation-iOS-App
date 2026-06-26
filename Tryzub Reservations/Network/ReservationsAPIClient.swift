@@ -62,6 +62,11 @@ enum ReservationAPIRequestReason: String {
     case reservationTablesPatch = "reservation_tables_patch"
     case reservationActivity = "reservation_activity"
     case activityFeed = "activity_feed"
+    case reservationAttachments = "reservation_attachments"
+    case reservationAttachmentUpload = "reservation_attachment_upload"
+    case reservationAttachmentPatch = "reservation_attachment_patch"
+    case reservationAttachmentDelete = "reservation_attachment_delete"
+    case reservationAttachmentContent = "reservation_attachment_content"
     case manualSkipBusy = "manual_skip_busy"
     case manualSkipCooldown = "manual_skip_cooldown"
     case scopeSkipInFlight = "scope_skip_in_flight"
@@ -72,7 +77,11 @@ enum ReservationAPIRequestReason: String {
 
     var suppressesResponseBodyLogging: Bool {
         switch self {
-        case .businessIntelligenceSummary, .guestIntelligence, .guestProfileLookup, .intelligenceSystemStatus:
+        case .businessIntelligenceSummary,
+             .guestIntelligence,
+             .guestProfileLookup,
+             .intelligenceSystemStatus,
+             .reservationAttachmentContent:
             return true
         default:
             return false
@@ -390,6 +399,28 @@ protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
         perPage: Int,
         reason: ReservationAPIRequestReason
     ) async throws -> ReservationActivityFeedResponseDTO
+    func listReservationAttachments(reservationID: Int) async throws -> ReservationAttachmentListResponseDTO
+    func uploadReservationAttachment(
+        reservationID: Int,
+        jpegData: Data,
+        originalFilename: String,
+        label: AttachmentLabel,
+        caption: String?
+    ) async throws -> ReservationAttachmentDTO
+    func updateReservationAttachment(
+        reservationID: Int,
+        attachmentID: Int,
+        label: AttachmentLabel,
+        caption: String?
+    ) async throws -> ReservationAttachmentDTO
+    func deleteReservationAttachment(
+        reservationID: Int,
+        attachmentID: Int
+    ) async throws
+    func downloadReservationAttachmentContent(
+        reservationID: Int,
+        attachmentID: Int
+    ) async throws -> Data
 }
 
 // MARK: - Default Protocol Convenience
@@ -1393,6 +1424,83 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         return try decode(ReservationActivityFeedResponseDTO.self, from: data, request: request)
     }
 
+    // MARK: - Reservation Attachments
+
+    // Intent: Reads private staff-only image attachment metadata for one reservation.
+    // Network: GET /managed-reservations/{id}/attachments.
+    func listReservationAttachments(reservationID: Int) async throws -> ReservationAttachmentListResponseDTO {
+        let url = try apiURL(path: "managed-reservations/\(reservationID)/attachments")
+        let request = makeRequest(url: url, method: "GET")
+        let data = try await perform(request, retryCount: 0, reason: .reservationAttachments)
+        return try decode(ReservationAttachmentListResponseDTO.self, from: data, request: request)
+    }
+
+    // Intent: Uploads one compressed JPEG to private backend attachment storage.
+    // Network: POST /managed-reservations/{id}/attachments multipart/form-data.
+    func uploadReservationAttachment(
+        reservationID: Int,
+        jpegData: Data,
+        originalFilename: String,
+        label: AttachmentLabel,
+        caption: String?
+    ) async throws -> ReservationAttachmentDTO {
+        let url = try apiURL(path: "managed-reservations/\(reservationID)/attachments")
+        let request = makeMultipartAttachmentUploadRequest(
+            url: url,
+            reservationID: reservationID,
+            jpegData: jpegData,
+            originalFilename: originalFilename,
+            label: label,
+            caption: caption
+        )
+        let data = try await perform(request, reason: .reservationAttachmentUpload)
+        return try decodeAttachmentMutationResponse(from: data, request: request)
+    }
+
+    // Intent: Updates private backend attachment metadata only, never image bytes.
+    // Network: PATCH /managed-reservations/{id}/attachments/{attachment_id}.
+    func updateReservationAttachment(
+        reservationID: Int,
+        attachmentID: Int,
+        label: AttachmentLabel,
+        caption: String?
+    ) async throws -> ReservationAttachmentDTO {
+        let url = try apiURL(path: "managed-reservations/\(reservationID)/attachments/\(attachmentID)")
+        let request = try makeJSONRequest(
+            url: url,
+            method: "PATCH",
+            body: ReservationAttachmentUpdateRequest(
+                label: label.backendValue,
+                caption: caption
+            )
+        )
+        let data = try await perform(request, reason: .reservationAttachmentPatch)
+        return try decodeAttachmentMutationResponse(from: data, request: request)
+    }
+
+    // Intent: Soft-deletes one private backend attachment.
+    // Network: DELETE /managed-reservations/{id}/attachments/{attachment_id}.
+    func deleteReservationAttachment(
+        reservationID: Int,
+        attachmentID: Int
+    ) async throws {
+        let url = try apiURL(path: "managed-reservations/\(reservationID)/attachments/\(attachmentID)")
+        let request = makeRequest(url: url, method: "DELETE")
+        _ = try await perform(request, reason: .reservationAttachmentDelete)
+    }
+
+    // Intent: Downloads image bytes through the authenticated REST content route.
+    // Network: GET /managed-reservations/{id}/attachments/{attachment_id}/content.
+    func downloadReservationAttachmentContent(
+        reservationID: Int,
+        attachmentID: Int
+    ) async throws -> Data {
+        let url = try apiURL(path: "managed-reservations/\(reservationID)/attachments/\(attachmentID)/content")
+        var request = makeRequest(url: url, method: "GET")
+        request.setValue("image/jpeg,image/*,*/*", forHTTPHeaderField: "Accept")
+        return try await perform(request, retryCount: 0, reason: .reservationAttachmentContent)
+    }
+
     // MARK: - Import Failure Diagnostics
 
     // Intent: Developer/manager reads failed public-form imports.
@@ -1472,6 +1580,85 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(body)
         return request
+    }
+
+    private func makeMultipartAttachmentUploadRequest(
+        url: URL,
+        reservationID: Int,
+        jpegData: Data,
+        originalFilename: String,
+        label: AttachmentLabel,
+        caption: String?
+    ) -> URLRequest {
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = makeRequest(url: url, method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(
+            "multipart/form-data; boundary=\(boundary)",
+            forHTTPHeaderField: "Content-Type"
+        )
+        request.httpBody = makeMultipartAttachmentBody(
+            boundary: boundary,
+            jpegData: jpegData,
+            filename: sanitizedJPEGFilename(originalFilename, reservationID: reservationID),
+            label: label.backendValue,
+            caption: caption
+        )
+        return request
+    }
+
+    private func makeMultipartAttachmentBody(
+        boundary: String,
+        jpegData: Data,
+        filename: String,
+        label: String,
+        caption: String?
+    ) -> Data {
+        var body = Data()
+        body.appendMultipartField(name: "label", value: label, boundary: boundary)
+        if let caption = caption?.trimmingCharacters(in: .whitespacesAndNewlines), !caption.isEmpty {
+            body.appendMultipartField(name: "caption", value: caption, boundary: boundary)
+        }
+        body.append("--\(boundary)\r\n")
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
+        body.append("Content-Type: image/jpeg\r\n\r\n")
+        body.append(jpegData)
+        body.append("\r\n")
+        body.append("--\(boundary)--\r\n")
+        return body
+    }
+
+    private func sanitizedJPEGFilename(_ originalFilename: String, reservationID: Int) -> String {
+        let fallback = "reservation-\(reservationID)-attachment.jpg"
+        let candidate = originalFilename
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "/")
+            .last
+            .map(String.init) ?? fallback
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        let sanitizedScalars = candidate.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? Character(scalar) : "-"
+        }
+        var sanitized = String(sanitizedScalars).trimmingCharacters(in: CharacterSet(charactersIn: ".-_"))
+        if sanitized.isEmpty {
+            sanitized = fallback
+        }
+        if !sanitized.lowercased().hasSuffix(".jpg"),
+           !sanitized.lowercased().hasSuffix(".jpeg") {
+            sanitized += ".jpg"
+        }
+        return sanitized
+    }
+
+    private func decodeAttachmentMutationResponse(
+        from data: Data,
+        request: URLRequest
+    ) throws -> ReservationAttachmentDTO {
+        if let envelope = try? decoder.decode(ReservationAttachmentResponseDTO.self, from: data),
+           let attachment = envelope.resolvedAttachment {
+            return attachment
+        }
+        return try decode(ReservationAttachmentDTO.self, from: data, request: request)
     }
 
     private func decodeTableAssignmentConflict(
@@ -2019,6 +2206,18 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
 private struct WordPressAPIError: Decodable {
     let code: String
     let message: String
+}
+
+private extension Data {
+    mutating func append(_ string: String) {
+        append(Data(string.utf8))
+    }
+
+    mutating func appendMultipartField(name: String, value: String, boundary: String) {
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+        append("\(value)\r\n")
+    }
 }
 
 // MARK: - Request Serialization

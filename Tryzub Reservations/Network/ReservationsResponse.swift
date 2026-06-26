@@ -243,6 +243,105 @@ struct ReservationDeleteResponse: Codable {
     let message: String?
 }
 
+struct ReservationAttachmentListResponseDTO: Decodable {
+    let success: Bool
+    let reservationID: Int
+    let attachments: [ReservationAttachmentDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case success
+        case reservationID
+        case attachments
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        success = try container.decodeFlexibleBoolIfPresent(forKey: .success) ?? true
+        reservationID = try container.decodeFlexibleIntIfPresent(forKey: .reservationID) ?? 0
+        attachments = try container.decodeIfPresent([ReservationAttachmentDTO].self, forKey: .attachments) ?? []
+    }
+}
+
+struct ReservationAttachmentResponseDTO: Decodable {
+    let success: Bool
+    let reservationID: Int?
+    let attachment: ReservationAttachmentDTO?
+    let data: ReservationAttachmentDTO?
+
+    enum CodingKeys: String, CodingKey {
+        case success
+        case reservationID
+        case attachment
+        case data
+    }
+
+    var resolvedAttachment: ReservationAttachmentDTO? {
+        attachment ?? data
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        success = try container.decodeFlexibleBoolIfPresent(forKey: .success) ?? true
+        reservationID = try container.decodeFlexibleIntIfPresent(forKey: .reservationID)
+        attachment = try container.decodeIfPresent(ReservationAttachmentDTO.self, forKey: .attachment)
+        data = try container.decodeIfPresent(ReservationAttachmentDTO.self, forKey: .data)
+    }
+}
+
+struct ReservationAttachmentDTO: Decodable, Identifiable, Equatable {
+    let id: Int
+    let reservationID: Int
+    let label: String
+    let caption: String?
+    let originalFilename: String?
+    let mimeType: String
+    let fileSizeBytes: Int?
+    let width: Int?
+    let height: Int?
+    let createdAt: String?
+    let updatedAt: String?
+    let uploadedByUserID: Int?
+    let contentPath: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case reservationID
+        case label
+        case caption
+        case originalFilename
+        case mimeType
+        case fileSizeBytes
+        case width
+        case height
+        case createdAt
+        case updatedAt
+        case uploadedByUserID
+        case contentPath
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeFlexibleIntIfPresent(forKey: .id) ?? 0
+        reservationID = try container.decodeFlexibleIntIfPresent(forKey: .reservationID) ?? 0
+        label = try container.decodeIfPresent(String.self, forKey: .label) ?? AttachmentLabel.other.backendValue
+        caption = try container.decodeIfPresent(String.self, forKey: .caption)
+        originalFilename = try container.decodeIfPresent(String.self, forKey: .originalFilename)
+        mimeType = try container.decodeIfPresent(String.self, forKey: .mimeType) ?? "image/jpeg"
+        fileSizeBytes = try container.decodeFlexibleIntIfPresent(forKey: .fileSizeBytes)
+        width = try container.decodeFlexibleIntIfPresent(forKey: .width)
+        height = try container.decodeFlexibleIntIfPresent(forKey: .height)
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
+        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        uploadedByUserID = try container.decodeFlexibleIntIfPresent(forKey: .uploadedByUserID)
+        contentPath = try container.decodeIfPresent(String.self, forKey: .contentPath)
+    }
+}
+
+struct ReservationAttachmentUpdateRequest: Encodable {
+    let label: String
+    let caption: String?
+}
+
 struct RestaurantSetupResponse: Codable {
     let success: Bool?
     let data: RestaurantSetupDTO?

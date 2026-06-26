@@ -61,12 +61,36 @@ enum AttachmentFileStore {
         return filename
     }
 
+    @discardableResult
+    static func saveDownloadedAttachmentData(
+        _ data: Data,
+        reservationID: Int,
+        attachmentID: Int,
+        preferredExtension: String
+    ) throws -> String {
+        ensureDirectory()
+        let filename = downloadedAttachmentFilename(
+            reservationID: reservationID,
+            attachmentID: attachmentID,
+            preferredExtension: preferredExtension
+        )
+        let url = attachmentsDirectory.appendingPathComponent(filename)
+        try data.write(to: url, options: .atomic)
+        return filename
+    }
+
     // MARK: - Read
 
     static func load(filename: String) -> UIImage? {
         let url = attachmentsDirectory.appendingPathComponent(filename)
         guard let data = try? Data(contentsOf: url) else { return nil }
         return UIImage(data: data)
+    }
+
+    static func loadDownloadedAttachmentData(filename: String) throws -> Data? {
+        let url = attachmentsDirectory.appendingPathComponent(safeStoredFilename(filename))
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try Data(contentsOf: url)
     }
 
     /// Loads and downsamples to a thumbnail for list display without loading the full image.
@@ -93,12 +117,54 @@ enum AttachmentFileStore {
         try? FileManager.default.removeItem(at: url)
     }
 
+    static func removeDownloadedAttachment(filename: String) throws {
+        let url = attachmentsDirectory.appendingPathComponent(safeStoredFilename(filename))
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
+    }
+
     // MARK: - Existence check
 
     static func exists(filename: String) -> Bool {
         FileManager.default.fileExists(
             atPath: attachmentsDirectory.appendingPathComponent(filename).path
         )
+    }
+
+    static func downloadedAttachmentFilename(
+        reservationID: Int,
+        attachmentID: Int,
+        preferredExtension: String
+    ) -> String {
+        let ext = normalizedImageExtension(preferredExtension)
+        return "remote-\(max(reservationID, 0))-\(max(attachmentID, 0)).\(ext)"
+    }
+
+    static func preferredExtension(forMimeType mimeType: String?) -> String {
+        switch mimeType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "image/png": return "png"
+        case "image/heic": return "heic"
+        case "image/heif": return "heif"
+        case "image/jpeg", "image/jpg": return "jpg"
+        default: return "jpg"
+        }
+    }
+
+    private static func normalizedImageExtension(_ preferredExtension: String) -> String {
+        let ext = preferredExtension
+            .trimmingCharacters(in: CharacterSet(charactersIn: ". \n\t\r"))
+            .lowercased()
+        switch ext {
+        case "jpeg", "jpg": return "jpg"
+        case "png": return "png"
+        case "heic": return "heic"
+        case "heif": return "heif"
+        default: return "jpg"
+        }
+    }
+
+    private static func safeStoredFilename(_ filename: String) -> String {
+        filename.split(separator: "/").last.map(String.init) ?? filename
     }
 }
 

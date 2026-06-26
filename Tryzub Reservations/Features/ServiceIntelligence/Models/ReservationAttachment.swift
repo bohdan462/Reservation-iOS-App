@@ -10,13 +10,9 @@
 //  The persistence model is ReservationAttachmentRecord (Persistence/ReservationAttachmentRecord.swift).
 //  Images are stored as JPEG files via AttachmentFileStore (Persistence/AttachmentFileStore.swift).
 //
-//  BACKEND STATUS: No remote attachment endpoint exists.
-//  Images are local-only. Backend endpoint needed before remote sync is possible.
-//
-//  Required future backend endpoints:
-//    POST   /wp-json/tryzub/v1/reservation-attachments   (multipart upload)
-//    GET    /wp-json/tryzub/v1/reservation-attachments?reservation_id={id}
-//    DELETE /wp-json/tryzub/v1/reservation-attachments/{id}
+//  Remote attachment endpoints are staff-authenticated under:
+//    /wp-json/tryzub/v1/managed-reservations/{id}/attachments
+//  Slice C adds DTO/API/cache foundations only; UI remains local-first until Slice D.
 //
 
 import Foundation
@@ -29,6 +25,8 @@ enum AttachmentLabel: String, Codable, CaseIterable, Identifiable {
     case guestScreenshot = "Guest screenshot"
     case receipt         = "Receipt"
     case setup           = "Setup"
+    case signedAgreement = "Signed agreement"
+    case referenceImage  = "Reference image"
     case other           = "Other"
 
     var id: String { rawValue }
@@ -41,7 +39,37 @@ enum AttachmentLabel: String, Codable, CaseIterable, Identifiable {
         case .guestScreenshot: return "person.crop.rectangle"
         case .receipt:         return "doc.text"
         case .setup:           return "checklist"
+        case .signedAgreement: return "signature"
+        case .referenceImage:  return "photo"
         case .other:           return "paperclip"
+        }
+    }
+
+    var backendValue: String {
+        switch self {
+        case .deposit:         return "deposit"
+        case .preorder:        return "preorder"
+        case .banquet:         return "banquet"
+        case .guestScreenshot: return "guest_screenshot"
+        case .receipt:         return "receipt"
+        case .setup:           return "setup_photo"
+        case .signedAgreement: return "signed_agreement"
+        case .referenceImage:  return "reference_image"
+        case .other:           return "other"
+        }
+    }
+
+    init(backendValue: String?) {
+        switch backendValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "deposit": self = .deposit
+        case "preorder": self = .preorder
+        case "banquet": self = .banquet
+        case "guest_screenshot": self = .guestScreenshot
+        case "receipt": self = .receipt
+        case "setup_photo", "setup": self = .setup
+        case "signed_agreement": self = .signedAgreement
+        case "reference_image": self = .referenceImage
+        default: self = .other
         }
     }
 
@@ -54,6 +82,8 @@ enum AttachmentLabel: String, Codable, CaseIterable, Identifiable {
         case .guestScreenshot: return "Check guest screenshot."
         case .receipt:         return "Review receipt."
         case .setup:           return "Check setup requirements."
+        case .signedAgreement: return "Review signed agreement."
+        case .referenceImage:  return "Review reference image."
         case .other:           return "Review attachment."
         }
     }
@@ -65,7 +95,7 @@ enum AttachmentFeatureFlag {
     /// Local device storage: always true — images are stored in Application Support.
     static let localStorageEnabled: Bool = true
 
-    /// Remote upload to backend: false until the backend endpoint is confirmed.
+    /// Remote upload to backend: false until Slice D wires the Reservation Detail UI.
     static let remoteUploadEnabled: Bool = false
 
     /// Apple Vision OCR text extraction from attached images.
