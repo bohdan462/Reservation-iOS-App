@@ -14,23 +14,38 @@
 ## Safe invariants (must stay true)
 
 1. Normal refresh never calls `POST /import`
-2. `isBackendConfirmEmailEnabled == false` in production restaurant test build (unless explicitly changed)
+2. `EmailAutomationSettings.backendConfirmationEnabled` defaults to **`true`** in code (`EmailAutomationSettings.swift`). Production pilot may disable it per device in Restaurant Settings → **This Device Email** — do not document Mail-only as the invariant default.
 3. Local model never PATCHes reservations
 4. Activity history — iOS never POSTs activity events
 5. Reservation attachments — `AttachmentFeatureFlag.remoteUploadEnabled` is **true** (Slice D `d947721`; Slice E polish `9d2784d`); normal reservation refresh must not auto-download attachment bytes; live cross-device verification still open
 
-## Confirmation test (current MVP)
+## Confirmation test
 
-**Do not** test “Confirm Only = PATCH only”. Current flow:
+**Both paths exist.** Active behavior depends on `EmailAutomationSettings.backendConfirmationEnabled` (code default **`true`**). See [RESERVATION_WORKFLOWS.md](./RESERVATION_WORKFLOWS.md) for full flow — do not assume Mail-first without checking device settings.
 
-1. Open reservation with email in **new** or **needs_review**
-2. Tap Confirm
-3. **Expect:** Mail composer with styled HTML (not immediate status change)
-4. Send mail (or cancel)
-5. On send: reservation becomes **confirmed**; `manual-email-log` recorded
-6. Without email: immediate PATCH confirmed + message “without email”
+### Path A — Backend confirmation (default when `backendConfirmationEnabled` is on)
 
-**Traces:** `ConfirmFlowTrace` in DEBUG console
+1. More → Restaurant Settings → confirm **This Device Email** has backend confirmation **enabled** (default).
+2. Open reservation with email in **new** or **needs_review**.
+3. Tap **Confirm & Send** (wording may vary).
+4. **Expect:** `POST /managed-reservations/{id}/confirm` via backend/provider — **no** Mail composer.
+5. With usable guest email: status becomes **confirmed** after backend send success.
+6. Without email: immediate PATCH confirmed + message “without email”.
+7. **Traces:** `ConfirmFlowTrace` in DEBUG console.
+
+**Device verification open** — do not claim production-verified until live tests pass.
+
+### Path B — Manual Mail (when backend confirmation is disabled on device)
+
+1. Restaurant Settings → disable backend confirmation (or use a device already configured Mail-first).
+2. Open reservation with email in **new** or **needs_review**.
+3. Tap **Confirm**.
+4. **Expect:** Mail composer with styled HTML (not immediate status change).
+5. On send: reservation becomes **confirmed**; `manual-email-log` recorded.
+6. Without email: immediate PATCH confirmed + message “without email”.
+7. **Traces:** `ConfirmFlowTrace` in DEBUG console.
+
+**Do not** test “Confirm Only = PATCH only” — that is not the current primary flow when backend confirmation is enabled.
 
 ## Shift reminders test
 
