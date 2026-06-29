@@ -6,83 +6,62 @@
 
 **Audience:** GPT-5.5 Agent (backend/iOS), Composer 2.5 (audit/docs), Bohdan (deploy/device test).
 
-**Status:** Backend **deployed and production-smoked** (plugin **0.5.5**, DB **1.12.0**, backend `a2422d3`). iOS **Slice C** at `17a0bee` (DTO/API/cache). iOS **Slice D** at `d947721` (Detail shared list/upload/download/delete). iOS **Slice E** at `9d2784d` (attachment management UI polish). `AttachmentFeatureFlag.remoteUploadEnabled` is **true**. Build **11** tracked (`eed6530`); **already submitted to TestFlight** — next upload should be **build 12**. **Live/cross-device verification still open** — do not claim passed. **Next practical step:** live verification checklist + TestFlight build 12 prep (not new attachment backend work).
+**Status:** Backend **deployed and production-smoked** (plugin **0.5.5**, DB **1.12.0**, backend `a2422d3`). iOS **Slice C** at `17a0bee` (DTO/API/cache). iOS **Slice D** at `d947721` (Detail shared list/upload/download/delete). iOS **Slice E** at `9d2784d` (attachment management UI polish). `AttachmentFeatureFlag.remoteUploadEnabled` is **true**. Build **12** tracked (`f2e9be0`). **Live/cross-device verification still open** — do not claim passed. **Next practical step:** live verification checklist (§9) + TestFlight build 12 upload — **not** new attachment backend or Slice C/D/E implementation.
 
 ---
 
-## 1. Current state (2026-06-26)
+## 1. Current shipped state (2026-06-28)
 
 ### Repo / backend baseline
 
 | Area | State |
 |------|--------|
 | Root branch | `audit-current-state` |
-| Root HEAD (docs) | `401390e` — Update docs after device smoke Phases 1–4 |
+| Root HEAD | `f2e9be0` — Track build 12 project settings |
 | Backend branch | `AI` |
-| Backend HEAD | `63d0cfc` — **deployed** |
-| Backend lookup | `1431a06` — **deployed** |
-| Device smoke Phases 1–4 | Code landed; **physical verification still open** separately |
+| Backend HEAD (root pointer) | `a2422d3` — **deployed**, production-smoked |
+| Plugin / DB | **0.5.5** / **1.12.0** — contract in [Backend README](../Backend/tryzub-reservations-api/README.md) |
+| Device smoke Phases 1–4 | Code landed; **physical verification still open** |
 
-### What exists today (iOS — local only)
+### What is shipped (iOS + backend)
 
-Reservation Detail already has an **Attachments** section (`ReservationDetailView.swift`). It is **not backend-synced** and **must not be treated as operational source of truth** for multi-device staff ops.
+Reservation Detail **shared attachments** are **remote-backed** when staff credentials and a reservation id are present:
 
-**Existing local features:**
+| Layer | Behavior |
+|-------|----------|
+| Backend | Source of truth for metadata + private file storage (`tryzub_reservation_attachments`, staff-auth routes — see Backend README) |
+| iOS network | List / upload / PATCH / delete / download content via `ReservationsAPIClient` — **detail-scoped only** |
+| Feature flag | `AttachmentFeatureFlag.remoteUploadEnabled` = **`true`** (gated at runtime by reservation id + credentials in Detail) |
+| SwiftData | `ReservationAttachmentRecord` with remote fields (`remoteID`, sync state, server timestamps) — **no image blobs** |
+| Disk cache | `AttachmentFileStore` — bytes downloaded on demand |
+| OCR | On-device advisory only; **not** synced operational truth |
+| Guest routes | Self-service **does not** expose attachments |
 
-| Feature | Implementation |
-|---------|----------------|
-| Add image | `PhotosPicker` (photo library, images only) |
-| Local JPEG cache | `AttachmentFileStore` — resize max 1920px, JPEG 0.85, `Application Support/attachments/` |
-| Thumbnail row | `AttachmentRow` + lazy thumbnail generation |
-| Full-screen preview | `AttachmentPreviewScreen` |
-| Delete | Swipe delete — removes local file + SwiftData row |
-| Label at save | `AttachmentLabel` enum via confirmation dialog |
-| Local OCR signals | `AttachmentOCRService` (Apple Vision) → `extractedText` on record |
-| Intelligence signals | `AttachmentSignalAnalyzer` — label + OCR → `ReservationSignal` (on-device) |
+**Key iOS files:**
 
-**Key iOS files (read-only reference for audit):**
+- `Features/ServiceIntelligence/Models/ReservationAttachment.swift` — labels, `AttachmentFeatureFlag`
+- `Persistence/ReservationAttachmentRecord.swift` — metadata + remote upsert helper
+- `Persistence/AttachmentFileStore.swift` — local byte cache
+- `Features/Reservations/ReservationDetailView.swift` — shared attachment UI (Slices D + E)
 
-- `Features/ServiceIntelligence/Models/ReservationAttachment.swift` — labels, feature flags, documented future API
-- `Persistence/ReservationAttachmentRecord.swift` — SwiftData metadata
-- `Persistence/AttachmentFileStore.swift` — disk I/O
-- `Features/Reservations/ReservationDetailView.swift` — UI
-- `AttachmentFeatureFlag.remoteUploadEnabled = true` (gated at runtime by reservation id + staff credentials in Detail)
+Normal reservation active-window refresh **must not** auto-download attachment bytes or call `POST /managed-reservations/import`.
 
-**Data model today:**
+### Pre-sync legacy (historical only)
 
-- Metadata: `ReservationAttachmentRecord` in SwiftData (keyed by `reservationRemoteID`)
-- Binaries: JPEG files on disk — **not** in SwiftData, **not** in `ReservationRecord`
-- IDs: local `"res-{reservationRemoteID}-{uuid}"` — **no server attachment id**
+Attachments saved **before Slice D** may remain **local-only on the original device** — they were **not** auto-uploaded. Staff should **reattach** important old images if they need shared visibility on other devices.
 
-### What is missing for production (boss requirement)
+### Still open (verification — not implementation)
 
-| Missing | Impact |
-|---------|--------|
-| Backend upload | Images stay on one device |
-| Backend list | Other devices cannot see attachments |
-| Backend delete | Delete on one device does not propagate |
-| Backend content download | Fresh install cannot recover image bytes |
-| Remote attachment IDs | No merge/dedup across devices |
-| Remote tags/captions sync | Label edits do not propagate |
-| Multi-device sync | **Boss requirement not met** |
-| Fresh-install recovery | Reinstall / new device loses local images |
-| Private authenticated serving | N/A until backend exists |
-| Share/save/export UI | Not implemented (future iOS polish) |
-| Edit label after save | Not implemented |
-| Caption UI | Model has `note`; UI unused |
-
-### Backend today
-
-- **No** `tryzub_reservation_attachments` table
-- **No** attachment REST routes
-- **No** multipart upload handler
-- **No** private file storage wired for reservations
-- Activity log defines `attachment_added` / `attachment_removed` event types in `reservation-activity.php` but **nothing logs them yet**
-- Guest self-service routes do **not** expose attachments (safe by absence)
+| Item | Status |
+|------|--------|
+| Live/cross-device checklist (§9) | **Open** — device verification required |
+| TestFlight build 12 upload | Release ops — build 12 tracked in project |
+| Slice F — intelligence packet labels | Not started |
+| Upload/list race duplicate rows | Fix only if observed during verify |
 
 ### Verdict
 
-**Partially implemented, local-only, unsafe for multi-device operational use.** Staff may believe deposit/banquet photos are “on the reservation”; they exist **only on the device that attached them**.
+**Implemented in code; not production-verified until §9 checklist passes on physical devices.** Agents must **not** re-implement Slices C/D/E. Do **not** treat pre-sync local-only rows as multi-device operational truth.
 
 ---
 
@@ -130,7 +109,7 @@ Reservation Detail already has an **Attachments** section (`ReservationDetailVie
     {attachment_id}.jpg
 ```
 
-Or equivalent **plugin-controlled private directory** under uploads (exact path documented in backend README when implemented).
+Or equivalent **plugin-controlled private directory** under uploads (exact path documented in [Backend README](../Backend/tryzub-reservations-api/README.md)).
 
 ### Requirements
 
@@ -231,9 +210,11 @@ Base: `/wp-json/tryzub/v1`
 
 ---
 
-## 6. iOS contract (future slices — not started)
+## 6. iOS contract (implemented — Slices C–E)
 
-### API surface (extend existing `ReservationsAPIClient`)
+**Status:** **Done in code** at `17a0bee` / `d947721` / `9d2784d`. Do **not** re-implement. See §8 for commit references.
+
+### API surface (`ReservationsAPIClient`)
 
 - `listAttachments(reservationID:)`
 - `uploadAttachment(reservationID: imageData: label: caption:)`
@@ -262,13 +243,12 @@ Add remote fields; **do not store image bytes in SwiftData.**
 
 Keep `AttachmentFileStore` as **local cache only**.
 
-### UI behavior (Slice D)
+### UI behavior (Slice D + E — shipped)
 
-- Reservation Detail **fetches attachment list on open** (and after upload/delete).
-- Show upload progress / error states.
-- Enable label/caption edit → PATCH.
-- Fresh install: list from backend → download content on demand (thumbnail first optional).
-- Flip `AttachmentFeatureFlag.remoteUploadEnabled` only after backend deployed.
+- Reservation Detail **fetches attachment list on open** (and after upload/delete/manual refresh).
+- Upload progress / error states; manage sheet; label + note edit (shared PATCH); fit-to-screen preview; manage delete.
+- Fresh install: list from backend → download content on demand.
+- `AttachmentFeatureFlag.remoteUploadEnabled` is **`true`** when Detail gates allow (reservation id + credentials).
 
 ### Local OCR (existing)
 
@@ -335,7 +315,7 @@ Keep `AttachmentFileStore` as **local cache only**.
 | **Goal** | Network client, DTOs, sync merge into `ReservationAttachmentRecord`, disk cache download |
 | **iOS files** | `Network/ReservationsAPIClient*.swift`, new DTO, `ReservationAttachmentRecord.swift`, `AttachmentFileStore` (no second client) |
 | **Do not touch** | Reservation Detail UI beyond wiring flags; Host/Bookings rows |
-| **Acceptance** | Device + Simulator builds pass; API methods exist; `remoteUploadEnabled` still **false**; no Detail remote wiring |
+| **Acceptance** | Device + Simulator builds pass; API methods exist; `remoteUploadEnabled` **true** in code; Detail remote wiring in Slice D |
 | **Commit** | `17a0bee` — Add reservation attachment iOS sync foundation |
 
 ### Slice D — Reservation Detail UI sync
@@ -358,7 +338,7 @@ Keep `AttachmentFileStore` as **local cache only**.
 | **iOS files** | `ReservationDetailView.swift` |
 | **Acceptance** | UUID/original filenames hidden from default row UI; shared edit calls backend PATCH; local-only edit stays local; `deletedRemote` skipped by note signals; builds pass |
 | **Commit** | `9d2784d` — Polish reservation attachment management UI |
-| **Notes** | Save to Photos supported (build 11 adds `NSPhotoLibraryAddUsageDescription`). Old pre-sync local-only attachments remain device-only — staff should **reattach** if shared visibility needed. |
+| **Notes** | Save to Photos supported (build 12 adds `NSPhotoLibraryAddUsageDescription`). Old pre-sync local-only attachments remain device-only — staff should **reattach** if shared visibility needed. |
 
 ### Live verification — cross-device checklist (open)
 
@@ -429,20 +409,18 @@ Keep `AttachmentFileStore` as **local cache only**.
 7. **No Apple image summarization in V1.**
 8. **No PDF support in V1** unless Bohdan explicitly expands scope.
 9. **No LLM/OCR auto-tags** — staff labels only for truth; OCR local advisory until explicit future design.
-10. **Do not start iOS sync (Slice C+)** until backend Slice A+B deployed and contract audited.
+10. **Slices A–E are shipped** — do **not** re-implement iOS sync or backend attachment routes unless a verified regression is found.
 
 ---
 
-## 11. Agent order
+## 11. Agent order (verification only)
 
-1. **Composer audit** of this doc (done before first commit).
-2. **GPT-5.5 Agent — Backend Slice A only** on `AI` from `63d0cfc`.
-3. **Deploy + Slice B manual tests.**
-4. **Composer audit** backend diff.
-5. **GPT-5.5 Agent — iOS Slice C**, then **D**, then **E** verification fixes.
-6. **Slice F** when product wants intelligence packet inclusion.
+Slices A–E are **done**. Agents must **not** re-implement attachment sync.
 
-**Do not** parallel iOS sync with backend Slice A unless Bohdan explicitly accepts contract risk.
+1. Run §9 **live/cross-device checklist** on physical devices (device verification open).
+2. Fix-only PRs if checklist finds regressions (upload/list race, auth, delete propagation).
+3. **Slice F** only when product explicitly requests intelligence packet label inclusion.
+4. Backend contract changes → edit [Backend README](../Backend/tryzub-reservations-api/README.md) first, not this file’s route tables.
 
 ---
 
@@ -452,4 +430,4 @@ Keep `AttachmentFileStore` as **local cache only**.
 
 ---
 
-*Created: 2026-06-26. Align with root docs `401390e`, backend `63d0cfc` deployed, backend lookup `1431a06` deployed.*
+*Created: 2026-06-26. Updated: 2026-06-28. Align with root `f2e9be0`, backend pointer `a2422d3`, iOS Slices C–E shipped. Live device verification still open.*
