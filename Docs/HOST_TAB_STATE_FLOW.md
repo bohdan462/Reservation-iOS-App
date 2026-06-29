@@ -193,7 +193,7 @@ HostBoardView.makeHostEngineInput(now: clockTick)
 - reservation + seated stamps
 - floor layout fingerprint + effective table assignments
 - guest intelligence cache stamp
-- operational minute stamp (today only)
+- `hostBoardSnapshotTimingRefreshStamp` (conditional operational minute on today only)
 
 **Local model:** opt-in via `HostIntelligenceSettingsStore` — does not own date state.
 

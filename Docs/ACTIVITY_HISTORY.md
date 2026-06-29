@@ -96,6 +96,7 @@ Reservations untouched before backend 1.7.0 deploy have **no history** until the
 
 ## Related docs
 
-- `Docs/PROJECT_MAP.md` — endpoint table, fetch timing
-- `Docs/IOS_ADMIN_TESTING.md` — manual verification checklist
-- `Docs/refactor.md` — ownership map
+- [DOCS_INDEX.md](./DOCS_INDEX.md) — start here for current documentation
+- [IOS_LIFECYCLE_AND_SYNC.md](./IOS_LIFECYCLE_AND_SYNC.md) — endpoint fetch timing, active-window refresh
+- [DIAGNOSTICS_AND_TESTING.md](./DIAGNOSTICS_AND_TESTING.md) — manual verification checklist
+- [refactor.md](./refactor.md) — ownership map

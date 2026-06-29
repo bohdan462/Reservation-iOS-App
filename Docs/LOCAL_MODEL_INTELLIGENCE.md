@@ -85,7 +85,7 @@ Packet excludes raw guest notes, staff notes, email, phone, backend JSON, eviden
 ### Table context in drafts
 
 - Packet may include `tableName` and party size flags when safe
-- Table layout truth comes from **backend floor plan** when loaded; local `HostTableConfigStore` is advisory fallback only (see `Docs/TABLE_CONFIGURATION.md`)
+- Table layout truth comes from **backend floor plan** when loaded; local `HostTableConfigStore` is advisory fallback only (see `Docs/FLOOR_PLAN_AND_TABLES.md`)
 
 ## Readiness & packaging
 
