@@ -64,12 +64,18 @@ Built in `.task(id: boardSnapshotBuildKey)` from current `reservations`, `select
 ```
 selectedDateKey
 + hostIntelligenceReservationStamp (reservation ids/status/tables)
-+ hostIntelligenceOperationalMinuteStamp ("op-minute-*" on today, "future-day" otherwise)
++ hostBoardSnapshotTimingRefreshStamp (conditional minute refresh — see below)
 + hostTableConfigStore.tableConfigFingerprint
 + floorPlanStore.layoutFingerprint(for: selectedDateKey)
 ```
 
-Task re-runs when date or reservation data changes.
+**`hostBoardSnapshotTimingRefreshStamp`** (`HostBoardView`, `71601fc`):
+
+- Non-today dates → `"snapshot-time-stable"` (no per-minute rebuild).
+- Today with **no** time-sensitive rows (seated, or new/confirmed/needs_review within 90 minutes) → `"snapshot-time-stable"`.
+- Today with time-sensitive rows → `hostIntelligenceOperationalMinuteStamp` (`"op-minute-*"`).
+
+Task re-runs when date, reservation data, table config, floor layout, or the timing stamp changes.
 
 ### Snapshot preservation (why it exists)
 

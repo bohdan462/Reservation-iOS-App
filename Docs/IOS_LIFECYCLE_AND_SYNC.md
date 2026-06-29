@@ -99,7 +99,7 @@ Blocked when: mutation in flight, `isSyncing`, interaction active (sheets).
 
 **Foreground / privacy unlock (`b910bd1`):** `ReservationsListView` calls `autoRefreshDashboardIfAllowed` when app becomes active or privacy cover dismisses — same active-window path as loops above.
 
-**Host status UI:** `HomeServiceStatusPresenter` already shows Updated / Checked / Saved data / offline state. Do not add a second stale-warning layer without device-proven gap.
+**Host status UI:** `HomeServiceStatusPresenter` already shows **Last sync** / **Checked** / Saved data / offline state (not “Updated”). Do not add a second stale-warning layer without device-proven gap.
 
 **Asymmetry risk:** Bookings auto-syncs on past dates; Host does not. See OPEN_WORK P1-1.
 
