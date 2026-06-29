@@ -1,5 +1,7 @@
 # Tryzub Reservations — Architecture Diagrams
 
+> **ARCHIVE / UNSAFE FOR IMPLEMENTATION.** Do not code from this file. Use [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) and [DOCS_INDEX.md](./DOCS_INDEX.md) first.
+
 > **Diagram reference only. Verify against [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md), [IOS_ARCHITECTURE.md](./IOS_ARCHITECTURE.md), and current code.**
 
 > **UPDATE_REQUIRED:** Audit sections (§13–16) may be stale. Prefer [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) and [IOS_ARCHITECTURE.md](./IOS_ARCHITECTURE.md) for current behavior. Branch `audit-current-state`, 2026-06-14.

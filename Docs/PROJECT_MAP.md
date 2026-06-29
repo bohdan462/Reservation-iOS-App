@@ -1,5 +1,7 @@
 # Tryzub Reservations — Project Map
 
+> **ARCHIVE / UNSAFE FOR IMPLEMENTATION.** Do not code from this file. Use [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) and [DOCS_INDEX.md](./DOCS_INDEX.md) first.
+
 > **Reference index only. Not source of truth. Start with [DOCS_INDEX.md](./DOCS_INDEX.md) and [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md).**
 
 > **Audit:** `audit-current-state` (2026-06-14) — see [DOCS_INDEX.md](./DOCS_INDEX.md). Confirm flow and shift reminders sections here may be stale; prefer [RESERVATION_WORKFLOWS.md](./RESERVATION_WORKFLOWS.md).
