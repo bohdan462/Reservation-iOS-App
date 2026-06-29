@@ -45,8 +45,8 @@ Latest known **pushed** state:
 | Backend branch | `AI` |
 | Backend HEAD | `a2422d3` — Add private reservation attachment backend |
 | Root branch | `audit-current-state` |
-| Root HEAD | `eed6530` — build 11 project settings; Slice E polish at `9d2784d` |
-| Remote | `origin/audit-current-state` @ `eed6530` |
+| Root HEAD | `f2e9be0` — build 12 project settings; Slice E polish at `9d2784d` |
+| Remote | `origin/audit-current-state` — push after doc sync |
 | Backend guest person-map Slice 2 lookup | `1431a06` (backend), `b1a09e7` (root pointer); **deployed** to WordPress |
 | Backend guest person-map Slice 3M-B unknown walk-in | `63d0cfc` (backend), `c7f5a69` (root pointer); **deployed** to WordPress |
 | iOS guest person-map Slice 3A lookup foundation | `823f42c` |
@@ -127,7 +127,7 @@ git submodule status
 
 ### Reservation attachments (iOS Slice E done — live verification next)
 
-31. **Reservation attachments** — Backend **deployed + production-smoked** (`a2422d3`). iOS **Slice C** `17a0bee`; **Slice D** `d947721`; **Slice E** `9d2784d` (management UI polish). `remoteUploadEnabled` **true**. Build **11** tracked (`eed6530`); TestFlight build 11 submitted — next **build 12**. **Live/cross-device verification not fully passed/recorded.** Old pre-sync local-only attachments may need reattach. See [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next:** live verification checklist.
+31. **Reservation attachments** — Backend **deployed + production-smoked** (`a2422d3`). iOS **Slice C** `17a0bee`; **Slice D** `d947721`; **Slice E** `9d2784d` (management UI polish). `remoteUploadEnabled` **true**. Build **12** tracked (`f2e9be0`); TestFlight build 12 upload pending. **Live/cross-device verification not fully passed/recorded.** Old pre-sync local-only attachments may need reattach. See [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next:** live verification checklist.
 
 ### Before broader product release (not V1 stabilization blocker)
 
@@ -295,4 +295,4 @@ zip -r tryzub-reservations-api.zip tryzub-reservations-api \
 
 ---
 
-*Last aligned: 2026-06-26 (iOS attachment Slice E at `9d2784d`; build 11 tracked; live verification open; device smoke verification still open). Update when repo HEAD or verification status changes materially.*
+*Last aligned: 2026-06-28 (build 12 tracked at `f2e9be0`; attachment live verification open; device smoke verification still open). Update when repo HEAD or verification status changes materially.*

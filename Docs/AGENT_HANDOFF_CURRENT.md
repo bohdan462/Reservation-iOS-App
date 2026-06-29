@@ -10,13 +10,13 @@ V1 stabilization + reservation attachments (iOS Slice E done; live verification 
 
 ---
 
-## Git state (2026-06-26)
+## Git state (2026-06-28)
 
 | Location | State |
 |----------|--------|
 | **Root branch** | `audit-current-state` |
-| **Root HEAD** | `eed6530` — Track build 11 project settings |
-| **Root vs remote** | Pushed to `origin/audit-current-state` at `eed6530` |
+| **Root HEAD** | `f2e9be0` — Track build 12 project settings |
+| **Root vs remote** | Push `origin/audit-current-state` after doc sync |
 | **Backend submodule pointer** | `a2422d3` — Add private reservation attachment backend |
 | **Backend branch** | `AI` |
 | **Backend HEAD** | `a2422d3` |
@@ -24,6 +24,8 @@ V1 stabilization + reservation attachments (iOS Slice E done; live verification 
 
 **Recent root commits (newest first):**
 
+- `f2e9be0` — Track build 12 project settings
+- `cd842c3` — Document reservation attachment management polish
 - `eed6530` — Track build 11 project settings
 - `9d2784d` — Polish reservation attachment management UI
 - `d947721` — Wire reservation detail shared attachments
@@ -78,7 +80,7 @@ V1 stabilization + reservation attachments (iOS Slice E done; live verification 
 
 **Stabilization still open** (physical device verification + release smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R/3M-B/3M**, **Manual Intake input polish**, **device smoke code Phases 1–4**, and **Tryzub V1 Host production polish** are shipped in code. **Current focus:** physical device verification + release smoke — see [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10. **Slice 3D/3E parked** until smoke verification is accepted or Bohdan resumes.
 
-**Reservation attachments (boss request):** Backend **deployed and production-smoked** (`a2422d3`, plugin **0.5.5**, DB **1.12.0**). iOS **Slice C** at `17a0bee` (DTO/API/cache). iOS **Slice D** at `d947721` (Detail shared list/upload/download/delete). iOS **Slice E** at `9d2784d` (management UI polish: staff-friendly rows, manage sheet, tag/note edit, fit-to-screen preview, manage delete, shared PATCH). `AttachmentFeatureFlag.remoteUploadEnabled` **true**; API calls detail-scoped only. Build **11** tracked (`eed6530`); **TestFlight build 11 already submitted** — next upload **build 12**. **Live/cross-device verification not run** — do not claim passed. Old pre-sync local-only attachments may remain device-local; staff should reattach important old images for shared visibility. Full plan: [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next:** live verification checklist — do not change backend unless a real API bug is found. Physical device smoke remains a separate open track.
+**Reservation attachments (boss request):** Backend **deployed and production-smoked** (`a2422d3`, plugin **0.5.5**, DB **1.12.0**). iOS **Slice C** at `17a0bee` (DTO/API/cache). iOS **Slice D** at `d947721` (Detail shared list/upload/download/delete). iOS **Slice E** at `9d2784d` (management UI polish: staff-friendly rows, manage sheet, tag/note edit, fit-to-screen preview, manage delete, shared PATCH). `AttachmentFeatureFlag.remoteUploadEnabled` **true**; API calls detail-scoped only. Build **12** tracked (`f2e9be0`). **TestFlight build 12 upload pending** — build 11 already submitted. **Live/cross-device verification not run** — do not claim passed. Old pre-sync local-only attachments may remain device-local; staff should reattach important old images for shared visibility. Full plan: [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next:** live verification checklist — do not change backend unless a real API bug is found. Physical device smoke remains a separate open track.
 
 **Guest Person Map target:** one shared **Guest history** destination by `guestKey` (`GuestProfileDetailView`). Wiring status:
 

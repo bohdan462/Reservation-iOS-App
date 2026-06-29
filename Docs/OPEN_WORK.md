@@ -1,8 +1,8 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `eed6530` (iOS attachment Slice E polish; live verification next)  
-**Last reviewed:** 2026-06-26  
+**Root HEAD:** `f2e9be0` (build 12 tracked; attachment live verification open)  
+**Last reviewed:** 2026-06-28  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
 **Priority order:** [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) owns what to do next. This file tracks backlog items and implementation status. Production/device verification remains open even when code is implemented.
@@ -43,11 +43,11 @@ Checklist: [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md
 | **iOS Slice D** | **Done** — `d947721` (Detail shared list/upload/download/delete) |
 | **iOS Slice E** | **Done** — `9d2784d` (management UI polish: rows, manage sheet, edit, preview, delete) |
 | **`remoteUploadEnabled`** | **true** — gated at runtime by reservation id + staff credentials |
-| **Build** | **11** tracked (`eed6530`); TestFlight build 11 submitted — next upload **build 12** |
+| **Build** | **12** tracked (`f2e9be0`); TestFlight build 12 upload pending (build 11 already submitted) |
 | **Live verification** | **Open** — cross-device / fresh-install workflow not fully passed/recorded |
 | **Old local-only attachments** | Pre-sync images may remain on original device only; staff should **reattach** for shared visibility |
 
-**Next step:** Live/cross-device attachment verification checklist + TestFlight build 12 prep — not new backend work.
+**Next step:** Live/cross-device attachment verification checklist + TestFlight build 12 upload — not new backend work.
 
 Every item includes risk, files, approach, acceptance test, and classification.
 
