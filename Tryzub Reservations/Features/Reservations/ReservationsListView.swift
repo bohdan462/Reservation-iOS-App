@@ -2072,6 +2072,10 @@ private struct ReservationScheduleView: View {
     }
 
     private var activityFeedWarmDateKeys: [String] {
+        if scope == .needsReview {
+            return []
+        }
+
         if dateScope.isSingleDateScope {
             return [bookingsSelectedDateKey]
         }
