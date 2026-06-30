@@ -169,6 +169,12 @@ struct ReservationDetailView: View {
     @StateObject private var guestInsightAnalysisCoordinator = GuestInsightsAnalysisCoordinator()
     @StateObject private var guestCommunicationCoordinator = GuestCommunicationCoordinator.templateOnly()
     @State private var cachedDetailGuestTruthBundle: DetailGuestTruthBundle?
+    /// Cached result of the local SwiftData guest profile lookup.
+    /// Populated once in runDeferredDetailSecondaryWorkIfNeeded; never fetched from body.
+    @State private var cachedLocalGuestProfileRecord: GuestProfileCacheRecord?
+    /// True while the deferred Detail open secondary work task is executing.
+    /// Used to suppress duplicate note signal recomputes from onChange(attachments).
+    @State private var isDetailOpenSecondaryWorkInProgress = false
 
     init(reservation: ReservationRecord, environment: AppEnvironment) {
         self.reservation = reservation
@@ -302,20 +308,24 @@ struct ReservationDetailView: View {
                 ).useLocalModelForGuestMessageDrafts
             }
             guestIntelligenceStore.markDetailOpened(reservationID: reservation.remoteID)
-            recomputeNoteSignals()
             logNotesSemantics()
-            autoSeedStructuredNoteFromSignals()
-            // Schedule OCR for any existing attachments that haven't been scanned yet.
-            if AttachmentFeatureFlag.ocrEnabled {
-                for attachment in attachments where attachment.ocrRanAt == nil && attachment.cachedImageFilename != nil {
-                    scheduleOCR(for: attachment)
-                }
-            }
-            refreshSharedAttachmentsIfNeeded()
+            // Note signals, OCR, and attachment refresh are deferred via .task(id: reservation.remoteID)
+            // to keep the NavigationStack push animation free of synchronous main-thread work.
+        }
+        .task(id: reservation.remoteID) {
+            await runDeferredDetailSecondaryWorkIfNeeded()
         }
         .onChange(of: attachments) { _, _ in
             // Re-run signal analysis when attachments change (new attachment saved,
             // OCR completes and writes extractedText, or attachment deleted).
+            // Skip during deferred open secondary work — that task already runs recomputeNoteSignals
+            // and will call it once more after the attachment refresh completes.
+            guard !isDetailOpenSecondaryWorkInProgress else {
+                #if DEBUG
+                print("[DETAIL_OPEN_GATE_TRACE] work=noteSignals decision=skip reason=already_scheduled")
+                #endif
+                return
+            }
             recomputeNoteSignals()
         }
         .confirmationDialog("Label this photo", isPresented: $showLabelPicker, titleVisibility: .visible) {
@@ -496,10 +506,7 @@ struct ReservationDetailView: View {
             )
         }
         .task(id: guestInsightCacheKey) {
-            guestInsightAnalysisCoordinator.scheduleAnalysis(
-                selected: reservation,
-                pool: guestInsightHistoryPool
-            )
+            await runDeferredGuestInsightAnalysisIfNeeded()
         }
         .task(id: guestIntelligenceFetchKey) {
             if await guestProfileStore.loadProfile(byReservationID: reservation.remoteID) == nil {
@@ -1049,6 +1056,113 @@ struct ReservationDetailView: View {
         var line = "[LOCAL_MODEL_GATE_TRACE] task=noteAnalysis decision=\(decision) reason=\(reason)"
         if let delay {
             line += " delayMs=\(max(0, Int(delay * 1000)))"
+        }
+        print(line)
+        #endif
+    }
+
+    // MARK: - Detail Open Gate
+
+    /// Defers Detail secondary open work (note signals, OCR, attachment refresh) until after the
+    /// NavigationStack push animation. Uses the same idle-gate pattern as the local model note gate,
+    /// but caps the delay at 500 ms so note signals appear promptly after navigation settles.
+    @MainActor
+    private func runDeferredDetailSecondaryWorkIfNeeded() async {
+        let capturedID = reservation.remoteID
+
+        // Yield first to let SwiftUI commit the first paint.
+        await Task.yield()
+        guard !Task.isCancelled else { return }
+
+        // Cap the idle-gate delay at 500 ms — enough to clear the push animation,
+        // but not the full 3-second staff-idle window used by the model enrichment gate.
+        let lastInteractionAt = controller.lastStaffInteractionAt
+        let remaining = StaffInteractionIdleGate.remainingDelay(since: lastInteractionAt)
+        let delay = min(remaining, 0.5)
+        if delay > 0.01 {
+            traceDetailOpenGate(work: "secondary", decision: "defer", reason: "user_active", delayMs: Int(delay * 1000))
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, reservation.remoteID == capturedID else { return }
+        } else {
+            traceDetailOpenGate(work: "secondary", decision: "run", reason: "idle")
+        }
+
+        isDetailOpenSecondaryWorkInProgress = true
+        defer { isDetailOpenSecondaryWorkInProgress = false }
+
+        // Populate the local guest profile cache record so body reads it from @State,
+        // never calling GuestProfileRepository().matchProfile from a computed property.
+        if cachedLocalGuestProfileRecord == nil {
+            cachedLocalGuestProfileRecord = try? GuestProfileRepository().matchProfile(
+                for: reservation, context: modelContext
+            )
+        }
+
+        // Run deterministic note signal analysis (note text + existing attachments).
+        recomputeNoteSignals()
+
+        // Auto-seed structured note from signal results (runs at most once per reservation).
+        autoSeedStructuredNoteFromSignals()
+
+        guard !Task.isCancelled, reservation.remoteID == capturedID else { return }
+
+        // Schedule OCR for any existing attachments not yet scanned.
+        if AttachmentFeatureFlag.ocrEnabled {
+            for attachment in attachments where attachment.ocrRanAt == nil && attachment.cachedImageFilename != nil {
+                scheduleOCR(for: attachment)
+            }
+        }
+
+        // Fetch shared attachment metadata. If new remote attachments arrive, onChange(attachments)
+        // will fire for genuine data changes but is suppressed during this window (isDetailOpenSecondaryWorkInProgress).
+        // refreshSharedAttachments calls recomputeNoteSignals once it finishes with the new data.
+        refreshSharedAttachmentsIfNeeded()
+    }
+
+    /// Defers local guest insight snapshot analysis until after the navigation push animation.
+    /// Uses the same capped 500 ms idle-gate as the secondary open work gate.
+    @MainActor
+    private func runDeferredGuestInsightAnalysisIfNeeded() async {
+        let capturedKey = guestInsightCacheKey
+
+        await Task.yield()
+        guard !Task.isCancelled else { return }
+
+        let lastInteractionAt = controller.lastStaffInteractionAt
+        let remaining = StaffInteractionIdleGate.remainingDelay(since: lastInteractionAt)
+        let delay = min(remaining, 0.5)
+        if delay > 0.01 {
+            traceDetailOpenGate(work: "guestInsights", decision: "defer", reason: "user_active", delayMs: Int(delay * 1000))
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, guestInsightCacheKey == capturedKey else { return }
+        } else {
+            traceDetailOpenGate(work: "guestInsights", decision: "run", reason: "idle")
+        }
+
+        guestInsightAnalysisCoordinator.scheduleAnalysis(
+            selected: reservation,
+            pool: guestInsightHistoryPool
+        )
+    }
+
+    private func traceDetailOpenGate(
+        work: String,
+        decision: String,
+        reason: String,
+        delayMs: Int? = nil
+    ) {
+        #if DEBUG
+        var line = "[DETAIL_OPEN_GATE_TRACE] work=\(work) decision=\(decision) reason=\(reason)"
+        if let delayMs {
+            line += " delayMs=\(delayMs)"
         }
         print(line)
         #endif
@@ -2015,7 +2129,9 @@ struct ReservationDetailView: View {
     }
 
     private var cachedGuestProfileCacheRecord: GuestProfileCacheRecord? {
-        try? GuestProfileRepository().matchProfile(for: reservation, context: modelContext)
+        // Reads @State populated by runDeferredDetailSecondaryWorkIfNeeded.
+        // GuestProfileRepository().matchProfile is never called from body/computed paths.
+        cachedLocalGuestProfileRecord
     }
 
     private func guestDetailInsightPresentation(
