@@ -33,6 +33,9 @@ final class HostIntelligenceController: ObservableObject {
   @Published private(set) var renderState: HostIntelligenceRenderState = .evaluating
   @Published private(set) var localEvaluationComplete = false
   @Published private(set) var isEnrichmentLoading = false
+  /// LOCAL-FIRST-OPS-4A — unified per-date staff intelligence snapshot.
+  /// Populated by updateServiceIntelligenceSnapshot(_:); never built in body.
+  @Published private(set) var serviceIntelligenceSnapshot: HostServiceIntelligenceSnapshot = .empty
 
   let settingsStore: HostIntelligenceSettingsStore
   let tableStore: HostTableConfigStore
@@ -72,6 +75,7 @@ final class HostIntelligenceController: ObservableObject {
   private var lastRetryableBriefingCacheKey: String?
   private var lastRetryableBriefingPacketFingerprint: String?
   private var lastRetryableBriefingSkipReason: HostBriefingHostBoardGate.SkipReason?
+  private var lastServiceIntelSnapshotFingerprint: String = ""
 
   init(
     settingsStore: HostIntelligenceSettingsStore? = nil,
@@ -162,9 +166,28 @@ final class HostIntelligenceController: ObservableObject {
     applyTemplateBriefing(from: .empty, presentation: .empty)
     localEvaluationComplete = false
     isEnrichmentLoading = false
+    serviceIntelligenceSnapshot = .empty
+    lastServiceIntelSnapshotFingerprint = ""
     #if DEBUG
     print("[HOST_CARD_STALE_GUARD_TRACE] event=date_transition_begin from=\(latestSelectedDateKey) to=\(newSelectedDateKey)")
     #endif
+  }
+
+  /// LOCAL-FIRST-OPS-4A — Build or skip unified per-date intelligence snapshot.
+  ///
+  /// Called from HostBoardView.rebuildServiceBriefing() after serviceBriefingState
+  /// is set (so serviceMode is accurate). Skip-gated by FNV-1a fingerprint of all
+  /// meaningful inputs; emits [SERVICE_INTEL_SNAPSHOT_TRACE] on build and skip.
+  func updateServiceIntelligenceSnapshot(_ input: HostServiceIntelligenceSnapshotBuilder.Input) {
+    let fingerprint = HostServiceIntelligenceSnapshotBuilder.inputFingerprint(input)
+    guard fingerprint != lastServiceIntelSnapshotFingerprint else {
+      #if DEBUG
+      print("[SERVICE_INTEL_SNAPSHOT_TRACE] decision=skip reason=fingerprint_unchanged date=\(input.dateKey)")
+      #endif
+      return
+    }
+    lastServiceIntelSnapshotFingerprint = fingerprint
+    serviceIntelligenceSnapshot = HostServiceIntelligenceSnapshotBuilder.build(input)
   }
 
   func evaluate(

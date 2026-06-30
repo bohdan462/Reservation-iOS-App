@@ -49,7 +49,7 @@ struct HostBoardView: View {
     @State private var stableCountByDate: [String: Int] = [:]
     @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var isShowingHostIntelligenceReview = false
-    @State private var showShiftReminders = false
+    @State private var showReminderStats = false
     /// Phase 2: cached deterministic Service Briefing, rebuilt only when inputs change
     /// (selected date, reservations, snapshot, coarse hour bucket) — never from a fetch.
     @State private var serviceBriefingState: HostServiceBriefingViewState?
@@ -73,7 +73,7 @@ struct HostBoardView: View {
     private var hasOpenInteraction: Bool {
         externalInteractionActive
             || pendingAction != nil
-            || showShiftReminders
+            || showReminderStats
             || showBackendReminderConfirmation
     }
 
@@ -83,16 +83,7 @@ struct HostBoardView: View {
     /// Only active edit/create sheets and mutation confirm dialogs block the network call.
     private var hasSyncBlockingInteraction: Bool {
         pendingAction != nil
-            || showShiftReminders
             || showBackendReminderConfirmation
-    }
-
-    private var shiftReminderEligibleReservations: [ReservationRecord] {
-        ShiftReminderEligibility.eligibleReservations(
-            from: allKnownReservations,
-            dateKey: selectedDateKey,
-            isHidden: { hiddenReservations.isHidden($0) }
-        )
     }
 
     private var shouldDeferStartupOptionalLoads: Bool {
@@ -888,12 +879,16 @@ struct HostBoardView: View {
                 controller.refreshHomeServicePresentation(hostOperationalLoading: isLoading)
             }
         }
-        .sheet(isPresented: $showShiftReminders) {
-            ShiftReminderReviewSheet(
-                dateKey: selectedDateKey,
-                reservations: shiftReminderEligibleReservations
+        .sheet(isPresented: $showReminderStats) {
+            HostReminderStatsSheet(
+                context: hostReminderPanelContext,
+                onSend: {
+                    showReminderStats = false
+                    showBackendReminderConfirmation = true
+                }
             )
-            .environmentObject(controller)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -1099,7 +1094,9 @@ struct HostBoardView: View {
             onManualRefresh: onManualRefresh,
             onShowFormProblems: onShowFormProblems,
             onOpenTimeline: nil,
-            onOpenShiftReminders: { showShiftReminders = true },
+            onOpenReminderStats: selectedDateKey == Date.reservationDateString()
+                ? { showReminderStats = true }
+                : nil,
             collapseProgress: hostBoardHeaderCollapse,
             usesInlineDateStrip: usesInlineDateStrip,
             liveHostModeEnabled: $liveHostModeEnabled
@@ -1327,25 +1324,18 @@ struct HostBoardView: View {
                 noTableCount: snapshot.noTableCount,
                 availabilitySummary: availabilitySummaryLine,
                 isAvailabilityLoading: isLoadingAvailabilitySummary,
-                reminderContext: hostReminderPanelContext,
                 isWideLayout: isWideLayout,
                 onRefreshAvailability: selectedDate.reservationDateString() == Date.reservationDateString()
                     ? { controller.ensureAvailabilitySummary(date: selectedDateKey, force: true) }
-                    : nil,
-                onSendReminders: { showBackendReminderConfirmation = true }
+                    : nil
             )
         }
     }
 
     @ViewBuilder
     private func hostRemindersAndIntelligenceSection() -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            hostReminderBatchCard
-                .frame(width: 360, alignment: .topLeading)
-            
-            hostIntelligenceSection
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
+        hostIntelligenceSection
+            .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
@@ -1392,16 +1382,8 @@ struct HostBoardView: View {
                     }
                 )
                 
-                // Reminders + Intelligence in HStack for wide layout
-                HStack(alignment: .top, spacing: 16) {
-                    // Today's Reminders: fixed width around 360
-                    hostReminderBatchCard
-                        .frame(width: 360, alignment: .topLeading)
-                    
-                    // Host Intelligence: flexible width
-                    hostIntelligenceSection
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
+                hostIntelligenceSection
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         } else {
             // iPhone/narrow layout: keep vertical stacking (existing layout)
@@ -1437,31 +1419,8 @@ struct HostBoardView: View {
                     }
                 )
 
-                hostReminderBatchCard
-
                 hostIntelligenceSection
             }
-        }
-    }
-
-    @ViewBuilder
-    private var hostReminderBatchCard: some View {
-        if let context = hostReminderPanelContext {
-            HostReminderBatchCard(
-                status: context.status,
-                notice: context.notice,
-                isSending: context.isSending,
-                showProof: context.showProof,
-                hasEligibleReminders: context.hasEligibleReminders,
-                manualSendEnabled: context.manualSendEnabled,
-                backendManualBatchEnabled: context.backendManualBatchEnabled,
-                automaticRemindersEnabled: context.automaticRemindersEnabled,
-                reminderLeadHours: context.reminderLeadHours,
-                emailUsage: context.emailUsage,
-                dailyEmailLimitReached: context.dailyEmailLimitReached,
-                canSendBatchReminders: context.canSendBatchReminders,
-                onSend: { showBackendReminderConfirmation = true }
-            )
         }
     }
 
@@ -1514,18 +1473,6 @@ struct HostBoardView: View {
         }
 
         return nil
-    }
-
-    private var hostIntelligenceReminderInlineContext: HostIntelligenceReminderInlineContext? {
-        guard let context = hostReminderPanelContext else { return nil }
-        return HostIntelligenceReminderInlineContext(
-            dueCount: context.status?.summary.eligible ?? 0,
-            skippedCount: context.status?.summary.skipped ?? 0,
-            failedCount: context.status?.summary.failed ?? 0,
-            isSending: context.isSending,
-            dailyLimitReached: context.dailyEmailLimitReached,
-            leadHours: context.reminderLeadHours
-        )
     }
 
     /// Stamp for the cached Service Briefing rebuild. Includes the clock minute so
@@ -1600,6 +1547,22 @@ struct HostBoardView: View {
             bookingTopItem = nil
             bookingKnownOnlyNote = ""
         }
+
+        // LOCAL-FIRST-OPS-4A: Build unified per-date intelligence snapshot.
+        // Called here (not in body) so serviceMode is already resolved from state.mode.
+        // Builder is pure/deterministic; skip-gated by fingerprint inside controller.
+        // No UI card changes in this slice — snapshot is proof-wired only.
+        hostIntelligenceController.updateServiceIntelligenceSnapshot(
+            HostServiceIntelligenceSnapshotBuilder.Input(
+                now: clockTick,
+                selectedDate: selectedDate,
+                dateKey: selectedDateKey,
+                serviceMode: state.mode,
+                dayReservations: reservations,
+                snapshot: hostIntelligenceController.decisionSnapshot,
+                largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
+            )
+        )
     }
 
     /// Cache-only deterministic booking-load analysis for the selected date.
@@ -1792,10 +1755,6 @@ struct HostBoardView: View {
 
     private var hostIntelligenceCardPresentationKey: String {
         let snapshot = hostIntelligenceController.displaySnapshot
-        let reminder = hostIntelligenceReminderInlineContext
-        let reminderStamp = reminder.map {
-            "\($0.dueCount)-\($0.skippedCount)-\($0.failedCount)-\($0.isSending)-\($0.dailyLimitReached)-\($0.leadHours)"
-        } ?? "none"
         return [
             selectedDateKey,
             snapshot.llmPacket.briefingFingerprint,
@@ -1805,7 +1764,6 @@ struct HostBoardView: View {
             String(allKnownReservations.count),
             hostIntelligenceController.displayAttentionPresentation.presentationFingerprint,
             HostAttentionStableDigest.hexDigest(hostIntelligenceController.displayBriefingText),
-            reminderStamp,
             String(hostIntelligenceController.settings.useSeparatedBriefingPrompts)
         ].joined(separator: "|")
     }
@@ -1845,7 +1803,7 @@ struct HostBoardView: View {
             snapshot: snapshot,
             reservations: reservations,
             knownReservations: allKnownReservations,
-            reminderContext: hostIntelligenceReminderInlineContext,
+            reminderContext: nil,
             attentionPresentation: hostIntelligenceController.displayAttentionPresentation,
             briefingText: hostIntelligenceController.displayBriefingText,
             usesSeparatedPrompts: hostIntelligenceController.settings.useSeparatedBriefingPrompts,
@@ -2159,7 +2117,7 @@ private struct HomeServiceHeader: View {
     let onManualRefresh: () -> Void
     let onShowFormProblems: () -> Void
     var onOpenTimeline: (() -> Void)? = nil
-    var onOpenShiftReminders: (() -> Void)? = nil
+    var onOpenReminderStats: (() -> Void)? = nil
     var collapseProgress: CGFloat = 0
     /// iPad Host board: title + sync and date chips share one row when horizontal space allows.
     var usesInlineDateStrip: Bool = false
@@ -2407,12 +2365,12 @@ private struct HomeServiceHeader: View {
             .accessibilityValue(liveHostModeEnabled ? "On" : "Off")
 
             Menu {
-                if let onOpenShiftReminders {
+                if let onOpenReminderStats {
                     Button {
                         ReservationHaptics.selection()
-                        onOpenShiftReminders()
+                        onOpenReminderStats()
                     } label: {
-                        Label("Shift reminders", systemImage: "bell.badge")
+                        Label("Reminder stats", systemImage: "bell.badge")
                     }
                 }
 
