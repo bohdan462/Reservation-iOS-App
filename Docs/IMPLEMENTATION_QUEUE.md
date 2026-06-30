@@ -508,6 +508,14 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 | P0-DETAIL-1 — Detail guest truth cache | `84f210c` — smoke-supported; device verification open |
 | P0-LOCALMODEL-1 — Detail note analysis model gate | `4e4c274` — smoke-supported; device verification open |
 | P0-HOST-2A — Host intelligence debounce on date nav | `f2274ee` |
+| P0-HOST-2B — Remove Host inline full-history returning scan | `see handoff` |
+| P0-DETAIL-2 Slice A — Defer Detail secondary work until after first paint | `see handoff` |
+| P0-NAV-1 — Gate underlying Host/Bookings work during reservation navigation | `see handoff` |
+| LIVE-SYNC-1A — Restore foreground active-window delta polling | `see handoff` |
+| LIVE-SYNC-1B — Make foreground root sync the only active-window reservation poll owner | `see handoff` |
+| LOCAL-FIRST-OPS-2A — Gate Host no-op CPU work when fingerprint unchanged | `cf32e95` |
+| LOCAL-FIRST-OPS-2B — Host date-switch stale publish guards | `4d8d101` |
+| LOCAL-FIRST-OPS-3A — Scope Bookings All tab to active-window; cap filter traces | `2a5b81f` |
 
 ---
 
