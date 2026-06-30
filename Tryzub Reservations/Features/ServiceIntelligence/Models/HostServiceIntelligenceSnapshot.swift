@@ -71,6 +71,39 @@ enum ServiceIntelligenceFactCategory: String, Equatable, CaseIterable {
     }
 }
 
+enum ServiceIntelligenceAttachmentCategory: String, Codable, Equatable, CaseIterable {
+    case deposit
+    case preorder
+    case banquetMenu
+    case setup
+    case genericPhoto
+}
+
+/// Metadata-only attachment input for day-bounded Service Intelligence.
+/// No image bytes and no raw OCR text; `signalTypes` are derived from existing
+/// cached labels/OCR via AttachmentSignalAnalyzer before the builder sees them.
+struct ServiceIntelligenceAttachmentMetadata: Equatable {
+    let reservationID: Int
+    let attachmentID: String
+    let label: AttachmentLabel
+    let signalTypes: [ReservationSignalType]
+    let updatedAt: String?
+
+    init(
+        reservationID: Int,
+        attachmentID: String,
+        label: AttachmentLabel,
+        signalTypes: [ReservationSignalType],
+        updatedAt: String? = nil
+    ) {
+        self.reservationID = reservationID
+        self.attachmentID = attachmentID
+        self.label = label
+        self.signalTypes = signalTypes
+        self.updatedAt = updatedAt
+    }
+}
+
 // MARK: - Fact
 
 /// A single ranked staff-facing intelligence item for a date.

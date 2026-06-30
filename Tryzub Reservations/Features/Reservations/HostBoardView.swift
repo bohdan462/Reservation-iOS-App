@@ -1495,6 +1495,7 @@ struct HostBoardView: View {
             selectedDateKey,
             String(reservations.count),
             String(Int(hostIntelligenceController.decisionSnapshot.generatedAt.timeIntervalSince1970)),
+            selectedDayAttachmentMetadataFingerprint(),
             "h\(hourBucket)"
         ].joined(separator: "|")
     }
@@ -1551,6 +1552,7 @@ struct HostBoardView: View {
         // Runs after state.mode is resolved; skip-gated by fingerprint inside controller.
         // Evaluate-order guard inside updateServiceIntelligenceSnapshot prevents building
         // from an empty HostDecisionSnapshot right after a date switch.
+        let attachmentMetadata = selectedDayAttachmentMetadata()
         hostIntelligenceController.updateServiceIntelligenceSnapshot(
             HostServiceIntelligenceSnapshotBuilder.Input(
                 now: clockTick,
@@ -1559,6 +1561,7 @@ struct HostBoardView: View {
                 serviceMode: state.mode,
                 dayReservations: reservations,
                 snapshot: hostIntelligenceController.decisionSnapshot,
+                attachmentMetadata: attachmentMetadata,
                 largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
             )
         )
@@ -1586,6 +1589,83 @@ struct HostBoardView: View {
         }
 
         serviceBriefingState = state
+    }
+
+    private func selectedDayAttachmentMetadataFingerprint() -> String {
+        let stamp = selectedDayAttachmentMetadata()
+            .sorted {
+                if $0.reservationID != $1.reservationID { return $0.reservationID < $1.reservationID }
+                return $0.attachmentID < $1.attachmentID
+            }
+            .map { metadata in
+                [
+                    String(metadata.reservationID),
+                    metadata.attachmentID,
+                    metadata.label.backendValue,
+                    metadata.signalTypes.map(\.rawValue).sorted().joined(separator: ","),
+                    metadata.updatedAt ?? "none"
+                ].joined(separator: ":")
+            }
+            .joined(separator: "|")
+        return HostAttentionStableDigest.hexDigest(stamp)
+    }
+
+    private func selectedDayAttachmentMetadata() -> [ServiceIntelligenceAttachmentMetadata] {
+        let dayReservations = reservations.filter {
+            $0.reservationDate == selectedDateKey && $0.isHostBoardOperational
+        }
+        guard !dayReservations.isEmpty else { return [] }
+
+        let deletedState = ReservationAttachmentSyncState.deletedRemote.rawValue
+        var metadata: [ServiceIntelligenceAttachmentMetadata] = []
+
+        for reservation in dayReservations {
+            let reservationID = reservation.remoteID
+            let descriptor = FetchDescriptor<ReservationAttachmentRecord>(
+                predicate: #Predicate<ReservationAttachmentRecord> { record in
+                    record.reservationRemoteID == reservationID
+                        && record.syncStateRaw != deletedState
+                },
+                sortBy: [SortDescriptor(\ReservationAttachmentRecord.createdAt)]
+            )
+            guard let attachments = try? modelContext.fetch(descriptor) else { continue }
+
+            for attachment in attachments {
+                let signals = AttachmentSignalAnalyzer.analyze(
+                    AttachmentSignalAnalyzer.Input(
+                        reservationID: String(reservationID),
+                        attachmentID: attachment.id,
+                        label: attachment.label,
+                        extractedText: attachment.extractedText
+                    )
+                )
+                metadata.append(
+                    ServiceIntelligenceAttachmentMetadata(
+                        reservationID: reservationID,
+                        attachmentID: attachment.id,
+                        label: attachment.label,
+                        signalTypes: signals.map(\.type),
+                        updatedAt: attachmentMetadataUpdatedAt(attachment)
+                    )
+                )
+            }
+        }
+
+        return metadata
+    }
+
+    private func attachmentMetadataUpdatedAt(_ attachment: ReservationAttachmentRecord) -> String? {
+        if let updated = attachment.remoteUpdatedAtRaw,
+           !updated.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return updated
+        }
+        if let ocrRanAt = attachment.ocrRanAt {
+            return "ocr-\(Int(ocrRanAt.timeIntervalSince1970))"
+        }
+        if let lastRemoteSyncAt = attachment.lastRemoteSyncAt {
+            return "sync-\(Int(lastRemoteSyncAt.timeIntervalSince1970))"
+        }
+        return "created-\(Int(attachment.createdAt.timeIntervalSince1970))"
     }
 
     /// Cache-only deterministic booking-load analysis for the selected date.

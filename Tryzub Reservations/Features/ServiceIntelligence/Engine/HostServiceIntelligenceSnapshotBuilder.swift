@@ -16,11 +16,12 @@
 //  A. HostGuestSignal   — engine-computed: allergy, occasion, returning, accessibility, etc.
 //  B. NoteSignalAnalyzer — per day reservation: all signal types mapped to snapshot categories.
 //     Fills gaps where engine guest-signal pipeline didn't run (future dates, no backend intel).
-//  C. HostBriefingFact.largeParty — engine-computed large-party context.
-//  D. HostSlotPressure busiest slot → mainWave.
-//  E. No-table aggregate count for futurePlanning mode.
-//  F. Plain-note fallback — reservation has notes but no note-derived fact yet.
-//  G. Confirmation / reminder day-level facts from local reservation fields.
+//  C. Attachment metadata/signals — local labels + cached OCR-derived signal types.
+//  D. HostBriefingFact.largeParty — engine-computed large-party context.
+//  E. HostSlotPressure busiest slot → mainWave.
+//  F. No-table aggregate count for futurePlanning mode.
+//  G. Plain-note fallback — reservation has notes but no note-derived fact yet.
+//  H. Confirmation / reminder day-level facts from local reservation fields.
 //
 //  Dedup: one ServiceIntelligenceFact per (reservationID, category).
 //  Ranking: ServiceIntelligenceFactCategory.basePriority ± signal-severity adjustment.
@@ -44,6 +45,8 @@ enum HostServiceIntelligenceSnapshotBuilder {
         let dayReservations: [ReservationRecord]
         /// Already-computed by HostIntelligenceEngine — no re-evaluation.
         let snapshot: HostDecisionSnapshot
+        /// Day-scoped attachment metadata only. No image bytes, no network, no raw OCR text.
+        let attachmentMetadata: [ServiceIntelligenceAttachmentMetadata]
         let largePartyThreshold: Int
 
         init(
@@ -53,6 +56,7 @@ enum HostServiceIntelligenceSnapshotBuilder {
             serviceMode: ServiceMode,
             dayReservations: [ReservationRecord],
             snapshot: HostDecisionSnapshot,
+            attachmentMetadata: [ServiceIntelligenceAttachmentMetadata] = [],
             largePartyThreshold: Int = 7
         ) {
             self.now = now
@@ -61,6 +65,7 @@ enum HostServiceIntelligenceSnapshotBuilder {
             self.serviceMode = serviceMode
             self.dayReservations = dayReservations
             self.snapshot = snapshot
+            self.attachmentMetadata = attachmentMetadata
             self.largePartyThreshold = largePartyThreshold
         }
     }
@@ -77,12 +82,24 @@ enum HostServiceIntelligenceSnapshotBuilder {
         )
 
         var seenKeys = Set<String>()
+        var factIndexByDedupeKey: [String: Int] = [:]
         var rawFacts: [ServiceIntelligenceFact] = []
 
         func addFact(_ fact: ServiceIntelligenceFact, dedupeKey: String) {
             guard !seenKeys.contains(dedupeKey) else { return }
             seenKeys.insert(dedupeKey)
+            factIndexByDedupeKey[dedupeKey] = rawFacts.count
             rawFacts.append(fact)
+        }
+
+        func addOrReplaceFact(_ fact: ServiceIntelligenceFact, dedupeKey: String) {
+            if let existingIndex = factIndexByDedupeKey[dedupeKey] {
+                if fact.priority >= rawFacts[existingIndex].priority {
+                    rawFacts[existingIndex] = fact
+                }
+                return
+            }
+            addFact(fact, dedupeKey: dedupeKey)
         }
 
         // ── Source A: HostGuestSignal ─────────────────────────────────────────
@@ -122,7 +139,11 @@ enum HostServiceIntelligenceSnapshotBuilder {
             let signals = NoteSignalAnalyzer.analyze(nsInput)
             for signal in signals {
                 guard let category = noteSignalCategory(signal.type) else { continue }
-                let dedupeKey = "\(reservation.remoteID)|\(category.rawValue)"
+                let dedupeKey = factDedupeKey(
+                    reservationID: reservation.remoteID,
+                    category: category,
+                    signalType: signal.type
+                )
                 addFact(
                     ServiceIntelligenceFact(
                         id: "note-\(reservation.remoteID)-\(signal.type.rawValue)",
@@ -140,7 +161,44 @@ enum HostServiceIntelligenceSnapshotBuilder {
             }
         }
 
-        // ── Source C: large party from HostBriefingFact ───────────────────────
+        // ── Source C: attachment metadata + cached OCR-derived signal types ───
+        let dayReservationIDs = Set(input.dayReservations.map(\.remoteID))
+        var attachmentFactKeys = Set<String>()
+        var attachmentReservationIDs = Set<Int>()
+        for metadata in input.attachmentMetadata where dayReservationIDs.contains(metadata.reservationID) {
+            guard let reservation = input.dayReservations.first(where: { $0.remoteID == metadata.reservationID }),
+                  reservation.isHostBoardOperational,
+                  reservation.reservationDate == input.dateKey else { continue }
+            let categories = attachmentCategories(for: metadata)
+            for category in categories {
+                let dedupeKey = "\(metadata.reservationID)|\(ServiceIntelligenceFactCategory.attachment.rawValue)|\(category.rawValue)"
+                let fact = ServiceIntelligenceFact(
+                    id: "att-\(metadata.reservationID)-\(metadata.attachmentID)-\(category.rawValue)",
+                    reservationID: metadata.reservationID,
+                    guestName: reservation.guestName,
+                    category: .attachment,
+                    priority: attachmentPriority(category),
+                    headline: attachmentFactHeadline(metadata: metadata, category: category),
+                    detail: attachmentFactDetail(metadata: metadata, guestName: reservation.guestName)
+                )
+                addOrReplaceFact(fact, dedupeKey: dedupeKey)
+                if rawFacts.contains(where: { $0.id == fact.id }) {
+                    attachmentFactKeys.insert(dedupeKey)
+                    attachmentReservationIDs.insert(metadata.reservationID)
+                }
+            }
+        }
+        #if DEBUG
+        if !input.attachmentMetadata.isEmpty {
+            let ids = attachmentReservationIDs.sorted().map(String.init).joined(separator: ",")
+            print(
+                "[SERVICE_INTEL_SNAPSHOT_TRACE] source=attachments date=\(input.dateKey) " +
+                "facts=\(attachmentFactKeys.count) reservations=\(ids.isEmpty ? "none" : ids)"
+            )
+        }
+        #endif
+
+        // ── Source D: large party from HostBriefingFact ───────────────────────
         for fact in input.snapshot.briefingFacts where fact.category == .largeParty {
             let rid = fact.relatedReservationIDs.first
             let dedupeKey = rid.map { "\($0)|largeParty" } ?? "day|largeParty"
@@ -161,7 +219,7 @@ enum HostServiceIntelligenceSnapshotBuilder {
             )
         }
 
-        // ── Source D: main service wave from slot pressures ───────────────────
+        // ── Source E: main service wave from slot pressures ───────────────────
         if let busiestSlot = input.snapshot.slotPressures.max(by: {
             ($0.guestCount, $0.reservationCount) < ($1.guestCount, $1.reservationCount)
         }), busiestSlot.guestCount > 0 {
@@ -180,7 +238,7 @@ enum HostServiceIntelligenceSnapshotBuilder {
             )
         }
 
-        // ── Source E: future no-table planning ────────────────────────────────
+        // ── Source F: future no-table planning ────────────────────────────────
         if input.serviceMode == .futurePlanning {
             let noTableCount = input.dayReservations.filter { r in
                 r.reservationDate == input.dateKey
@@ -204,7 +262,7 @@ enum HostServiceIntelligenceSnapshotBuilder {
             }
         }
 
-        // ── Source F: plain-note fallback ─────────────────────────────────────
+        // ── Source G: plain-note fallback ─────────────────────────────────────
         // Catches reservations with notes that didn't match any NoteSignalAnalyzer
         // keyword (e.g. "Please ask manager about the arrangement"). Surfaces a
         // low-priority generic note fact so staff know to check.
@@ -239,7 +297,7 @@ enum HostServiceIntelligenceSnapshotBuilder {
             )
         }
 
-        // ── Source G: confirmation / reminder status ──────────────────────────
+        // ── Source H: confirmation / reminder status ──────────────────────────
         // Day-level facts from local reservation fields. No network required.
         // Confirmation: reservations that are still new/needsReview and have neither
         //   confirmedAt nor a confirmation email sent.
@@ -385,6 +443,25 @@ enum HostServiceIntelligenceSnapshotBuilder {
             .map { "\($0.id):\($0.category.rawValue)" }
             .joined(separator: ";")
 
+        let attachmentStamp = input.attachmentMetadata
+            .sorted {
+                if $0.reservationID != $1.reservationID { return $0.reservationID < $1.reservationID }
+                return $0.attachmentID < $1.attachmentID
+            }
+            .map { metadata in
+                let signalTypeDigest = HostAttentionStableDigest.hexDigest(
+                    metadata.signalTypes.map(\.rawValue).sorted().joined(separator: ",")
+                )
+                return [
+                    String(metadata.reservationID),
+                    metadata.attachmentID,
+                    metadata.label.backendValue,
+                    signalTypeDigest,
+                    metadata.updatedAt ?? "none"
+                ].joined(separator: ":")
+            }
+            .joined(separator: ";")
+
         let raw = [
             input.dateKey,
             input.serviceMode.rawValue,
@@ -392,7 +469,8 @@ enum HostServiceIntelligenceSnapshotBuilder {
             reservationStamp,
             guestSignalStamp,
             slotStamp,
-            briefingStamp
+            briefingStamp,
+            attachmentStamp
         ].joined(separator: "||")
         return HostAttentionStableDigest.hexDigest(raw)
     }
@@ -565,6 +643,125 @@ enum HostServiceIntelligenceSnapshotBuilder {
         default:
             return nil
         }
+    }
+
+    private static func factDedupeKey(
+        reservationID: Int,
+        category: ServiceIntelligenceFactCategory,
+        signalType: ReservationSignalType?
+    ) -> String {
+        if category == .attachment,
+           let signalType,
+           let attachmentCategory = attachmentCategory(for: signalType) {
+            return "\(reservationID)|\(category.rawValue)|\(attachmentCategory.rawValue)"
+        }
+        return "\(reservationID)|\(category.rawValue)"
+    }
+
+    private static func attachmentCategories(
+        for metadata: ServiceIntelligenceAttachmentMetadata
+    ) -> [ServiceIntelligenceAttachmentCategory] {
+        var categories: [ServiceIntelligenceAttachmentCategory] = []
+
+        func append(_ category: ServiceIntelligenceAttachmentCategory) {
+            guard !categories.contains(category) else { return }
+            categories.append(category)
+        }
+
+        if let labelCategory = attachmentCategory(for: metadata.label), labelCategory != .genericPhoto {
+            append(labelCategory)
+        }
+        for type in metadata.signalTypes {
+            if let signalCategory = attachmentCategory(for: type), signalCategory != .genericPhoto {
+                append(signalCategory)
+            }
+        }
+
+        if categories.isEmpty {
+            append(.genericPhoto)
+        }
+
+        return categories
+    }
+
+    private static func attachmentCategory(
+        for label: AttachmentLabel
+    ) -> ServiceIntelligenceAttachmentCategory? {
+        switch label {
+        case .deposit, .receipt:
+            return .deposit
+        case .preorder:
+            return .preorder
+        case .banquet:
+            return .banquetMenu
+        case .setup, .signedAgreement:
+            return .setup
+        case .guestScreenshot, .referenceImage, .other:
+            return .genericPhoto
+        }
+    }
+
+    private static func attachmentCategory(
+        for signalType: ReservationSignalType
+    ) -> ServiceIntelligenceAttachmentCategory? {
+        switch signalType {
+        case .depositMentioned, .depositVerified:
+            return .deposit
+        case .preorderMentioned:
+            return .preorder
+        case .banquetMentioned:
+            return .banquetMenu
+        case .setupNeeded:
+            return .setup
+        case .attachmentNeedsReview:
+            return .genericPhoto
+        default:
+            return nil
+        }
+    }
+
+    private static func attachmentPriority(_ category: ServiceIntelligenceAttachmentCategory) -> Int {
+        switch category {
+        case .deposit, .preorder, .banquetMenu:
+            return ServiceIntelligenceFactCategory.attachment.basePriority + 4
+        case .setup:
+            return ServiceIntelligenceFactCategory.attachment.basePriority - 2
+        case .genericPhoto:
+            return ServiceIntelligenceFactCategory.guestNote.basePriority + 2
+        }
+    }
+
+    private static func attachmentFactHeadline(
+        metadata: ServiceIntelligenceAttachmentMetadata,
+        category: ServiceIntelligenceAttachmentCategory
+    ) -> String {
+        switch category {
+        case .preorder:
+            return "Preorder attached — check kitchen before service."
+        case .deposit:
+            if metadata.label == .receipt {
+                return "Receipt attachment on file — check before confirming details."
+            }
+            return "Deposit attachment on file — check before confirming details."
+        case .banquetMenu:
+            return "Banquet/menu photo attached — review before setup."
+        case .setup:
+            return "Special setup attachment on file — check before service."
+        case .genericPhoto:
+            return "Photo attached — check before service."
+        }
+    }
+
+    private static func attachmentFactDetail(
+        metadata: ServiceIntelligenceAttachmentMetadata,
+        guestName: String
+    ) -> String {
+        let signalTypes = metadata.signalTypes
+            .map(\.rawValue)
+            .sorted()
+            .joined(separator: ",")
+        let signalDetail = signalTypes.isEmpty ? "none" : signalTypes
+        return "\(guestName) · \(metadata.label.rawValue) · signals: \(signalDetail)"
     }
 
     /// Maps ReservationSignal priority + category basePriority to a snapshot integer priority.
