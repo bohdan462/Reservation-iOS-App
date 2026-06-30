@@ -1201,6 +1201,8 @@ private struct ReservationScheduleView: View {
     @State private var allModeErrorMessage: String?
     @State private var navigationPath: [Int] = []
     @State private var needsReviewInsightCache: [Int: NewBookingRowInsight?] = [:]
+    @State private var needsReviewInsightValidationKeys: [Int: String] = [:]
+    @State private var needsReviewInsightBuildTokens: Set<String> = []
     @State private var needsReviewInsightRebuildGeneration = 0
     @State private var needsReviewSummaryCache: NewBookingsIntelligenceSummary?
     @State private var needsReviewSummaryCacheKey: String?
@@ -1257,6 +1259,13 @@ private struct ReservationScheduleView: View {
 
     // Schedule reads cached rows; sync freshness is handled by ReservationsController.
     private var displayedReservations: [ReservationRecord] {
+        scheduleRows(applyingSearch: true, tracingDateBoundary: true)
+    }
+
+    private func scheduleRows(
+        applyingSearch: Bool,
+        tracingDateBoundary: Bool
+    ) -> [ReservationRecord] {
         guard isActive else { return [] }
         let now = Date()
         let trimmedSearchText = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1301,9 +1310,11 @@ private struct ReservationScheduleView: View {
 
         rows = rows.filter { dateScope.contains(reservationDateKey: $0.reservationDate, now: now) }
 
-        traceBookingsDateBoundary(candidateRows: candidateRows, includedRows: rows)
+        if tracingDateBoundary {
+            traceBookingsDateBoundary(candidateRows: candidateRows, includedRows: rows)
+        }
 
-        if !trimmedSearchText.isEmpty {
+        if applyingSearch, !trimmedSearchText.isEmpty {
             rows = rows.filter { $0.matchesSearch(trimmedSearchText) }
         }
 
@@ -1326,7 +1337,8 @@ private struct ReservationScheduleView: View {
 
     private var needsReviewInsightRows: [ReservationRecord] {
         guard isActive, scope == .needsReview else { return [] }
-        return displayedReservations.filter { $0.statusValue == .needsReview }
+        return scheduleRows(applyingSearch: false, tracingDateBoundary: false)
+            .filter { $0.statusValue == .needsReview }
     }
 
     private var needsReviewInsightRebuildKey: String {
@@ -1337,10 +1349,27 @@ private struct ReservationScheduleView: View {
         return [
             "active",
             dateScope.id,
-            debouncedSearchText,
             "\(reservationInsightFingerprint(for: needsReviewInsightRows))",
             "\(reservationInsightFingerprint(for: guestInsightHistoryPool))",
             hostTableConfigStore.tableConfigFingerprint
+        ].joined(separator: "|")
+    }
+
+    private var needsReviewVisibleInsightFillKey: String {
+        guard isActive, scope == .needsReview else {
+            return "inactive|\(isActive)|\(scope.rawValue)"
+        }
+
+        let visibleIDs = scheduleRows(applyingSearch: true, tracingDateBoundary: false)
+            .filter { $0.statusValue == .needsReview }
+            .map(\.remoteID)
+            .map(String.init)
+            .joined(separator: ",")
+
+        return [
+            needsReviewInsightRebuildKey,
+            debouncedSearchText,
+            visibleIDs
         ].joined(separator: "|")
     }
 
@@ -1621,6 +1650,9 @@ private struct ReservationScheduleView: View {
             .task(id: needsReviewInsightRebuildKey) {
                 await rebuildNeedsReviewInsightCache()
             }
+            .task(id: needsReviewVisibleInsightFillKey) {
+                await fillVisibleNeedsReviewInsightCache()
+            }
             .task(id: activityFeedWarmTaskKey) {
                 await warmVisibleBookingsActivityFeeds()
             }
@@ -1709,6 +1741,12 @@ private struct ReservationScheduleView: View {
             if !needsReviewInsightCache.isEmpty {
                 needsReviewInsightCache = [:]
             }
+            if !needsReviewInsightValidationKeys.isEmpty {
+                needsReviewInsightValidationKeys = [:]
+            }
+            if !needsReviewInsightBuildTokens.isEmpty {
+                needsReviewInsightBuildTokens = []
+            }
             if needsReviewSummaryCache != nil || needsReviewSummaryCacheKey != nil {
                 needsReviewSummaryCache = nil
                 needsReviewSummaryCacheKey = nil
@@ -1717,9 +1755,20 @@ private struct ReservationScheduleView: View {
         }
 
         let rows = needsReviewInsightRows
+        let activeIDs = Set(rows.map(\.remoteID))
+        for remoteID in Array(needsReviewInsightCache.keys) where !activeIDs.contains(remoteID) {
+            needsReviewInsightCache.removeValue(forKey: remoteID)
+        }
+        for remoteID in Array(needsReviewInsightValidationKeys.keys) where !activeIDs.contains(remoteID) {
+            needsReviewInsightValidationKeys.removeValue(forKey: remoteID)
+        }
+
         guard !rows.isEmpty else {
             if !needsReviewInsightCache.isEmpty {
                 needsReviewInsightCache = [:]
+            }
+            if !needsReviewInsightValidationKeys.isEmpty {
+                needsReviewInsightValidationKeys = [:]
             }
             let summary = derivedNeedsReviewSummary(rows: rows, insights: [:])
             guard !Task.isCancelled, generation == needsReviewInsightRebuildGeneration else { return }
@@ -1728,30 +1777,102 @@ private struct ReservationScheduleView: View {
             return
         }
 
+        await buildNeedsReviewInsightsIfNeeded(for: rows, generation: generation)
+
+        guard !Task.isCancelled, generation == needsReviewInsightRebuildGeneration else { return }
+        needsReviewSummaryCache = derivedNeedsReviewSummary(rows: rows, insights: needsReviewInsightCache)
+        needsReviewSummaryCacheKey = rebuildKey
+    }
+
+    @MainActor
+    private func fillVisibleNeedsReviewInsightCache() async {
+        guard isActive, scope == .needsReview else { return }
+        let rows = scheduleRows(applyingSearch: true, tracingDateBoundary: false)
+            .filter { $0.statusValue == .needsReview }
+        guard !rows.isEmpty else { return }
+
+        let generation = needsReviewInsightRebuildGeneration
+        await buildNeedsReviewInsightsIfNeeded(for: rows, generation: generation)
+
+        guard !Task.isCancelled,
+              generation == needsReviewInsightRebuildGeneration,
+              isActive,
+              scope == .needsReview else {
+            return
+        }
+
+        let summaryRows = needsReviewInsightRows
+        needsReviewSummaryCache = derivedNeedsReviewSummary(rows: summaryRows, insights: needsReviewInsightCache)
+        needsReviewSummaryCacheKey = needsReviewInsightRebuildKey
+    }
+
+    @MainActor
+    private func buildNeedsReviewInsightsIfNeeded(
+        for rows: [ReservationRecord],
+        generation: Int
+    ) async {
         let historyPool = guestInsightHistoryPool
         let tableConfigs = hostTableConfigStore.activeTables
-        var rebuilt: [Int: NewBookingRowInsight?] = [:]
-        rebuilt.reserveCapacity(rows.count)
+        let tableConfigFingerprint = hostTableConfigStore.tableConfigFingerprint
 
         for reservation in rows {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  generation == needsReviewInsightRebuildGeneration,
+                  isActive,
+                  scope == .needsReview else {
+                return
+            }
+
             let boundedHistoryPool = GuestInsightLocalPool.boundedPool(
                 selected: reservation,
                 windowRecords: historyPool
             )
+            let validationKey = needsReviewInsightValidationKey(
+                for: reservation,
+                boundedHistoryPool: boundedHistoryPool,
+                tableConfigFingerprint: tableConfigFingerprint
+            )
+            let remoteID = reservation.remoteID
+
+            if needsReviewInsightValidationKeys[remoteID] == validationKey,
+               needsReviewInsightCache.keys.contains(remoteID) {
+                continue
+            }
+
+            let buildToken = "\(remoteID)|\(validationKey)"
+            guard !needsReviewInsightBuildTokens.contains(buildToken) else {
+                continue
+            }
+
+            needsReviewInsightBuildTokens.insert(buildToken)
             let insight = NewBookingRowInsightBuilder.build(
                 reservation: reservation,
                 historyPool: boundedHistoryPool,
                 tableConfigs: tableConfigs
             )
-            rebuilt.updateValue(insight, forKey: reservation.remoteID)
+            if Task.isCancelled || generation != needsReviewInsightRebuildGeneration {
+                needsReviewInsightBuildTokens.remove(buildToken)
+                return
+            }
+
+            needsReviewInsightCache.updateValue(insight, forKey: remoteID)
+            needsReviewInsightValidationKeys[remoteID] = validationKey
+            needsReviewInsightBuildTokens.remove(buildToken)
             await Task.yield()
         }
+    }
 
-        guard !Task.isCancelled, generation == needsReviewInsightRebuildGeneration else { return }
-        needsReviewInsightCache = rebuilt
-        needsReviewSummaryCache = derivedNeedsReviewSummary(rows: rows, insights: rebuilt)
-        needsReviewSummaryCacheKey = rebuildKey
+    private func needsReviewInsightValidationKey(
+        for reservation: ReservationRecord,
+        boundedHistoryPool: [ReservationRecord],
+        tableConfigFingerprint: String
+    ) -> String {
+        [
+            "row-v1",
+            "\(reservationInsightFingerprint(for: [reservation]))",
+            "\(reservationInsightFingerprint(for: boundedHistoryPool))",
+            tableConfigFingerprint
+        ].joined(separator: "|")
     }
 
     private func derivedNeedsReviewSummary(
