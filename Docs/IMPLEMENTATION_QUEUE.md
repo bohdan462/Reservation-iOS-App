@@ -516,6 +516,9 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 | LOCAL-FIRST-OPS-2A — Gate Host no-op CPU work when fingerprint unchanged | `cf32e95` |
 | LOCAL-FIRST-OPS-2B — Host date-switch stale publish guards | `4d8d101` |
 | LOCAL-FIRST-OPS-3A — Scope Bookings All tab to active-window; cap filter traces | `2a5b81f` |
+| LOCAL-FIRST-OPS-3B — Remove Bookings Review intelligence card and row labels | `see handoff` |
+| LOCAL-FIRST-OPS-4 — Read-only audit: Host/Service Intelligence fragmentation | `see handoff` |
+| LOCAL-FIRST-OPS-4A — Build unified deterministic per-date Service Intelligence snapshot | `f0554a3` |
 
 ---
 
