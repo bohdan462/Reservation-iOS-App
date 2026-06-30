@@ -899,15 +899,40 @@ struct HostBoardView: View {
             }
         }
         .sheet(isPresented: $showReminderStats) {
-            HostReminderStatsSheet(
-                context: hostReminderPanelContext,
-                onSend: {
-                    showReminderStats = false
-                    showBackendReminderConfirmation = true
-                }
-            )
+            reminderStatsSheet
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
+        }
+    }
+
+    @ViewBuilder
+    private var reminderStatsSheet: some View {
+        if let context = hostReminderPanelContext {
+            NavigationStack {
+                ScrollView {
+                    HostReminderBatchCard(
+                        status: context.status,
+                        notice: context.notice,
+                        isSending: context.isSending,
+                        showProof: context.showProof,
+                        hasEligibleReminders: context.hasEligibleReminders,
+                        manualSendEnabled: context.manualSendEnabled,
+                        backendManualBatchEnabled: context.backendManualBatchEnabled,
+                        automaticRemindersEnabled: context.automaticRemindersEnabled,
+                        reminderLeadHours: context.reminderLeadHours,
+                        emailUsage: context.emailUsage,
+                        dailyEmailLimitReached: context.dailyEmailLimitReached,
+                        canSendBatchReminders: context.canSendBatchReminders,
+                        onSend: {
+                            showReminderStats = false
+                            showBackendReminderConfirmation = true
+                        }
+                    )
+                    .padding(16)
+                }
+                .navigationTitle("Guest reminders")
+                .navigationBarTitleDisplayMode(.inline)
+            }
         }
     }
 
@@ -1343,10 +1368,12 @@ struct HostBoardView: View {
                 noTableCount: snapshot.noTableCount,
                 availabilitySummary: availabilitySummaryLine,
                 isAvailabilityLoading: isLoadingAvailabilitySummary,
+                reminderContext: hostReminderPanelContext,
                 isWideLayout: isWideLayout,
                 onRefreshAvailability: selectedDate.reservationDateString() == Date.reservationDateString()
                     ? { controller.ensureAvailabilitySummary(date: selectedDateKey, force: true) }
-                    : nil
+                    : nil,
+                onSendReminders: { showBackendReminderConfirmation = true }
             )
         }
     }
