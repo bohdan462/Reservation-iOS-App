@@ -624,6 +624,10 @@ private struct HomeDashboardView: View {
     @State private var showImportFailures = false
     @State private var selectedDate = Date()
     @State private var navigationPath: [Int] = []
+    /// True from the moment a reservation detail is pushed onto the nav stack until
+    /// 350 ms after it is dismissed. Used to suppress Host reactive work during the
+    /// presentation and pop-back animation so it doesn't compete with navigation.
+    @State private var isDetailOrNavigationActive: Bool = false
 
     let environment: AppEnvironment
     let isActive: Bool
@@ -745,7 +749,7 @@ private struct HomeDashboardView: View {
                 failedImportCount: controller.importFailureCount,
                 isVisible: isActive,
                 isAppActive: scenePhase == .active && selectedDate.reservationDateString() == Date.reservationDateString(),
-                externalInteractionActive: showManualCreate || showImportFailures || !navigationPath.isEmpty,
+                externalInteractionActive: showManualCreate || showImportFailures || isDetailOrNavigationActive,
                 onAddReservation: {
                     onStaffInteraction()
                     showManualCreate = true
@@ -799,8 +803,25 @@ private struct HomeDashboardView: View {
         .onChange(of: selectedDate) { _, _ in
             onStaffInteraction()
         }
-        .onChange(of: navigationPath) { _, _ in
+        .onChange(of: navigationPath) { _, newPath in
             onStaffInteraction()
+            if !newPath.isEmpty {
+                if !isDetailOrNavigationActive {
+                    isDetailOrNavigationActive = true
+                    #if DEBUG
+                    print("[NAV_PRESENTATION_TRACE] detailPresented=true reservationID=\(newPath.last ?? -1) tab=host")
+                    #endif
+                }
+            } else if isDetailOrNavigationActive {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(350))
+                    guard !Task.isCancelled else { return }
+                    isDetailOrNavigationActive = false
+                    #if DEBUG
+                    print("[NAV_PRESENTATION_TRACE] detailPresented=false reason=dismissed tab=host")
+                    #endif
+                }
+            }
         }
         .task(id: navigationResetToken) {
             onStaffInteraction()
@@ -1257,6 +1278,10 @@ private struct ReservationScheduleView: View {
     @State private var allModeTotalPages = 0
     @State private var allModeErrorMessage: String?
     @State private var navigationPath: [Int] = []
+    /// True from the moment a reservation detail is pushed until 350 ms after it is
+    /// dismissed. Pauses filter/insight/activation work so Bookings does not compete
+    /// with the navigation animation.
+    @State private var isDetailOrNavigationActive: Bool = false
     @State private var needsReviewInsightCache: [Int: NewBookingRowInsight?] = [:]
     @State private var needsReviewInsightValidationKeys: [Int: String] = [:]
     @State private var needsReviewInsightBuildTokens: Set<String> = []
@@ -1391,6 +1416,9 @@ private struct ReservationScheduleView: View {
     }
 
     private var filterTraceKey: String {
+        guard !isDetailOrNavigationActive else {
+            return "paused-filter|\(isDetailOrNavigationActive)"
+        }
         let ids = displayedReservations.map(\.remoteID).map(String.init).joined(separator: ",")
         return "\(reminderDateKey)|\(scope.rawValue)|\(dateScope.id)|\(debouncedSearchText)|\(ids)"
     }
@@ -1402,6 +1430,9 @@ private struct ReservationScheduleView: View {
     }
 
     private var needsReviewInsightRebuildKey: String {
+        guard !isDetailOrNavigationActive else {
+            return "paused-rebuild|\(isDetailOrNavigationActive)"
+        }
         guard isActive, scope == .needsReview else {
             return "inactive|\(isActive)|\(scope.rawValue)"
         }
@@ -1416,6 +1447,9 @@ private struct ReservationScheduleView: View {
     }
 
     private var needsReviewVisibleInsightFillKey: String {
+        guard !isDetailOrNavigationActive else {
+            return "paused-fill|\(isDetailOrNavigationActive)"
+        }
         guard isActive, scope == .needsReview else {
             return "inactive|\(isActive)|\(scope.rawValue)"
         }
@@ -1665,6 +1699,12 @@ private struct ReservationScheduleView: View {
                 guard isActive else { return }
                 try? await Task.sleep(for: .milliseconds(350))
                 guard !Task.isCancelled else { return }
+                guard !isDetailOrNavigationActive else {
+                    #if DEBUG
+                    print("[BOOKINGS_NAV_GATE_TRACE] work=activation_refresh decision=skip reason=detail_presented")
+                    #endif
+                    return
+                }
                 let lastInteractionAt = controller.lastStaffInteractionAt
                 let idleDelay = StaffInteractionIdleGate.remainingDelay(since: lastInteractionAt)
                 if idleDelay > 0 {
@@ -1714,6 +1754,12 @@ private struct ReservationScheduleView: View {
             }
             .task(id: filterTraceKey) {
                 guard isActive else { return }
+                guard !isDetailOrNavigationActive else {
+                    #if DEBUG
+                    print("[BOOKINGS_NAV_GATE_TRACE] work=filter_trace decision=skip reason=detail_presented")
+                    #endif
+                    return
+                }
                 let ids = displayedReservations.map(\.remoteID).map(String.init).joined(separator: ",")
                 WorkflowCleanupTrace.log(
                     "BOOKINGS_TAB_TRACE",
@@ -1743,9 +1789,16 @@ private struct ReservationScheduleView: View {
                 }
             }
             .task(id: needsReviewInsightRebuildKey) {
+                guard !isDetailOrNavigationActive else {
+                    #if DEBUG
+                    print("[BOOKINGS_NAV_GATE_TRACE] work=row_truth decision=skip reason=detail_presented")
+                    #endif
+                    return
+                }
                 await rebuildNeedsReviewInsightCache()
             }
             .task(id: needsReviewVisibleInsightFillKey) {
+                guard !isDetailOrNavigationActive else { return }
                 await fillVisibleNeedsReviewInsightCache()
             }
             .task(id: activityFeedWarmTaskKey) {
@@ -1762,8 +1815,25 @@ private struct ReservationScheduleView: View {
             .onChange(of: dateScope.id) { _, _ in
                 onStaffInteraction()
             }
-            .onChange(of: navigationPath) { _, _ in
+            .onChange(of: navigationPath) { _, newPath in
                 onStaffInteraction()
+                if !newPath.isEmpty {
+                    if !isDetailOrNavigationActive {
+                        isDetailOrNavigationActive = true
+                        #if DEBUG
+                        print("[NAV_PRESENTATION_TRACE] detailPresented=true reservationID=\(newPath.last ?? -1) tab=bookings")
+                        #endif
+                    }
+                } else if isDetailOrNavigationActive {
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(350))
+                        guard !Task.isCancelled else { return }
+                        isDetailOrNavigationActive = false
+                        #if DEBUG
+                        print("[NAV_PRESENTATION_TRACE] detailPresented=false reason=dismissed tab=bookings")
+                        #endif
+                    }
+                }
             }
             .navigationDestination(for: Int.self) { remoteID in
                 reservationDestination(remoteID: remoteID)

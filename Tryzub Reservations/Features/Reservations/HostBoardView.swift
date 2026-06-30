@@ -385,6 +385,12 @@ struct HostBoardView: View {
     }
 
     private var boardSnapshotBuildKey: String {
+        // Mirrors the evaluate/enrichment paused-key pattern: while a reservation detail
+        // is presented (or settling after pop) the snapshot task becomes stable so the
+        // background reactive work stops competing with the navigation animation.
+        guard !externalInteractionActive else {
+            return "paused-snapshot-\(externalInteractionActive)"
+        }
         let options = hostFloorLegacyOptions
         return "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostBoardSnapshotTimingRefreshStamp)-\(hostTableConfigStore.tableConfigFingerprint)-\(floorPlanStore.layoutFingerprint(for: selectedDateKey, allowsLegacyFallback: options.allowsFallback, localActiveTableCount: options.localActiveTableCount))"
     }
@@ -524,6 +530,13 @@ struct HostBoardView: View {
         }
         .task(id: boardSnapshotBuildKey) {
             guard !isRunningForPreviews else { return }
+            guard !externalInteractionActive else {
+                #if DEBUG
+                print("[HOST_NAV_GATE_TRACE] work=snapshot decision=skip reason=detail_presented")
+                #endif
+                traceHostBoardStabilization(event: "snapshot_skipped", detail: "reason=detail_presented")
+                return
+            }
             traceHostBoardStabilization(event: "snapshot_started", detail: "date=\(selectedDateKey)")
             let started = ContinuousClock.now
             let densityBounds = serviceDensityBounds
@@ -637,6 +650,11 @@ struct HostBoardView: View {
         }
         .task(id: hostIntelligenceCardTaskKey) {
             guard isHostIntelligenceCardVisible else {
+                #if DEBUG
+                if externalInteractionActive {
+                    print("[HOST_NAV_GATE_TRACE] work=card decision=skip reason=detail_presented")
+                }
+                #endif
                 traceHostBoardStabilization(event: "card_presentation_skipped", detail: "reason=hidden")
                 return
             }
@@ -676,6 +694,11 @@ struct HostBoardView: View {
                 return
             }
             guard !liveHostModeEnabled, !externalInteractionActive else {
+                #if DEBUG
+                if externalInteractionActive {
+                    print("[HOST_NAV_GATE_TRACE] work=evaluate decision=skip reason=detail_presented")
+                }
+                #endif
                 traceHostBoardStabilization(event: "evaluate_skipped", detail: "reason=presentation_hidden")
                 return
             }
@@ -726,6 +749,11 @@ struct HostBoardView: View {
                 return
             }
             guard !liveHostModeEnabled, !externalInteractionActive else {
+                #if DEBUG
+                if externalInteractionActive {
+                    print("[HOST_NAV_GATE_TRACE] work=enrichment decision=skip reason=detail_presented")
+                }
+                #endif
                 traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=presentation_hidden")
                 return
             }
