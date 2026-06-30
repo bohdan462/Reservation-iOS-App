@@ -173,12 +173,24 @@ final class HostIntelligenceController: ObservableObject {
     #endif
   }
 
-  /// LOCAL-FIRST-OPS-4A — Build or skip unified per-date intelligence snapshot.
+  /// LOCAL-FIRST-OPS-4A/4B — Build or skip unified per-date intelligence snapshot.
   ///
   /// Called from HostBoardView.rebuildServiceBriefing() after serviceBriefingState
-  /// is set (so serviceMode is accurate). Skip-gated by FNV-1a fingerprint of all
-  /// meaningful inputs; emits [SERVICE_INTEL_SNAPSHOT_TRACE] on build and skip.
+  /// is set (so serviceMode is accurate). Guards:
+  ///  1. Requires controller to have completed a local evaluate pass for the selected
+  ///     date (same safety pattern as the Host card task). Prevents building from an
+  ///     .empty HostDecisionSnapshot right after a date switch.
+  ///  2. Skip-gated by FNV-1a fingerprint of all meaningful inputs.
+  /// Emits [SERVICE_INTEL_SNAPSHOT_TRACE] on build and skip.
   func updateServiceIntelligenceSnapshot(_ input: HostServiceIntelligenceSnapshotBuilder.Input) {
+    // Guard 1: evaluate must have completed for this date.
+    guard isEvaluatedForSelectedDate(input.dateKey) else {
+      #if DEBUG
+      print("[SERVICE_INTEL_SNAPSHOT_TRACE] decision=skip reason=awaiting_evaluate date=\(input.dateKey)")
+      #endif
+      return
+    }
+    // Guard 2: fingerprint skip if inputs unchanged.
     let fingerprint = HostServiceIntelligenceSnapshotBuilder.inputFingerprint(input)
     guard fingerprint != lastServiceIntelSnapshotFingerprint else {
       #if DEBUG
