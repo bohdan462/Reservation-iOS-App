@@ -2,7 +2,7 @@
 
 **Branch:** `audit-current-state`  
 **Root HEAD:** `f2e9be0` (build 12 tracked; attachment live verification open)  
-**Last reviewed:** 2026-06-28  
+**Last reviewed:** 2026-06-29  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
 **Priority order:** [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) owns what to do next. This file tracks backlog items and implementation status. Production/device verification remains open even when code is implemented.
@@ -90,6 +90,44 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 | **Approach** | Show “Confirmation email pending” while mail draft open; only show confirmed after `manual_sent` + PATCH |
 | **Acceptance** | Detail status badge matches server until mail `.sent`; traces show `ConfirmFlowTrace` phases in order |
 | **Class** | V1 stabilization — iOS only |
+
+---
+
+## P0-CPU — Bookings / Host render path
+
+### P0-CPU-1A: Needs Review row insight off render path
+
+| Field | Value |
+|-------|-------|
+| **Risk if not fixed** | Bookings → Needs Review scroll/re-render runs `GuestInsightsController().analyze` per row from `ForEach` body — O(rows × history pool) on main thread |
+| **Files** | `Features/Reservations/ReservationsListView.swift` (`ReservationScheduleView`) |
+| **Approach** | Keyed MainActor `.task` cache; `NewBookingRowInsightBuilder.build` only in batch rebuild; `GuestInsightLocalPool.boundedPool`; row render = dict lookup |
+| **Acceptance** | `NewBookingRowInsightBuilder.build` not called from `ForEach`/body; insight lines unchanged; Instruments shows analyze off body stack |
+| **Class** | V1 stabilization — iOS only |
+
+**P0-CPU-1A implemented; build passed; device verification open.** Row insight rendering no longer calls `NewBookingRowInsightBuilder.build` from `ForEach`/body; rebuild runs in keyed MainActor `.task` with `GuestInsightLocalPool.boundedPool`. **Do not claim** Bookings CPU is fully fixed — aggregate card and Host paths remain.
+
+### P0-CPU-1B: NewBookingsIntelligenceCard aggregate summary (follow-up)
+
+| Field | Value |
+|-------|-------|
+| **Risk** | `NewBookingsIntelligenceSummary.build` still runs in `body` on Needs Review scope — body-time `analyze` for duplicate/returning counts |
+| **Files** | `NewBookingsIntelligenceCard.swift`, `ReservationsListView.swift` |
+| **Approach** | Cache or derive summary off row cache — only if needed after 1A device smoke |
+| **Acceptance** | No `GuestInsightsController().analyze` in card `body` path when scoped to Needs Review |
+| **Class** | V1 stabilization — iOS only — **open** |
+
+**P0-CPU-1B:** NewBookingsIntelligenceCard aggregate summary still runs body-time analysis; fix only if Bookings remains heavy after 1A smoke.
+
+### P0-CPU-1C: HostBoardSnapshot body fallback (follow-up)
+
+| Field | Value |
+|-------|-------|
+| **Risk** | `HostBoardView` may rebuild `HostBoardSnapshot` synchronously in `body` fallback path |
+| **Files** | `HostBoardView.swift`, `HostBoardSnapshot.swift` |
+| **Approach** | Separate PR — move snapshot build off body; do not bundle with Bookings |
+| **Acceptance** | Instruments: snapshot build not in Host `body` hot path |
+| **Class** | V1 stabilization — iOS only — **open** |
 
 ---
 
@@ -356,6 +394,7 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 - Manual/custom email log skip + trace (`unsupported_email_type`)
 - `POST /import` not in normal client workflow
 - Offline mutations blocked when degraded; no offline create/edit queue (not V1)
+- P0-CPU-1A — Bookings Needs Review row insight cache (`ReservationsListView.swift`); **P0-CPU-1A implemented; build passed; device verification open.**
 
 ---
 

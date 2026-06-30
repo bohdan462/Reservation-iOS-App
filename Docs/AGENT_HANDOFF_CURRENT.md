@@ -10,7 +10,7 @@ V1 stabilization + reservation attachments (iOS Slice E done; live verification 
 
 ---
 
-## Git state (2026-06-28)
+## Git state (2026-06-29)
 
 | Location | State |
 |----------|--------|
@@ -79,6 +79,8 @@ V1 stabilization + reservation attachments (iOS Slice E done; live verification 
 ## Current slice goal
 
 **Stabilization still open** (physical device verification + release smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R/3M-B/3M**, **Manual Intake input polish**, **device smoke code Phases 1–4**, and **Tryzub V1 Host production polish** are shipped in code. **Current focus:** physical device verification + release smoke — see [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10. **Slice 3D/3E parked** until smoke verification is accepted or Bohdan resumes.
+
+**Bookings CPU (P0-CPU-1A):** **P0-CPU-1A implemented; build passed; device verification open.** `ReservationScheduleView` no longer calls `NewBookingRowInsightBuilder.build` from `ForEach`/body; keyed MainActor `.task` rebuilds row insights with `GuestInsightLocalPool.boundedPool`. **Do not claim** Bookings scroll performance is fully verified or fully fixed. **P0-CPU-1B:** NewBookingsIntelligenceCard aggregate summary still runs body-time analysis; fix only if Bookings remains heavy after 1A smoke. **P0-CPU-1C:** HostBoardSnapshot body fallback — separate follow-up ([OPEN_WORK.md](./OPEN_WORK.md)).
 
 **Reservation attachments (boss request):** Backend **deployed and production-smoked** (`a2422d3`, plugin **0.5.5**, DB **1.12.0**). iOS **Slice C** at `17a0bee` (DTO/API/cache). iOS **Slice D** at `d947721` (Detail shared list/upload/download/delete). iOS **Slice E** at `9d2784d` (management UI polish: staff-friendly rows, manage sheet, tag/note edit, fit-to-screen preview, manage delete, shared PATCH). `AttachmentFeatureFlag.remoteUploadEnabled` **true**; API calls detail-scoped only. Build **12** tracked (`f2e9be0`). **TestFlight build 12 upload pending** — build 11 already submitted. **Live/cross-device verification not run** — do not claim passed. Old pre-sync local-only attachments may remain device-local; staff should reattach important old images for shared visibility. Full plan: [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next:** live verification checklist — do not change backend unless a real API bug is found. Physical device smoke remains a separate open track.
 

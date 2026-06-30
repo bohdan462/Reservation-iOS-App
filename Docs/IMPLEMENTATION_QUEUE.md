@@ -4,7 +4,7 @@
 
 Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), backend 3M-B (#18), iOS Slices 3A/3B/3R/3M, Manual Intake input polish (#17b), Tryzub V1 Host production polish (#5b, #5c), and **device smoke Phases 1–4 (#24–#27)** are **done in code**.
 
-**Current focus:** (1) physical device verification + release smoke test (backend `63d0cfc` **deployed**); (2) **reservation attachments** — backend Slice A+B **done** (`a2422d3` **deployed**, production-smoked); iOS Slice C **done** (`17a0bee`); iOS Slice D **done** (`d947721`); iOS Slice E **done** (`9d2784d`); see [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next attachment step:** live/cross-device verification + TestFlight **build 12** upload (not new backend work). **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
+**Current focus:** (1) physical device verification + release smoke test (backend `63d0cfc` **deployed**); (2) **reservation attachments** — backend Slice A+B **done** (`a2422d3` **deployed**, production-smoked); iOS Slice C **done** (`17a0bee`); iOS Slice D **done** (`d947721`); iOS Slice E **done** (`9d2784d`); see [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next attachment step:** live/cross-device verification + TestFlight **build 12** upload (not new backend work). (3) **Bookings CPU** — **P0-CPU-1A implemented; build passed; device verification open.** **P0-CPU-1B:** NewBookingsIntelligenceCard aggregate summary still runs body-time analysis; fix only if Bookings remains heavy after 1A smoke. **P0-CPU-1C:** HostBoardSnapshot body fallback — separate follow-up. **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
 
 ---
 
@@ -411,6 +411,36 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 
 ---
 
+## 34. P0-CPU-1A — Bookings Needs Review row insight cache
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done in code** — `ReservationsListView.swift` (`ReservationScheduleView`) |
+| **Scope** | Move `NewBookingRowInsightBuilder.build` off `ForEach`/body into keyed MainActor `.task` cache; use `GuestInsightLocalPool.boundedPool`; generation guard; row render = dict lookup |
+| **Notes** | **P0-CPU-1A implemented; build passed; device verification open.** Do not claim Bookings performance fully fixed. |
+
+---
+
+## 35. P0-CPU-1B — NewBookingsIntelligenceCard aggregate summary (follow-up)
+
+| Field | Value |
+|-------|-------|
+| **Status** | **open** — fix only if Bookings remains heavy after 1A device smoke |
+| **Scope** | `NewBookingsIntelligenceSummary.build` in `body` when `scope == .needsReview` still runs aggregate `GuestInsightsController().analyze` |
+| **Notes** | **P0-CPU-1B:** NewBookingsIntelligenceCard aggregate summary still runs body-time analysis; fix only if Bookings remains heavy after 1A smoke. |
+
+---
+
+## 36. P0-CPU-1C — HostBoardSnapshot body fallback (follow-up)
+
+| Field | Value |
+|-------|-------|
+| **Status** | **open** — separate PR from Bookings |
+| **Scope** | `HostBoardView` synchronous snapshot build in `body` fallback |
+| **Notes** | Host-only; do not bundle with P0-CPU-1A/B |
+
+---
+
 ## Completed (reference)
 
 | Slice | Commit / note |
@@ -443,6 +473,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 | Reservation attachments iOS Slice D — Detail sync UI | `d947721` — `remoteUploadEnabled` true |
 | Reservation attachments iOS Slice E — management UI polish | `9d2784d` |
 | Build 12 project settings | `f2e9be0` — tracked; TestFlight build 12 upload pending |
+| P0-CPU-1A — Bookings Needs Review row insight cache | `ReservationsListView.swift` — build passed; device verification open |
 
 ---
 
