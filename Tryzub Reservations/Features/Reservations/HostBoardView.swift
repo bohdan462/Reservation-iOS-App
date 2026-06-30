@@ -811,7 +811,7 @@ struct HostBoardView: View {
         guard isVisible, !deferNetworkLoads, !isRunningForPreviews else { return }
         let dateKey = selectedDateKey
         let date = selectedDate
-        try? await Task.sleep(nanoseconds: 400_000_000)
+        try? await Task.sleep(nanoseconds: 800_000_000)
         guard !Task.isCancelled else { return }
         guard selectedDateKey == dateKey else {
             return
@@ -819,6 +819,7 @@ struct HostBoardView: View {
         await activityStore.loadActivityFeed(
             date: date,
             perPage: 100,
+            isWarmRequest: true,
             guestNameByReservationID: guestNameByVisibleReservationID
         )
     }

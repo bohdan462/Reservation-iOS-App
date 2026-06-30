@@ -2193,27 +2193,13 @@ private struct ReservationScheduleView: View {
     }
 
     private var activityFeedWarmDateKeys: [String] {
-        if scope == .needsReview {
-            return []
-        }
-
-        if dateScope.isSingleDateScope {
-            return [bookingsSelectedDateKey]
-        }
-
-        if scope == .all, dateScope == .allHistory {
-            return []
-        }
-
-        return Array(sections.map(\.id).prefix(5))
+        // List-level activity evidence is optional and can churn network/state during
+        // tab changes and search. Detail/activity screens still load activity on demand.
+        []
     }
 
     private var activityFeedWarmTaskKey: String {
-        let rowsKey = displayedReservations
-            .prefix(80)
-            .map { "\($0.remoteID):\($0.guestName)" }
-            .joined(separator: ",")
-        return "activity-feed-\(isActive)-\(scope.rawValue)-\(dateScope.id)-\(activityFeedWarmDateKeys.joined(separator: ","))-\(rowsKey)"
+        "activity-feed-disabled-\(isActive)"
     }
 
     private func warmVisibleBookingsActivityFeeds() async {

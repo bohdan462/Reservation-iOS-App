@@ -103,10 +103,12 @@ final class ReservationActivityStore: ObservableObject {
     private var feedCache: [String: ActivityFeedCacheEntry] = [:]
     private var inFlightReservationIDs: Set<Int> = []
     private var inFlightFeedDateKeys: Set<String> = []
+    private var recentWarmFeedRequestAtByDateKey: [String: Date] = [:]
     private var invalidationTask: Task<Void, Never>?
 
     private let apiClient: any ReservationsAPIClientProtocol
     private let cacheTTL: TimeInterval = 90
+    private let warmRequestCooldown: TimeInterval = 20
 
     init(apiClient: any ReservationsAPIClientProtocol) {
         self.apiClient = apiClient
@@ -132,6 +134,7 @@ final class ReservationActivityStore: ObservableObject {
         feedCache = [:]
         inFlightReservationIDs = []
         inFlightFeedDateKeys = []
+        recentWarmFeedRequestAtByDateKey = [:]
     }
 
     // MARK: - Reservation scope
@@ -294,9 +297,25 @@ final class ReservationActivityStore: ObservableObject {
         page: Int = 1,
         perPage: Int = 50,
         force: Bool = false,
+        isWarmRequest: Bool = false,
         guestNameByReservationID: [Int: String] = [:]
     ) async {
         let dateKey = normalizedDateKey(date)
+        let now = Date()
+
+        if isWarmRequest,
+           !force,
+           page == 1,
+           let requestedAt = recentWarmFeedRequestAtByDateKey[dateKey],
+           now.timeIntervalSince(requestedAt) < warmRequestCooldown {
+            ReservationActivityStoreTrace.store(
+                scope: "date",
+                id: dateKey,
+                decision: "skip",
+                reason: "warm_cooldown"
+            )
+            return
+        }
 
         if inFlightFeedDateKeys.contains(dateKey) {
             ReservationActivityStoreTrace.store(
@@ -311,11 +330,9 @@ final class ReservationActivityStore: ObservableObject {
         if !force,
            let cache = feedCache[dateKey],
            !cache.isStale,
-           Date().timeIntervalSince(cache.loadedAt) < cacheTTL,
+           now.timeIntervalSince(cache.loadedAt) < cacheTTL,
            page == 1 {
-            feedLoadStateByDateKey[dateKey] = cache.items.isEmpty ? .empty : .loaded(cache.items)
-            feedSummaryChipsByDateKey[dateKey] = cache.summaryChips
-            feedPaginationByDateKey[dateKey] = (cache.page, cache.totalPages, cache.total)
+            publishFeedCacheIfChanged(cache, dateKey: dateKey)
             ReservationActivityStoreTrace.store(
                 scope: "date",
                 id: dateKey,
@@ -325,11 +342,15 @@ final class ReservationActivityStore: ObservableObject {
             return
         }
 
+        if isWarmRequest, page == 1 {
+            recentWarmFeedRequestAtByDateKey[dateKey] = now
+        }
+
         ReservationActivityStoreTrace.store(
             scope: "date",
             id: dateKey,
             decision: "fetch",
-            reason: force ? "manual_refresh" : "visible"
+            reason: force ? "manual_refresh" : (isWarmRequest ? "warm_visible" : "visible")
         )
 
         inFlightFeedDateKeys.insert(dateKey)
@@ -390,6 +411,22 @@ final class ReservationActivityStore: ObservableObject {
             if page == 1 {
                 feedLoadStateByDateKey[dateKey] = .failed(message)
             }
+        }
+    }
+
+    private func publishFeedCacheIfChanged(_ cache: ActivityFeedCacheEntry, dateKey: String) {
+        let loadState: ActivityLoadState = cache.items.isEmpty ? .empty : .loaded(cache.items)
+        if feedLoadStateByDateKey[dateKey] != loadState {
+            feedLoadStateByDateKey[dateKey] = loadState
+        }
+        if feedSummaryChipsByDateKey[dateKey] != cache.summaryChips {
+            feedSummaryChipsByDateKey[dateKey] = cache.summaryChips
+        }
+        let pagination = (cache.page, cache.totalPages, cache.total)
+        if feedPaginationByDateKey[dateKey]?.page != pagination.0
+            || feedPaginationByDateKey[dateKey]?.totalPages != pagination.1
+            || feedPaginationByDateKey[dateKey]?.total != pagination.2 {
+            feedPaginationByDateKey[dateKey] = pagination
         }
     }
 
