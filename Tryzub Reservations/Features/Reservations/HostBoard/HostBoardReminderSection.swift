@@ -57,86 +57,227 @@ struct HostReminderPanelContext {
     }
 }
 
-struct HostReminderBatchCard: View {
-    let status: ReservationReminderStatusResponse?
-    let notice: String?
-    let isSending: Bool
-    let showProof: Bool
-    let hasEligibleReminders: Bool
-    let manualSendEnabled: Bool
-    let backendManualBatchEnabled: Bool
-    let automaticRemindersEnabled: Bool
-    let reminderLeadHours: Int
-    let emailUsage: ResolvedEmailUsage
-    let dailyEmailLimitReached: Bool
-    let canSendBatchReminders: Bool
+struct HostReminderStatsSheet: View {
+    let context: HostReminderPanelContext?
     let onSend: () -> Void
+    @Environment(\.dismiss) private var dismiss
 
-    private var summary: HostReminderStaffSummary {
-        HostReminderStaffSummary.build(
-            status: status,
-            automaticRemindersEnabled: automaticRemindersEnabled,
-            manualSendEnabled: manualSendEnabled,
-            backendManualBatchEnabled: backendManualBatchEnabled,
-            reminderLeadHours: reminderLeadHours,
-            dailyEmailLimitReached: dailyEmailLimitReached,
-            canSendBatchReminders: canSendBatchReminders,
-            isLoading: showProof && status == nil
-        )
+    private var summary: ReservationReminderSummaryDTO? {
+        context?.status?.summary
+    }
+
+    private var leadTimeText: String {
+        guard let hours = context?.reminderLeadHours else { return "Not loaded" }
+        return "\(hours) \(hours == 1 ? "hour" : "hours") before service"
+    }
+
+    private var automationText: String {
+        guard let context else { return "Not loaded" }
+        return context.automaticRemindersEnabled ? "Automatic reminders on" : "Automatic reminders off"
+    }
+
+    private var manualText: String {
+        guard let context else { return "Not loaded" }
+        if context.canSendBatchReminders {
+            return "Manual send available now"
+        }
+        if context.backendManualBatchEnabled {
+            return "Manual send enabled"
+        }
+        return "Manual send off"
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Label(summary.title, systemImage: "bell.badge")
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    headerCard
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        reminderStatRow(
+                            title: "Sent",
+                            value: summary?.sent ?? 0,
+                            systemImage: "paperplane.fill",
+                            tint: TryzubColors.info,
+                            detail: "Reminders sent during the latest backend check."
+                        )
+                        reminderStatRow(
+                            title: "Handled",
+                            value: summary?.alreadySent ?? 0,
+                            systemImage: "checkmark.circle.fill",
+                            tint: TryzubColors.success,
+                            detail: "Guests who already had a reminder on record."
+                        )
+                        reminderStatRow(
+                            title: "Due",
+                            value: summary?.eligible ?? 0,
+                            systemImage: "clock.fill",
+                            tint: TryzubColors.warning,
+                            detail: "Guests eligible for a manual reminder send right now."
+                        )
+                        reminderStatRow(
+                            title: "Skipped",
+                            value: summary?.skipped ?? 0,
+                            systemImage: "forward.end.fill",
+                            tint: TryzubColors.mutedText,
+                            detail: "Checked but not eligible, usually because timing or contact rules block it."
+                        )
+                        reminderStatRow(
+                            title: "Failed",
+                            value: summary?.failed ?? 0,
+                            systemImage: "exclamationmark.triangle.fill",
+                            tint: (summary?.failed ?? 0) > 0 ? TryzubColors.warning : TryzubColors.mutedText,
+                            detail: "Needs staff attention before the guest can be considered reminded."
+                        )
+                    }
+                    .padding(10)
+                    .hostBoardGlassPanel(cornerRadius: 14, strokeOpacity: 0.10)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        reminderInfoRow(title: "Automation", value: automationText, systemImage: "bolt.circle.fill")
+                        reminderInfoRow(title: "Manual batch", value: manualText, systemImage: "paperplane.circle.fill")
+                        reminderInfoRow(title: "Lead time", value: leadTimeText, systemImage: "timer")
+                        if let daily = context?.emailUsage.dailyValueText {
+                            reminderInfoRow(title: "Daily email", value: daily, systemImage: "envelope.badge")
+                        }
+                    }
+                    .padding(10)
+                    .hostBoardGlassPanel(cornerRadius: 14, strokeOpacity: 0.10)
+
+                    if let notice = context?.notice, !notice.isEmpty {
+                        Text(notice)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(TryzubColors.mutedText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(10)
+                            .hostBoardGlassPanel(cornerRadius: 14, strokeOpacity: 0.08)
+                    }
+                }
+                .padding(16)
+            }
+            .background(TryzubColors.screenBackground.ignoresSafeArea())
+            .navigationTitle("Reminder stats")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
                     .font(.subheadline.weight(.semibold))
-                Spacer()
-                if isSending {
-                    ProgressView()
-                        .controlSize(.small)
                 }
-            }
-
-            Text(summary.message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if let secondary = summary.secondary {
-                Text(secondary)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(TryzubColors.mutedText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if canSendBatchReminders {
-                Button {
-                    onSend()
-                } label: {
-                    Label(summary.actionLabel ?? "Send reminders", systemImage: "paperplane")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
-                .disabled(isSending)
-            } else if let actionLabel = summary.actionLabel {
-                Text(actionLabel)
-                    .frame(maxWidth: .infinity)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(TryzubColors.mutedText)
-                    .padding(.vertical, 10)
-            }
-
-            if let notice, !notice.isEmpty {
-                Text(notice)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(TryzubColors.mutedText)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var headerCard: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "bell.badge")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(context?.stateTint ?? TryzubColors.mutedText)
+                .frame(width: 38, height: 38)
+                .hostBoardGlassChip(cornerRadius: 19, isSelected: false, strokeOpacity: 0.12)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(context?.summary.title ?? "Guest reminders")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(TryzubColors.primaryText)
+                    .lineLimit(1)
+
+                Text(context?.summary.message ?? "Reminder status is not loaded for this date.")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(TryzubColors.mutedText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+
+            if context?.canSendBatchReminders == true {
+                Button {
+                    onSend()
+                    dismiss()
+                } label: {
+                    Label("Send", systemImage: "paperplane.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 12)
+                        .frame(height: 38)
+                        .hostBoardGlassChip(
+                            cornerRadius: 19,
+                            isSelected: false,
+                            strokeOpacity: 0.14
+                        )
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(TryzubColors.primaryControl)
+                .disabled(context?.isSending == true)
+                .accessibilityLabel("Send due reminders")
+            } else if context?.isSending == true {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        }
         .padding(12)
-        .hostBoardGlassPanel(cornerRadius: 12)
+        .hostBoardGlassPanel(cornerRadius: 16, strokeOpacity: 0.12)
+    }
+
+    private func reminderStatRow(
+        title: String,
+        value: Int,
+        systemImage: String,
+        tint: Color,
+        detail: String
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 28, height: 28)
+                .hostBoardGlassChip(cornerRadius: 14, isSelected: false, strokeOpacity: 0.10)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\(value)")
+                        .font(.system(size: 19, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(value == 0 ? TryzubColors.mutedText : TryzubColors.primaryText)
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(TryzubColors.primaryText)
+                }
+
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(TryzubColors.mutedText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .hostBoardGlassSurface(cornerRadius: 12)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func reminderInfoRow(title: String, value: String, systemImage: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(TryzubColors.mutedText)
+                .frame(width: 24, height: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(TryzubColors.mutedText)
+                Text(value)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(TryzubColors.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -223,7 +364,7 @@ struct HostReminderStaffSummary {
             if failed > 0 {
                 return HostReminderStaffSummary(
                     title: title,
-                    message: "\(failed) \(failed == 1 ? "reminder needs" : "reminders need") a staff check.",
+                    message: "\(failed) \(failed == 1 ? "reminder needs" : "reminders need") attention.",
                     secondary: nil,
                     actionLabel: nil,
                     severity: .attention

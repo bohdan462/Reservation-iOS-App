@@ -130,10 +130,8 @@ struct HostOperationalStatusPanel: View {
     let noTableCount: Int
     let availabilitySummary: String?
     let isAvailabilityLoading: Bool
-    let reminderContext: HostReminderPanelContext?
     let isWideLayout: Bool
     let onRefreshAvailability: (() -> Void)?
-    let onSendReminders: () -> Void
 
     private var stats: [HostBoardStat] {
         var items = [
@@ -150,20 +148,7 @@ struct HostOperationalStatusPanel: View {
     }
 
     var body: some View {
-        Group {
-            if isWideLayout {
-                HStack(alignment: .top, spacing: 16) {
-                    statsSection
-                    reminderSection
-                    Spacer(minLength: 0)
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 14) {
-                    statsSection
-                    reminderSection
-                }
-            }
-        }
+        statsSection
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .hostBoardGlassPanel(cornerRadius: ReservationUIStyle.cardCorner, strokeOpacity: 0.14)
@@ -180,17 +165,13 @@ struct HostOperationalStatusPanel: View {
                 availabilityStatus
             }
 
-            ViewThatFits(in: .horizontal) {
+            if isWideLayout {
                 HStack(alignment: .center, spacing: 8) {
-                    ForEach(stats) { statItem($0) }
+                    ForEach(stats) { statItem($0, compact: false) }
                 }
-
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 82), spacing: 8)],
-                    alignment: .leading,
-                    spacing: 8
-                ) {
-                    ForEach(stats) { statItem($0) }
+            } else {
+                HStack(alignment: .center, spacing: 6) {
+                    ForEach(stats) { statItem($0, compact: true) }
                 }
             }
         }
@@ -230,95 +211,27 @@ struct HostOperationalStatusPanel: View {
         }
     }
 
-    private var reminderSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 8) {
-                Label("Reminders", systemImage: "bell.badge")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(TryzubColors.primaryText)
-                    .fixedSize()
-
-                Text(reminderContext?.shortStateLine ?? "Off")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(reminderContext?.stateTint ?? TryzubColors.mutedText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-
-                if reminderContext?.isSending == true {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-
-                Spacer(minLength: 0)
-
-                if reminderContext?.canSendBatchReminders == true {
-                    Button(action: onSendReminders) {
-                        Image(systemName: "paperplane.fill")
-                            .font(.caption.weight(.semibold))
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(reminderContext?.isSending == true)
-                    .accessibilityLabel("Send reminders")
-                }
-            }
-
-            if let summary = reminderContext?.status?.summary {
-                HStack(alignment: .center, spacing: 9) {
-                    reminderMetric(systemImage: "paperplane.fill", value: summary.sent, label: "Sent")
-                    reminderMetric(systemImage: "checkmark.circle.fill", value: summary.alreadySent, label: "Handled")
-                    reminderMetric(systemImage: "clock.fill", value: summary.eligible, label: "Due")
-                    reminderMetric(systemImage: "forward.end.fill", value: summary.skipped, label: "Skipped")
-                    reminderMetric(
-                        systemImage: "exclamationmark.triangle.fill",
-                        value: summary.failed,
-                        label: "Failed",
-                        tint: summary.failed > 0 ? TryzubColors.warning : TryzubColors.mutedText
-                    )
-                }
-                .frame(minHeight: 28)
-            }
-        }
-    }
-
-    private func reminderMetric(
-        systemImage: String,
-        value: Int,
-        label: String,
-        tint: Color = TryzubColors.mutedText
-    ) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: systemImage)
-                .font(.system(size: 9, weight: .semibold))
-            Text("\(value)")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .monospacedDigit()
-        }
-        .foregroundStyle(tint)
-        .fixedSize()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label): \(value)")
-    }
-
-    private func statItem(_ stat: HostBoardStat) -> some View {
+    private func statItem(_ stat: HostBoardStat, compact: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {
             Text("\(stat.value)")
-                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .font(.system(size: compact ? 15 : 17, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(stat.value == 0 ? TryzubColors.mutedText : TryzubColors.primaryText)
                 .contentTransition(.numericText())
                 .animation(.snappy(duration: 0.35), value: stat.value)
                 .lineLimit(1)
             Text(stat.label)
-                .font(.caption2.weight(.medium))
+                .font(.system(size: compact ? 10 : 11, weight: .medium))
                 .foregroundStyle(TryzubColors.mutedText)
                 .lineLimit(1)
+                .minimumScaleFactor(0.62)
+                .allowsTightening(true)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, compact ? 5 : 10)
         .padding(.vertical, 7)
         .hostBoardGlassCapsule()
-        .fixedSize(horizontal: true, vertical: false)
+        .frame(maxWidth: compact ? .infinity : nil)
+        .fixedSize(horizontal: !compact, vertical: false)
     }
 }
 
