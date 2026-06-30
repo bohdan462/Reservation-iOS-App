@@ -51,8 +51,10 @@ struct HostBoardView: View {
     @State private var isShowingHostIntelligenceReview = false
     @State private var showShiftReminders = false
     /// Phase 2: cached deterministic Service Briefing, rebuilt only when inputs change
-    /// (selected date, reservations, snapshot, clock minute) — never from a fetch.
+    /// (selected date, reservations, snapshot, coarse hour bucket) — never from a fetch.
     @State private var serviceBriefingState: HostServiceBriefingViewState?
+    /// Tracks the stamp used for the last service briefing build; used to skip no-op rebuilds.
+    @State private var lastBuiltServiceBriefingStamp: String = ""
     /// Phase 4: concise booking-load heads-up for the busiest window, shown only during
     /// before/during service. Rebuilt with the briefing (cache-only, no fetch).
     @State private var bookingTopItem: BookingSuggestionViewItem?
@@ -64,6 +66,8 @@ struct HostBoardView: View {
     @State private var hostBoardHeaderCollapse: CGFloat = 0
     @State private var isPressureExpanded = false
     @State private var hostIntelligenceCardPresentation: HostIntelligenceCardPresentation = .empty
+    /// Tracks the presentation key used for the last card build; used to skip no-op card rebuilds.
+    @State private var lastBuiltCardInputKey: String = ""
     @AppStorage("host.liveModeEnabled") private var liveHostModeEnabled = false
 
     private var hasOpenInteraction: Bool {
@@ -263,9 +267,12 @@ struct HostBoardView: View {
 
     /// Local deterministic Host facts: reservations, date, seated times, settings.
     /// History cache enrichment is intentionally excluded; guest intelligence uses `hostIntelligenceEnrichmentKey`.
+    /// Clock minute is intentionally excluded: minute-only ticks must not rerun the full engine.
+    /// Time-sensitive row labels are handled by the snapshot via boardSnapshotBuildKey which
+    /// includes hostBoardSnapshotTimingRefreshStamp (minute-aware, gated to today + time-sensitive rows).
     private var hostIntelligenceEvaluationKey: String {
         let options = hostFloorLegacyOptions
-        return "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceSeatedStamp)-\(hostIntelligenceOperationalMinuteStamp)-\(hostIntelligenceSettingsStore.settings.hostDecisionFingerprint)-\(floorPlanStore.layoutFingerprint(for: selectedDateKey, allowsLegacyFallback: options.allowsFallback, localActiveTableCount: options.localActiveTableCount))"
+        return "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceSeatedStamp)-\(hostIntelligenceSettingsStore.settings.hostDecisionFingerprint)-\(floorPlanStore.layoutFingerprint(for: selectedDateKey, allowsLegacyFallback: options.allowsFallback, localActiveTableCount: options.localActiveTableCount))"
     }
 
     private var hostIntelligenceEvaluationTaskKey: String {
@@ -616,6 +623,9 @@ struct HostBoardView: View {
         }
         .onChange(of: selectedDateKey) { _, dateKey in
             controller.noteHostBoardSelectedDate(dateKey)
+            // Invalidate no-op gates so the new date always gets a fresh build.
+            lastBuiltCardInputKey = ""
+            lastBuiltServiceBriefingStamp = ""
         }
         .onAppear {
             hostIntelligenceController.updateDeveloperDiagnosticsAccess(
@@ -712,6 +722,13 @@ struct HostBoardView: View {
                 traceHostBoardStabilization(event: "evaluate_skipped", detail: "reason=presentation_hidden")
                 return
             }
+            // Clock minute is intentionally removed from hostIntelligenceEvaluationKey.
+            // If this task fires, something operationally meaningful changed (reservation
+            // stamp, seated stamp, settings, or floor layout). Minute-only ticks no longer
+            // reach this path.
+            #if DEBUG
+            print("[HOST_NOOP_CPU_GATE_TRACE] work=evaluate decision=run reason=operational_change reservationStamp=\(hostIntelligenceReservationStamp) date=\(selectedDateKey)")
+            #endif
             let requestedDateKey = selectedDateKey
             let requestedEvalKey = hostIntelligenceEvaluationTaskKey
             let wasDebounced = isHostDateNavigationRecent()
@@ -1477,12 +1494,16 @@ struct HostBoardView: View {
     }
 
     private var serviceBriefingStamp: String {
-        let minute = Int(clockTick.timeIntervalSince1970 / 60)
+        // Use a coarse hourly bucket so service-mode transitions (before → during → after)
+        // are captured without rebuilding the full service briefing every clock minute.
+        // Reservation count and snapshot generatedAt ensure reservation/status changes
+        // still trigger an immediate rebuild.
+        let hourBucket = Int(clockTick.timeIntervalSince1970 / 3600)
         return [
             selectedDateKey,
             String(reservations.count),
             String(Int(hostIntelligenceController.decisionSnapshot.generatedAt.timeIntervalSince1970)),
-            String(minute)
+            "h\(hourBucket)"
         ].joined(separator: "|")
     }
 
@@ -1500,6 +1521,14 @@ struct HostBoardView: View {
 
     /// Rebuilds the Service Briefing from cached data only. No network.
     private func rebuildServiceBriefing() {
+        let currentStamp = serviceBriefingStamp
+        guard currentStamp != lastBuiltServiceBriefingStamp else {
+            #if DEBUG
+            print("[HOST_NOOP_CPU_GATE_TRACE] work=service_briefing decision=skip reason=reservation_fingerprint_unchanged date=\(selectedDateKey)")
+            #endif
+            return
+        }
+        lastBuiltServiceBriefingStamp = currentStamp
         let bounds = serviceDensityBounds
         let state = HostServiceBriefingViewStateBuilder.build(
             HostServiceBriefingViewStateBuilder.Input(
@@ -1679,7 +1708,17 @@ struct HostBoardView: View {
     }
 
     private var stableHostIntelligenceCardPresentation: HostIntelligenceCardPresentation {
-        hostIntelligenceCardPresentation
+        // Guard against rendering stale card built for a prior selected date.
+        // The card key's first pipe-delimited segment is always the date key.
+        let cardKey = hostIntelligenceCardPresentation.key
+        let cardDateKey = cardKey.components(separatedBy: "|").first ?? ""
+        guard cardDateKey == selectedDateKey || cardKey == "empty" else {
+            #if DEBUG
+            print("[HOST_CARD_STALE_GUARD_TRACE] decision=hide reason=date_mismatch selected=\(selectedDateKey) cardDate=\(cardDateKey)")
+            #endif
+            return .empty
+        }
+        return hostIntelligenceCardPresentation
     }
 
     private var isHostIntelligenceCardVisible: Bool {
@@ -1720,6 +1759,15 @@ struct HostBoardView: View {
     private func rebuildHostIntelligenceCardPresentation(expectedKey: String? = nil) -> Bool {
         let key = expectedKey ?? hostIntelligenceCardPresentationKey
         guard key == hostIntelligenceCardPresentationKey else { return false }
+
+        // Skip rebuild if inputs have not changed since the last build.
+        if key == lastBuiltCardInputKey {
+            #if DEBUG
+            print("[HOST_NOOP_CPU_GATE_TRACE] work=card decision=skip reason=input_key_unchanged date=\(selectedDateKey)")
+            #endif
+            return true
+        }
+
         let snapshot = hostIntelligenceController.displaySnapshot
         let presentation = HostIntelligenceCardPresentation.build(
             key: key,
@@ -1733,6 +1781,7 @@ struct HostBoardView: View {
             includesReviewItem: true
         )
         guard key == hostIntelligenceCardPresentationKey else { return false }
+        lastBuiltCardInputKey = key
         if presentation != hostIntelligenceCardPresentation {
             hostIntelligenceCardPresentation = presentation
         }
