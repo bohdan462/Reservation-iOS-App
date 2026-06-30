@@ -4,7 +4,7 @@
 
 Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), backend 3M-B (#18), iOS Slices 3A/3B/3R/3M, Manual Intake input polish (#17b), Tryzub V1 Host production polish (#5b, #5c), and **device smoke Phases 1–4 (#24–#27)** are **done in code**.
 
-**Current focus:** (1) physical device verification + release smoke test (backend `63d0cfc` **deployed**); (2) **reservation attachments** — backend Slice A+B **done** (`a2422d3` **deployed**, production-smoked); iOS Slice C **done** (`17a0bee`); iOS Slice D **done** (`d947721`); iOS Slice E **done** (`9d2784d`); see [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next attachment step:** live/cross-device verification + TestFlight **build 12** upload (not new backend work). (3) **Bookings CPU** — **P0-CPU-1A implemented; build passed; device verification open.** **P0-CPU-1B:** NewBookingsIntelligenceCard aggregate summary still runs body-time analysis; fix only if Bookings remains heavy after 1A smoke. **P0-CPU-1C:** HostBoardSnapshot body fallback — separate follow-up. **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
+**Current focus:** (1) physical device verification + release smoke test (backend `63d0cfc` **deployed**); (2) **reservation attachments** — backend Slice A+B **done** (`a2422d3` **deployed**, production-smoked); iOS Slice C **done** (`17a0bee`); iOS Slice D **done** (`d947721`); iOS Slice E **done** (`9d2784d`); see [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next attachment step:** live/cross-device verification + TestFlight **build 12** upload (not new backend work). (3) **Bookings CPU** — **P0-CPU-1A implemented; build passed; device verification open.** **P0-CPU-1B:** NewBookingsIntelligenceCard aggregate summary still runs body-time analysis; fix only if Bookings remains heavy after 1A smoke. **P0-CPU-1C:** HostBoardSnapshot body fallback — separate follow-up. (4) **P0 smoothness** — **P0-DETAIL-1** + **P0-LOCALMODEL-1** **done in code; smoke-supported** (`84f210c`, `4e4c274`); **next recommended slice: P0-HOST-2B** (Host inline full-history returning scan). **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
 
 ---
 
@@ -441,6 +441,37 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 
 ---
 
+## 37. P0-DETAIL-1 — Cache Detail guest truth per reservation fingerprint
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done in code** — `84f210c` |
+| **Scope** | `ReservationDetailView.swift`, `GuestHistorySemantics.swift` — keyed `detailGuestTruthFingerprint` + `DetailGuestTruthBundle`; body reads cache only |
+| **Notes** | **Smoke-supported.** `DETAIL_TRUTH_CACHE_TRACE` rebuild/publish/skip by semantic fingerprint. Activity, attachments, profile fetches, status mutations unchanged. **Do not claim** final physical smoke passed. |
+
+---
+
+## 38. P0-LOCALMODEL-1 — Defer Detail note analysis until model is warm and idle
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done in code** — `4e4c274` |
+| **Scope** | `ReservationDetailView.swift` — deterministic `recomputeNoteSignals()` immediate; model enrichment via keyed `.task` + `LOCAL_MODEL_GATE_TRACE` |
+| **Notes** | **Smoke-supported.** Detail open no longer cold-loads 3B model. **Do not claim** final physical smoke passed. |
+
+---
+
+## 39. P0-HOST-2B — Remove Host inline full-history returning scan
+
+| Field | Value |
+|-------|-------|
+| **Status** | **open** — next recommended smoothness slice |
+| **Scope** | `HostIntelligenceInlineItem.swift` — map returning inline chips from `snapshot.guestSignals` instead of `ReturningGuestHistoryIndex(records: knownReservations)` |
+| **Evidence** | `INTEL_PERF_TRACE operation=Host inline returning scan reservations=1 knownReservations=4162 durationMs=64–67` |
+| **Notes** | Separate from P0-HOST-2A evaluate debounce (`f2274ee`). Rows must stay immediate. |
+
+---
+
 ## Completed (reference)
 
 | Slice | Commit / note |
@@ -474,6 +505,9 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 | Reservation attachments iOS Slice E — management UI polish | `9d2784d` |
 | Build 12 project settings | `f2e9be0` — tracked; TestFlight build 12 upload pending |
 | P0-CPU-1A — Bookings Needs Review row insight cache | `ReservationsListView.swift` — build passed; device verification open |
+| P0-DETAIL-1 — Detail guest truth cache | `84f210c` — smoke-supported; device verification open |
+| P0-LOCALMODEL-1 — Detail note analysis model gate | `4e4c274` — smoke-supported; device verification open |
+| P0-HOST-2A — Host intelligence debounce on date nav | `f2274ee` |
 
 ---
 

@@ -1,7 +1,7 @@
 # Open work — V1 stabilization backlog
 
 **Branch:** `audit-current-state`  
-**Root HEAD:** `f2e9be0` (build 12 tracked; attachment live verification open)  
+**Root HEAD:** `4e4c274` (P0-DETAIL-1 + P0-LOCALMODEL-1; attachment live verification open)  
 **Last reviewed:** 2026-06-29  
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
@@ -128,6 +128,36 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 | **Approach** | Separate PR — move snapshot build off body; do not bundle with Bookings |
 | **Acceptance** | Instruments: snapshot build not in Host `body` hot path |
 | **Class** | V1 stabilization — iOS only — **open** |
+
+---
+
+## P0 smoothness — Detail truth cache + local model gate
+
+### P0 smoothness stabilization — Detail truth cache + local model gate
+
+**Implemented (code complete + smoke-supported; do not mark final physical smoke passed):**
+
+- **`84f210c` — P0-DETAIL-1:** Cache Detail guest truth per reservation fingerprint. Moves Detail guest truth / regularity / guest-detail presentation out of SwiftUI body/computed hot paths. `DETAIL_TRUTH_CACHE_TRACE` shows rebuild/publish/skip by semantic fingerprint. Activity, attachments, profile fetches, and status mutations unchanged.
+- **`4e4c274` — P0-LOCALMODEL-1:** Defer Detail note analysis until model is warm and idle. Deterministic note analysis still runs immediately on appear. Detail no longer cold-loads the 3B local model during navigation/open. `LOCAL_MODEL_GATE_TRACE` records skip/defer/run decisions.
+
+**Physical smoke (supported, not final sign-off):**
+
+- No `LOCAL_MODEL_LOAD_TRACE` / `llama_model_loader` / `ggml_metal` dump during Detail open.
+- Detail truth cache rebuilds once per fingerprint and skips when unchanged.
+- Remaining Host date-chip jank is separate: Host inline returning scan over full history pool (`knownReservations=4162`, ~64–67 ms). Track as **P0-HOST-2B**.
+
+### P0-HOST-2B: Remove Host inline full-history returning scan
+
+| Field | Value |
+|-------|-------|
+| **Risk if not fixed** | Host date navigation still pays ~64–67 ms building `ReturningGuestHistoryIndex` over full history pool during card presentation |
+| **Files** | `HostIntelligenceInlineItem.swift` (primary) |
+| **Approach** | Map returning inline chips from `snapshot.guestSignals` (`.regularGuest` / `.importantGuest`) like `guestCareItems`; do not rescan `knownReservations` |
+| **Evidence** | `INTEL_PERF_TRACE operation=Host inline returning scan reservations=1 knownReservations=4162 durationMs=64–67` |
+| **Acceptance** | Date tap does not scan full pool; rows still immediate; returning chips update after evaluate settles |
+| **Class** | V1 stabilization — iOS only — **open** (next recommended smoothness slice) |
+
+**Related done:** P0-HOST-2A Host evaluate debounce on date nav (`f2274ee`).
 
 ---
 
@@ -395,6 +425,8 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 - `POST /import` not in normal client workflow
 - Offline mutations blocked when degraded; no offline create/edit queue (not V1)
 - P0-CPU-1A — Bookings Needs Review row insight cache (`ReservationsListView.swift`); **P0-CPU-1A implemented; build passed; device verification open.**
+- P0-DETAIL-1 — Detail guest truth cache (`84f210c`); **smoke-supported; device verification open.**
+- P0-LOCALMODEL-1 — Detail note analysis model gate (`4e4c274`); **smoke-supported; device verification open.**
 
 ---
 
