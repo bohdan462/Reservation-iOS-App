@@ -180,7 +180,11 @@ enum HostIntelligenceInlineItemBuilder {
 
     items.append(contentsOf: possibleCorrectionItems(snapshot: snapshot))
     items.append(contentsOf: busyTimeItems(snapshot: snapshot))
-    items.append(contentsOf: returningGuestItems(reservations: reservations, knownReservations: knownReservations))
+    items.append(contentsOf: returningGuestItems(
+      snapshot: snapshot,
+      reservations: reservations,
+      knownReservationsCount: knownReservations.count
+    ))
 
     if let next = nextGuestItem(reservations: reservations, now: snapshot.generatedAt),
        !items.contains(where: { $0.reservationID == next.reservationID && $0.priority < next.priority }) {
@@ -407,54 +411,71 @@ enum HostIntelligenceInlineItemBuilder {
   }
 
   private static func returningGuestItems(
+    snapshot: HostDecisionSnapshot,
     reservations: [ReservationRecord],
-    knownReservations: [ReservationRecord]
+    knownReservationsCount: Int
   ) -> [HostIntelligenceInlineItem] {
     guard !reservations.isEmpty else { return [] }
 
     let started = ContinuousClock.now
-    let historyIndex = ReturningGuestHistoryIndex(records: knownReservations)
-    let items: [HostIntelligenceInlineItem] = reservations
-      .filter { $0.isExpectedGuest && !$0.isHidden }
-      .compactMap { reservation in
-        let history = validPriorVisits(
-          for: reservation,
-          in: historyIndex.candidates(for: reservation)
-        )
-        guard !history.priorVisits.isEmpty, history.reliableIdentity else { return nil }
-        let priorCount = history.priorVisits.count
-        let lastVisit = history.priorVisits.max { lhs, rhs in
-          lhs.reservationDate < rhs.reservationDate
-        }
-        let lastVisitText = lastVisit.map { "last \(displayDate($0.reservationDate))" } ?? "history found"
-        let title = priorCount >= 3 ? "Likely regular" : "Seen before"
+    let dayReservationIDs = Set(
+      reservations.filter { $0.isExpectedGuest && !$0.isHidden }.map(\.remoteID)
+    )
+    guard !dayReservationIDs.isEmpty else { return [] }
+
+    let signals = snapshot.guestSignals.filter { signal in
+      dayReservationIDs.contains(signal.reservationID)
+        && (signal.kind == .regularGuest || signal.kind == .importantGuest)
+    }
+    var seenReservationIDs = Set<Int>()
+    let items: [HostIntelligenceInlineItem] = signals
+      .sorted { lhs, rhs in
+        if lhs.kind == rhs.kind { return lhs.reservationID < rhs.reservationID }
+        return lhs.kind == .importantGuest
+      }
+      .compactMap { signal -> HostIntelligenceInlineItem? in
+        guard seenReservationIDs.insert(signal.reservationID).inserted else { return nil }
+        let isFrequent = signal.kind == .importantGuest
+        let title = isFrequent ? "Likely regular" : "Seen before"
+        let lastVisitText = lastVisitDisplay(from: signal.evidence)
+          .map { "last \($0)" } ?? "history found"
         let action = action(
-          id: "inline-returning-\(reservation.remoteID)",
+          id: "inline-returning-\(signal.reservationID)",
           kind: .reviewReservation,
-          severity: .info,
+          severity: signal.severity,
           title: title,
-          reason: "\(priorCount) valid prior \(priorCount == 1 ? "visit" : "visits")",
-          reservationID: reservation.remoteID
+          reason: signal.message,
+          reservationID: signal.reservationID
         )
         return HostIntelligenceInlineItem(
-          id: "returning-\(reservation.remoteID)",
+          id: "returning-\(signal.reservationID)",
           kind: .returningGuest,
           priority: 45,
           title: title,
-          detail: "\(firstName(reservation.guestName)) · \(lastVisitText)",
-          reservationID: reservation.remoteID,
+          detail: "\(firstName(signal.guestName)) · \(lastVisitText)",
+          reservationID: signal.reservationID,
           action: action,
           opensReview: false,
-          evidence: ["validPastVisitCount=\(priorCount)", "identity=\(history.identityKey)"],
-          confidence: priorCount >= 3 ? .likely : .confirmed,
+          evidence: signal.evidence,
+          confidence: isFrequent ? .likely : .confirmed,
           suppressReason: nil
         )
       }
     #if DEBUG
     let durationMs = Int(started.duration(to: .now).pressureTraceTimeInterval * 1_000)
-    print("[INTEL_PERF_TRACE] operation=Host inline returning scan reservations=\(reservations.count) knownReservations=\(knownReservations.count) acceptedReturning=\(items.count) durationMs=\(durationMs)")
+    print("[INTEL_PERF_TRACE] operation=Host inline returning scan skipped reason=using_snapshot_guest_signals knownReservations=\(knownReservationsCount) dayReservations=\(reservations.count) acceptedReturning=\(items.count) durationMs=\(durationMs)")
     #endif
     return items
+  }
+
+  private static func lastVisitDisplay(from evidence: [String]) -> String? {
+    for item in evidence {
+      guard item.hasPrefix("lastVisit=") else { continue }
+      let value = String(item.dropFirst("lastVisit=".count))
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      if !value.isEmpty { return value }
+    }
+    return nil
   }
 
   private static func reminderItem(_ context: HostIntelligenceReminderInlineContext?) -> HostIntelligenceInlineItem? {
@@ -675,79 +696,6 @@ enum HostIntelligenceInlineItemBuilder {
       }
   }
 
-  private static func validPriorVisits(
-    for reservation: ReservationRecord,
-    in knownReservations: [ReservationRecord]
-  ) -> (priorVisits: [ReservationRecord], reliableIdentity: Bool, identityKey: String) {
-    let identity = GuestIdentityResolver().identity(for: reservation)
-    let identityKey = identity.fullPhoneDigits.map { "phone:\($0)" }
-      ?? identity.usefulEmail.map { "email:\($0)" }
-      ?? "none"
-    guard identityKey != "none" else { return ([], false, identityKey) }
-    let prior = GuestOperationalTruth.validPastVisits(
-      selected: reservation,
-      reservationPool: knownReservations,
-      emitTrace: false
-    )
-    return (prior, true, identityKey)
-  }
-
-  /// Narrows truth evaluation to plausible identity peers without changing the
-  /// GuestOperationalTruth matching or visit-validity rules.
-  private struct ReturningGuestHistoryIndex {
-    private let resolver = GuestIdentityResolver()
-    private var recordsByID: [Int: ReservationRecord] = [:]
-    private var idsByPhone: [String: Set<Int>] = [:]
-    private var idsByEmail: [String: Set<Int>] = [:]
-    private var idsByName: [String: Set<Int>] = [:]
-
-    init(records: [ReservationRecord]) {
-      for record in records {
-        recordsByID[record.remoteID] = record
-        let identity = resolver.identity(for: record)
-        if let phone = identity.fullPhoneDigits {
-          idsByPhone[phone, default: []].insert(record.remoteID)
-        }
-        if let email = identity.usefulEmail {
-          idsByEmail[email, default: []].insert(record.remoteID)
-        }
-        if !identity.normalizedName.isEmpty {
-          idsByName[identity.normalizedName, default: []].insert(record.remoteID)
-        }
-      }
-    }
-
-    func candidates(for reservation: ReservationRecord) -> [ReservationRecord] {
-      let identity = resolver.identity(for: reservation)
-      guard identity.hasReliableContact else { return [reservation] }
-      var ids: Set<Int> = [reservation.remoteID]
-      if let phone = identity.fullPhoneDigits {
-        ids.formUnion(idsByPhone[phone] ?? [])
-      }
-      if let email = identity.usefulEmail {
-        ids.formUnion(idsByEmail[email] ?? [])
-      }
-      if !identity.normalizedName.isEmpty {
-        // Same-name candidates preserve the resolver's strong name + partial-contact rules.
-        ids.formUnion(idsByName[identity.normalizedName] ?? [])
-      }
-      return ids.compactMap { id in
-        id == reservation.remoteID ? reservation : recordsByID[id]
-      }
-    }
-  }
-
-  private static func normalizedPhone(_ value: String) -> String? {
-    let digits = value.filter(\.isNumber)
-    return digits.count >= 7 ? digits : nil
-  }
-
-  private static func normalizedEmail(_ value: String) -> String? {
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    guard trimmed.contains("@"), !trimmed.isManualPlaceholderEmail else { return nil }
-    return trimmed
-  }
-
   private static func itemSort(_ lhs: HostIntelligenceInlineItem, _ rhs: HostIntelligenceInlineItem) -> Bool {
     if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
     if lhs.confidence != rhs.confidence {
@@ -796,11 +744,6 @@ enum HostIntelligenceInlineItemBuilder {
       return ReservationFormatters.shortTime.string(from: date)
     }
     return String(value.prefix(5))
-  }
-
-  private static func displayDate(_ value: String) -> String {
-    guard let date = ReservationFormatters.reservationDateKey.date(from: value) else { return value }
-    return date.formatted(.dateTime.month(.abbreviated).day())
   }
 
   private static func punctuate(_ value: String) -> String {
