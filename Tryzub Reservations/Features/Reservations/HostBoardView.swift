@@ -20,6 +20,7 @@ struct HostBoardView: View {
     var deferNetworkLoads: Bool = false
     let isAppActive: Bool
     let externalInteractionActive: Bool
+    let lastStaffInteractionAt: Date
     let onAddReservation: () -> Void
     let onManualRefresh: () -> Void
     let onShowFormProblems: () -> Void
@@ -505,7 +506,7 @@ struct HostBoardView: View {
             guard !isRunningForPreviews else { return }
             await runClockLoop()
         }
-        .task(id: "activity-feed-\(isVisible)-\(deferNetworkLoads)-\(selectedDateKey)-\(hostActivityFeedWarmKey)") {
+        .task(id: "activity-feed-\(isVisible)-\(deferNetworkLoads)-\(selectedDateKey)-\(hostActivityFeedWarmKey)-\(Int(lastStaffInteractionAt.timeIntervalSinceReferenceDate * 1000))") {
             await warmVisibleActivityFeedIfNeeded()
         }
         .task(id: boardSnapshotBuildKey) {
@@ -637,12 +638,13 @@ struct HostBoardView: View {
         // Single coordinated task replaces the two independent availability +
         // guest-intelligence tasks. Floor plan fetch is scheduled immediately on Host
         // visibility (never deferred). Availability/guest intel may defer during startup.
-        .task(id: "\(isVisible)-\(deferNetworkLoads)-\(controller.canStartNoncriticalStartupLoads)-\(selectedDateKey)") {
+        .task(id: "\(isVisible)-\(deferNetworkLoads)-\(controller.canStartNoncriticalStartupLoads)-\(selectedDateKey)-\(Int(lastStaffInteractionAt.timeIntervalSinceReferenceDate * 1000))") {
             guard !isRunningForPreviews else { return }
             lifecycleCoordinator.handle(
                 isVisible: isVisible,
                 date: selectedDateKey,
                 shouldDefer: deferNetworkLoads || shouldDeferStartupOptionalLoads,
+                lastStaffInteractionAt: lastStaffInteractionAt,
                 controller: controller,
                 guestIntelligenceStore: guestIntelligenceStore,
                 floorPlanStore: floorPlanStore
@@ -811,11 +813,39 @@ struct HostBoardView: View {
         guard isVisible, !deferNetworkLoads, !isRunningForPreviews else { return }
         let dateKey = selectedDateKey
         let date = selectedDate
+        let idleDelay = StaffInteractionIdleGate.remainingDelay(since: lastStaffInteractionAt)
+        if idleDelay > 0 {
+            StaffInteractionIdleGate.trace(
+                work: "activity_warm",
+                decision: "schedule_after_idle",
+                reason: "user_active",
+                lastInteractionAt: lastStaffInteractionAt,
+                delay: idleDelay
+            )
+            try? await Task.sleep(for: .seconds(idleDelay))
+            guard !Task.isCancelled else { return }
+            guard selectedDateKey == dateKey,
+                  StaffInteractionIdleGate.isIdle(since: lastStaffInteractionAt) else {
+                StaffInteractionIdleGate.trace(
+                    work: "activity_warm",
+                    decision: "skip",
+                    reason: "user_active",
+                    lastInteractionAt: lastStaffInteractionAt
+                )
+                return
+            }
+        }
         try? await Task.sleep(nanoseconds: 800_000_000)
         guard !Task.isCancelled else { return }
         guard selectedDateKey == dateKey else {
             return
         }
+        StaffInteractionIdleGate.trace(
+            work: "activity_warm",
+            decision: "run",
+            reason: "idle",
+            lastInteractionAt: lastStaffInteractionAt
+        )
         await activityStore.loadActivityFeed(
             date: date,
             perPage: 100,
@@ -1809,6 +1839,15 @@ struct HostBoardView: View {
             }
 
             guard isVisible, isAppActive else { return }
+            guard StaffInteractionIdleGate.isIdle(since: lastStaffInteractionAt) else {
+                StaffInteractionIdleGate.trace(
+                    work: "active_window_refresh",
+                    decision: "skip",
+                    reason: "user_active",
+                    lastInteractionAt: lastStaffInteractionAt
+                )
+                continue
+            }
 
             #if DEBUG
             let selectedKey = selectedDate.reservationDateString()

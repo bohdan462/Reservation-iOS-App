@@ -8,6 +8,39 @@ import SwiftUI
 import MessageUI
 import UIKit
 
+enum StaffInteractionIdleGate {
+    static let idleInterval: TimeInterval = 3
+
+    static func ageMs(since lastInteractionAt: Date, now: Date = Date()) -> Int {
+        max(0, Int(now.timeIntervalSince(lastInteractionAt) * 1000))
+    }
+
+    static func isIdle(since lastInteractionAt: Date, now: Date = Date()) -> Bool {
+        now.timeIntervalSince(lastInteractionAt) >= idleInterval
+    }
+
+    static func remainingDelay(since lastInteractionAt: Date, now: Date = Date()) -> TimeInterval {
+        max(0, idleInterval - now.timeIntervalSince(lastInteractionAt))
+    }
+
+    static func trace(
+        work: String,
+        decision: String,
+        reason: String,
+        lastInteractionAt: Date,
+        delay: TimeInterval? = nil,
+        now: Date = Date()
+    ) {
+        #if DEBUG
+        var line = "[INTERACTION_IDLE_TRACE] work=\(work) decision=\(decision) reason=\(reason) ageMs=\(ageMs(since: lastInteractionAt, now: now))"
+        if let delay {
+            line += " delayMs=\(max(0, Int(delay * 1000)))"
+        }
+        print(line)
+        #endif
+    }
+}
+
 // MARK: - Root Reservation Shell
 
 struct ReservationsListView: View {
@@ -253,6 +286,8 @@ private struct ReservationsTabShell: View {
                 environment: environment,
                 isActive: selectedTab == .host,
                 navigationResetToken: navigationResetToken,
+                lastStaffInteractionAt: lastStaffInteractionAt,
+                onStaffInteraction: noteStaffInteraction,
                 onOpenFloorSetup: { selectedTab = .floorPlan }
             )
             .tabItem {
@@ -273,7 +308,9 @@ private struct ReservationsTabShell: View {
             ReservationScheduleView(
                 environment: environment,
                 isActive: selectedTab == .bookings,
-                navigationResetToken: navigationResetToken
+                navigationResetToken: navigationResetToken,
+                lastStaffInteractionAt: lastStaffInteractionAt,
+                onStaffInteraction: noteStaffInteraction
             )
                 .tabItem {
                     Label(ReservationsAppTab.bookings.title, systemImage: ReservationsAppTab.bookings.systemImage)
@@ -418,6 +455,15 @@ private struct ReservationsTabShell: View {
     private func refreshOperationalDataAfterUnlock(reason: String) {
         guard controller.hasReleasedStartupUI else { return }
         guard !controller.isStartupNetworkPassInFlight else { return }
+        guard StaffInteractionIdleGate.isIdle(since: lastStaffInteractionAt) else {
+            StaffInteractionIdleGate.trace(
+                work: "active_window_refresh",
+                decision: "skip",
+                reason: "user_active",
+                lastInteractionAt: lastStaffInteractionAt
+            )
+            return
+        }
         let source: VisibleLiveRefreshSource = selectedTab == .bookings ? .bookings : .host
         Task { @MainActor in
             await controller.autoRefreshDashboardIfAllowed(
@@ -584,17 +630,23 @@ private struct HomeDashboardView: View {
     let environment: AppEnvironment
     let isActive: Bool
     let navigationResetToken: UUID
+    let lastStaffInteractionAt: Date
+    let onStaffInteraction: () -> Void
     var onOpenFloorSetup: (() -> Void)? = nil
 
     init(
         environment: AppEnvironment,
         isActive: Bool,
         navigationResetToken: UUID,
+        lastStaffInteractionAt: Date,
+        onStaffInteraction: @escaping () -> Void,
         onOpenFloorSetup: (() -> Void)? = nil
     ) {
         self.environment = environment
         self.isActive = isActive
         self.navigationResetToken = navigationResetToken
+        self.lastStaffInteractionAt = lastStaffInteractionAt
+        self.onStaffInteraction = onStaffInteraction
         self.onOpenFloorSetup = onOpenFloorSetup
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
@@ -699,7 +751,9 @@ private struct HomeDashboardView: View {
                 isVisible: isActive,
                 isAppActive: scenePhase == .active && selectedDate.reservationDateString() == Date.reservationDateString(),
                 externalInteractionActive: showManualCreate || showImportFailures || !navigationPath.isEmpty,
+                lastStaffInteractionAt: lastStaffInteractionAt,
                 onAddReservation: {
+                    onStaffInteraction()
                     showManualCreate = true
                 },
                 onManualRefresh: {
@@ -708,9 +762,11 @@ private struct HomeDashboardView: View {
                     }
                 },
                 onShowFormProblems: {
+                    onStaffInteraction()
                     showImportFailures = true
                 },
                 onOpenReservation: { reservation in
+                    onStaffInteraction()
                     navigationPath.append(reservation.remoteID)
                 },
                 onOpenFloorSetup: onOpenFloorSetup
@@ -746,7 +802,14 @@ private struct HomeDashboardView: View {
             guard !wasActive, isNowActive else { return }
             resetHostToToday(clearNavigation: false)
         }
+        .onChange(of: selectedDate) { _, _ in
+            onStaffInteraction()
+        }
+        .onChange(of: navigationPath) { _, _ in
+            onStaffInteraction()
+        }
         .task(id: navigationResetToken) {
+            onStaffInteraction()
             resetHostToToday(clearNavigation: true)
         }
     }
@@ -1210,15 +1273,21 @@ private struct ReservationScheduleView: View {
     let environment: AppEnvironment
     let isActive: Bool
     let navigationResetToken: UUID
+    let lastStaffInteractionAt: Date
+    let onStaffInteraction: () -> Void
 
     init(
         environment: AppEnvironment,
         isActive: Bool,
-        navigationResetToken: UUID
+        navigationResetToken: UUID,
+        lastStaffInteractionAt: Date,
+        onStaffInteraction: @escaping () -> Void
     ) {
         self.environment = environment
         self.isActive = isActive
         self.navigationResetToken = navigationResetToken
+        self.lastStaffInteractionAt = lastStaffInteractionAt
+        self.onStaffInteraction = onStaffInteraction
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
         let toDate = bounds.to
@@ -1491,7 +1560,10 @@ private struct ReservationScheduleView: View {
                                     showsSubmittedTime: scope == .upcoming || scope == .needsReview,
                                     newBookingInsight: cachedNeedsReviewInsight(for: reservation),
                                     showsRowActions: showsRowActions(for: reservation),
-                                    onOpenDetails: { navigationPath.append($0.remoteID) }
+                                    onOpenDetails: {
+                                        onStaffInteraction()
+                                        navigationPath.append($0.remoteID)
+                                    }
                                 )
                             }
                         } header: {
@@ -1598,10 +1670,38 @@ private struct ReservationScheduleView: View {
                     scope = .needsReview
                 }
             }
-            .task(id: isActive) {
+            .task(id: "bookings-activation-\(isActive)-\(Int(lastStaffInteractionAt.timeIntervalSinceReferenceDate * 1000))") {
                 guard isActive else { return }
                 try? await Task.sleep(for: .milliseconds(350))
                 guard !Task.isCancelled else { return }
+                let idleDelay = StaffInteractionIdleGate.remainingDelay(since: lastStaffInteractionAt)
+                if idleDelay > 0 {
+                    StaffInteractionIdleGate.trace(
+                        work: "bookings_activation_refresh",
+                        decision: "schedule_after_idle",
+                        reason: "user_active",
+                        lastInteractionAt: lastStaffInteractionAt,
+                        delay: idleDelay
+                    )
+                    try? await Task.sleep(for: .seconds(idleDelay))
+                    guard !Task.isCancelled,
+                          isActive,
+                          StaffInteractionIdleGate.isIdle(since: lastStaffInteractionAt) else {
+                        StaffInteractionIdleGate.trace(
+                            work: "bookings_activation_refresh",
+                            decision: "skip",
+                            reason: "user_active",
+                            lastInteractionAt: lastStaffInteractionAt
+                        )
+                        return
+                    }
+                }
+                StaffInteractionIdleGate.trace(
+                    work: "bookings_activation_refresh",
+                    decision: "run",
+                    reason: "idle",
+                    lastInteractionAt: lastStaffInteractionAt
+                )
                 // Bookings tab activation: controller fetches only when cached active window is stale.
                 await controller.scheduleBecameActive(context: modelContext)
             }
@@ -1616,6 +1716,9 @@ private struct ReservationScheduleView: View {
                 if !Task.isCancelled {
                     debouncedSearchText = value
                 }
+            }
+            .onChange(of: searchText) { _, _ in
+                onStaffInteraction()
             }
             .task(id: filterTraceKey) {
                 guard isActive else { return }
@@ -1657,11 +1760,18 @@ private struct ReservationScheduleView: View {
                 await warmVisibleBookingsActivityFeeds()
             }
             .onChange(of: scope) { _, newScope in
+                onStaffInteraction()
                 allModeLoadGeneration += 1
                 dateScope = BookingDateScope.defaultScope(for: newScope)
                 if newScope != .all {
                     isLoadingAllPage = false
                 }
+            }
+            .onChange(of: dateScope.id) { _, _ in
+                onStaffInteraction()
+            }
+            .onChange(of: navigationPath) { _, _ in
+                onStaffInteraction()
             }
             .navigationDestination(for: Int.self) { remoteID in
                 reservationDestination(remoteID: remoteID)
@@ -1680,6 +1790,7 @@ private struct ReservationScheduleView: View {
                 )
             }
             .task(id: navigationResetToken) {
+                onStaffInteraction()
                 navigationPath.removeAll()
             }
         }
@@ -1700,6 +1811,15 @@ private struct ReservationScheduleView: View {
             }
             guard isActive else { return }
             guard scenePhase == .active else { continue }
+            guard StaffInteractionIdleGate.isIdle(since: lastStaffInteractionAt) else {
+                StaffInteractionIdleGate.trace(
+                    work: "active_window_refresh",
+                    decision: "skip",
+                    reason: "user_active",
+                    lastInteractionAt: lastStaffInteractionAt
+                )
+                continue
+            }
             #if DEBUG
             let selectedDate = dateScope.representativeDate(now: Date())
             let selectedKey = selectedDate.reservationDateString()

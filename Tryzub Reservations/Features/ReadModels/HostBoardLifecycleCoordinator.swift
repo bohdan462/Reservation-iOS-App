@@ -30,6 +30,8 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
     private var lastEmittedVisible: Bool?
     private var pendingFloorPlanDate: String?
     private var floorPlanDebounceTask: Task<Void, Never>?
+    private var pendingOptionalWorkDate: String?
+    private var optionalWorkIdleTask: Task<Void, Never>?
 
     // MARK: - Init
 
@@ -44,17 +46,20 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         isVisible: Bool,
         date: String,
         shouldDefer: Bool,
+        lastStaffInteractionAt: Date,
         controller: ReservationsController,
         guestIntelligenceStore: GuestIntelligenceStore,
         floorPlanStore: FloorPlanStore
     ) {
         let visibilityChanged = lastEmittedVisible != isVisible
         let dateChanged = lastEmittedDate != date && lastEmittedDate != nil
+        let isInitialVisibleLoad = isVisible && lastEmittedVisible == nil && lastEmittedDate == nil
 
         if !isVisible {
             if lastEmittedVisible == true {
                 lastEmittedVisible = false
                 log(event: "hidden", date: date)
+                cancelPendingOptionalWork(reason: "hidden")
                 cancelPendingFloorPlan(reason: "hidden")
                 controller.cancelAvailabilitySummary(date: date)
                 guestIntelligenceStore.cancelScheduledLoad()
@@ -72,6 +77,8 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
             lastEmittedVisible = true
             log(event: "date_changed", date: date, oldDate: old)
             if old != date {
+                cancelPendingOptionalWork(reason: "date_changed")
+                cancelPendingFloorPlan(reason: "date_changed")
                 controller.cancelAvailabilitySummary(date: old)
             }
             prepareIfReady(
@@ -80,7 +87,9 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
                 controller: controller,
                 guestIntelligenceStore: guestIntelligenceStore,
                 floorPlanStore: floorPlanStore,
-                debounceFloorPlan: true
+                debounceFloorPlan: true,
+                gateOptionalWork: true,
+                lastStaffInteractionAt: lastStaffInteractionAt
             )
             return
         } else {
@@ -101,7 +110,9 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
             controller: controller,
             guestIntelligenceStore: guestIntelligenceStore,
             floorPlanStore: floorPlanStore,
-            debounceFloorPlan: false
+            debounceFloorPlan: false,
+            gateOptionalWork: !isInitialVisibleLoad,
+            lastStaffInteractionAt: lastStaffInteractionAt
         )
     }
 
@@ -113,8 +124,25 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         controller: ReservationsController,
         guestIntelligenceStore: GuestIntelligenceStore,
         floorPlanStore: FloorPlanStore,
-        debounceFloorPlan: Bool
+        debounceFloorPlan: Bool,
+        gateOptionalWork: Bool,
+        lastStaffInteractionAt: Date
     ) {
+        if gateOptionalWork,
+           !StaffInteractionIdleGate.isIdle(since: lastStaffInteractionAt) {
+            scheduleOptionalWorkAfterIdle(
+                date: date,
+                shouldDefer: shouldDefer,
+                controller: controller,
+                guestIntelligenceStore: guestIntelligenceStore,
+                floorPlanStore: floorPlanStore,
+                lastStaffInteractionAt: lastStaffInteractionAt
+            )
+            return
+        }
+
+        cancelPendingOptionalWork(reason: "run_now")
+
         // Floor plan is canonical for Host Intelligence and must start as soon as Host
         // is visible — never wait for startup deferral, availability, or guest intel.
         scheduleFloorPlanIfNeeded(
@@ -150,6 +178,77 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         } else {
             log(event: "schedule_guest_intel", date: date)
             guestIntelligenceStore.scheduleLoad(dateKey: date)
+        }
+    }
+
+    private func scheduleOptionalWorkAfterIdle(
+        date: String,
+        shouldDefer: Bool,
+        controller: ReservationsController,
+        guestIntelligenceStore: GuestIntelligenceStore,
+        floorPlanStore: FloorPlanStore,
+        lastStaffInteractionAt: Date
+    ) {
+        if let pendingOptionalWorkDate, pendingOptionalWorkDate != date {
+            StaffInteractionIdleGate.trace(
+                work: "host_optional_work",
+                decision: "skip",
+                reason: "date_changed",
+                lastInteractionAt: lastStaffInteractionAt
+            )
+        }
+
+        let delay = StaffInteractionIdleGate.remainingDelay(since: lastStaffInteractionAt)
+        pendingOptionalWorkDate = date
+        optionalWorkIdleTask?.cancel()
+        StaffInteractionIdleGate.trace(
+            work: "host_optional_work",
+            decision: "schedule_after_idle",
+            reason: "user_active",
+            lastInteractionAt: lastStaffInteractionAt,
+            delay: delay
+        )
+
+        optionalWorkIdleTask = Task { @MainActor [weak self, weak controller, weak guestIntelligenceStore, weak floorPlanStore] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled,
+                  let self,
+                  let controller,
+                  let guestIntelligenceStore,
+                  let floorPlanStore else {
+                return
+            }
+            guard self.pendingOptionalWorkDate == date,
+                  self.lastEmittedDate == date,
+                  self.lastEmittedVisible == true,
+                  StaffInteractionIdleGate.isIdle(since: lastStaffInteractionAt) else {
+                StaffInteractionIdleGate.trace(
+                    work: "host_optional_work",
+                    decision: "skip",
+                    reason: "user_active",
+                    lastInteractionAt: lastStaffInteractionAt
+                )
+                return
+            }
+
+            self.pendingOptionalWorkDate = nil
+            self.optionalWorkIdleTask = nil
+            StaffInteractionIdleGate.trace(
+                work: "host_optional_work",
+                decision: "run",
+                reason: "idle",
+                lastInteractionAt: lastStaffInteractionAt
+            )
+            self.prepareIfReady(
+                date: date,
+                shouldDefer: shouldDefer,
+                controller: controller,
+                guestIntelligenceStore: guestIntelligenceStore,
+                floorPlanStore: floorPlanStore,
+                debounceFloorPlan: true,
+                gateOptionalWork: false,
+                lastStaffInteractionAt: lastStaffInteractionAt
+            )
         }
     }
 
@@ -209,6 +308,14 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         self.pendingFloorPlanDate = nil
         floorPlanDebounceTask?.cancel()
         floorPlanDebounceTask = nil
+    }
+
+    private func cancelPendingOptionalWork(reason: String) {
+        guard let pendingOptionalWorkDate else { return }
+        log(event: "cancel_optional_work", date: pendingOptionalWorkDate, reason: reason)
+        self.pendingOptionalWorkDate = nil
+        optionalWorkIdleTask?.cancel()
+        optionalWorkIdleTask = nil
     }
 
     // MARK: - Tracing
