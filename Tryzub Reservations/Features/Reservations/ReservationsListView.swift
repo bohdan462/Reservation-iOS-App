@@ -1386,7 +1386,24 @@ private struct ReservationScheduleView: View {
 
         var rows: [ReservationRecord] = {
             switch scope {
-            case .all, .cancelled, .noShow:
+            case .all:
+                // Use the bounded active-window @Query for date scopes that don't need
+                // historical records. This prevents iterating the full 4000+ SwiftData
+                // pool when staff is viewing today/upcoming reservations on the All tab.
+                // activeReservationWindowQueryBounds covers yesterday through +120 days,
+                // which is sufficient for .today, .upcoming, .tomorrow, and .custom dates
+                // within that range.
+                switch dateScope {
+                case .past, .allHistory:
+                    // Historical views need the full pool — user explicitly asked for past records.
+                    return allCachedReservations
+                default:
+                    // Active/future scopes: use the bounded query.
+                    return reservations
+                }
+            case .cancelled, .noShow:
+                // These tabs default to last7Days and can show allHistory; keep full pool
+                // because their records may predate the active-window query start.
                 return allCachedReservations
             case .upcoming, .needsReview:
                 return reservations
@@ -1448,8 +1465,14 @@ private struct ReservationScheduleView: View {
         guard !isDetailOrNavigationActive else {
             return "paused-filter|\(isDetailOrNavigationActive)"
         }
-        let ids = displayedReservations.map(\.remoteID).map(String.init).joined(separator: ",")
-        return "\(reminderDateKey)|\(scope.rawValue)|\(dateScope.id)|\(debouncedSearchText)|\(ids)"
+        // Use tracingDateBoundary: false here — boundary trace is heavy for large lists
+        // and should only run inside the task body, not in the SwiftUI key computation path.
+        // Cap IDs to count + first 10 to avoid O(n) string construction for large lists
+        // (e.g. All+allHistory = 4162 records). The count + prefix is a sufficient
+        // discriminator for task scheduling; exact full-ID equality is not required.
+        let rows = scheduleRows(applyingSearch: true, tracingDateBoundary: false)
+        let prefix = rows.prefix(10).map { String($0.remoteID) }.joined(separator: ",")
+        return "\(reminderDateKey)|\(scope.rawValue)|\(dateScope.id)|\(debouncedSearchText)|\(rows.count)|\(prefix)"
     }
 
     private var needsReviewInsightRows: [ReservationRecord] {
@@ -1539,7 +1562,17 @@ private struct ReservationScheduleView: View {
             tomorrowRowsFilteredOut: tomorrowRowsFilteredOut
         )
 
-        for record in candidateRows {
+        // Cap per-record trace to avoid O(n) debug output when candidateRows is large
+        // (e.g. All+Today with allCachedReservations as base before the scope fix).
+        // 50 rows is sufficient to diagnose date-boundary filtering issues.
+        let maxPerRecordTrace = 50
+        for (index, record) in candidateRows.enumerated() {
+            guard index < maxPerRecordTrace else {
+                #if DEBUG
+                print("[BOOKINGS_ROW_TRUTH_TRACE] decision=skip reason=trace_cap_reached candidateCount=\(candidateRows.count) cap=\(maxPerRecordTrace)")
+                #endif
+                break
+            }
             let included = includedIDs.contains(record.remoteID)
             let reason: String = {
                 if record.reservationDate != selectedKey { return "date_mismatch" }
@@ -1789,13 +1822,35 @@ private struct ReservationScheduleView: View {
                     #endif
                     return
                 }
-                let ids = displayedReservations.map(\.remoteID).map(String.init).joined(separator: ",")
+                // Run scheduleRows with tracingDateBoundary: true here (inside the task,
+                // not in the key computation path) so the boundary trace fires once per
+                // real filter change rather than on every SwiftUI render cycle.
+                let rows = scheduleRows(applyingSearch: true, tracingDateBoundary: true)
+                // Cap IDs to prevent logging thousands of reservation IDs in a single trace.
+                // Full ID printing causes log spam and contributes to allocation pressure.
+                let maxTracedIDs = 10
+                let firstIDs = rows.prefix(maxTracedIDs).map { String($0.remoteID) }.joined(separator: ",")
+                let omitted = max(0, rows.count - maxTracedIDs)
+                #if DEBUG
+                // Emit scope source decision for the All tab so smoke logs show the pool used.
+                if scope == .all {
+                    switch dateScope {
+                    case .past, .allHistory:
+                        print("[BOOKINGS_SCOPE_TRACE] tab=All source=full_history count=\(rows.count)")
+                        if rows.count > 200 {
+                            print("[BOOKINGS_SCOPE_TRACE] tab=All decision=large_result source=full_history count=\(rows.count)")
+                        }
+                    default:
+                        print("[BOOKINGS_SCOPE_TRACE] tab=All source=active_window count=\(rows.count)")
+                    }
+                }
+                #endif
                 WorkflowCleanupTrace.log(
                     "BOOKINGS_TAB_TRACE",
                     fields: [
                         "date": reminderDateKey,
                         "tab": scope.rawValue,
-                        "count": "\(displayedReservations.count)"
+                        "count": "\(rows.count)"
                     ]
                 )
                 WorkflowCleanupTrace.log(
@@ -1803,7 +1858,9 @@ private struct ReservationScheduleView: View {
                     fields: [
                         "date": reminderDateKey,
                         "tab": scope.rawValue,
-                        "includedIDs": ids
+                        "count": "\(rows.count)",
+                        "firstIDs": firstIDs,
+                        "omitted": "\(omitted)"
                     ]
                 )
                 if !debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1811,8 +1868,9 @@ private struct ReservationScheduleView: View {
                         "SEARCH_RESULT_TRACE",
                         fields: [
                             "query": "redacted",
-                            "results": "\(displayedReservations.count)",
-                            "ids": ids
+                            "results": "\(rows.count)",
+                            "firstIDs": firstIDs,
+                            "omitted": "\(omitted)"
                         ]
                     )
                 }
