@@ -28,6 +28,8 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
 
     private var lastEmittedDate: String?
     private var lastEmittedVisible: Bool?
+    private var pendingFloorPlanDate: String?
+    private var floorPlanDebounceTask: Task<Void, Never>?
 
     // MARK: - Init
 
@@ -53,6 +55,7 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
             if lastEmittedVisible == true {
                 lastEmittedVisible = false
                 log(event: "hidden", date: date)
+                cancelPendingFloorPlan(reason: "hidden")
                 controller.cancelAvailabilitySummary(date: date)
                 guestIntelligenceStore.cancelScheduledLoad()
             }
@@ -76,7 +79,8 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
                 shouldDefer: shouldDefer,
                 controller: controller,
                 guestIntelligenceStore: guestIntelligenceStore,
-                floorPlanStore: floorPlanStore
+                floorPlanStore: floorPlanStore,
+                debounceFloorPlan: true
             )
             return
         } else {
@@ -96,7 +100,8 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
             shouldDefer: shouldDefer,
             controller: controller,
             guestIntelligenceStore: guestIntelligenceStore,
-            floorPlanStore: floorPlanStore
+            floorPlanStore: floorPlanStore,
+            debounceFloorPlan: false
         )
     }
 
@@ -107,11 +112,16 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         shouldDefer: Bool,
         controller: ReservationsController,
         guestIntelligenceStore: GuestIntelligenceStore,
-        floorPlanStore: FloorPlanStore
+        floorPlanStore: FloorPlanStore,
+        debounceFloorPlan: Bool
     ) {
         // Floor plan is canonical for Host Intelligence and must start as soon as Host
         // is visible — never wait for startup deferral, availability, or guest intel.
-        scheduleFloorPlanIfNeeded(date: date, floorPlanStore: floorPlanStore)
+        scheduleFloorPlanIfNeeded(
+            date: date,
+            floorPlanStore: floorPlanStore,
+            debounce: debounceFloorPlan
+        )
 
         guard !shouldDefer else {
             log(event: "deferred", date: date, reason: "optional_startup_loads")
@@ -143,15 +153,62 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         }
     }
 
-    private func scheduleFloorPlanIfNeeded(date: String, floorPlanStore: FloorPlanStore) {
+    private func scheduleFloorPlanIfNeeded(
+        date: String,
+        floorPlanStore: FloorPlanStore,
+        debounce: Bool
+    ) {
         if floorPlanStore.isLoading(date: date) {
+            cancelPendingFloorPlan(reason: "in_flight")
             log(event: "skip_floor_plan", date: date, reason: "in_flight")
         } else if floorPlanStore.hasCachedLayout(for: date) {
+            cancelPendingFloorPlan(reason: "fresh")
             log(event: "skip_floor_plan", date: date, reason: "fresh")
+        } else if debounce {
+            scheduleDebouncedFloorPlan(date: date, floorPlanStore: floorPlanStore)
         } else {
+            cancelPendingFloorPlan(reason: "immediate_load")
             log(event: "schedule_floor_plan", date: date, reason: "host_visible")
             floorPlanStore.load(date: date)
         }
+    }
+
+    private func scheduleDebouncedFloorPlan(date: String, floorPlanStore: FloorPlanStore) {
+        if let pendingFloorPlanDate, pendingFloorPlanDate != date {
+            log(event: "cancel_floor_plan", date: pendingFloorPlanDate, reason: "date_changed")
+        }
+
+        pendingFloorPlanDate = date
+        floorPlanDebounceTask?.cancel()
+        log(event: "schedule_floor_plan", date: date, reason: "host_date_changed_debounced")
+
+        floorPlanDebounceTask = Task { @MainActor [weak self, weak floorPlanStore] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled,
+                  let self,
+                  let floorPlanStore else {
+                return
+            }
+            guard self.pendingFloorPlanDate == date,
+                  self.lastEmittedDate == date,
+                  self.lastEmittedVisible == true else {
+                self.log(event: "skip_floor_plan", date: date, reason: "date_changed")
+                return
+            }
+
+            self.pendingFloorPlanDate = nil
+            self.floorPlanDebounceTask = nil
+            self.log(event: "schedule_floor_plan", date: date, reason: "host_date_stable")
+            floorPlanStore.load(date: date)
+        }
+    }
+
+    private func cancelPendingFloorPlan(reason: String) {
+        guard let pendingFloorPlanDate else { return }
+        log(event: "cancel_floor_plan", date: pendingFloorPlanDate, reason: reason)
+        self.pendingFloorPlanDate = nil
+        floorPlanDebounceTask?.cancel()
+        floorPlanDebounceTask = nil
     }
 
     // MARK: - Tracing
