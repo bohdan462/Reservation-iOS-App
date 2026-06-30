@@ -73,6 +73,16 @@ struct HostBoardView: View {
             || showBackendReminderConfirmation
     }
 
+    /// Narrower gate for Host's own auto-refresh loop.
+    /// Detail presentation gates Host UI work (snapshot/evaluate/enrichment/card) via
+    /// `externalInteractionActive`, but must not suppress active-window live sync.
+    /// Only active edit/create sheets and mutation confirm dialogs block the network call.
+    private var hasSyncBlockingInteraction: Bool {
+        pendingAction != nil
+            || showShiftReminders
+            || showBackendReminderConfirmation
+    }
+
     private var shiftReminderEligibleReservations: [ReservationRecord] {
         ShiftReminderEligibility.eligibleReservations(
             from: allKnownReservations,
@@ -1939,9 +1949,11 @@ struct HostBoardView: View {
                 reason: "host_auto_refresh_never_advances_date"
             )
             #endif
+            // Detail presentation gates UI work via externalInteractionActive but must not
+            // suppress active-window live sync; use the narrower hasSyncBlockingInteraction.
             await controller.autoRefreshDashboardIfAllowed(
                 context: modelContext,
-                isInteractionActive: hasOpenInteraction,
+                isInteractionActive: hasSyncBlockingInteraction,
                 isAppActive: isAppActive,
                 source: .host,
                 preferVisibleLiveRefresh: liveHostModeEnabled

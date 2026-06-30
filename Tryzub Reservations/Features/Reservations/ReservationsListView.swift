@@ -370,6 +370,13 @@ private struct ReservationsTabShell: View {
         .task {
             await runStaleNavigationResetLoop()
         }
+        // Root foreground live-sync loop: fires ~every 60 s while the scene is active,
+        // independent of selected tab, Host date, detail navigation, or privacy cover.
+        // Backed by controller.performForegroundLiveDeltaIfAllowed which bypasses the
+        // 300 s idle freshness TTL when a server cursor already exists.
+        .task(id: scenePhase == .active) {
+            await runForegroundLiveSyncLoop()
+        }
         .restaurantPrivacyCover(
             snapshot: {
                 var snap = RestaurantPrivacyCoverDataController.snapshot(from: serviceWindowReservations)
@@ -448,28 +455,50 @@ private struct ReservationsTabShell: View {
         controller.noteStaffInteraction()
     }
 
+    /// Called on foreground return and privacy-cover dismissal.
+    /// Uses the cursor-aware live delta path so that reconcile runs even when the
+    /// 300 s idle freshness TTL would otherwise block it. Does not idle-gate these
+    /// explicit unlock / app-return events; the 55 s interval throttle inside
+    /// performForegroundLiveDeltaIfAllowed prevents rapid-fire duplicates.
     @MainActor
     private func refreshOperationalDataAfterUnlock(reason: String) {
         guard controller.hasReleasedStartupUI else { return }
         guard !controller.isStartupNetworkPassInFlight else { return }
-        let lastInteractionAt = controller.lastStaffInteractionAt
-        guard StaffInteractionIdleGate.isIdle(since: lastInteractionAt) else {
-            StaffInteractionIdleGate.trace(
-                work: "active_window_refresh",
-                decision: "skip",
-                reason: "user_active",
-                lastInteractionAt: lastInteractionAt
-            )
-            return
-        }
-        let source: VisibleLiveRefreshSource = selectedTab == .bookings ? .bookings : .host
+        let deltaReason = reason == "privacy_cover" ? "privacy_unlock_reconcile" : "foreground_return"
+        #if DEBUG
+        print("[LIVE_FOREGROUND_DELTA_TRACE] decision=run reason=\(deltaReason) force=true")
+        #endif
         Task { @MainActor in
-            await controller.autoRefreshDashboardIfAllowed(
+            await controller.performForegroundLiveDeltaIfAllowed(
                 context: modelContext,
-                isInteractionActive: ReservationsPresentedInteractionProbe.hasPresentedInteraction,
-                isAppActive: true,
-                source: source
+                reason: deltaReason
             )
+        }
+    }
+
+    /// Root foreground live-sync loop. Runs while scenePhase == .active, waits for
+    /// startup UI release, then fires a cursor-aware active-window delta every ~60 s.
+    /// Continues under privacy cover (cover is UI-only; backend awareness must not stop).
+    @MainActor
+    private func runForegroundLiveSyncLoop() async {
+        guard scenePhase == .active else { return }
+        // Spin-wait for startup release; poll every 500 ms so we don't busy-wait.
+        while !Task.isCancelled, !controller.hasReleasedStartupUI {
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        guard !Task.isCancelled else { return }
+
+        while !Task.isCancelled {
+            guard scenePhase == .active else { return }
+            await controller.performForegroundLiveDeltaIfAllowed(
+                context: modelContext,
+                reason: "foreground_loop"
+            )
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                return
+            }
         }
     }
 

@@ -200,6 +200,8 @@ final class ReservationsController: ObservableObject {
     private let availabilitySummaryDebounceInterval: TimeInterval = 0.4
     private var activeWindowRefreshTask: Task<Bool, Never>?
     private var activeWindowRefreshScope: ReservationSyncScope?
+    /// One pending retry after a controller_busy skip. At most one exists at a time.
+    private var foregroundLiveDeltaRetryTask: Task<Void, Never>?
     private var currentStartupPassID: String?
     private var currentActiveWindowRefreshID: String?
     private let controllerInstanceID = StartupTrace.makeInstanceID()
@@ -471,6 +473,8 @@ final class ReservationsController: ObservableObject {
         activeWindowRefreshTask?.cancel()
         activeWindowRefreshTask = nil
         activeWindowRefreshScope = nil
+        foregroundLiveDeltaRetryTask?.cancel()
+        foregroundLiveDeltaRetryTask = nil
     }
 
     private func applyNetworkPathStatus(_ isSatisfied: Bool) {
@@ -1258,7 +1262,9 @@ final class ReservationsController: ObservableObject {
     // MARK: - Schedule Sync
 
     // Intent: Schedule tab became visible; refresh only if the schedule cache is stale.
-    // Network: GET /managed-reservations?from=...&to=... when stale.
+    // When a server cursor exists we always run a cheap delta so a PATCH on another device
+    // is reflected within one tab-switch even if the active-window freshness TTL has not expired.
+    // Network: GET /managed-reservations?from=...&to=... (or updated_since delta) when needed.
     func scheduleBecameActive(context: ModelContext) async {
         let scope = activeWindowScope()
         if isScopeInFailureCooldown(scope) {
@@ -1266,11 +1272,20 @@ final class ReservationsController: ObservableObject {
             ReservationAPILogger.skip(reason: .autoSkipCooldown, message: "\(scope.description) schedule activation skipped because failure cooldown is active")
             return
         }
-        guard !isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) else {
-            recordActiveWindowFreshness(.useCache(reason: "fresh_schedule_activation"))
-            recordRefreshDecision(scope: scope, mode: .schedule, outcome: "skipped_fresh")
-            ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "\(scope.description) schedule activation skipped because cache is fresh")
-            return
+        let hasCursor = serverCursor(for: scope) != nil
+        // Cursor present → always attempt delta (coalesces with any in-flight).
+        // No cursor → original fresh-skip policy protects against hammering full GETs.
+        if !hasCursor {
+            guard !isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) else {
+                recordActiveWindowFreshness(.useCache(reason: "fresh_schedule_activation"))
+                recordRefreshDecision(scope: scope, mode: .schedule, outcome: "skipped_fresh")
+                ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "\(scope.description) schedule activation skipped because cache is fresh")
+                return
+            }
+        } else {
+            #if DEBUG
+            print("[LIVE_FOREGROUND_DELTA_TRACE] decision=run reason=cursor_exists trigger=schedule_activation")
+            #endif
         }
         await performActiveWindowRefresh(context: context, mode: .schedule, force: false)
     }
@@ -1456,6 +1471,116 @@ final class ReservationsController: ObservableObject {
                 }
             }
             throw error
+        }
+    }
+
+    // MARK: - Foreground Live Delta (controller-owned, tab-independent)
+
+    // Intent: Periodically poll the server cursor delta while the app is foreground-active,
+    //   regardless of which tab is visible, detail navigation state, or privacy cover.
+    //   Unlike autoRefreshDashboardIfAllowed this path:
+    //   • is not gated by isInteractionActive / externalInteractionActive
+    //   • bypasses the 300 s idle freshness TTL when a server cursor exists
+    //   • coalesces with any in-flight active-window refresh instead of double-firing
+    //   • schedules one near-term retry (10 s) when the controller is temporarily busy
+    // Called by: runForegroundLiveSyncLoop in ReservationsTabShell (~60 s cadence).
+    func performForegroundLiveDeltaIfAllowed(context: ModelContext, reason: String) async {
+        guard hasReleasedStartupUI else {
+            #if DEBUG
+            print("[LIVE_FOREGROUND_DELTA_TRACE] decision=skip reason=startup_not_released trigger=\(reason)")
+            #endif
+            return
+        }
+
+        let scope = activeWindowScope()
+        let hasCursor = serverCursor(for: scope) != nil
+        let now = Date()
+
+        if hasCursor {
+            // Cursor-present live path: bypass 300 s freshness TTL entirely.
+            // Coalesce with any in-flight active-window refresh instead of spawning a second.
+            if let existing = activeWindowRefreshTask, activeWindowRefreshScope == scope {
+                #if DEBUG
+                print("[LIVE_FOREGROUND_DELTA_TRACE] decision=skip reason=already_in_flight trigger=\(reason)")
+                #endif
+                _ = await existing.value
+                return
+            }
+
+            // If the controller is occupied with mutation or visible sync, schedule one retry.
+            if hasActiveMutation || isSyncing || isCheckingImportFailureCount {
+                #if DEBUG
+                print("[LIVE_FOREGROUND_DELTA_TRACE] decision=skip reason=controller_busy trigger=\(reason)")
+                print("[LIVE_SYNC_RETRY_TRACE] decision=schedule reason=controller_busy delayMs=10000")
+                #endif
+                scheduleForegroundLiveDeltaRetry(context: context)
+                return
+            }
+
+            // 55 s throttle prevents overlapping polls when the loop fires slightly early.
+            if let lastAttempt = lastAutoRefreshAttemptAt,
+               now.timeIntervalSince(lastAttempt) < (autoRefreshInterval - 5) {
+                #if DEBUG
+                print("[LIVE_FOREGROUND_DELTA_TRACE] decision=skip reason=interval_throttle trigger=\(reason)")
+                #endif
+                return
+            }
+
+            if let lastFailure = lastAutoRefreshFailureAt,
+               now.timeIntervalSince(lastFailure) < autoRefreshFailureCooldown {
+                #if DEBUG
+                print("[LIVE_FOREGROUND_DELTA_TRACE] decision=skip reason=failure_cooldown trigger=\(reason)")
+                #endif
+                return
+            }
+
+            #if DEBUG
+            print("[LIVE_FOREGROUND_DELTA_TRACE] decision=run reason=cursor_exists trigger=\(reason)")
+            #endif
+            lastAutoRefreshAttemptAt = now
+            let didRefresh = await performActiveWindowRefresh(context: context, mode: .automatic, force: false)
+            if !didRefresh {
+                lastAutoRefreshFailureAt = Date()
+                markScopeFailure(scope, cooldown: autoRefreshFailureCooldown)
+            }
+        } else {
+            // No cursor yet: use existing freshness policy — only full-sync when stale.
+            if isScopeFresh(scope, freshnessInterval: activeWindowAutoRefreshTTL) {
+                #if DEBUG
+                print("[LIVE_FOREGROUND_DELTA_TRACE] decision=skip reason=no_cursor_fresh trigger=\(reason)")
+                #endif
+                return
+            }
+            #if DEBUG
+            print("[LIVE_FOREGROUND_DELTA_TRACE] decision=run reason=no_cursor_policy_full trigger=\(reason)")
+            #endif
+            lastAutoRefreshAttemptAt = now
+            let didRefresh = await performActiveWindowRefresh(context: context, mode: .automatic, force: false)
+            if !didRefresh {
+                lastAutoRefreshFailureAt = Date()
+                markScopeFailure(scope, cooldown: autoRefreshFailureCooldown)
+            }
+        }
+    }
+
+    /// Schedules one ~10 s retry for foreground live delta after a controller_busy skip.
+    /// Guards against storm: only one pending retry is allowed at a time.
+    private func scheduleForegroundLiveDeltaRetry(context: ModelContext) {
+        guard foregroundLiveDeltaRetryTask == nil else { return }
+        foregroundLiveDeltaRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled, let self else { return }
+            self.foregroundLiveDeltaRetryTask = nil
+            if self.hasActiveMutation || self.isSyncing || self.isAutoRefreshing {
+                #if DEBUG
+                print("[LIVE_SYNC_RETRY_TRACE] decision=skip reason=still_busy")
+                #endif
+                return
+            }
+            #if DEBUG
+            print("[LIVE_SYNC_RETRY_TRACE] decision=run reason=retry_after_busy")
+            #endif
+            await self.performForegroundLiveDeltaIfAllowed(context: context, reason: "retry_after_busy")
         }
     }
 
