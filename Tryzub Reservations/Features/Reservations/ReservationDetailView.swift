@@ -168,6 +168,7 @@ struct ReservationDetailView: View {
     @State private var guestConfirmationMailDraft: GuestConfirmationMailPresenter.Draft?
     @StateObject private var guestInsightAnalysisCoordinator = GuestInsightsAnalysisCoordinator()
     @StateObject private var guestCommunicationCoordinator = GuestCommunicationCoordinator.templateOnly()
+    @State private var cachedDetailGuestTruthBundle: DetailGuestTruthBundle?
 
     init(reservation: ReservationRecord, environment: AppEnvironment) {
         self.reservation = reservation
@@ -531,6 +532,115 @@ struct ReservationDetailView: View {
                 )
             )
         }
+        .task(id: detailGuestTruthFingerprint) {
+            buildDetailGuestTruthBundleIfNeeded()
+        }
+    }
+
+    // MARK: - Detail Guest Truth Cache
+
+    /// Evaluates GuestOperationalTruth once per `detailGuestTruthFingerprint` and caches the result.
+    /// Extracted from `.task(id:)` closure to avoid Swift type-checker timeout on large closures.
+    /// Must never be called from body or body-read computed properties.
+    private func buildDetailGuestTruthBundleIfNeeded() {
+        let capturedFingerprint = detailGuestTruthFingerprint
+        let capturedID = reservation.remoteID
+        guard let report = guestInsightReport else { return }
+        if cachedDetailGuestTruthBundle?.fingerprint == capturedFingerprint {
+            #if DEBUG
+            print("[DETAIL_TRUTH_CACHE_TRACE] reservation=\(capturedID) decision=skip reason=fingerprint_same")
+            #endif
+            return
+        }
+        #if DEBUG
+        print("[DETAIL_TRUTH_CACHE_TRACE] reservation=\(capturedID) decision=rebuild reason=fingerprint_changed")
+        let buildStart = ContinuousClock.now
+        #endif
+        let pool = guestInsightHistoryPool
+        let serverSummary = guestIntelligenceStore.summary(for: capturedID, dateKey: reservation.reservationDate)
+        let serverAnswered = guestIntelligenceStore.hasServerAnswer(for: capturedID, dateKey: reservation.reservationDate)
+        let profilePack = guestIntelligenceStore.profilePack(for: capturedID)
+        // One evaluate per fingerprint — never re-runs on activity/attachment/profile publishes.
+        let truth = GuestOperationalTruth.evaluate(
+            surface: "guest_detail",
+            selected: reservation,
+            reservationPool: pool,
+            summary: serverSummary,
+            profilePack: profilePack
+        )
+        guard detailGuestTruthFingerprint == capturedFingerprint else { return }
+        let presentation = GuestHistorySemantics.detailInsightPresentation(
+            reservation: reservation,
+            reservationPool: pool,
+            localReport: report,
+            serverSummary: serverSummary,
+            serverAnswered: serverAnswered,
+            profilePack: profilePack,
+            operationalTruth: truth
+        )
+        let regularity = GuestHistorySemantics.mergedRegularityLevel(
+            localReport: report,
+            serverSummary: serverSummary,
+            serverAnswered: serverAnswered,
+            profilePack: profilePack,
+            selectedReservation: reservation,
+            reservationPool: pool,
+            operationalTruth: truth
+        )
+        // Profile preview: cheap cached paths first; pack-path (calls evaluate) only as last resort.
+        let computedProfilePreview: GuestInsightsProfilePresentation.DetailPreview?
+        if let cached = cachedGuestProfilePreview {
+            computedProfilePreview = cached
+        } else if let aggregate = GuestInsightsProfilePresentation.detailPreview(
+            profile: guestProfileStore.cachedProfile(byReservationID: capturedID),
+            referenceReservation: reservation
+        ) {
+            computedProfilePreview = aggregate
+        } else {
+            computedProfilePreview = GuestInsightsProfilePresentation.detailPreview(
+                guestName: reservation.guestName,
+                pack: profilePack,
+                referenceReservation: reservation,
+                reservationPool: pool
+            )
+        }
+        guard detailGuestTruthFingerprint == capturedFingerprint else { return }
+        // Build merge dedupe key reusing pre-computed truth — no second evaluate needed.
+        let mergedLine = GuestHistorySemantics.mergedHistoryLine(
+            guestName: reservation.guestName,
+            localReport: report,
+            serverSummary: serverSummary,
+            serverAnswered: serverAnswered,
+            profilePack: profilePack,
+            selectedReservation: reservation,
+            reservationPool: pool,
+            truthSurface: "detail",
+            operationalTruth: truth
+        )
+        let backendSeenBefore = GuestHistorySemantics.isBackendSeenBefore(
+            serverSummary: serverSummary,
+            profilePack: profilePack
+        )
+        let mergeKey = GuestHistorySemantics.semanticMergeDedupeKey(
+            surface: "detail",
+            reservationID: report.selectedReservationID,
+            mergedSource: mergedLine.source,
+            backendSeenBefore: backendSeenBefore,
+            localPriorCount: report.priorReliableVisitCount,
+            profilePack: profilePack
+        )
+        guard detailGuestTruthFingerprint == capturedFingerprint else { return }
+        #if DEBUG
+        let durationMs = Int(buildStart.duration(to: .now).pressureTraceTimeInterval * 1_000)
+        print("[DETAIL_TRUTH_CACHE_TRACE] reservation=\(capturedID) decision=publish durationMs=\(durationMs)")
+        #endif
+        cachedDetailGuestTruthBundle = DetailGuestTruthBundle(
+            fingerprint: capturedFingerprint,
+            profilePreview: computedProfilePreview,
+            detailInsightPresentation: presentation,
+            regularityLevel: regularity,
+            mergeTraceKey: mergeKey
+        )
     }
 
     // MARK: - Detail Layout
@@ -1769,24 +1879,29 @@ struct ReservationDetailView: View {
         DetailSectionCard(title: "Guest history", systemImage: "person.text.rectangle") {
             VStack(alignment: .leading, spacing: 10) {
                 if let guestInsightReport {
-                    // Full report available: preview card already contains profile text.
-                    NavigationLink {
-                        GuestInsightsView(
-                            selectedReservation: reservation,
-                            allReservations: guestInsightHistoryPool
-                        )
-                        .environmentObject(guestIntelligenceStore)
-                        .environmentObject(guestProfileStore)
-                    } label: {
-                        GuestInsightsPreviewCard(
-                            report: guestInsightReport,
-                            presentation: guestDetailInsightPresentation(report: guestInsightReport),
-                            profilePreview: guestProfilePreview,
-                            mergedRegularity: mergedRegularityLevel(for: guestInsightReport)
-                        )
+                    // Show preview card only once the truth bundle is ready (avoids body-time evaluate).
+                    // Placeholder shown for the one frame gap while the task builds the bundle.
+                    if let bundlePresentation = guestDetailInsightPresentation(report: guestInsightReport) {
+                        NavigationLink {
+                            GuestInsightsView(
+                                selectedReservation: reservation,
+                                allReservations: guestInsightHistoryPool
+                            )
+                            .environmentObject(guestIntelligenceStore)
+                            .environmentObject(guestProfileStore)
+                        } label: {
+                            GuestInsightsPreviewCard(
+                                report: guestInsightReport,
+                                presentation: bundlePresentation,
+                                profilePreview: guestProfilePreview,
+                                mergedRegularity: mergedRegularityLevel(for: guestInsightReport)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        TryzubLoadingRow(title: "Checking guest history\u{2026}")
                     }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 } else if let guestProfilePreview {
                     // Profile available but no local history report yet.
                     HStack(spacing: 6) {
@@ -1819,20 +1934,18 @@ struct ReservationDetailView: View {
     }
 
     private var guestProfilePreview: GuestInsightsProfilePresentation.DetailPreview? {
-        if let cachedPreview = cachedGuestProfilePreview {
-            return cachedPreview
+        // Bundle-first: the pack-path that calls GuestOperationalTruth.evaluate runs only
+        // inside the detailGuestTruthFingerprint task, never in body.
+        if let bundlePreview = cachedDetailGuestTruthBundle?.profilePreview {
+            return bundlePreview
         }
-        if let aggregatePreview = GuestInsightsProfilePresentation.detailPreview(
-            profile: guestProfileStore.cachedProfile(byReservationID: reservation.remoteID),
-            referenceReservation: reservation
-        ) {
-            return aggregatePreview
+        // Cheap fallback before bundle is ready — neither path below calls evaluate.
+        if let cached = cachedGuestProfilePreview {
+            return cached
         }
         return GuestInsightsProfilePresentation.detailPreview(
-            guestName: reservation.guestName,
-            pack: guestIntelligenceStore.profilePack(for: reservation.remoteID),
-            referenceReservation: reservation,
-            reservationPool: guestInsightHistoryPool
+            profile: guestProfileStore.cachedProfile(byReservationID: reservation.remoteID),
+            referenceReservation: reservation
         )
     }
 
@@ -1849,23 +1962,10 @@ struct ReservationDetailView: View {
 
     private func guestDetailInsightPresentation(
         report: GuestInsightReport
-    ) -> GuestHistorySemantics.DetailInsightPresentation {
-        let serverSummary = guestIntelligenceStore.summary(
-            for: reservation.remoteID,
-            dateKey: reservation.reservationDate
-        )
-        let serverAnswered = guestIntelligenceStore.hasServerAnswer(
-            for: reservation.remoteID,
-            dateKey: reservation.reservationDate
-        )
-        return GuestHistorySemantics.detailInsightPresentation(
-            reservation: reservation,
-            reservationPool: guestInsightHistoryPool,
-            localReport: report,
-            serverSummary: serverSummary,
-            serverAnswered: serverAnswered,
-            profilePack: guestIntelligenceStore.profilePack(for: reservation.remoteID)
-        )
+    ) -> GuestHistorySemantics.DetailInsightPresentation? {
+        // Bundle-only: never calls GuestOperationalTruth.evaluate in body.
+        // Returns nil until the detailGuestTruthFingerprint task completes.
+        cachedDetailGuestTruthBundle?.detailInsightPresentation
     }
 
     private var guestIntelligenceFetchKey: String {
@@ -1873,52 +1973,45 @@ struct ReservationDetailView: View {
     }
 
     private var guestMergeTraceKey: String? {
-        guard let guestInsightReport else { return nil }
-        let serverSummary = guestIntelligenceStore.summary(
-            for: reservation.remoteID,
-            dateKey: reservation.reservationDate
-        )
-        let serverAnswered = guestIntelligenceStore.hasServerAnswer(
-            for: reservation.remoteID,
-            dateKey: reservation.reservationDate
-        )
-        return GuestHistorySemantics.mergePresentationTaskKey(
-            surface: "detail",
-            guestName: reservation.guestName,
-            localReport: guestInsightReport,
-            serverSummary: serverSummary,
-            serverAnswered: serverAnswered,
-            profilePack: guestIntelligenceStore.profilePack(for: reservation.remoteID),
-            selectedReservation: reservation,
-            reservationPool: guestInsightHistoryPool
-        )
+        // Bundle-only: GuestHistorySemantics.mergePresentationTaskKey calls evaluate; never call in body.
+        // Nil while bundle is computing; task fires once bundle sets a real dedupe key.
+        guard guestInsightReport != nil else { return nil }
+        return cachedDetailGuestTruthBundle?.mergeTraceKey
     }
 
     private func mergedRegularityLevel(for report: GuestInsightReport) -> GuestRegularityLevel? {
-        let serverSummary = guestIntelligenceStore.summary(
-            for: reservation.remoteID,
-            dateKey: reservation.reservationDate
-        )
-        let serverAnswered = guestIntelligenceStore.hasServerAnswer(
-            for: reservation.remoteID,
-            dateKey: reservation.reservationDate
-        )
-        return GuestHistorySemantics.mergedRegularityLevel(
-            localReport: report,
-            serverSummary: serverSummary,
-            serverAnswered: serverAnswered,
-            profilePack: guestIntelligenceStore.profilePack(for: reservation.remoteID),
-            selectedReservation: reservation,
-            reservationPool: guestInsightHistoryPool
-        )
+        // Bundle-only: GuestHistorySemantics.mergedRegularityLevel calls evaluate; never call in body.
+        cachedDetailGuestTruthBundle?.regularityLevel
     }
 
     private var guestInsightCacheKey: ReservationDetailGuestInsightCacheKey {
+        // Server profile stamp removed: local pool analysis depends only on reservation + history pool.
+        // Profile data is consumed by the separate detailGuestTruthFingerprint task, not by scheduleAnalysis.
         ReservationDetailGuestInsightCacheKey(
             selectedReservation: reservation,
-            reservations: guestInsightHistoryPool,
-            guestIntelligenceStamp: "\(guestIntelligenceStore.cacheStamp(for: reservation.reservationDate))-\(guestIntelligenceStore.profileCacheStamp(for: reservation.remoteID))"
+            reservations: guestInsightHistoryPool
         )
+    }
+
+    /// Stable fingerprint that gates GuestOperationalTruth evaluation for detail presentation.
+    /// Changes only when guest history pool, server profile semantics, or local report identity change.
+    /// Does NOT change on activity load, attachment update, or volatile loading-state transitions.
+    private var detailGuestTruthFingerprint: String {
+        let visiblePool = guestInsightHistoryPool.filter { !$0.isHidden }
+        let poolStamp = [
+            "\(reservation.remoteID)",
+            "\(visiblePool.count)",
+            visiblePool.map(\.lastSyncedAt).max().map { "\(Int($0.timeIntervalSince1970))" } ?? "0",
+            visiblePool.compactMap(\.updatedAt).max().map { "\(Int($0.timeIntervalSince1970))" } ?? "0"
+        ].joined(separator: "-")
+        let serverStamp = guestIntelligenceStore.semanticProfileStamp(
+            for: reservation.remoteID,
+            dateKey: reservation.reservationDate
+        )
+        let reportStamp = guestInsightReport.map {
+            "r\($0.selectedReservationID)v\($0.priorReliableVisitCount)"
+        } ?? "noreport"
+        return "\(poolStamp)|\(serverStamp)|\(reportStamp)"
     }
 
     // MARK: - Staff Action Routing
@@ -2581,6 +2674,17 @@ private struct ReservationDetailGuestInsightCacheKey: Hashable {
         maxUpdatedAt = visible.compactMap(\.updatedAt).max()
         self.guestIntelligenceStamp = guestIntelligenceStamp
     }
+}
+
+/// Cached output of one GuestOperationalTruth evaluation pass for Reservation Detail.
+/// Built once per `detailGuestTruthFingerprint` inside a keyed task; read from body.
+/// Body and all body-read computed properties must never call GuestOperationalTruth.evaluate directly.
+private struct DetailGuestTruthBundle: Equatable {
+    let fingerprint: String
+    let profilePreview: GuestInsightsProfilePresentation.DetailPreview?
+    let detailInsightPresentation: GuestHistorySemantics.DetailInsightPresentation?
+    let regularityLevel: GuestRegularityLevel?
+    let mergeTraceKey: String?
 }
 
 // MARK: - Service Load Card

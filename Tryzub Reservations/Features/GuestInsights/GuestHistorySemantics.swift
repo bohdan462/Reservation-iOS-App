@@ -445,7 +445,8 @@ enum GuestHistorySemantics {
     localReport: GuestInsightReport,
     serverSummary: GuestIntelligenceSummaryDTO?,
     serverAnswered: Bool,
-    profilePack: GuestIntelligenceProfilePackDTO? = nil
+    profilePack: GuestIntelligenceProfilePackDTO? = nil,
+    operationalTruth: GuestOperationalTruth.Evaluation? = nil
   ) -> DetailInsightPresentation {
     let merged = mergedHistoryLine(
       guestName: reservation.guestName,
@@ -454,7 +455,8 @@ enum GuestHistorySemantics {
       serverAnswered: serverAnswered,
       profilePack: profilePack,
       selectedReservation: reservation,
-      reservationPool: reservationPool
+      reservationPool: reservationPool,
+      operationalTruth: operationalTruth
     )
     var supplemental: [DetailInsightLine] = []
 
