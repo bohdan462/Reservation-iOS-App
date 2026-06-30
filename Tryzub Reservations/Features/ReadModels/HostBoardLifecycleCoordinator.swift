@@ -28,6 +28,7 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
 
     private var lastEmittedDate: String?
     private var lastEmittedVisible: Bool?
+    private var lastShouldDefer: Bool?
     private var pendingFloorPlanDate: String?
     private var floorPlanDebounceTask: Task<Void, Never>?
     private var pendingOptionalWorkDate: String?
@@ -42,11 +43,14 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
     /// Call this from a single .task(id: lifecycleKey) in HostBoardView.
     /// It determines whether this is a visibility change, date change, or hide event,
     /// routes work accordingly, and emits the appropriate traces.
+    ///
+    /// `lastStaffInteractionAt` is intentionally NOT a parameter here.
+    /// Tasks read `controller.lastStaffInteractionAt` imperatively inside their bodies
+    /// so that idle checks never cause SwiftUI task-ID churn.
     func handle(
         isVisible: Bool,
         date: String,
         shouldDefer: Bool,
-        lastStaffInteractionAt: Date,
         controller: ReservationsController,
         guestIntelligenceStore: GuestIntelligenceStore,
         floorPlanStore: FloorPlanStore
@@ -58,6 +62,7 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         if !isVisible {
             if lastEmittedVisible == true {
                 lastEmittedVisible = false
+                lastShouldDefer = nil
                 log(event: "hidden", date: date)
                 cancelPendingOptionalWork(reason: "hidden")
                 cancelPendingFloorPlan(reason: "hidden")
@@ -75,6 +80,7 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
             let old = lastEmittedDate ?? ""
             lastEmittedDate = date
             lastEmittedVisible = true
+            lastShouldDefer = shouldDefer
             log(event: "date_changed", date: date, oldDate: old)
             if old != date {
                 cancelPendingOptionalWork(reason: "date_changed")
@@ -88,8 +94,7 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
                 guestIntelligenceStore: guestIntelligenceStore,
                 floorPlanStore: floorPlanStore,
                 debounceFloorPlan: true,
-                gateOptionalWork: true,
-                lastStaffInteractionAt: lastStaffInteractionAt
+                gateOptionalWork: true
             )
             return
         } else {
@@ -101,8 +106,16 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         log(event: event, date: date)
 
         if event == "noop" {
-            guard !shouldDefer else { return }
+            // Only run prepareIfReady on noop when deferral actually transitioned from
+            // true → false (post-startup deferral completion). Ordinary noops caused by
+            // other task-key changes (canStartNoncriticalStartupLoads flipping, etc.)
+            // must not reschedule optional work.
+            let deferralJustCleared = (lastShouldDefer == true) && !shouldDefer
+            lastShouldDefer = shouldDefer
+            guard deferralJustCleared else { return }
             log(event: "noop_prepare_after_deferral", date: date)
+        } else {
+            lastShouldDefer = shouldDefer
         }
         prepareIfReady(
             date: date,
@@ -111,8 +124,7 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
             guestIntelligenceStore: guestIntelligenceStore,
             floorPlanStore: floorPlanStore,
             debounceFloorPlan: false,
-            gateOptionalWork: !isInitialVisibleLoad,
-            lastStaffInteractionAt: lastStaffInteractionAt
+            gateOptionalWork: !isInitialVisibleLoad
         )
     }
 
@@ -125,18 +137,16 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         guestIntelligenceStore: GuestIntelligenceStore,
         floorPlanStore: FloorPlanStore,
         debounceFloorPlan: Bool,
-        gateOptionalWork: Bool,
-        lastStaffInteractionAt: Date
+        gateOptionalWork: Bool
     ) {
         if gateOptionalWork,
-           !StaffInteractionIdleGate.isIdle(since: lastStaffInteractionAt) {
+           !StaffInteractionIdleGate.isIdle(since: controller.lastStaffInteractionAt) {
             scheduleOptionalWorkAfterIdle(
                 date: date,
                 shouldDefer: shouldDefer,
                 controller: controller,
                 guestIntelligenceStore: guestIntelligenceStore,
-                floorPlanStore: floorPlanStore,
-                lastStaffInteractionAt: lastStaffInteractionAt
+                floorPlanStore: floorPlanStore
             )
             return
         }
@@ -186,26 +196,25 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
         shouldDefer: Bool,
         controller: ReservationsController,
         guestIntelligenceStore: GuestIntelligenceStore,
-        floorPlanStore: FloorPlanStore,
-        lastStaffInteractionAt: Date
+        floorPlanStore: FloorPlanStore
     ) {
         if let pendingOptionalWorkDate, pendingOptionalWorkDate != date {
             StaffInteractionIdleGate.trace(
                 work: "host_optional_work",
                 decision: "skip",
                 reason: "date_changed",
-                lastInteractionAt: lastStaffInteractionAt
+                lastInteractionAt: controller.lastStaffInteractionAt
             )
         }
 
-        let delay = StaffInteractionIdleGate.remainingDelay(since: lastStaffInteractionAt)
+        let delay = StaffInteractionIdleGate.remainingDelay(since: controller.lastStaffInteractionAt)
         pendingOptionalWorkDate = date
         optionalWorkIdleTask?.cancel()
         StaffInteractionIdleGate.trace(
             work: "host_optional_work",
             decision: "schedule_after_idle",
             reason: "user_active",
-            lastInteractionAt: lastStaffInteractionAt,
+            lastInteractionAt: controller.lastStaffInteractionAt,
             delay: delay
         )
 
@@ -221,12 +230,12 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
             guard self.pendingOptionalWorkDate == date,
                   self.lastEmittedDate == date,
                   self.lastEmittedVisible == true,
-                  StaffInteractionIdleGate.isIdle(since: lastStaffInteractionAt) else {
+                  StaffInteractionIdleGate.isIdle(since: controller.lastStaffInteractionAt) else {
                 StaffInteractionIdleGate.trace(
                     work: "host_optional_work",
                     decision: "skip",
                     reason: "user_active",
-                    lastInteractionAt: lastStaffInteractionAt
+                    lastInteractionAt: controller.lastStaffInteractionAt
                 )
                 return
             }
@@ -237,7 +246,7 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
                 work: "host_optional_work",
                 decision: "run",
                 reason: "idle",
-                lastInteractionAt: lastStaffInteractionAt
+                lastInteractionAt: controller.lastStaffInteractionAt
             )
             self.prepareIfReady(
                 date: date,
@@ -246,8 +255,7 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
                 guestIntelligenceStore: guestIntelligenceStore,
                 floorPlanStore: floorPlanStore,
                 debounceFloorPlan: true,
-                gateOptionalWork: false,
-                lastStaffInteractionAt: lastStaffInteractionAt
+                gateOptionalWork: false
             )
         }
     }

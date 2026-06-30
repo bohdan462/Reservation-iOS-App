@@ -65,6 +65,16 @@ final class ReservationsController: ObservableObject {
     @Published private(set) var hostBoardSelectedDateKey: String?
     private(set) var hostBoardDateNavigationAt: Date?
 
+    // Non-published: reading this never causes SwiftUI body invalidation.
+    // Updated on every staff gesture, tab switch, search change, and navigation action.
+    // Task bodies read it imperatively to check idle state; it must not appear in task IDs.
+    private var lastStaffInteractionAtStorage = Date()
+    var lastStaffInteractionAt: Date { lastStaffInteractionAtStorage }
+
+    func noteStaffInteraction() {
+        lastStaffInteractionAtStorage = Date()
+    }
+
     // Tracks the quiet host-board loop that keeps today's cache warm.
     @Published private(set) var isAutoRefreshing = false {
         didSet { publishOperationState() }

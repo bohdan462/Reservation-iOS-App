@@ -212,7 +212,6 @@ private struct ReservationsTabShell: View {
     @StateObject private var emailAutomationSettingsStore: EmailAutomationSettingsStore
     @State private var selectedTab: ReservationsAppTab = .host
     @State private var navigationResetToken = UUID()
-    @State private var lastStaffInteractionAt = Date()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.modelContext) private var modelContext
 
@@ -286,7 +285,6 @@ private struct ReservationsTabShell: View {
                 environment: environment,
                 isActive: selectedTab == .host,
                 navigationResetToken: navigationResetToken,
-                lastStaffInteractionAt: lastStaffInteractionAt,
                 onStaffInteraction: noteStaffInteraction,
                 onOpenFloorSetup: { selectedTab = .floorPlan }
             )
@@ -309,7 +307,6 @@ private struct ReservationsTabShell: View {
                 environment: environment,
                 isActive: selectedTab == .bookings,
                 navigationResetToken: navigationResetToken,
-                lastStaffInteractionAt: lastStaffInteractionAt,
                 onStaffInteraction: noteStaffInteraction
             )
                 .tabItem {
@@ -448,19 +445,20 @@ private struct ReservationsTabShell: View {
     }
 
     private func noteStaffInteraction() {
-        lastStaffInteractionAt = Date()
+        controller.noteStaffInteraction()
     }
 
     @MainActor
     private func refreshOperationalDataAfterUnlock(reason: String) {
         guard controller.hasReleasedStartupUI else { return }
         guard !controller.isStartupNetworkPassInFlight else { return }
-        guard StaffInteractionIdleGate.isIdle(since: lastStaffInteractionAt) else {
+        let lastInteractionAt = controller.lastStaffInteractionAt
+        guard StaffInteractionIdleGate.isIdle(since: lastInteractionAt) else {
             StaffInteractionIdleGate.trace(
                 work: "active_window_refresh",
                 decision: "skip",
                 reason: "user_active",
-                lastInteractionAt: lastStaffInteractionAt
+                lastInteractionAt: lastInteractionAt
             )
             return
         }
@@ -489,12 +487,12 @@ private struct ReservationsTabShell: View {
     }
 
     private func evaluateStaleNavigationReset(now: Date = Date()) {
-        guard now.timeIntervalSince(lastStaffInteractionAt) >= ReservationsStaleNavigationReset.timeout else { return }
+        guard now.timeIntervalSince(controller.lastStaffInteractionAt) >= ReservationsStaleNavigationReset.timeout else { return }
         guard !ReservationsPresentedInteractionProbe.hasPresentedInteraction else { return }
 
         selectedTab = .host
         navigationResetToken = UUID()
-        lastStaffInteractionAt = now
+        controller.noteStaffInteraction()
     }
 }
 
@@ -630,7 +628,6 @@ private struct HomeDashboardView: View {
     let environment: AppEnvironment
     let isActive: Bool
     let navigationResetToken: UUID
-    let lastStaffInteractionAt: Date
     let onStaffInteraction: () -> Void
     var onOpenFloorSetup: (() -> Void)? = nil
 
@@ -638,14 +635,12 @@ private struct HomeDashboardView: View {
         environment: AppEnvironment,
         isActive: Bool,
         navigationResetToken: UUID,
-        lastStaffInteractionAt: Date,
         onStaffInteraction: @escaping () -> Void,
         onOpenFloorSetup: (() -> Void)? = nil
     ) {
         self.environment = environment
         self.isActive = isActive
         self.navigationResetToken = navigationResetToken
-        self.lastStaffInteractionAt = lastStaffInteractionAt
         self.onStaffInteraction = onStaffInteraction
         self.onOpenFloorSetup = onOpenFloorSetup
         let bounds = activeReservationWindowQueryBounds()
@@ -751,7 +746,6 @@ private struct HomeDashboardView: View {
                 isVisible: isActive,
                 isAppActive: scenePhase == .active && selectedDate.reservationDateString() == Date.reservationDateString(),
                 externalInteractionActive: showManualCreate || showImportFailures || !navigationPath.isEmpty,
-                lastStaffInteractionAt: lastStaffInteractionAt,
                 onAddReservation: {
                     onStaffInteraction()
                     showManualCreate = true
@@ -1273,20 +1267,17 @@ private struct ReservationScheduleView: View {
     let environment: AppEnvironment
     let isActive: Bool
     let navigationResetToken: UUID
-    let lastStaffInteractionAt: Date
     let onStaffInteraction: () -> Void
 
     init(
         environment: AppEnvironment,
         isActive: Bool,
         navigationResetToken: UUID,
-        lastStaffInteractionAt: Date,
         onStaffInteraction: @escaping () -> Void
     ) {
         self.environment = environment
         self.isActive = isActive
         self.navigationResetToken = navigationResetToken
-        self.lastStaffInteractionAt = lastStaffInteractionAt
         self.onStaffInteraction = onStaffInteraction
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
@@ -1670,28 +1661,29 @@ private struct ReservationScheduleView: View {
                     scope = .needsReview
                 }
             }
-            .task(id: "bookings-activation-\(isActive)-\(Int(lastStaffInteractionAt.timeIntervalSinceReferenceDate * 1000))") {
+            .task(id: isActive) {
                 guard isActive else { return }
                 try? await Task.sleep(for: .milliseconds(350))
                 guard !Task.isCancelled else { return }
-                let idleDelay = StaffInteractionIdleGate.remainingDelay(since: lastStaffInteractionAt)
+                let lastInteractionAt = controller.lastStaffInteractionAt
+                let idleDelay = StaffInteractionIdleGate.remainingDelay(since: lastInteractionAt)
                 if idleDelay > 0 {
                     StaffInteractionIdleGate.trace(
                         work: "bookings_activation_refresh",
                         decision: "schedule_after_idle",
                         reason: "user_active",
-                        lastInteractionAt: lastStaffInteractionAt,
+                        lastInteractionAt: lastInteractionAt,
                         delay: idleDelay
                     )
                     try? await Task.sleep(for: .seconds(idleDelay))
                     guard !Task.isCancelled,
                           isActive,
-                          StaffInteractionIdleGate.isIdle(since: lastStaffInteractionAt) else {
+                          StaffInteractionIdleGate.isIdle(since: controller.lastStaffInteractionAt) else {
                         StaffInteractionIdleGate.trace(
                             work: "bookings_activation_refresh",
                             decision: "skip",
                             reason: "user_active",
-                            lastInteractionAt: lastStaffInteractionAt
+                            lastInteractionAt: controller.lastStaffInteractionAt
                         )
                         return
                     }
@@ -1700,7 +1692,7 @@ private struct ReservationScheduleView: View {
                     work: "bookings_activation_refresh",
                     decision: "run",
                     reason: "idle",
-                    lastInteractionAt: lastStaffInteractionAt
+                    lastInteractionAt: controller.lastStaffInteractionAt
                 )
                 // Bookings tab activation: controller fetches only when cached active window is stale.
                 await controller.scheduleBecameActive(context: modelContext)
@@ -1811,12 +1803,13 @@ private struct ReservationScheduleView: View {
             }
             guard isActive else { return }
             guard scenePhase == .active else { continue }
-            guard StaffInteractionIdleGate.isIdle(since: lastStaffInteractionAt) else {
+            let lastInteractionAt = controller.lastStaffInteractionAt
+            guard StaffInteractionIdleGate.isIdle(since: lastInteractionAt) else {
                 StaffInteractionIdleGate.trace(
                     work: "active_window_refresh",
                     decision: "skip",
                     reason: "user_active",
-                    lastInteractionAt: lastStaffInteractionAt
+                    lastInteractionAt: lastInteractionAt
                 )
                 continue
             }
