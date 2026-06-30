@@ -410,6 +410,8 @@ enum HostIntelligenceInlineItemBuilder {
     reservations: [ReservationRecord],
     knownReservations: [ReservationRecord]
   ) -> [HostIntelligenceInlineItem] {
+    guard !reservations.isEmpty else { return [] }
+
     let started = ContinuousClock.now
     let historyIndex = ReturningGuestHistoryIndex(records: knownReservations)
     let items: [HostIntelligenceInlineItem] = reservations
