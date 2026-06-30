@@ -356,6 +356,20 @@ struct HostBoardView: View {
         )
     }
 
+    /// How long after a date tap the intelligence/presentation pipeline waits before running.
+    /// Sized to absorb rapid tapping across multiple date chips without running evaluate for
+    /// every skipped date. Same-day reservation/status changes are not caused by date navigation
+    /// so `isHostDateNavigationRecent()` returns false and evaluate remains immediate.
+    private static let intelligenceStabilityWindow: TimeInterval = 0.40
+
+    /// Returns true when the staff last tapped a Host date chip within the stability window.
+    /// Uses `controller.hostBoardDateNavigationAt` (set by `noteHostBoardSelectedDate`),
+    /// which is non-@Published so this call does not create SwiftUI dependency churn.
+    private func isHostDateNavigationRecent() -> Bool {
+        guard let navigationAt = controller.hostBoardDateNavigationAt else { return false }
+        return Date().timeIntervalSince(navigationAt) < HostBoardView.intelligenceStabilityWindow
+    }
+
     private var analyticsSummaryIdentity: String {
         guard hostIntelligenceController.settings.includeAnalyticsSignals,
               let summary = restaurantSettingsStore.analyticsSummary else {
@@ -604,11 +618,19 @@ struct HostBoardView: View {
                 traceHostBoardStabilization(event: "view_state_skipped", detail: "reason=presentation_hidden")
                 return
             }
+            guard !isHostDateNavigationRecent() else {
+                traceHostBoardStabilization(event: "view_state_skipped", detail: "reason=date_navigation")
+                return
+            }
             refreshHostBoardViewState(reason: "semantic_key_changed")
         }
         .onChange(of: serviceBriefingObservationKey, initial: true) { _, _ in
             guard !liveHostModeEnabled, !externalInteractionActive else {
                 traceHostBoardStabilization(event: "service_briefing_skipped", detail: "reason=presentation_hidden")
+                return
+            }
+            guard !isHostDateNavigationRecent() else {
+                traceHostBoardStabilization(event: "service_briefing_skipped", detail: "reason=date_navigation")
                 return
             }
             rebuildServiceBriefing()
@@ -657,9 +679,28 @@ struct HostBoardView: View {
                 traceHostBoardStabilization(event: "evaluate_skipped", detail: "reason=presentation_hidden")
                 return
             }
+            let requestedDateKey = selectedDateKey
+            let requestedEvalKey = hostIntelligenceEvaluationTaskKey
+            let wasDebounced = isHostDateNavigationRecent()
+            if wasDebounced {
+                traceHostBoardStabilization(event: "evaluate_debounced", detail: "duration_ms=\(Int(HostBoardView.intelligenceStabilityWindow * 1000)) date=\(requestedDateKey)")
+                do {
+                    try await Task.sleep(for: .seconds(HostBoardView.intelligenceStabilityWindow))
+                } catch {
+                    traceHostBoardStabilization(event: "evaluate_skipped", detail: "reason=cancelled_during_debounce")
+                    return
+                }
+                guard !Task.isCancelled,
+                      isVisible,
+                      selectedDateKey == requestedDateKey,
+                      hostIntelligenceEvaluationTaskKey == requestedEvalKey else {
+                    traceHostBoardStabilization(event: "evaluate_skipped", detail: "reason=stale_after_debounce date=\(requestedDateKey)")
+                    return
+                }
+            }
             HostReevalTrace.log(
                 trigger: "selected_day_reservation_change",
-                immediate: true
+                immediate: !wasDebounced
             )
             traceHostBoardStabilization(event: "evaluate_started", detail: "date=\(selectedDateKey)")
             let bookingReport = buildBookingLoadReport(bounds: serviceDensityBounds)
@@ -669,6 +710,15 @@ struct HostBoardView: View {
                 bookingLoadReport: bookingReport
             )
             traceHostBoardStabilization(event: "evaluate_completed", detail: "date=\(selectedDateKey)")
+            // Rebuild presentation once after a debounced evaluation settles on the stable
+            // date. The onChange handlers are suppressed during navigation, so this is the
+            // only path that runs refreshHostBoardViewState / rebuildServiceBriefing for dates
+            // where navigation was recent when the task started.
+            if wasDebounced, !Task.isCancelled, selectedDateKey == requestedDateKey {
+                traceHostBoardStabilization(event: "view_state_rebuild_after_debounce", detail: "date=\(selectedDateKey)")
+                refreshHostBoardViewState(reason: "post_evaluate_debounce")
+                rebuildServiceBriefing()
+            }
         }
         .task(id: hostIntelligenceEnrichmentTaskKey) {
             guard isVisible else {
