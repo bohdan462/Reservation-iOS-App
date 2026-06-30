@@ -1200,6 +1200,8 @@ private struct ReservationScheduleView: View {
     @State private var allModeTotalPages = 0
     @State private var allModeErrorMessage: String?
     @State private var navigationPath: [Int] = []
+    @State private var needsReviewInsightCache: [Int: NewBookingRowInsight?] = [:]
+    @State private var needsReviewInsightRebuildGeneration = 0
 
     let environment: AppEnvironment
     let isActive: Bool
@@ -1320,6 +1322,26 @@ private struct ReservationScheduleView: View {
         return "\(reminderDateKey)|\(scope.rawValue)|\(dateScope.id)|\(debouncedSearchText)|\(ids)"
     }
 
+    private var needsReviewInsightRows: [ReservationRecord] {
+        guard isActive, scope == .needsReview else { return [] }
+        return displayedReservations.filter { $0.statusValue == .needsReview }
+    }
+
+    private var needsReviewInsightRebuildKey: String {
+        guard isActive, scope == .needsReview else {
+            return "inactive|\(isActive)|\(scope.rawValue)"
+        }
+
+        return [
+            "active",
+            dateScope.id,
+            debouncedSearchText,
+            "\(reservationInsightFingerprint(for: needsReviewInsightRows))",
+            "\(reservationInsightFingerprint(for: guestInsightHistoryPool))",
+            hostTableConfigStore.tableConfigFingerprint
+        ].joined(separator: "|")
+    }
+
     private var reminderDateKey: String {
         bookingsSelectedDateKey
     }
@@ -1437,7 +1459,7 @@ private struct ReservationScheduleView: View {
                                     environment: environment,
                                     context: .schedule,
                                     showsSubmittedTime: scope == .upcoming || scope == .needsReview,
-                                    newBookingInsight: newBookingRowInsight(for: reservation),
+                                    newBookingInsight: cachedNeedsReviewInsight(for: reservation),
                                     showsRowActions: showsRowActions(for: reservation),
                                     onOpenDetails: { navigationPath.append($0.remoteID) }
                                 )
@@ -1595,6 +1617,9 @@ private struct ReservationScheduleView: View {
                     )
                 }
             }
+            .task(id: needsReviewInsightRebuildKey) {
+                await rebuildNeedsReviewInsightCache()
+            }
             .task(id: activityFeedWarmTaskKey) {
                 await warmVisibleBookingsActivityFeeds()
             }
@@ -1664,17 +1689,80 @@ private struct ReservationScheduleView: View {
         }
     }
 
-    private func newBookingRowInsight(for reservation: ReservationRecord) -> NewBookingRowInsight? {
+    private func cachedNeedsReviewInsight(for reservation: ReservationRecord) -> NewBookingRowInsight? {
         guard scope == .needsReview else { return nil }
         guard reservation.statusValue == .needsReview else {
             return nil
         }
 
-        return NewBookingRowInsightBuilder.build(
-            reservation: reservation,
-            historyPool: guestInsightHistoryPool,
-            tableConfigs: hostTableConfigStore.activeTables
-        )
+        return needsReviewInsightCache[reservation.remoteID] ?? nil
+    }
+
+    @MainActor
+    private func rebuildNeedsReviewInsightCache() async {
+        needsReviewInsightRebuildGeneration += 1
+        let generation = needsReviewInsightRebuildGeneration
+
+        guard isActive, scope == .needsReview else {
+            if !needsReviewInsightCache.isEmpty {
+                needsReviewInsightCache = [:]
+            }
+            return
+        }
+
+        let rows = needsReviewInsightRows
+        guard !rows.isEmpty else {
+            if !needsReviewInsightCache.isEmpty {
+                needsReviewInsightCache = [:]
+            }
+            return
+        }
+
+        let historyPool = guestInsightHistoryPool
+        let tableConfigs = hostTableConfigStore.activeTables
+        var rebuilt: [Int: NewBookingRowInsight?] = [:]
+        rebuilt.reserveCapacity(rows.count)
+
+        for reservation in rows {
+            guard !Task.isCancelled else { return }
+            let boundedHistoryPool = GuestInsightLocalPool.boundedPool(
+                selected: reservation,
+                windowRecords: historyPool
+            )
+            let insight = NewBookingRowInsightBuilder.build(
+                reservation: reservation,
+                historyPool: boundedHistoryPool,
+                tableConfigs: tableConfigs
+            )
+            rebuilt.updateValue(insight, forKey: reservation.remoteID)
+            await Task.yield()
+        }
+
+        guard !Task.isCancelled, generation == needsReviewInsightRebuildGeneration else { return }
+        needsReviewInsightCache = rebuilt
+    }
+
+    private func reservationInsightFingerprint(for records: [ReservationRecord]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(records.count)
+
+        for record in records {
+            hasher.combine(record.remoteID)
+            hasher.combine(record.rowVersion)
+            hasher.combine(record.guestName)
+            hasher.combine(record.email)
+            hasher.combine(record.phone)
+            hasher.combine(record.reservationDate)
+            hasher.combine(record.reservationTime)
+            hasher.combine(record.partySize)
+            hasher.combine(record.status)
+            hasher.combine(record.guestNotes)
+            hasher.combine(record.staffNotes)
+            hasher.combine(record.tableName)
+            hasher.combine(record.isHidden)
+        }
+
+        return hasher.finalize()
     }
 
     private var newAttentionCount: Int {
