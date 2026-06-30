@@ -1273,19 +1273,22 @@ final class ReservationsController: ObservableObject {
             return
         }
         let hasCursor = serverCursor(for: scope) != nil
-        // Cursor present → always attempt delta (coalesces with any in-flight).
-        // No cursor → original fresh-skip policy protects against hammering full GETs.
-        if !hasCursor {
-            guard !isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) else {
-                recordActiveWindowFreshness(.useCache(reason: "fresh_schedule_activation"))
-                recordRefreshDecision(scope: scope, mode: .schedule, outcome: "skipped_fresh")
-                ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "\(scope.description) schedule activation skipped because cache is fresh")
-                return
-            }
-        } else {
+        if hasCursor {
+            // Root foreground live-sync loop (ReservationsTabShell) owns all cursor-backed
+            // active-window polling and will fetch within ~60 s regardless of tab.
+            // Bookings tab-activation network call is redundant; skip it to avoid
+            // competing with the root loop and producing controller_busy noise.
             #if DEBUG
-            print("[LIVE_FOREGROUND_DELTA_TRACE] decision=run reason=cursor_exists trigger=schedule_activation")
+            print("[LIVE_SYNC_OWNER_TRACE] owner=bookings decision=skip reason=root_foreground_owner")
             #endif
+            return
+        }
+        // No cursor yet: original fresh-skip policy; only full-sync when stale.
+        guard !isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval) else {
+            recordActiveWindowFreshness(.useCache(reason: "fresh_schedule_activation"))
+            recordRefreshDecision(scope: scope, mode: .schedule, outcome: "skipped_fresh")
+            ReservationAPILogger.skip(reason: .scopeSkipFresh, message: "\(scope.description) schedule activation skipped because cache is fresh")
+            return
         }
         await performActiveWindowRefresh(context: context, mode: .schedule, force: false)
     }

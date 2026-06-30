@@ -1887,51 +1887,19 @@ private struct ReservationScheduleView: View {
         }
     }
 
-    // Intent: Keeps Bookings current on other devices without interrupting staff.
-    // Mirrors the Host board's visible-live loop: a lightweight active-window delta
-    // every 60s while the Bookings tab is visible and the app is active. Cache TTL may
-    // skip a full sync but the controller never suppresses a cursor-backed delta here.
+    // Intent: Was the Bookings tab's automatic active-window network poll. Demoted in
+    // LIVE-SYNC-1B: ReservationsTabShell.runForegroundLiveSyncLoop now owns all
+    // automatic active-window reservation network polling. The Bookings list rebuilds
+    // from SwiftData via @Query and does not need its own periodic network poll.
     @MainActor
     private func runBookingsAutoRefreshLoop() async {
         guard isActive else { return }
-        while !Task.isCancelled {
-            do {
-                try await Task.sleep(for: .seconds(60))
-            } catch {
-                return
-            }
-            guard isActive else { return }
-            guard scenePhase == .active else { continue }
-            let lastInteractionAt = controller.lastStaffInteractionAt
-            guard StaffInteractionIdleGate.isIdle(since: lastInteractionAt) else {
-                StaffInteractionIdleGate.trace(
-                    work: "active_window_refresh",
-                    decision: "skip",
-                    reason: "user_active",
-                    lastInteractionAt: lastInteractionAt
-                )
-                continue
-            }
-            #if DEBUG
-            let selectedDate = dateScope.representativeDate(now: Date())
-            let selectedKey = selectedDate.reservationDateString()
-            DateBoundaryTrace.boundary(
-                source: "autoRefresh",
-                selectedDate: selectedKey,
-                serviceDate: selectedKey,
-                afterClose: DateBoundaryTrace.isLikelyAfterClose(selectedDate: selectedDate),
-                autoAdvanced: false,
-                decision: "keep_selected_date",
-                reason: "bookings_auto_refresh_never_advances_date"
-            )
-            #endif
-            await controller.autoRefreshDashboardIfAllowed(
-                context: modelContext,
-                isInteractionActive: ReservationsPresentedInteractionProbe.hasPresentedInteraction,
-                isAppActive: scenePhase == .active,
-                source: .bookings
-            )
-        }
+        // Root foreground live-sync loop owns active-window reservation polling once
+        // startup UI is released. Do not issue a duplicate reservation network call here.
+        #if DEBUG
+        print("[LIVE_SYNC_OWNER_TRACE] owner=bookings decision=skip reason=root_foreground_owner")
+        #endif
+        // Task exits; restarted by SwiftUI if isActive changes.
     }
 
     private func cachedNeedsReviewInsight(for reservation: ReservationRecord) -> NewBookingRowInsight? {

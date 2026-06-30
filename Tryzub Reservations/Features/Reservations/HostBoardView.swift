@@ -1912,54 +1912,21 @@ struct HostBoardView: View {
 
     // MARK: - Auto Refresh Loop
 
-    // Intent: Keeps Today fresh without interrupting staff while sheets/dialogs are open.
-    // Network: Controller may call GET /managed-reservations?date=today.
+    // Intent: Was the Host board's automatic active-window network poll. Demoted in
+    // LIVE-SYNC-1B: ReservationsTabShell.runForegroundLiveSyncLoop now owns all
+    // automatic active-window reservation network polling. This task remains so the
+    // .task(id: isVisible && isAppActive) attachment point is preserved, but it must
+    // not issue reservation network calls while the root foreground live loop is active.
     @MainActor
     private func runAutoRefreshLoop() async {
         guard isVisible, isAppActive else { return }
-
-        while !Task.isCancelled {
-            do {
-                try await Task.sleep(for: .seconds(60))
-            } catch {
-                return
-            }
-
-            guard isVisible, isAppActive else { return }
-            let lastInteractionAt = controller.lastStaffInteractionAt
-            guard StaffInteractionIdleGate.isIdle(since: lastInteractionAt) else {
-                StaffInteractionIdleGate.trace(
-                    work: "active_window_refresh",
-                    decision: "skip",
-                    reason: "user_active",
-                    lastInteractionAt: lastInteractionAt
-                )
-                continue
-            }
-
-            #if DEBUG
-            let selectedKey = selectedDate.reservationDateString()
-            DateBoundaryTrace.boundary(
-                source: "autoRefresh",
-                selectedDate: selectedKey,
-                serviceDate: selectedKey,
-                afterClose: DateBoundaryTrace.isLikelyAfterClose(selectedDate: selectedDate),
-                autoAdvanced: false,
-                decision: "keep_selected_date",
-                reason: "host_auto_refresh_never_advances_date"
-            )
-            #endif
-            // Detail presentation gates UI work via externalInteractionActive but must not
-            // suppress active-window live sync; use the narrower hasSyncBlockingInteraction.
-            await controller.autoRefreshDashboardIfAllowed(
-                context: modelContext,
-                isInteractionActive: hasSyncBlockingInteraction,
-                isAppActive: isAppActive,
-                source: .host,
-                preferVisibleLiveRefresh: liveHostModeEnabled
-                    && selectedDate.reservationDateString() == Date.reservationDateString()
-            )
-        }
+        // Root foreground live-sync loop owns active-window reservation polling once
+        // startup UI is released. Host board rebuilds its UI from SwiftData via @Query;
+        // it does not need its own network poll to stay current.
+        #if DEBUG
+        print("[LIVE_SYNC_OWNER_TRACE] owner=host decision=skip reason=root_foreground_owner")
+        #endif
+        // Task exits; it will be restarted by SwiftUI if isVisible/isAppActive change.
     }
 
     @MainActor
