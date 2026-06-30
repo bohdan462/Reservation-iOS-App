@@ -1522,7 +1522,7 @@ struct HostBoardView: View {
         }
         lastBuiltServiceBriefingStamp = currentStamp
         let bounds = serviceDensityBounds
-        let state = HostServiceBriefingViewStateBuilder.build(
+        var state = HostServiceBriefingViewStateBuilder.build(
             HostServiceBriefingViewStateBuilder.Input(
                 now: clockTick,
                 selectedDate: selectedDate,
@@ -1533,7 +1533,6 @@ struct HostBoardView: View {
                 selectedDateLabel: selectedDate.formatted(.dateTime.weekday(.wide))
             )
         )
-        serviceBriefingState = state
         if usesServiceBriefingCard(state.mode) {
             ServiceIntelligenceTrace.hostCard(display: "service_briefing", mode: state.mode)
         }
@@ -1548,10 +1547,10 @@ struct HostBoardView: View {
             bookingKnownOnlyNote = ""
         }
 
-        // LOCAL-FIRST-OPS-4A: Build unified per-date intelligence snapshot.
-        // Called here (not in body) so serviceMode is already resolved from state.mode.
-        // Builder is pure/deterministic; skip-gated by fingerprint inside controller.
-        // No UI card changes in this slice — snapshot is proof-wired only.
+        // LOCAL-FIRST-OPS-4A/4B: Build/update unified per-date intelligence snapshot.
+        // Runs after state.mode is resolved; skip-gated by fingerprint inside controller.
+        // Evaluate-order guard inside updateServiceIntelligenceSnapshot prevents building
+        // from an empty HostDecisionSnapshot right after a date switch.
         hostIntelligenceController.updateServiceIntelligenceSnapshot(
             HostServiceIntelligenceSnapshotBuilder.Input(
                 now: clockTick,
@@ -1563,6 +1562,30 @@ struct HostBoardView: View {
                 largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
             )
         )
+
+        // LOCAL-FIRST-OPS-4B-2: substitute snapshot headline/subline for planning/recap
+        // modes. Today's HostIntelligenceCard and live-service modes are not touched.
+        // Readiness guard prevents stale-date copy (snapshot.dateKey == selectedDateKey
+        // is the key invariant; beginSelectedDateTransition resets snapshot to .empty).
+        if usesServiceBriefingCard(state.mode) {
+            let snap = hostIntelligenceController.serviceIntelligenceSnapshot
+            let snapReady = snap.dateKey == selectedDateKey
+                && snap.inputFingerprint != "empty"
+                && hostIntelligenceController.isEvaluatedForSelectedDate(selectedDateKey)
+            if snapReady {
+                #if DEBUG
+                let truncated = String(snap.headline.prefix(50))
+                print("[SERVICE_INTEL_UI_TRACE] surface=host_planning decision=use_snapshot date=\(selectedDateKey) headline=\"\(truncated)\"")
+                #endif
+                state = state.overridingHeadline(snap.headline, summary: snap.subline ?? "")
+            } else {
+                #if DEBUG
+                print("[SERVICE_INTEL_UI_TRACE] surface=host_planning decision=legacy reason=snapshot_not_ready date=\(selectedDateKey)")
+                #endif
+            }
+        }
+
+        serviceBriefingState = state
     }
 
     /// Cache-only deterministic booking-load analysis for the selected date.

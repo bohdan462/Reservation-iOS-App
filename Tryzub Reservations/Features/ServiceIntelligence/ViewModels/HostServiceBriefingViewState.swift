@@ -52,6 +52,23 @@ struct HostServiceBriefingViewState: Equatable {
         if primaryActions.contains(where: { $0.title == trimmed }) { return false }
         return true
     }
+
+    /// LOCAL-FIRST-OPS-4B-2: returns a copy with headline/summary replaced by the
+    /// unified snapshot values. All other fields (actions, mode, source) are unchanged
+    /// so the planning card retains its structured action rows.
+    func overridingHeadline(_ newHeadline: String, summary newSummary: String) -> HostServiceBriefingViewState {
+        HostServiceBriefingViewState(
+            mode: mode,
+            headline: newHeadline,
+            summary: newSummary,
+            primaryActions: primaryActions,
+            secondaryActions: secondaryActions,
+            todaySummary: todaySummary,
+            unresolvedCount: unresolvedCount,
+            source: source,
+            isLoadingModelText: isLoadingModelText
+        )
+    }
 }
 
 enum HostServiceBriefingViewStateBuilder {
