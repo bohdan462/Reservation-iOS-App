@@ -312,8 +312,6 @@ struct ReservationDetailView: View {
                 }
             }
             refreshSharedAttachmentsIfNeeded()
-            // Model note enrichment (tone + missed signals) — additive, non-blocking.
-            Task { await enrichNoteSignalsWithModel() }
         }
         .onChange(of: attachments) { _, _ in
             // Re-run signal analysis when attachments change (new attachment saved,
@@ -534,6 +532,9 @@ struct ReservationDetailView: View {
         }
         .task(id: detailGuestTruthFingerprint) {
             buildDetailGuestTruthBundleIfNeeded()
+        }
+        .task(id: modelNoteEnrichmentKey) {
+            await runDeferredModelNoteEnrichmentIfNeeded()
         }
     }
 
@@ -994,6 +995,63 @@ struct ReservationDetailView: View {
         guard !enriched.isEmpty else { return }
         modelNoteSignals = enriched
         recomputeNoteSignals()
+    }
+
+    @MainActor
+    private func runDeferredModelNoteEnrichmentIfNeeded() async {
+        let capturedKey = modelNoteEnrichmentKey
+        guard capturedKey.useLocalModelForNoteAnalysis else {
+            traceLocalModelGate(decision: "skip", reason: "disabled")
+            return
+        }
+        guard HostLocalModelWarmthTracker.isWarm else {
+            traceLocalModelGate(decision: "skip", reason: "model_cold")
+            return
+        }
+
+        let lastInteractionAt = controller.lastStaffInteractionAt
+        if !StaffInteractionIdleGate.isIdle(since: lastInteractionAt) {
+            let delay = StaffInteractionIdleGate.remainingDelay(since: lastInteractionAt)
+            traceLocalModelGate(decision: "defer", reason: "user_active", delay: delay)
+            do {
+                try await Task.sleep(nanoseconds: UInt64(max(0, delay) * 1_000_000_000))
+            } catch {
+                traceLocalModelGate(decision: "skip", reason: "cancelled_or_stale")
+                return
+            }
+
+            guard !Task.isCancelled,
+                  modelNoteEnrichmentKey == capturedKey,
+                  StaffInteractionIdleGate.isIdle(since: controller.lastStaffInteractionAt) else {
+                traceLocalModelGate(decision: "skip", reason: "cancelled_or_stale")
+                return
+            }
+            guard HostLocalModelWarmthTracker.isWarm else {
+                traceLocalModelGate(decision: "skip", reason: "model_cold")
+                return
+            }
+        }
+
+        guard !Task.isCancelled, modelNoteEnrichmentKey == capturedKey else {
+            traceLocalModelGate(decision: "skip", reason: "cancelled_or_stale")
+            return
+        }
+        traceLocalModelGate(decision: "run", reason: "model_warm_and_idle")
+        await enrichNoteSignalsWithModel()
+    }
+
+    private func traceLocalModelGate(
+        decision: String,
+        reason: String,
+        delay: TimeInterval? = nil
+    ) {
+        #if DEBUG
+        var line = "[LOCAL_MODEL_GATE_TRACE] task=noteAnalysis decision=\(decision) reason=\(reason)"
+        if let delay {
+            line += " delayMs=\(max(0, Int(delay * 1000)))"
+        }
+        print(line)
+        #endif
     }
 
     /// Schedules background Vision OCR on a newly saved attachment.
@@ -2014,6 +2072,15 @@ struct ReservationDetailView: View {
         return "\(poolStamp)|\(serverStamp)|\(reportStamp)"
     }
 
+    private var modelNoteEnrichmentKey: ReservationDetailModelNoteEnrichmentKey {
+        ReservationDetailModelNoteEnrichmentKey(
+            reservationID: reservation.remoteID,
+            guestNote: reservation.guestNotes?.nilIfBlank ?? "",
+            staffNote: reservation.staffNotes?.nilIfBlank ?? "",
+            useLocalModelForNoteAnalysis: hostIntelligenceRuntimeSettings.useLocalModelForNoteAnalysis
+        )
+    }
+
     // MARK: - Staff Action Routing
 
     // View sends staff intent only; controller owns network and cache writes.
@@ -2653,6 +2720,13 @@ private struct GuestMessageDraftReviewContext: Identifiable {
     let id = UUID()
     let kind: GuestMessageDraftKind
     let draft: GuestMessageDraft
+}
+
+private struct ReservationDetailModelNoteEnrichmentKey: Hashable {
+    let reservationID: Int
+    let guestNote: String
+    let staffNote: String
+    let useLocalModelForNoteAnalysis: Bool
 }
 
 private struct ReservationDetailGuestInsightCacheKey: Hashable {
