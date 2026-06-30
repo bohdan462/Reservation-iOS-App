@@ -1204,7 +1204,6 @@ private struct ReservationScheduleView: View {
     @State private var needsReviewInsightRebuildGeneration = 0
     @State private var needsReviewSummaryCache: NewBookingsIntelligenceSummary?
     @State private var needsReviewSummaryCacheKey: String?
-    @State private var needsReviewSummaryRebuildGeneration = 0
 
     let environment: AppEnvironment
     let isActive: Bool
@@ -1620,7 +1619,6 @@ private struct ReservationScheduleView: View {
                 }
             }
             .task(id: needsReviewInsightRebuildKey) {
-                await rebuildNeedsReviewSummaryCache()
                 await rebuildNeedsReviewInsightCache()
             }
             .task(id: activityFeedWarmTaskKey) {
@@ -1702,53 +1700,18 @@ private struct ReservationScheduleView: View {
     }
 
     @MainActor
-    private func rebuildNeedsReviewSummaryCache() async {
-        needsReviewSummaryRebuildGeneration += 1
-        let generation = needsReviewSummaryRebuildGeneration
-        let rebuildKey = needsReviewInsightRebuildKey
-
-        guard isActive, scope == .needsReview else {
-            if needsReviewSummaryCache != nil || needsReviewSummaryCacheKey != nil {
-                needsReviewSummaryCache = nil
-                needsReviewSummaryCacheKey = nil
-            }
-            return
-        }
-
-        let rows = needsReviewInsightRows
-        guard !rows.isEmpty else {
-            if needsReviewSummaryCache != nil || needsReviewSummaryCacheKey != nil {
-                needsReviewSummaryCache = nil
-                needsReviewSummaryCacheKey = nil
-            }
-            return
-        }
-
-        let historyPool = guestInsightHistoryPool
-        let boundedHistoryPool = await boundedNeedsReviewSummaryHistoryPool(
-            rows: rows,
-            historyPool: historyPool
-        )
-        let tableConfigs = hostTableConfigStore.activeTables
-        let summary = NewBookingsIntelligenceSummary.build(
-            from: rows,
-            historyPool: boundedHistoryPool,
-            tableConfigs: tableConfigs
-        )
-
-        guard !Task.isCancelled, generation == needsReviewSummaryRebuildGeneration else { return }
-        needsReviewSummaryCache = summary
-        needsReviewSummaryCacheKey = rebuildKey
-    }
-
-    @MainActor
     private func rebuildNeedsReviewInsightCache() async {
         needsReviewInsightRebuildGeneration += 1
         let generation = needsReviewInsightRebuildGeneration
+        let rebuildKey = needsReviewInsightRebuildKey
 
         guard isActive, scope == .needsReview else {
             if !needsReviewInsightCache.isEmpty {
                 needsReviewInsightCache = [:]
+            }
+            if needsReviewSummaryCache != nil || needsReviewSummaryCacheKey != nil {
+                needsReviewSummaryCache = nil
+                needsReviewSummaryCacheKey = nil
             }
             return
         }
@@ -1758,6 +1721,10 @@ private struct ReservationScheduleView: View {
             if !needsReviewInsightCache.isEmpty {
                 needsReviewInsightCache = [:]
             }
+            let summary = derivedNeedsReviewSummary(rows: rows, insights: [:])
+            guard !Task.isCancelled, generation == needsReviewInsightRebuildGeneration else { return }
+            needsReviewSummaryCache = summary
+            needsReviewSummaryCacheKey = rebuildKey
             return
         }
 
@@ -1783,28 +1750,93 @@ private struct ReservationScheduleView: View {
 
         guard !Task.isCancelled, generation == needsReviewInsightRebuildGeneration else { return }
         needsReviewInsightCache = rebuilt
+        needsReviewSummaryCache = derivedNeedsReviewSummary(rows: rows, insights: rebuilt)
+        needsReviewSummaryCacheKey = rebuildKey
     }
 
-    private func boundedNeedsReviewSummaryHistoryPool(
+    private func derivedNeedsReviewSummary(
         rows: [ReservationRecord],
-        historyPool: [ReservationRecord]
-    ) async -> [ReservationRecord] {
-        var records: [ReservationRecord] = []
-        var seenIDs: Set<Int> = []
-
-        for reservation in rows {
-            guard !Task.isCancelled else { return records }
-            let boundedPool = GuestInsightLocalPool.boundedPool(
-                selected: reservation,
-                windowRecords: historyPool
+        insights: [Int: NewBookingRowInsight?]
+    ) -> NewBookingsIntelligenceSummary {
+        let pending = rows.filter {
+            $0.statusValue == .new || $0.statusValue == .needsReview
+        }
+        let noTableCount = pending.filter { !$0.hasTableAssignment }.count
+        let returningCount = pending.filter { reservation in
+            let insight = insights[reservation.remoteID] ?? nil
+            return insight?.isReturningGuest == true
+        }.count
+        let tableFitCount = pending.filter { reservation in
+            let insight = insights[reservation.remoteID] ?? nil
+            return insight?.hasSpecificTableFit == true
+        }.count
+        let allergyCount = NewBookingRowInsightBuilder.countAllergyNotes(pending: pending)
+        let duplicateCount = pending.filter { reservation in
+            let insight = insights[reservation.remoteID] ?? nil
+            return insight?.noteLine == "Possible correction — same phone/email on another active booking today"
+        }.count
+        let tableConfigs = hostTableConfigStore.activeTables
+        let largePartyCount = pending.filter {
+            NewBookingRowInsightBuilder.isLargePartyNeedingTablePlan(
+                reservation: $0,
+                tableConfigs: tableConfigs
             )
-            for record in boundedPool where seenIDs.insert(record.remoteID).inserted {
-                records.append(record)
-            }
-            await Task.yield()
+        }.count
+
+        guard !pending.isEmpty else {
+            return NewBookingsIntelligenceSummary(
+                totalPendingCount: 0,
+                noTableCount: 0,
+                summaryLine: "No new reservations waiting right now.",
+                priorityLines: [],
+                returningGuestLine: nil,
+                tableFitLine: nil
+            )
         }
 
-        return records
+        let summaryLine = pending.count == 1
+            ? "1 reservation needs attention"
+            : "\(pending.count) reservations need attention"
+
+        var priorityLines: [String] = []
+        if allergyCount == 1 {
+            priorityLines.append("1 allergy note — tell server first")
+        } else if allergyCount > 1 {
+            priorityLines.append("\(allergyCount) allergy notes — tell server first")
+        }
+        if duplicateCount == 1 {
+            priorityLines.append("1 possible duplicate — compare details")
+        } else if duplicateCount > 1 {
+            priorityLines.append("\(duplicateCount) possible duplicates — compare details")
+        }
+        if largePartyCount == 1 {
+            priorityLines.append("1 large party — check joined tables")
+        } else if largePartyCount > 1 {
+            priorityLines.append("\(largePartyCount) large parties — check joined tables")
+        }
+
+        return NewBookingsIntelligenceSummary(
+            totalPendingCount: pending.count,
+            noTableCount: noTableCount,
+            summaryLine: summaryLine,
+            priorityLines: Array(priorityLines.prefix(3)),
+            returningGuestLine: returningGuestLine(count: returningCount),
+            tableFitLine: tableFitLine(count: tableFitCount)
+        )
+    }
+
+    private func returningGuestLine(count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return count == 1
+            ? "1 returning guest in this queue"
+            : "\(count) returning guests in this queue"
+    }
+
+    private func tableFitLine(count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return count == 1
+            ? "1 party may need a floor plan"
+            : "\(count) parties may need a floor plan"
     }
 
     private func reservationInsightFingerprint(for records: [ReservationRecord]) -> Int {
