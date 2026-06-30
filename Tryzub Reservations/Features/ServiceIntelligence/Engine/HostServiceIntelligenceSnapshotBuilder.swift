@@ -455,7 +455,7 @@ enum HostServiceIntelligenceSnapshotBuilder {
                 return [
                     String(metadata.reservationID),
                     metadata.attachmentID,
-                    metadata.label.backendValue,
+                    metadata.labelTypeTagDigest,
                     signalTypeDigest,
                     metadata.updatedAt ?? "none"
                 ].joined(separator: ":")

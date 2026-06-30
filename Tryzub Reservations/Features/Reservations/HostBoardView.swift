@@ -55,6 +55,10 @@ struct HostBoardView: View {
     @State private var serviceBriefingState: HostServiceBriefingViewState?
     /// Tracks the stamp used for the last service briefing build; used to skip no-op rebuilds.
     @State private var lastBuiltServiceBriefingStamp: String = ""
+    /// Selected-day attachment metadata is fetched only from explicit rebuild/task work.
+    /// Observation keys read this cheap digest instead of touching SwiftData.
+    @State private var serviceIntelligenceAttachmentDigest: String = "no-attachments"
+    @State private var serviceIntelligenceAttachmentMetadataByDate: [String: [ServiceIntelligenceAttachmentMetadata]] = [:]
     /// Phase 4: concise booking-load heads-up for the busiest window, shown only during
     /// before/during service. Rebuilt with the briefing (cache-only, no fetch).
     @State private var bookingTopItem: BookingSuggestionViewItem?
@@ -292,6 +296,9 @@ struct HostBoardView: View {
     private var hostIntelligenceEnrichmentTaskKey: String {
         guard !liveHostModeEnabled, !externalInteractionActive else {
             return "paused-\(liveHostModeEnabled)-\(externalInteractionActive)"
+        }
+        if let skipReason = hostIntelligenceEnrichmentSkipReason() {
+            return "skip-\(skipReason)-\(selectedDateKey)"
         }
         return hostIntelligenceEnrichmentKey
     }
@@ -632,6 +639,7 @@ struct HostBoardView: View {
             bookingKnownOnlyNote = ""
             lastBuiltCardInputKey = ""
             lastBuiltServiceBriefingStamp = ""
+            serviceIntelligenceAttachmentDigest = "no-attachments"
         }
         .onAppear {
             hostIntelligenceController.updateDeveloperDiagnosticsAccess(
@@ -802,6 +810,11 @@ struct HostBoardView: View {
                 traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=presentation_hidden")
                 return
             }
+            if let skipReason = hostIntelligenceEnrichmentSkipReason() {
+                traceServiceIntelligenceEnrichment(decision: "skip", reason: skipReason, dateKey: selectedDateKey)
+                traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=\(skipReason)")
+                return
+            }
             let requestedKey = hostIntelligenceEnrichmentKey
             // Capture date at task start for post-sleep stale checks.
             let requestedDateKey = selectedDateKey
@@ -820,6 +833,11 @@ struct HostBoardView: View {
                 traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=cancelled_or_stale")
                 return
             }
+            if let skipReason = hostIntelligenceEnrichmentSkipReason() {
+                traceServiceIntelligenceEnrichment(decision: "skip", reason: skipReason, dateKey: selectedDateKey)
+                traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=\(skipReason)")
+                return
+            }
             // Require controller to have evaluated for the current date before enriching.
             // Prevents refreshBriefing from operating on prior-date decisionSnapshot/
             // attentionPresentation, which would cause HOST_ATTENTION_GROUP_TRACE to log
@@ -832,6 +850,7 @@ struct HostBoardView: View {
                 traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=awaiting_evaluate")
                 return
             }
+            traceServiceIntelligenceEnrichment(decision: "run", reason: "live_host_card", dateKey: selectedDateKey)
             traceHostBoardStabilization(event: "enrichment_started", detail: "date=\(selectedDateKey)")
             let options = hostFloorLegacyOptions
             let floorSource = hostFloorTableSource
@@ -1495,7 +1514,7 @@ struct HostBoardView: View {
             selectedDateKey,
             String(reservations.count),
             String(Int(hostIntelligenceController.decisionSnapshot.generatedAt.timeIntervalSince1970)),
-            selectedDayAttachmentMetadataFingerprint(),
+            serviceIntelligenceAttachmentDigest,
             "h\(hourBucket)"
         ].joined(separator: "|")
     }
@@ -1512,8 +1531,27 @@ struct HostBoardView: View {
         }
     }
 
+    private func hostIntelligenceEnrichmentSkipReason() -> String? {
+        let todayKey = Date.reservationDateString()
+        if selectedDateKey > todayKey {
+            return "future_date"
+        }
+        if selectedDateKey < todayKey {
+            return "planning_card"
+        }
+        if let serviceBriefingState, usesServiceBriefingCard(serviceBriefingState.mode) {
+            return "planning_card"
+        }
+        return nil
+    }
+
+    private func traceServiceIntelligenceEnrichment(decision: String, reason: String, dateKey: String) {
+        print("[SERVICE_INTEL_ENRICHMENT_TRACE] decision=\(decision) reason=\(reason) date=\(dateKey)")
+    }
+
     /// Rebuilds the Service Briefing from cached data only. No network.
     private func rebuildServiceBriefing() {
+        refreshSelectedDayAttachmentMetadataCache()
         let currentStamp = serviceBriefingStamp
         guard currentStamp != lastBuiltServiceBriefingStamp else {
             #if DEBUG
@@ -1552,7 +1590,7 @@ struct HostBoardView: View {
         // Runs after state.mode is resolved; skip-gated by fingerprint inside controller.
         // Evaluate-order guard inside updateServiceIntelligenceSnapshot prevents building
         // from an empty HostDecisionSnapshot right after a date switch.
-        let attachmentMetadata = selectedDayAttachmentMetadata()
+        let attachmentMetadata = serviceIntelligenceAttachmentMetadataByDate[selectedDateKey] ?? []
         hostIntelligenceController.updateServiceIntelligenceSnapshot(
             HostServiceIntelligenceSnapshotBuilder.Input(
                 now: clockTick,
@@ -1591,18 +1629,28 @@ struct HostBoardView: View {
         serviceBriefingState = state
     }
 
-    private func selectedDayAttachmentMetadataFingerprint() -> String {
-        let stamp = selectedDayAttachmentMetadata()
+    private func refreshSelectedDayAttachmentMetadataCache() {
+        let metadata = selectedDayAttachmentMetadata()
+        serviceIntelligenceAttachmentMetadataByDate[selectedDateKey] = metadata
+        serviceIntelligenceAttachmentDigest = attachmentMetadataFingerprint(metadata)
+    }
+
+    private func attachmentMetadataFingerprint(_ metadata: [ServiceIntelligenceAttachmentMetadata]) -> String {
+        guard !metadata.isEmpty else { return "no-attachments" }
+        let stamp = metadata
             .sorted {
                 if $0.reservationID != $1.reservationID { return $0.reservationID < $1.reservationID }
                 return $0.attachmentID < $1.attachmentID
             }
             .map { metadata in
-                [
+                let signalTypeDigest = HostAttentionStableDigest.hexDigest(
+                    metadata.signalTypes.map(\.rawValue).sorted().joined(separator: ",")
+                )
+                return [
                     String(metadata.reservationID),
                     metadata.attachmentID,
-                    metadata.label.backendValue,
-                    metadata.signalTypes.map(\.rawValue).sorted().joined(separator: ","),
+                    metadata.labelTypeTagDigest,
+                    signalTypeDigest,
                     metadata.updatedAt ?? "none"
                 ].joined(separator: ":")
             }
@@ -1644,6 +1692,7 @@ struct HostBoardView: View {
                         reservationID: reservationID,
                         attachmentID: attachment.id,
                         label: attachment.label,
+                        labelTypeTagDigest: attachmentLabelTypeTagDigest(attachment),
                         signalTypes: signals.map(\.type),
                         updatedAt: attachmentMetadataUpdatedAt(attachment)
                     )
@@ -1652,6 +1701,18 @@ struct HostBoardView: View {
         }
 
         return metadata
+    }
+
+    private func attachmentLabelTypeTagDigest(_ attachment: ReservationAttachmentRecord) -> String {
+        let raw = [
+            attachment.label.rawValue,
+            attachment.label.backendValue,
+            attachment.mimeType ?? "none",
+            attachment.originalFilename ?? "none",
+            attachment.remoteCaption ?? attachment.note ?? "none",
+            attachment.syncStateRaw
+        ].joined(separator: "|")
+        return HostAttentionStableDigest.hexDigest(raw)
     }
 
     private func attachmentMetadataUpdatedAt(_ attachment: ReservationAttachmentRecord) -> String? {

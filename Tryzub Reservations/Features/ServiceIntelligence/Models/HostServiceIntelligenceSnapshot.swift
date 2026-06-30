@@ -86,6 +86,9 @@ struct ServiceIntelligenceAttachmentMetadata: Equatable {
     let reservationID: Int
     let attachmentID: String
     let label: AttachmentLabel
+    /// Stable digest of metadata tags that can affect staff-facing attachment facts.
+    /// This intentionally excludes image bytes and raw OCR text.
+    let labelTypeTagDigest: String
     let signalTypes: [ReservationSignalType]
     let updatedAt: String?
 
@@ -93,12 +96,14 @@ struct ServiceIntelligenceAttachmentMetadata: Equatable {
         reservationID: Int,
         attachmentID: String,
         label: AttachmentLabel,
+        labelTypeTagDigest: String? = nil,
         signalTypes: [ReservationSignalType],
         updatedAt: String? = nil
     ) {
         self.reservationID = reservationID
         self.attachmentID = attachmentID
         self.label = label
+        self.labelTypeTagDigest = labelTypeTagDigest ?? HostAttentionStableDigest.hexDigest(label.backendValue)
         self.signalTypes = signalTypes
         self.updatedAt = updatedAt
     }
