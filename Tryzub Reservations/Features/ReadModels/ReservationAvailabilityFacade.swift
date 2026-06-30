@@ -139,7 +139,11 @@ enum ReservationAvailabilityFacade {
             )
         }
 
-        if date == controller.hostBoardSelectedDateKey {
+        if reason == .hostBoardVisible,
+           !force,
+           date == controller.hostBoardSelectedDateKey {
+            controller.scheduleAvailabilitySummary(date: date, force: false)
+        } else if date == controller.hostBoardSelectedDateKey {
             controller.ensureAvailabilitySummary(date: date, force: force)
         } else {
             startDirectLoad(controller: controller, date: date)

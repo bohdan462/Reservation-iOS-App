@@ -809,8 +809,15 @@ struct HostBoardView: View {
 
     private func warmVisibleActivityFeedIfNeeded() async {
         guard isVisible, !deferNetworkLoads, !isRunningForPreviews else { return }
+        let dateKey = selectedDateKey
+        let date = selectedDate
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        guard !Task.isCancelled else { return }
+        guard selectedDateKey == dateKey else {
+            return
+        }
         await activityStore.loadActivityFeed(
-            date: selectedDate,
+            date: date,
             perPage: 100,
             guestNameByReservationID: guestNameByVisibleReservationID
         )

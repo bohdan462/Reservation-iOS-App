@@ -68,6 +68,9 @@ final class HostBoardLifecycleCoordinator: ObservableObject {
             lastEmittedDate = date
             lastEmittedVisible = true
             log(event: "date_changed", date: date, oldDate: old)
+            if old != date {
+                controller.cancelAvailabilitySummary(date: old)
+            }
             prepareIfReady(
                 date: date,
                 shouldDefer: shouldDefer,
