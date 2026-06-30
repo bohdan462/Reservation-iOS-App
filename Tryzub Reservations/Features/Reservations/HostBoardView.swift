@@ -387,6 +387,13 @@ struct HostBoardView: View {
         return Date().timeIntervalSince(navigationAt) < HostBoardView.intelligenceStabilityWindow
     }
 
+    /// True when the Host intelligence controller has completed a local evaluate pass for
+    /// the current selected date. Gates card rebuild, enrichment, and live card rendering
+    /// to prevent old-date facts publishing under a new selected date key.
+    private var isHostIntelligenceReadyForSelectedDate: Bool {
+        hostIntelligenceController.isEvaluatedForSelectedDate(selectedDateKey)
+    }
+
     private var analyticsSummaryIdentity: String {
         guard hostIntelligenceController.settings.includeAnalyticsSignals,
               let summary = restaurantSettingsStore.analyticsSummary else {
@@ -623,7 +630,15 @@ struct HostBoardView: View {
         }
         .onChange(of: selectedDateKey) { _, dateKey in
             controller.noteHostBoardSelectedDate(dateKey)
-            // Invalidate no-op gates so the new date always gets a fresh build.
+            // Synchronously clear controller's old-date intelligence before any task
+            // can read displaySnapshot/displayAttentionPresentation/displayBriefingText.
+            hostIntelligenceController.beginSelectedDateTransition(to: dateKey)
+            // Clear all local date-sensitive presentation state so prior-date card/briefing
+            // content cannot render under the new date key.
+            hostIntelligenceCardPresentation = .empty
+            serviceBriefingState = nil
+            bookingTopItem = nil
+            bookingKnownOnlyNote = ""
             lastBuiltCardInputKey = ""
             lastBuiltServiceBriefingStamp = ""
         }
@@ -678,17 +693,29 @@ struct HostBoardView: View {
                 traceHostBoardStabilization(event: "card_presentation_skipped", detail: "reason=hidden")
                 return
             }
+            let requestedDateKey = selectedDateKey
             let requestedKey = hostIntelligenceCardPresentationKey
             traceHostBoardStabilization(event: "card_presentation_yielded")
             await Task.yield()
             guard !Task.isCancelled,
                   isHostIntelligenceCardVisible,
+                  selectedDateKey == requestedDateKey,
                   requestedKey == hostIntelligenceCardPresentationKey else {
                 traceHostBoardStabilization(event: "card_presentation_skipped", detail: "reason=cancelled_or_stale")
                 return
             }
+            // Require controller to have evaluated for the current date before building the
+            // card. Prevents old-date displaySnapshot/displayAttentionPresentation from being
+            // published under the new date's presentation key.
+            guard isHostIntelligenceReadyForSelectedDate else {
+                #if DEBUG
+                print("[HOST_NOOP_CPU_GATE_TRACE] work=card decision=skip reason=awaiting_evaluate date=\(selectedDateKey)")
+                #endif
+                traceHostBoardStabilization(event: "card_presentation_skipped", detail: "reason=awaiting_evaluate")
+                return
+            }
             traceHostBoardStabilization(event: "card_presentation_started")
-            let published = rebuildHostIntelligenceCardPresentation(expectedKey: requestedKey)
+            let published = rebuildHostIntelligenceCardPresentation(expectedKey: requestedKey, expectedDateKey: requestedDateKey)
             traceHostBoardStabilization(
                 event: published ? "card_presentation_completed" : "card_presentation_skipped",
                 detail: published ? "" : "reason=key_changed"
@@ -785,15 +812,33 @@ struct HostBoardView: View {
                 return
             }
             let requestedKey = hostIntelligenceEnrichmentKey
-            traceHostBoardStabilization(event: "enrichment_debounced", detail: "duration_ms=350")
+            // Capture date at task start for post-sleep stale checks.
+            let requestedDateKey = selectedDateKey
+            // Sleep longer than intelligenceStabilityWindow (400ms) so evaluate always runs
+            // before enrichment can call refreshBriefing. Enrichment at 350ms was racing
+            // ahead of evaluate's 400ms debounce, causing HOST_ATTENTION_GROUP_TRACE to log
+            // the prior date while view date had already advanced.
+            traceHostBoardStabilization(event: "enrichment_debounced", detail: "duration_ms=450")
             do {
-                try await Task.sleep(nanoseconds: 350_000_000)
+                try await Task.sleep(nanoseconds: 450_000_000)
             } catch {
                 traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=cancelled")
                 return
             }
             guard !Task.isCancelled, requestedKey == hostIntelligenceEnrichmentKey else {
                 traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=cancelled_or_stale")
+                return
+            }
+            // Require controller to have evaluated for the current date before enriching.
+            // Prevents refreshBriefing from operating on prior-date decisionSnapshot/
+            // attentionPresentation, which would cause HOST_ATTENTION_GROUP_TRACE to log
+            // the old date while enrichment_started logs the new date.
+            guard selectedDateKey == requestedDateKey,
+                  hostIntelligenceController.isEvaluatedForSelectedDate(requestedDateKey) else {
+                #if DEBUG
+                print("[HOST_NOOP_CPU_GATE_TRACE] work=enrichment decision=skip reason=awaiting_evaluate date=\(selectedDateKey)")
+                #endif
+                traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=awaiting_evaluate")
                 return
             }
             traceHostBoardStabilization(event: "enrichment_started", detail: "date=\(selectedDateKey)")
@@ -1670,23 +1715,33 @@ struct HostBoardView: View {
 
     @ViewBuilder
     private var liveHostIntelligenceSection: some View {
-        let snapshot = hostIntelligenceController.displaySnapshot
+        // Gate all controller-fed inputs: when the controller has not yet evaluated
+        // for the current selected date (e.g. during date navigation debounce), pass
+        // empty/nil inputs so no prior-date facts are visible in the card.
+        let ready = isHostIntelligenceReadyForSelectedDate
+        let snapshot = ready ? hostIntelligenceController.displaySnapshot : .empty
         let useSeparatedPrompts = hostIntelligenceController.settings.useSeparatedBriefingPrompts
-        let presentation = stableHostIntelligenceCardPresentation
+        let presentation = ready ? stableHostIntelligenceCardPresentation : .empty
+        let cardAttentionPresentation = ready ? hostIntelligenceController.displayAttentionPresentation : .empty
+        let cardBriefingText: String? = ready ? hostIntelligenceController.displayBriefingText : nil
+        let cardManagerNarrative: ManagerNarrative? = ready ? hostIntelligenceController.displayManagerNarrative : nil
+        let cardBriefingSource = ready ? hostIntelligenceController.briefingSource : .template
+        let cardRenderState = ready ? hostIntelligenceController.renderState : .evaluating
+        let cardIsRefreshing = ready && hostIntelligenceController.isRefreshingAttentionCard
 
         HostIntelligenceCard(
             snapshot: snapshot,
             presentation: presentation,
             presentationStyle: .compactStrip,
-            attentionPresentation: hostIntelligenceController.displayAttentionPresentation,
-            briefingTextOverride: hostIntelligenceController.displayBriefingText,
-            managerNarrative: hostIntelligenceController.displayManagerNarrative,
-            briefingSource: hostIntelligenceController.briefingSource,
+            attentionPresentation: cardAttentionPresentation,
+            briefingTextOverride: cardBriefingText,
+            managerNarrative: cardManagerNarrative,
+            briefingSource: cardBriefingSource,
             showOperationalReview: useSeparatedPrompts,
             staffFacingPresentation: true,
             externalPulseActive: onDeviceSupportCoordinator.phase.pulseIsActive,
-            renderState: hostIntelligenceController.renderState,
-            isRefreshingAttentionCard: hostIntelligenceController.isRefreshingAttentionCard,
+            renderState: cardRenderState,
+            isRefreshingAttentionCard: cardIsRefreshing,
             onReviewTapped: { isShowingHostIntelligenceReview = true }
         ) { action in
             handleHostIntelligenceAction(action)
@@ -1756,8 +1811,14 @@ struct HostBoardView: View {
     }
 
     @discardableResult
-    private func rebuildHostIntelligenceCardPresentation(expectedKey: String? = nil) -> Bool {
+    private func rebuildHostIntelligenceCardPresentation(
+        expectedKey: String? = nil,
+        expectedDateKey: String? = nil
+    ) -> Bool {
+        let dateKey = expectedDateKey ?? selectedDateKey
         let key = expectedKey ?? hostIntelligenceCardPresentationKey
+        // Reject if selected date changed since caller captured these keys.
+        guard selectedDateKey == dateKey else { return false }
         guard key == hostIntelligenceCardPresentationKey else { return false }
 
         // Skip rebuild if inputs have not changed since the last build.
@@ -1766,6 +1827,16 @@ struct HostBoardView: View {
             print("[HOST_NOOP_CPU_GATE_TRACE] work=card decision=skip reason=input_key_unchanged date=\(selectedDateKey)")
             #endif
             return true
+        }
+
+        // Verify controller has evaluated for the current date before reading its outputs.
+        // Prevents old-date displaySnapshot / displayAttentionPresentation from being
+        // published under a new-date presentation key.
+        guard hostIntelligenceController.isEvaluatedForSelectedDate(dateKey) else {
+            #if DEBUG
+            print("[HOST_CARD_STALE_GUARD_TRACE] decision=hide reason=controller_date_mismatch selected=\(dateKey) controller=\(hostIntelligenceController.evaluatedSelectedDateKey)")
+            #endif
+            return false
         }
 
         let snapshot = hostIntelligenceController.displaySnapshot
@@ -1780,7 +1851,10 @@ struct HostBoardView: View {
             usesSeparatedPrompts: hostIntelligenceController.settings.useSeparatedBriefingPrompts,
             includesReviewItem: true
         )
-        guard key == hostIntelligenceCardPresentationKey else { return false }
+        // Final publish guard: date and key must still match, and controller still ready.
+        guard selectedDateKey == dateKey,
+              key == hostIntelligenceCardPresentationKey,
+              hostIntelligenceController.isEvaluatedForSelectedDate(dateKey) else { return false }
         lastBuiltCardInputKey = key
         if presentation != hostIntelligenceCardPresentation {
             hostIntelligenceCardPresentation = presentation

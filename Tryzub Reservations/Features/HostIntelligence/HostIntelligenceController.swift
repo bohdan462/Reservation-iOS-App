@@ -137,6 +137,36 @@ final class HostIntelligenceController: ObservableObject {
     return decisionSnapshot.hasAttentionContent ? "local_ready" : "stable_empty"
   }
 
+  // MARK: - Date transition readiness API
+
+  /// The date key for which the controller has completed a local evaluate pass.
+  var evaluatedSelectedDateKey: String { latestSelectedDateKey }
+
+  /// True when the controller has completed a local evaluate pass for the given date.
+  /// HostBoardView uses this to guard card rebuild and enrichment tasks.
+  func isEvaluatedForSelectedDate(_ dateKey: String) -> Bool {
+    latestSelectedDateKey == dateKey && localEvaluationComplete
+  }
+
+  /// Synchronously clears old-date publishable state when the view's selected date
+  /// changes before the debounced evaluate task runs. Mirrors the dateChanged clearing
+  /// block inside evaluate(), but callable immediately from onChange(of: selectedDateKey).
+  /// Safe/idempotent: no-op when called with the already-evaluated date.
+  func beginSelectedDateTransition(to newSelectedDateKey: String) {
+    guard newSelectedDateKey != latestSelectedDateKey else { return }
+    briefingRefreshGeneration += 1
+    clearAttentionPreservation()
+    clearValidModelBriefingCache()
+    decisionSnapshot = .empty
+    attentionPresentation = .empty
+    applyTemplateBriefing(from: .empty, presentation: .empty)
+    localEvaluationComplete = false
+    isEnrichmentLoading = false
+    #if DEBUG
+    print("[HOST_CARD_STALE_GUARD_TRACE] event=date_transition_begin from=\(latestSelectedDateKey) to=\(newSelectedDateKey)")
+    #endif
+  }
+
   func evaluate(
     input: HostEngineInput,
     stability: HostEvaluationStabilityContext,
