@@ -143,6 +143,105 @@ struct GuestProfileDTO: Decodable, Identifiable, Equatable {
     let lastCalculatedAt: String?
     let updatedAt: String?
 
+    private enum CodingKeys: String, CodingKey {
+        case guestKey
+        case primaryName
+        case primaryEmail
+        case primaryPhone
+        case identityConfidence
+        case identitySource
+        case firstSeenDate
+        case lastSeenDate
+        case lastBookedAt
+        case totalReservations
+        case cleanVisitCount
+        case cleanPastVisitCount
+        case totalBookingCount
+        case completedCount
+        case confirmedCount
+        case cancelledCount
+        case noShowCount
+        case needsReviewCount
+        case upcomingCount
+        case duplicateOrCorrectionCount
+        case lastCleanVisitDate
+        case lastCleanVisitId
+        case guestNotesCount
+        case staffNotesCount
+        case bookingHistory
+        case notesHistory
+        case usualPartySize
+        case averagePartySize
+        case largestPartySize
+        case usualHour
+        case usualWeekday
+        case nextReservation
+        case labels
+        case evidence
+        case summary
+        case sourceCoverage
+        case counts
+        case preferences
+        case noteFlags
+        case sourceMix
+        case sourceCounts
+        case stale
+        case dirtyAt
+        case dirtyReason
+        case lastCalculatedAt
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guestKey = try container.decodeIfPresent(String.self, forKey: .guestKey)
+        primaryName = try container.decodeIfPresent(String.self, forKey: .primaryName)
+        primaryEmail = try container.decodeIfPresent(String.self, forKey: .primaryEmail)
+        primaryPhone = try container.decodeIfPresent(String.self, forKey: .primaryPhone)
+        identityConfidence = try container.decodeIfPresent(String.self, forKey: .identityConfidence)
+        identitySource = try container.decodeIfPresent(String.self, forKey: .identitySource)
+        firstSeenDate = try container.decodeIfPresent(String.self, forKey: .firstSeenDate)
+        lastSeenDate = try container.decodeIfPresent(String.self, forKey: .lastSeenDate)
+        lastBookedAt = try container.decodeIfPresent(String.self, forKey: .lastBookedAt)
+        totalReservations = try container.decodeIfPresent(Int.self, forKey: .totalReservations)
+        cleanVisitCount = try container.decodeIfPresent(Int.self, forKey: .cleanVisitCount)
+        cleanPastVisitCount = try container.decodeIfPresent(Int.self, forKey: .cleanPastVisitCount)
+        totalBookingCount = try container.decodeIfPresent(Int.self, forKey: .totalBookingCount)
+        completedCount = try container.decodeIfPresent(Int.self, forKey: .completedCount)
+        confirmedCount = try container.decodeIfPresent(Int.self, forKey: .confirmedCount)
+        cancelledCount = try container.decodeIfPresent(Int.self, forKey: .cancelledCount)
+        noShowCount = try container.decodeIfPresent(Int.self, forKey: .noShowCount)
+        needsReviewCount = try container.decodeIfPresent(Int.self, forKey: .needsReviewCount)
+        upcomingCount = try container.decodeIfPresent(Int.self, forKey: .upcomingCount)
+        duplicateOrCorrectionCount = try container.decodeIfPresent(Int.self, forKey: .duplicateOrCorrectionCount)
+        lastCleanVisitDate = try container.decodeIfPresent(String.self, forKey: .lastCleanVisitDate)
+        lastCleanVisitId = try container.decodeIfPresent(Int.self, forKey: .lastCleanVisitId)
+        guestNotesCount = try container.decodeIfPresent(Int.self, forKey: .guestNotesCount)
+        staffNotesCount = try container.decodeIfPresent(Int.self, forKey: .staffNotesCount)
+        bookingHistory = try container.decodeIfPresent([GuestHistoryRowDTO].self, forKey: .bookingHistory)
+        notesHistory = try container.decodeIfPresent([GuestNoteHistoryItemDTO].self, forKey: .notesHistory)
+        usualPartySize = try container.decodeIfPresent(Int.self, forKey: .usualPartySize)
+        averagePartySize = try container.decodeIfPresent(Double.self, forKey: .averagePartySize)
+        largestPartySize = try container.decodeIfPresent(Int.self, forKey: .largestPartySize)
+        usualHour = try container.decodeIfPresent(Int.self, forKey: .usualHour)
+        usualWeekday = try container.decodeIfPresent(Int.self, forKey: .usualWeekday)
+        nextReservation = try container.decodeIfPresent(GuestProfileNextReservationDTO.self, forKey: .nextReservation)
+        labels = try container.decodeIfPresent([GuestProfileLabelDTO].self, forKey: .labels)
+        evidence = try container.decodeIfPresent(GuestProfileEvidenceDTO.self, forKey: .evidence)
+        summary = try? container.decodeIfPresent(GuestProfileSummaryDTO.self, forKey: .summary)
+        sourceCoverage = try container.decodeIfPresent(GuestProfileSourceCoverageDTO.self, forKey: .sourceCoverage)
+        counts = try container.decodeIfPresent(GuestProfileCountsDTO.self, forKey: .counts)
+        preferences = try container.decodeIfPresent(GuestProfilePreferencesDTO.self, forKey: .preferences)
+        noteFlags = try container.decodeIfPresent(GuestProfileNoteFlagsDTO.self, forKey: .noteFlags)
+        sourceMix = try container.decodeIfPresent(GuestProfileSourceMixDTO.self, forKey: .sourceMix)
+        sourceCounts = try container.decodeIfPresent(GuestProfileSourceMixDTO.self, forKey: .sourceCounts)
+        stale = try container.decodeIfPresent(Bool.self, forKey: .stale)
+        dirtyAt = try container.decodeIfPresent(String.self, forKey: .dirtyAt)
+        dirtyReason = try container.decodeIfPresent(String.self, forKey: .dirtyReason)
+        lastCalculatedAt = try container.decodeIfPresent(String.self, forKey: .lastCalculatedAt)
+        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+    }
+
     private var stableIdentity: String {
         let candidates = [
             guestKey,
