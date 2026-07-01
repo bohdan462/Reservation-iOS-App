@@ -6,7 +6,14 @@
 //  local model is off, unavailable, times out, or is rejected by the validator.
 //
 //  Produces the same section shape the model is asked to produce so the UI is
-//  identical regardless of source. Plain, useful, non-robotic staff language.
+//  identical regardless of source.
+//
+//  STYLE (4F-2 polish): reads like one manager briefing another person — a
+//  natural opener, one flowing overview paragraph (no repeated counts), and
+//  bullets only for concrete things staff should check or do. Deliberately does
+//  not pass through raw business-insight lines (they can reference a different
+//  weekday/window than the selected service date); arrival timing comes only
+//  from packet facts computed for the selected date.
 //
 
 import Foundation
@@ -31,108 +38,151 @@ enum StaffBriefingTemplateWriter {
     // MARK: - Pre-service
 
     private static func buildPreService(_ packet: StaffBriefingPacket) -> Content {
-        let counts = packet.statusCounts
-        let headline: String
-        if counts.totalReservations == 0 {
-            headline = "No reservations on the books yet for \(dayWord(packet)). Quiet start."
-        } else {
-            headline = "\(counts.totalReservations) \(reservationWord(counts.totalReservations)) booked · \(counts.expectedGuests) \(guestWord(counts.expectedGuests)) expected."
-        }
+        let headline = "Here's the picture before service."
 
         var sections: [StaffBriefingSection] = []
+        sections.append(section("overview", "Overview", paragraphs: [preServiceOverview(packet)]))
 
-        // Overview
-        var overview: [String] = []
-        if counts.totalReservations > 0 {
-            overview.append("Today is shaping up with \(counts.totalReservations) \(reservationWord(counts.totalReservations)) and about \(counts.expectedGuests) \(guestWord(counts.expectedGuests)).")
+        let guestLines = guestBullets(packet)
+        if !guestLines.isEmpty {
+            sections.append(section("guests", "Guests to know", bullets: guestLines))
         }
-        for line in packet.businessSummaryLines.prefix(2) { overview.append(line) }
-        if let peak = fact(packet, .arrivalWindow), let time = peak.timeLabel {
-            overview.append("Busiest window looks like \(time)\(peak.count.map { " with \($0) \(reservationWord($0))" } ?? "").")
-        }
-        sections.append(section("overview", "Today's shape", paragraphs: overview))
 
-        // Attention
-        var attention: [String] = []
-        if counts.needsReviewCount > 0 {
-            attention.append("\(counts.needsReviewCount) \(reservationWord(counts.needsReviewCount)) still need review.")
-        }
-        if let noTable = fact(packet, .noTableToday)?.count, noTable > 0 {
-            attention.append("\(noTable) \(reservationWord(noTable)) without a table yet.")
-        }
-        if packet.communicationSummary.confirmationsMissingCount > 0 {
-            attention.append("\(packet.communicationSummary.confirmationsMissingCount) awaiting confirmation.")
-        }
-        if packet.communicationSummary.remindersMissingCount > 0 {
-            attention.append("\(packet.communicationSummary.remindersMissingCount) with no reminder sent.")
-        }
-        if let large = fact(packet, .setup)?.count, large > 0 {
-            attention.append("\(large) large \(large == 1 ? "party" : "parties") needing setup.")
-        }
-        sections.append(section("attention", "Needs attention", bullets: attention))
-
-        // Guests
-        sections.append(section("guests", "Guests to know", bullets: guestBullets(packet)))
-
-        // Floor / attachments
         var floor = attachmentBullets(packet)
         if let allergy = fact(packet, .allergy)?.count, allergy > 0 {
-            floor.insert("\(allergy) \(allergy == 1 ? "guest has" : "guests have") an allergy or dietary note.", at: 0)
+            floor.insert("\(allergy) \(allergy == 1 ? "guest has" : "guests have") an allergy or dietary note — confirm with the kitchen.", at: 0)
         }
-        sections.append(section("floor", "Setup & attachments", bullets: floor))
+        if !floor.isEmpty {
+            sections.append(section("floor", "Floor", bullets: floor))
+        }
 
-        // Followup
-        var followup: [String] = []
+        let actions = preServiceActions(packet)
+        if !actions.isEmpty {
+            sections.append(section("followup", "Focus before service", bullets: actions))
+        }
+
+        return Content(headline: headline, sections: sections.filter { !$0.isEmpty }, actionBullets: [])
+    }
+
+    private static func preServiceOverview(_ packet: StaffBriefingPacket) -> String {
+        let counts = packet.statusCounts
+        guard counts.totalReservations > 0 else {
+            return "Nothing is booked yet — a quiet start."
+        }
+
+        var text = "You have \(counts.totalReservations) \(reservationWord(counts.totalReservations)) and about \(counts.expectedGuests) \(guestWord(counts.expectedGuests)) expected."
+
+        if let noTable = fact(packet, .noTableToday)?.count, noTable > 0 {
+            let subject = noTable == counts.totalReservations ? "all of them" : "\(noTable) \(reservationWord(noTable))"
+            text += " The main thing to handle before service is table assignment: \(subject) still \(noTable == 1 ? "needs" : "need") a table."
+        } else if counts.needsReviewCount > 0 {
+            text += " \(counts.needsReviewCount) still \(counts.needsReviewCount == 1 ? "needs" : "need") review before doors open."
+        }
+
+        let missingReminders = packet.communicationSummary.remindersMissingCount
+        if missingReminders > 0 {
+            text += " There \(missingReminders == 1 ? "is" : "are") also \(missingReminders) \(missingReminders == 1 ? "reminder" : "reminders") that \(missingReminders == 1 ? "hasn't" : "haven't") gone out."
+        }
+
+        return text
+    }
+
+    private static func preServiceActions(_ packet: StaffBriefingPacket) -> [String] {
+        let counts = packet.statusCounts
+        var actions: [String] = []
+
+        if let noTable = fact(packet, .noTableToday)?.count, noTable > 0 {
+            actions.append(noTable == 1
+                ? "Pick a table for the remaining reservation."
+                : "Pick tables for the \(noTable) reservations still without one.")
+        }
+        if packet.communicationSummary.remindersMissingCount > 0 {
+            actions.append("Send the missing reminders.")
+        }
         if packet.communicationSummary.confirmationsMissingCount > 0 {
-            followup.append("Confirm the \(packet.communicationSummary.confirmationsMissingCount) outstanding \(reservationWord(packet.communicationSummary.confirmationsMissingCount)).")
+            actions.append("Confirm the \(packet.communicationSummary.confirmationsMissingCount) outstanding \(reservationWord(packet.communicationSummary.confirmationsMissingCount)).")
         }
-        if counts.needsReviewCount > 0 {
-            followup.append("Clear the review queue before doors open.")
+        if let first = fact(packet, .arrivalWindow) ?? fact(packet, .nextArrival) ?? fact(packet, .timedArrival),
+           let time = first.timeLabel {
+            actions.append("Watch the first arrival around \(time).")
         }
-        sections.append(section("followup", "Before service", bullets: followup))
+        if counts.needsReviewCount > 0, fact(packet, .noTableToday) == nil {
+            actions.append("Clear the review queue before doors open.")
+        }
 
-        return Content(
-            headline: headline,
-            sections: sections.filter { !$0.isEmpty || $0.id == "overview" },
-            actionBullets: []
-        )
+        return actions
     }
 
     // MARK: - Live service
 
     private static func buildLiveService(_ packet: StaffBriefingPacket) -> Content {
-        let counts = packet.statusCounts
-        let headline: String
-        if counts.stillSeatedReservations > 0 {
-            headline = "\(counts.stillSeatedReservations) \(tableWord(counts.stillSeatedReservations)) seated · \(counts.remainingArrivalsCount) still to arrive."
-        } else if counts.remainingArrivalsCount > 0 {
-            headline = "\(counts.remainingArrivalsCount) \(reservationWord(counts.remainingArrivalsCount)) still to arrive."
-        } else {
-            headline = "Floor is quiet right now."
-        }
+        let headline = "Here's what's happening right now."
 
         var sections: [StaffBriefingSection] = []
+        sections.append(section("overview", "Overview", paragraphs: [liveServiceOverview(packet)]))
 
-        // Now
-        var now: [String] = []
+        let attention = liveServiceAttention(packet)
+        if !attention.isEmpty {
+            sections.append(section("attention", "Needs attention", bullets: attention))
+        }
+
+        let guestLines = guestBullets(packet)
+        if !guestLines.isEmpty {
+            sections.append(section("guests", "Guests to know", bullets: guestLines))
+        }
+
+        var floor: [String] = []
+        if let noShow = fact(packet, .noShowFollowUp)?.count, noShow > 0 {
+            floor.append("\(noShow) no-show\(noShow == 1 ? "" : "s") so far.")
+        }
+        if packet.statusCounts.cancelledCount > 0 {
+            floor.append("\(packet.statusCounts.cancelledCount) cancelled so far.")
+        }
+        floor.append(contentsOf: attachmentBullets(packet))
+        if !floor.isEmpty {
+            sections.append(section("floor", "Floor & follow-up", bullets: floor))
+        }
+
+        return Content(headline: headline, sections: sections.filter { !$0.isEmpty }, actionBullets: [])
+    }
+
+    private static func liveServiceOverview(_ packet: StaffBriefingPacket) -> String {
+        let counts = packet.statusCounts
+        guard counts.stillSeatedReservations > 0 || counts.remainingArrivalsCount > 0 else {
+            return "The floor is quiet right now."
+        }
+
+        var clauses: [String] = []
         if counts.stillSeatedReservations > 0 {
-            now.append("\(counts.stillSeatedReservations) \(tableWord(counts.stillSeatedReservations)) currently seated (\(counts.currentlySeatedGuests) \(guestWord(counts.currentlySeatedGuests))).")
+            clauses.append("\(counts.currentlySeatedGuests) \(guestWord(counts.currentlySeatedGuests)) seated across \(counts.stillSeatedReservations) \(tableWord(counts.stillSeatedReservations)) right now")
         }
-        if let waiting = fact(packet, .waitingArrivals)?.count, waiting > 0 {
-            now.append("\(waiting) \(arrivalWord(waiting)) waiting to be seated.")
+        if counts.remainingArrivalsCount > 0 {
+            clauses.append("\(counts.remainingArrivalsCount) more \(reservationWord(counts.remainingArrivalsCount)) still due")
         }
-        if let next = fact(packet, .nextArrival) {
-            now.append(nextArrivalLine(next))
-        }
-        sections.append(section("overview", "Right now", paragraphs: now))
 
-        // Attention
+        var text = clauses.joined(separator: ", and ")
+        text = text.prefix(1).uppercased() + text.dropFirst()
+
+        if let next = fact(packet, .nextArrival), let time = next.timeLabel {
+            text += ". Next arrival is around \(time)"
+            if let name = next.guestName { text += " for \(name)" }
+        }
+
+        return text + "."
+    }
+
+    private static func liveServiceAttention(_ packet: StaffBriefingPacket) -> [String] {
+        let counts = packet.statusCounts
         var attention: [String] = []
+
         if let longStay = fact(packet, .longStayRecap)?.count, longStay > 0 {
             attention.append("\(longStay) \(tableWord(longStay)) seated over 90 minutes.")
         }
         if let seatedDur = fact(packet, .seatedDuration), let name = seatedDur.guestName, let mins = seatedDur.minutes {
             attention.append("\(name) has been seated \(mins) min\(seatedDur.tableLabel.map { " at \($0)" } ?? "").")
+        }
+        if let waiting = fact(packet, .waitingArrivals)?.count, waiting > 0 {
+            attention.append("\(waiting) \(arrivalWord(waiting)) waiting to be seated.")
         }
         if let noTable = fact(packet, .noTableToday)?.count, noTable > 0 {
             attention.append("\(noTable) \(reservationWord(noTable)) still need a table.")
@@ -140,23 +190,8 @@ enum StaffBriefingTemplateWriter {
         if counts.needsReviewCount > 0 {
             attention.append("\(counts.needsReviewCount) unresolved review \(counts.needsReviewCount == 1 ? "item" : "items").")
         }
-        sections.append(section("attention", "Needs attention", bullets: attention))
 
-        // Guests
-        sections.append(section("guests", "Guests to know", bullets: guestBullets(packet)))
-
-        // Floor
-        var floor: [String] = []
-        if let noShow = fact(packet, .noShowFollowUp)?.count, noShow > 0 {
-            floor.append("\(noShow) no-show\(noShow == 1 ? "" : "s") so far.")
-        }
-        if counts.cancelledCount > 0 {
-            floor.append("\(counts.cancelledCount) cancelled today.")
-        }
-        floor.append(contentsOf: attachmentBullets(packet))
-        sections.append(section("floor", "Floor & follow-up", bullets: floor))
-
-        return Content(headline: headline, sections: sections.filter { !$0.isEmpty || $0.id == "overview" }, actionBullets: [])
+        return attention
     }
 
     // MARK: - Closing recap
@@ -164,21 +199,11 @@ enum StaffBriefingTemplateWriter {
     private static func buildClosingRecap(_ packet: StaffBriefingPacket) -> Content {
         let counts = packet.statusCounts
         let wrapped = counts.remainingArrivalsCount == 0 && counts.stillSeatedReservations == 0
-        let headline = wrapped
-            ? "Service wrapped · \(counts.completedCount) completed, \(counts.expectedGuests) \(guestWord(counts.expectedGuests)) served."
-            : "Winding down · \(counts.stillSeatedReservations) still seated, \(counts.remainingArrivalsCount) not yet arrived."
+        let headline = "Here's the wrap-up."
 
         var sections: [StaffBriefingSection] = []
+        sections.append(section("overview", "Overview", paragraphs: [closingRecapOverview(packet, wrapped: wrapped)]))
 
-        // Overview
-        var overview: [String] = []
-        overview.append(wrapped
-            ? "Today's service is complete."
-            : "Service is not fully wrapped yet.")
-        overview.append("\(counts.totalReservations) \(reservationWord(counts.totalReservations)) total · \(counts.completedCount) completed · \(counts.cancelledCount) cancelled · \(counts.noShowCount) no-show.")
-        sections.append(section("overview", "Service recap", paragraphs: overview))
-
-        // Attention / cleanup
         var attention: [String] = []
         if counts.stillSeatedReservations > 0 {
             attention.append("\(counts.stillSeatedReservations) \(tableWord(counts.stillSeatedReservations)) still marked seated — check cleanup.")
@@ -186,34 +211,62 @@ enum StaffBriefingTemplateWriter {
         if counts.unresolvedCount > 0 {
             attention.append("\(counts.unresolvedCount) \(counts.unresolvedCount == 1 ? "item" : "items") still need a status update.")
         }
-        sections.append(section("attention", "Cleanup", bullets: attention))
+        if !attention.isEmpty {
+            sections.append(section("attention", "Cleanup", bullets: attention))
+        }
 
-        // Followup
         var followup: [String] = []
         if counts.noShowCount > 0 {
             followup.append("Follow up on \(counts.noShowCount) no-show\(counts.noShowCount == 1 ? "" : "s").")
         }
         if let longStay = fact(packet, .longStayRecap)?.count, longStay > 0 {
-            followup.append("\(longStay) long \(longStay == 1 ? "stay" : "stays") today — note for turn planning.")
+            followup.append("\(longStay) long \(longStay == 1 ? "stay" : "stays") — worth noting for turn planning.")
         }
-        sections.append(section("followup", "Follow-up", bullets: followup))
+        if !followup.isEmpty {
+            sections.append(section("followup", "Follow-up", bullets: followup))
+        }
 
-        // Tomorrow
         if let preview = packet.tomorrowPreview, preview.hasData {
-            var tomorrow: [String] = []
-            tomorrow.append("\(preview.reservationCount) \(reservationWord(preview.reservationCount)) · \(preview.expectedGuests) \(guestWord(preview.expectedGuests)) expected.")
-            if preview.needsReviewCount > 0 { tomorrow.append("\(preview.needsReviewCount) to review.") }
-            if preview.noTableCount > 0 { tomorrow.append("\(preview.noTableCount) without a table yet.") }
-            if preview.largePartyCount > 0 { tomorrow.append("\(preview.largePartyCount) large \(preview.largePartyCount == 1 ? "party" : "parties").") }
-            if preview.allergyCount > 0 { tomorrow.append("\(preview.allergyCount) allergy \(preview.allergyCount == 1 ? "note" : "notes").") }
-            if preview.occasionCount > 0 { tomorrow.append("\(preview.occasionCount) \(preview.occasionCount == 1 ? "occasion" : "occasions").") }
-            if preview.attachmentCount > 0 { tomorrow.append("\(preview.attachmentCount) with attachments to review.") }
-            sections.append(section("tomorrow", "Tomorrow preview", bullets: tomorrow))
+            sections.append(section("tomorrow", "Tomorrow", bullets: tomorrowBullets(preview)))
         } else {
-            sections.append(section("tomorrow", "Tomorrow preview", paragraphs: ["Tomorrow's details are not available yet."]))
+            sections.append(section("tomorrow", "Tomorrow", paragraphs: ["Tomorrow's details aren't available yet."]))
         }
 
-        return Content(headline: headline, sections: sections.filter { !$0.isEmpty || $0.id == "overview" || $0.id == "tomorrow" }, actionBullets: [])
+        return Content(headline: headline, sections: sections.filter { !$0.isEmpty }, actionBullets: [])
+    }
+
+    private static func closingRecapOverview(_ packet: StaffBriefingPacket, wrapped: Bool) -> String {
+        let counts = packet.statusCounts
+        var text = wrapped
+            ? "Service is wrapped: \(counts.completedCount) \(counts.completedCount == 1 ? "table" : "tables") completed and about \(counts.expectedGuests) \(guestWord(counts.expectedGuests)) served."
+            : "Service isn't fully wrapped yet — \(counts.stillSeatedReservations) still seated and \(counts.remainingArrivalsCount) not yet arrived."
+
+        var extras: [String] = []
+        if counts.cancelledCount > 0 {
+            extras.append("\(counts.cancelledCount) cancelled")
+        }
+        if counts.noShowCount > 0 {
+            extras.append("\(counts.noShowCount) no-show\(counts.noShowCount == 1 ? "" : "s")")
+        }
+        if !extras.isEmpty {
+            let verb = (extras.count == 1 && (counts.cancelledCount + counts.noShowCount) == 1) ? "was" : "were"
+            text += " There \(verb) also \(extras.joined(separator: " and "))."
+        }
+
+        return text
+    }
+
+    private static func tomorrowBullets(_ preview: StaffBriefingTomorrowPreview) -> [String] {
+        var bullets: [String] = [
+            "\(preview.reservationCount) \(preview.reservationCount == 1 ? "reservation" : "reservations") · \(preview.expectedGuests) \(preview.expectedGuests == 1 ? "guest" : "guests") expected."
+        ]
+        if preview.needsReviewCount > 0 { bullets.append("\(preview.needsReviewCount) to review.") }
+        if preview.noTableCount > 0 { bullets.append("\(preview.noTableCount) without a table yet.") }
+        if preview.largePartyCount > 0 { bullets.append("\(preview.largePartyCount) large \(preview.largePartyCount == 1 ? "party" : "parties").") }
+        if preview.allergyCount > 0 { bullets.append("\(preview.allergyCount) allergy \(preview.allergyCount == 1 ? "note" : "notes").") }
+        if preview.occasionCount > 0 { bullets.append("\(preview.occasionCount) \(preview.occasionCount == 1 ? "occasion" : "occasions").") }
+        if preview.attachmentCount > 0 { bullets.append("\(preview.attachmentCount) with attachments to review.") }
+        return bullets
     }
 
     // MARK: - Shared fact rendering
@@ -255,15 +308,6 @@ enum StaffBriefingTemplateWriter {
         }
     }
 
-    private static func nextArrivalLine(_ fact: BriefingFact) -> String {
-        var parts = "Next arrival"
-        if let time = fact.timeLabel { parts += " at \(time)" }
-        if let name = fact.guestName { parts += " · \(name)" }
-        if let party = fact.partySize { parts += ", \(party) \(guestWord(party))" }
-        if let table = fact.tableLabel { parts += " (\(table))" }
-        return parts + "."
-    }
-
     // MARK: - Helpers
 
     private static func fact(_ packet: StaffBriefingPacket, _ kind: BriefingFactKind) -> BriefingFact? {
@@ -302,10 +346,6 @@ enum StaffBriefingTemplateWriter {
         case .photoReference: return "photo reference"
         case .other: return "attachment"
         }
-    }
-
-    private static func dayWord(_ packet: StaffBriefingPacket) -> String {
-        packet.serviceStateLabel.lowercased().contains("future") ? "that day" : "today"
     }
 
     private static func reservationWord(_ n: Int) -> String { n == 1 ? "reservation" : "reservations" }

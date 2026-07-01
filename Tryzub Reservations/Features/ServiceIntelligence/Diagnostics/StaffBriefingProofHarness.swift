@@ -18,7 +18,8 @@ enum StaffBriefingProofHarness {
         testValidatorRejectsUnknownGuest()
         testValidatorRejectsUnknownTable()
         testValidatorRejectsImpossibleCount()
-        testValidatorRejectsPhone()
+        testValidatorRejectsPhoneVariants()
+        testValidatorAcceptsTimeAndRangePatterns()
         testValidatorRejectsEmail()
         testValidatorRejectsMetaLanguage()
         testValidatorRejectsExecutionClaim()
@@ -90,14 +91,58 @@ enum StaffBriefingProofHarness {
         expectRejection("validator_impossible_count", raw: raw, packet: packet, reason: "count_grounding")
     }
 
-    private static func testValidatorRejectsPhone() {
+    /// 4F-2 — the local model was once rejected with reason=contact_phone even though
+    /// it only wrote ordinary service times (18:45, 03:52) and a duration range
+    /// (30-60 minutes). These variants must still be rejected as real phone numbers.
+    private static func testValidatorRejectsPhoneVariants() {
+        let packet = makePacket(mode: .preService)
+        let variants = [
+            "555-123-4567",
+            "(555) 123-4567",
+            "555.123.4567",
+            "+1 555 123 4567",
+            "555 123 4567",
+        ]
+        var allPassed = true
+        for variant in variants {
+            let raw = """
+            HEADLINE: Follow up needed.
+            SECTION followup:
+            - Reach them at \(variant) to confirm.
+            """
+            guard let parsed = StaffBriefingOutputParser.parse(raw) else {
+                allPassed = false
+                continue
+            }
+            let result = StaffBriefingValidator.validate(parsed: parsed, packet: packet)
+            let rejectedForPhone = !result.accepted && result.rejectionReason == "contact_phone"
+            if !rejectedForPhone {
+                allPassed = false
+                print("[STAFF_BRIEFING_TEST] phone_variant_failed variant=\(variant) reason=\(result.rejectionReason ?? "accepted")")
+            }
+        }
+        expect("validator_rejects_phone_variants", allPassed)
+    }
+
+    /// 4F-2 — the fix for testValidatorRejectsPhoneVariants must not start rejecting
+    /// ordinary times, ranges, or dates that happen to contain several digits.
+    private static func testValidatorAcceptsTimeAndRangePatterns() {
         let packet = makePacket(mode: .preService)
         let raw = """
-        HEADLINE: Call the guest.
-        SECTION followup:
-        - Reach them at 555-123-4567 to confirm.
+        HEADLINE: Nothing urgent before service.
+        SECTION overview: First arrival lands around 6:45 PM, after a prep window of 30-60 minutes. Service opened on 2026-07-01, the last check was logged at 03:52, and another window of 30–60 minutes is possible near 18:45.
         """
-        expectRejection("validator_phone", raw: raw, packet: packet, reason: "contact_phone")
+        guard let parsed = StaffBriefingOutputParser.parse(raw) else {
+            expect("validator_accepts_time_and_range_patterns", false); return
+        }
+        let result = StaffBriefingValidator.validate(parsed: parsed, packet: packet)
+        expect(
+            "validator_accepts_time_and_range_patterns",
+            result.accepted && result.rejectionReason == nil
+        )
+        if !result.accepted {
+            print("[STAFF_BRIEFING_TEST] accept_time_patterns_failed reason=\(result.rejectionReason ?? "unknown") detail=\(result.debugDetail ?? "none")")
+        }
     }
 
     private static func testValidatorRejectsEmail() {

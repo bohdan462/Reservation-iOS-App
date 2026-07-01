@@ -77,7 +77,7 @@ enum StaffBriefingWriter {
             return fallback(from: templateResult, reason: "model_error")
         }
 
-        guard let parsed = StaffBriefingOutputParser.parse(rawOutput) else {
+        guard let parsed = StaffBriefingOutputParser.parse(rawOutput, mode: input.packet.mode) else {
             #if DEBUG
             print("[STAFF_BRIEFING_TRACE] decision=fallback mode=\(input.packet.mode.rawValue) reason=parse_failed")
             #endif

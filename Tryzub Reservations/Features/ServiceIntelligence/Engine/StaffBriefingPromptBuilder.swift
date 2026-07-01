@@ -19,16 +19,24 @@ enum StaffBriefingPromptBuilder {
     /// Bump when the prompt schema changes to invalidate cached output.
     static let promptVersion = "sb-full-v1"
 
+    // NOTE: The system prompt actually sent to the runtime lives on
+    // `HostLocalModelTaskProfile.staffBriefing` (HostLocalModelRuntime.swift) — the
+    // runtime wraps that profile-level prompt around the user message built below.
+    // This constant is kept in sync for reference/tests; update both together.
     static let systemPrompt = """
     You write an internal staff and management briefing for a restaurant team. \
     Use only the structured facts provided. Never address guests. Never invent \
     reservations, guests, tables, counts, attachments, reminders, confirmations, \
     cancellations, no-shows, allergies, birthdays, or regular status. Never claim \
     anything was sent, confirmed, seated, completed, assigned, or reviewed unless \
-    the provided facts explicitly support it. Write like a strong floor manager \
-    briefing the team: plain, useful, calm, operational. No AI/meta language. \
-    No marketing copy. If the day is quiet, keep it short. If it is busy, expand \
-    naturally but stay focused.
+    the provided facts explicitly support it. Write like one manager briefing \
+    another person: plain, warm, conversational sentences — not a report. Start \
+    with a natural opener such as "Here's the picture before service," "Here's \
+    what's happening right now," or "Here's the wrap-up." Use paragraphs first; \
+    use bullets only for concrete action items. Do not mention data sources, \
+    systems, packets, notes, or how this briefing was generated. No AI/meta \
+    language. No marketing copy. If the day is quiet, keep it short. If it is \
+    busy, expand naturally but stay focused.
     """
 
     static func build(_ packet: StaffBriefingPacket, serviceDateLabel: String?) -> String {
@@ -131,6 +139,8 @@ enum StaffBriefingPromptBuilder {
         }
         lines.append("")
 
+        lines.append(styleBlock(for: packet))
+        lines.append("")
         lines.append(forbiddenBlock)
         lines.append("")
         lines.append(outputFormat(for: packet))
@@ -168,17 +178,36 @@ enum StaffBriefingPromptBuilder {
     - Words: AI, model, LLM, backend, cache, API, sync, packet, validation, algorithm, prompt.
     - Guest-facing phrases like "Dear guest", "we are excited", "we look forward".
     - Uncertain hype: "guaranteed", "definitely will", "absolutely".
+    - Meta descriptions of how this briefing was written or where the data came from.
     """
+
+    /// Mode-aware opener + conversational instructions. Kept separate from
+    /// forbiddenBlock so the safety rules above stay unambiguous and unchanged.
+    private static func styleBlock(for packet: StaffBriefingPacket) -> String {
+        let opener: String
+        switch packet.mode {
+        case .preService:  opener = "\"Here's the picture before service.\""
+        case .liveService: opener = "\"Here's what's happening right now.\""
+        case .closingRecap: opener = "\"Here's the wrap-up.\""
+        }
+        return """
+        STYLE:
+        Write like one manager briefing another person — plain, conversational sentences, not a report or a status dump.
+        Open with a natural line like \(opener)
+        Use paragraphs first. Use bullets only for concrete things staff should check or do.
+        Do not restate the same count twice. Do not mention data sources, systems, or how this briefing was generated.
+        """
+    }
 
     private static func outputFormat(for packet: StaffBriefingPacket) -> String {
         var block = """
-        OUTPUT FORMAT — use these labels exactly, one per line where shown:
-        HEADLINE: <one short line>
-        SECTION overview: <1-2 short paragraphs>
-        SECTION attention: <bullet lines starting with "- ">
-        SECTION guests: <bullets or short paragraph>
-        SECTION floor: <bullets or short paragraph>
-        SECTION followup: <bullets>
+        OUTPUT FORMAT — use these labels exactly, one per line where shown (write natural sentences inside each):
+        HEADLINE: <one short, natural line>
+        SECTION overview: <1-2 conversational sentences, opening the way STYLE describes>
+        SECTION attention: <bullet lines starting with "- ", only for things needing attention>
+        SECTION guests: <bullets or a short sentence, only if there are guests worth flagging>
+        SECTION floor: <bullets or a short sentence, only if there is something to report>
+        SECTION followup: <bullets, only for concrete actions>
         """
         if packet.mode == .closingRecap, packet.tomorrowPreview?.hasData == true {
             block += "\nSECTION tomorrow: <bullets covering tomorrow's counts>"

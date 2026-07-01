@@ -28,10 +28,19 @@ enum StaffBriefingOutputParser {
         "guests": "Guests to know",
         "floor": "Floor",
         "followup": "Follow-up",
-        "tomorrow": "Tomorrow preview"
+        "tomorrow": "Tomorrow"
     ]
 
-    static func parse(_ raw: String) -> Parsed? {
+    /// "followup" reads better as "Focus before service" when the briefing is
+    /// preService; other modes and ids keep the default mapping.
+    private static func sectionTitle(id: String, mode: StaffBriefingMode) -> String {
+        if id == "followup", mode == .preService {
+            return "Focus before service"
+        }
+        return sectionTitles[id] ?? id.capitalized
+    }
+
+    static func parse(_ raw: String, mode: StaffBriefingMode = .preService) -> Parsed? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
@@ -91,7 +100,7 @@ enum StaffBriefingOutputParser {
         let sections: [StaffBriefingSection] = sectionOrder.map { id in
             StaffBriefingSection(
                 id: id,
-                title: sectionTitles[id] ?? id.capitalized,
+                title: sectionTitle(id: id, mode: mode),
                 paragraphs: dedupe(paragraphsByID[id] ?? []),
                 bullets: dedupe(bulletsByID[id] ?? [])
             )
@@ -273,7 +282,7 @@ enum StaffBriefingValidator {
         "nothing", "urgent", "quiet", "calm", "confirm", "confirmed", "confirmation",
         "reminder", "reminders", "allergy", "occasion", "setup", "deposit", "preorder",
         "no-show", "cancelled", "completed", "large", "attention", "follow-up",
-        "overview", "guests", "headline", "section", "actions",
+        "overview", "guests", "headline", "section", "actions", "am", "pm",
     ]
 
     private static func guestNameCheck(text: String, allowedNames: [String]) -> String? {
@@ -320,9 +329,10 @@ enum StaffBriefingValidator {
     }
 
     private static func countGroundingCheck(text: String, packet: StaffBriefingPacket) -> String? {
+        let sanitized = sanitizedForCountCheck(text)
         let pattern = try? NSRegularExpression(pattern: #"\b(\d+)\b"#)
-        let nsText = text as NSString
-        guard let matches = pattern?.matches(in: text, range: NSRange(location: 0, length: nsText.length)) else {
+        let nsText = sanitized as NSString
+        guard let matches = pattern?.matches(in: sanitized, range: NSRange(location: 0, length: nsText.length)) else {
             return nil
         }
         let s = packet.statusCounts
@@ -336,12 +346,28 @@ enum StaffBriefingValidator {
         let ceiling = max(maxAllowed + 2, Int(Double(maxAllowed) * 1.5))
         for match in matches {
             let token = nsText.substring(with: match.range)
-            // Ignore clock-like tokens handled by time labels (e.g. "30" in "30 minutes").
             if let n = Int(token), n > ceiling, n > 12 {
                 return "Count \(n) exceeds packet maximum (\(maxAllowed))."
             }
         }
         return nil
+    }
+
+    /// Strips date (2026-07-01), clock-time (18:45, 6:45 PM), and numeric-range
+    /// (30-60, 30–60) substrings before scanning for out-of-range counts, so
+    /// service-time language never gets misread as an impossible reservation count.
+    private static func sanitizedForCountCheck(_ text: String) -> String {
+        var result = text
+        result = replacingMatches(in: result, pattern: #"\b\d{4}-\d{2}-\d{2}\b"#)
+        result = replacingMatches(in: result, pattern: #"\b\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\b"#)
+        result = replacingMatches(in: result, pattern: #"\b\d{1,4}[\u{2013}\-]\d{1,4}\b"#)
+        return result
+    }
+
+    private static func replacingMatches(in text: String, pattern: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+        let range = NSRange(text.startIndex..., in: text)
+        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: " ")
     }
 
     private static func unsupportedStatusClaimCheck(text: String, packet: StaffBriefingPacket) -> String? {
@@ -360,9 +386,26 @@ enum StaffBriefingValidator {
         return nil
     }
 
+    /// Matches real phone-number shapes only (3-3-4 NANP grouping, with or without a
+    /// country code, or a bare 10-11 digit run). Deliberately does NOT match times
+    /// (18:45, 03:52), ranges (30-60 minutes, 30–60 minutes), or dates (2026-07-01),
+    /// because none of those form a 3-digit/3-digit/4-digit group. Uses literal
+    /// space/dot/hyphen separators (not \s) so it can't accidentally bridge across
+    /// newlines when multiple unrelated numbers appear in nearby sections.
+    private static let phonePatterns: [String] = [
+        #"(?:\+?\d{1,3}[ .\-]?)?\(?\d{3}\)?[ .\-]\d{3}[ .\-]\d{4}\b"#,
+        #"\b\d{10,11}\b"#,
+    ]
+
     private static func containsPhonePattern(_ text: String) -> Bool {
-        let pattern = try? NSRegularExpression(pattern: #"\b\d[\d\s\-\(\)]{6,}\d\b"#)
-        return pattern?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        let nsRange = NSRange(text.startIndex..., in: text)
+        for pattern in phonePatterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            if regex.firstMatch(in: text, range: nsRange) != nil {
+                return true
+            }
+        }
+        return false
     }
 
     private static func containsEmailPattern(_ text: String) -> Bool {

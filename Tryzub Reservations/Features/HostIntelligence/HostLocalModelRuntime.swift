@@ -193,9 +193,13 @@ struct HostLocalModelTaskProfile: Sendable, Equatable {
     reservations, guests, tables, counts, attachments, reminders, confirmations, \
     cancellations, no-shows, allergies, birthdays, or regular status. Never claim \
     anything was sent, confirmed, seated, completed, assigned, or reviewed unless \
-    the provided facts explicitly support it. Write like a strong floor manager \
-    briefing the team: plain, useful, calm, operational. No AI/meta language. \
-    Output only the formatted block requested by the user message.
+    the provided facts explicitly support it. Write like one manager briefing \
+    another person: plain, warm, conversational sentences — not a report. Start \
+    with a natural opener such as "Here's the picture before service," "Here's \
+    what's happening right now," or "Here's the wrap-up." Use paragraphs first; \
+    use bullets only for concrete action items. Do not mention data sources, \
+    systems, packets, notes, or how this briefing was generated. No AI/meta \
+    language. Output only the formatted block requested by the user message.
     """,
     maxOutputTokens: 768,
     echoStopMarkers: [
@@ -205,6 +209,7 @@ struct HostLocalModelTaskProfile: Sendable, Equatable {
       "STATUS COUNTS",
       "PRIORITY FACTS",
       "ALLOWED GUEST NAMES",
+      "STYLE:",
       "OUTPUT FORMAT",
       "FORBIDDEN IN OUTPUT:",
     ],

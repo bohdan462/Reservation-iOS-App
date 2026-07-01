@@ -174,9 +174,19 @@ struct GlobalServiceIntelligenceView: View {
             retainedResult: retainedStaffBriefingResult,
             retainedResultIsCurrent: retainedStaffBriefingResultIsCurrent,
             primaryButtonLabel: staffBriefingMode.primaryButtonLabel,
+            showsSourceCaption: hostIntelligenceController.canViewDeveloperDiagnostics,
+            dateContextLabel: isServiceDateToday ? nil : serviceDateLabel,
             onRequest: { requestStaffBriefing(forceRefresh: false) },
             onRefresh: { requestStaffBriefing(forceRefresh: true) }
         )
+    }
+
+    /// The briefing modes/copy are day-agnostic (no "today"/"tonight" wording), so the
+    /// panel stays available for any Host Board date — mode already resolves correctly
+    /// per date via ServiceModeResolver (.futurePlanning → preService, .pastRecap →
+    /// closingRecap). We still surface which day it's for whenever it isn't today.
+    private var isServiceDateToday: Bool {
+        serviceDateKey == Date.reservationDateString()
     }
 
     @ViewBuilder
@@ -1057,6 +1067,10 @@ private struct StaffBriefingPanel: View {
     let retainedResult: StaffBriefingResult?
     let retainedResultIsCurrent: Bool
     let primaryButtonLabel: String
+    let showsSourceCaption: Bool
+    /// Non-nil (e.g. "Wednesday") only when the Host Board's selected date isn't today,
+    /// so staff never mistake a briefing for a different day as "today's".
+    let dateContextLabel: String?
     let onRequest: () -> Void
     let onRefresh: () -> Void
 
@@ -1085,9 +1099,9 @@ private struct StaffBriefingPanel: View {
     private var staleCaption: String? {
         switch state {
         case .stale:
-            return "Reservation details changed since this briefing was generated."
+            return "Something changed since this was written."
         case .generating where visibleResult != nil && !visibleResultIsCurrent:
-            return "Reservation details changed since this briefing was generated."
+            return "Something changed since this was written."
         default:
             return nil
         }
@@ -1104,12 +1118,11 @@ private struct StaffBriefingPanel: View {
         VStack(alignment: .leading, spacing: 11) {
             header
 
-            Text("Generated from today’s reservations, guest notes, floor state, and service signals.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if let result = visibleResult {
+            if isGenerating {
+                // The pulse itself, sitting exactly where the message will land, is the
+                // only "loading" cue — no separate spinner/icon row anymore.
+                StaffBriefingSkeletonCard()
+            } else if let result = visibleResult {
                 if let staleCaption {
                     Text(staleCaption)
                         .font(.caption2)
@@ -1117,7 +1130,7 @@ private struct StaffBriefingPanel: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                StaffBriefingMessageCard(result: result)
+                StaffBriefingMessageCard(result: result, showsSourceCaption: showsSourceCaption)
 
                 HStack {
                     Spacer(minLength: 0)
@@ -1128,35 +1141,51 @@ private struct StaffBriefingPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Ask for a quick staff briefing.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            if isGenerating {
-                StaffBriefingLoadingRow()
-            } else if visibleResult == nil {
+            if !isGenerating, visibleResult == nil {
                 primaryButton
             }
         }
-        .padding(12)
+        .padding(13)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .hostBoardGlassPanel(cornerRadius: 14, strokeOpacity: 0.12)
+        .hostBoardGlassPanel(cornerRadius: 16, strokeOpacity: 0.12)
+        .shadow(color: TryzubColors.primaryControl.opacity(0.10), radius: 16, y: 6)
         .animation(.easeInOut(duration: 0.18), value: state)
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "quote.bubble")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 15, alignment: .center)
+            HStack(spacing: 7) {
+                ZStack {
+                    Circle()
+                        .fill(TryzubColors.primaryControl.opacity(0.16))
+                        .frame(width: 22, height: 22)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(TryzubColors.primaryControl)
+                }
+
                 Text("Staff briefing")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.primary)
+
+                if let dateContextLabel {
+                    Text("· \(dateContextLabel)")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
 
             Spacer(minLength: 0)
 
-            if visibleResult != nil {
+            if visibleResult != nil, !isGenerating {
                 StaffBriefingStatusBadge(isCurrent: visibleResultIsCurrent)
             }
         }
@@ -1165,9 +1194,9 @@ private struct StaffBriefingPanel: View {
     private var primaryButton: some View {
         Button(action: onRequest) {
             HStack(spacing: 9) {
-                Image(systemName: "text.bubble")
+                Image(systemName: "sparkles")
                     .font(.subheadline.weight(.semibold))
-                    .frame(width: 20, alignment: .center)
+                    .frame(width: 18, alignment: .center)
                 Text(primaryButtonLabel)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
@@ -1176,15 +1205,27 @@ private struct StaffBriefingPanel: View {
                 Image(systemName: "arrow.right")
                     .font(.caption.weight(.bold))
             }
-            .foregroundStyle(TryzubColors.primaryControl)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 11)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .hostBoardGlassPanel(cornerRadius: 12, strokeOpacity: 0.14)
+            .background(staffBriefingCTABackground)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(StaffBriefingCTAButtonStyle())
         .disabled(isGenerating)
-        .opacity(isGenerating ? 0.55 : 1)
+    }
+
+    @ViewBuilder
+    private var staffBriefingCTABackground: some View {
+        let corner: CGFloat = 13
+        if #available(iOS 26.0, *) {
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .fill(.clear)
+                .glassEffect(.regular.tint(TryzubColors.primaryControl).interactive(), in: .rect(cornerRadius: corner))
+        } else {
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .fill(TryzubColors.primaryControl.gradient)
+        }
     }
 
     private var refreshButton: some View {
@@ -1204,8 +1245,68 @@ private struct StaffBriefingPanel: View {
     }
 }
 
+/// Solid, orange (accent) filled CTA — matches the same accent used across Host Board,
+/// with genuine Liquid Glass tint on iOS 26+ and a plain gradient fallback below that.
+private struct StaffBriefingCTAButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .opacity(configuration.isPressed ? 0.9 : 1)
+            .animation(.snappy(duration: 0.16), value: configuration.isPressed)
+    }
+}
+
+/// Lightweight skeleton shown in place of the message card while a briefing is being
+/// generated. Pure implicit opacity animation (no per-frame work) — cheap on CPU, but
+/// sits exactly where the real content will appear so the "AI is thinking" cue reads
+/// as part of the section, not a generic spinner bolted on top.
+private struct StaffBriefingSkeletonCard: View {
+    @State private var isPulsing = false
+
+    private let lineWidths: [CGFloat] = [150, 132]
+    private let bodyWidths: [CGFloat] = [268, 240, 176]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            bar(width: lineWidths[0], height: 13)
+
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(Array(bodyWidths.enumerated()), id: \.offset) { _, width in
+                    bar(width: width, height: 9)
+                }
+            }
+
+            bar(width: lineWidths[1], height: 9)
+
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.caption2)
+                    .foregroundStyle(TryzubColors.primaryControl.opacity(0.7))
+                Text("Preparing your briefing…")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 1)
+        }
+        .padding(.top, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(isPulsing ? 0.45 : 1)
+        .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: isPulsing)
+        .onAppear { isPulsing = true }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Preparing your briefing")
+    }
+
+    private func bar(width: CGFloat, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: height / 2, style: .continuous)
+            .fill(Color.primary.opacity(0.10))
+            .frame(width: width, height: height)
+    }
+}
+
 private struct StaffBriefingMessageCard: View {
     let result: StaffBriefingResult
+    let showsSourceCaption: Bool
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -1213,6 +1314,12 @@ private struct StaffBriefingMessageCard: View {
         formatter.timeStyle = .short
         return formatter
     }()
+
+    private var footerText: String {
+        let time = Self.timeFormatter.string(from: result.generatedAt)
+        guard showsSourceCaption else { return "Generated \(time)" }
+        return "Generated \(time) · \(result.source.developerCaption)"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1229,7 +1336,7 @@ private struct StaffBriefingMessageCard: View {
                 StaffBriefingBulletBlock(title: "Actions", bullets: result.actionBullets)
             }
 
-            Text("Generated \(Self.timeFormatter.string(from: result.generatedAt)) · \(result.source.caption)")
+            Text(footerText)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1307,31 +1414,13 @@ private struct StaffBriefingStatusBadge: View {
     let isCurrent: Bool
 
     var body: some View {
-        Text(isCurrent ? "Current" : "Outdated")
+        Text(isCurrent ? "Current" : "Needs refresh")
             .font(.caption2.weight(.semibold))
             .foregroundStyle(isCurrent ? TryzubColors.primaryControl : .secondary)
             .lineLimit(1)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .hostIntelligenceCompactCapsule(strokeOpacity: isCurrent ? 0.12 : 0.06)
-    }
-}
-
-private struct StaffBriefingLoadingRow: View {
-    var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "ellipsis.circle")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 18, alignment: .center)
-            Text("Preparing briefing…")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 8)
-            TryzubSubtleLoadingDot(diameter: 6)
-        }
-        .padding(.vertical, 5)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1349,14 +1438,16 @@ private extension StaffBriefingMode {
 }
 
 private extension StaffBriefingSource {
-    var caption: String {
+    /// Subtle, developer-only suffix. Staff-facing UI never shows this — the
+    /// footer only shows the generated time (see StaffBriefingMessageCard).
+    var developerCaption: String {
         switch self {
         case .localModel:
-            return "Local model briefing"
+            return "Local"
         case .template:
-            return "Template briefing"
+            return "Template"
         case .fallback:
-            return "Template fallback"
+            return "Fallback"
         }
     }
 }
