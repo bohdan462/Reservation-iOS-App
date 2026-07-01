@@ -361,6 +361,26 @@ extension ReservationRecord {
         return EmailDeliveryStatus(rawValue: raw) ?? .unknown
     }
 
+    var effectiveConfirmationDeliveryStatus: EmailDeliveryStatus {
+        switch confirmationDeliveryStatus {
+        case .notApplicable, .unknown:
+            return hasLegacyConfirmationAttemptTimestamp ? .legacyRecorded : confirmationDeliveryStatus
+        case .delivered, .pendingDelivery, .sentToProvider, .failed, .suppressed, .complained,
+             .deliveryDelayed, .deliveryUnknown, .legacyRecorded, .manualRecorded:
+            return confirmationDeliveryStatus
+        }
+    }
+
+    var effectiveReminderDeliveryStatus: EmailDeliveryStatus {
+        switch reminderDeliveryStatus {
+        case .notApplicable, .unknown:
+            return hasLegacyReminderAttemptTimestamp ? .legacyRecorded : reminderDeliveryStatus
+        case .delivered, .pendingDelivery, .sentToProvider, .failed, .suppressed, .complained,
+             .deliveryDelayed, .deliveryUnknown, .legacyRecorded, .manualRecorded:
+            return reminderDeliveryStatus
+        }
+    }
+
     var confirmationSource: ConfirmationSource {
         guard let raw = confirmationSourceRaw?.trimmingCharacters(in: .whitespacesAndNewlines),
               !raw.isEmpty else {
@@ -418,7 +438,7 @@ extension ReservationRecord {
         if confirmationSource == .noEmail {
             return "Confirmed without guest email"
         }
-        return Self.deliveryLabel(for: confirmationDeliveryStatus)
+        return Self.deliveryLabel(for: effectiveConfirmationDeliveryStatus)
     }
 
     var confirmationDeliveryDetailText: String {
@@ -429,7 +449,7 @@ extension ReservationRecord {
             return "Reservation confirmed without a usable guest email."
         }
 
-        switch confirmationDeliveryStatus {
+        switch effectiveConfirmationDeliveryStatus {
         case .delivered:
             return "Confirmation email delivered."
         case .pendingDelivery, .sentToProvider:
@@ -447,9 +467,9 @@ extension ReservationRecord {
         case .manualRecorded:
             return "Manual confirmation email recorded."
         case .notApplicable:
-            return hasUsableConfirmationEmail ? "No confirmation delivery expected." : "Confirmed without guest email."
+            return hasUsableConfirmationEmail ? "No confirmation email recorded." : "Confirmed without guest email."
         case .deliveryUnknown, .unknown:
-            return "Confirmation delivery status is unknown."
+            return hasUsableConfirmationEmail ? "No confirmation email recorded." : "Confirmed without guest email."
         }
     }
 
@@ -467,11 +487,11 @@ extension ReservationRecord {
     }
 
     var reminderDeliveryLabel: String {
-        Self.deliveryLabel(for: reminderDeliveryStatus)
+        Self.deliveryLabel(for: effectiveReminderDeliveryStatus)
     }
 
     var reminderDeliveryDetailText: String {
-        switch reminderDeliveryStatus {
+        switch effectiveReminderDeliveryStatus {
         case .delivered:
             return "Reminder email delivered."
         case .pendingDelivery, .sentToProvider:
@@ -489,9 +509,9 @@ extension ReservationRecord {
         case .manualRecorded:
             return "Manual reminder email recorded."
         case .notApplicable:
-            return hasUsableConfirmationEmail ? "No reminder delivery expected." : "No usable guest email for reminder delivery."
+            return hasUsableConfirmationEmail ? "No reminder attempted yet." : "No usable guest email for reminder delivery."
         case .deliveryUnknown, .unknown:
-            return "Reminder delivery status is unknown."
+            return hasUsableConfirmationEmail ? "No reminder attempted yet." : "No usable guest email for reminder delivery."
         }
     }
 
@@ -508,7 +528,7 @@ extension ReservationRecord {
              .deliveryDelayed, .deliveryUnknown, .legacyRecorded, .manualRecorded:
             return true
         case .notApplicable, .unknown:
-            return confirmationEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            return hasLegacyConfirmationAttemptTimestamp
         }
     }
 
@@ -518,8 +538,16 @@ extension ReservationRecord {
              .deliveryDelayed, .deliveryUnknown, .legacyRecorded, .manualRecorded:
             return true
         case .notApplicable, .unknown:
-            return reminderEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            return hasLegacyReminderAttemptTimestamp
         }
+    }
+
+    private var hasLegacyConfirmationAttemptTimestamp: Bool {
+        confirmationEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    private var hasLegacyReminderAttemptTimestamp: Bool {
+        reminderEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     private static func isFailedDeliveryStatus(_ status: EmailDeliveryStatus) -> Bool {
