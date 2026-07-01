@@ -36,6 +36,7 @@ final class HostIntelligenceController: ObservableObject {
   /// LOCAL-FIRST-OPS-4A — unified per-date staff intelligence snapshot.
   /// Populated by updateServiceIntelligenceSnapshot(_:); never built in body.
   @Published private(set) var serviceIntelligenceSnapshot: HostServiceIntelligenceSnapshot = .empty
+  @Published private(set) var serviceIntelligenceSourceFingerprint: String = ""
 
   let settingsStore: HostIntelligenceSettingsStore
   let tableStore: HostTableConfigStore
@@ -58,6 +59,7 @@ final class HostIntelligenceController: ObservableObject {
   private var latestStabilityContext = HostEvaluationStabilityContext()
   private var latestTraceCandidate: HostCardTraceNoTableCandidate?
   private var latestSelectedDateKey = ""
+  private var latestEvaluatedServiceIntelSourceFingerprint = ""
   private var latestFloorTableSource: HostFloorTableSource = .pendingBackend
 
   private var lastBriefingCacheKey: String?
@@ -152,12 +154,65 @@ final class HostIntelligenceController: ObservableObject {
     latestSelectedDateKey == dateKey && localEvaluationComplete
   }
 
+  static func serviceIntelligenceSourceFingerprint(
+    dateKey: String,
+    reservations: [ReservationRecord]
+  ) -> String {
+    let reservationStamp = reservations
+      .filter { $0.reservationDate == dateKey && !$0.isHidden }
+      .sorted {
+        if $0.remoteID != $1.remoteID { return $0.remoteID < $1.remoteID }
+        return $0.id.uuidString < $1.id.uuidString
+      }
+      .map { reservation -> String in
+        let noteHash = HostAttentionStableDigest.hexDigest(
+          "\(reservation.guestNotes ?? "")|\(reservation.staffNotes ?? "")"
+        )
+        return [
+          reservation.id.uuidString,
+          String(reservation.remoteID),
+          reservation.reservationDate,
+          reservation.reservationTime,
+          String(reservation.partySize),
+          reservation.status,
+          reservation.tableName ?? "",
+          noteHash,
+          reservation.confirmedAt ?? "none",
+          reservation.confirmationEmailSentAt ?? "none",
+          reservation.reminderEmailSentAt ?? "none",
+          reservation.rowVersion
+        ].joined(separator: ":")
+      }
+      .joined(separator: "|")
+    return HostAttentionStableDigest.hexDigest("\(dateKey)||\(reservationStamp)")
+  }
+
+  func isServiceIntelligenceSnapshotCurrent(
+    dateKey: String,
+    sourceFingerprint: String
+  ) -> Bool {
+    let current = sourceFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard serviceIntelligenceSnapshot.dateKey == dateKey,
+          !current.isEmpty,
+          serviceIntelligenceSourceFingerprint == current else {
+      #if DEBUG
+      print("[SERVICE_INTEL_LIFECYCLE_TRACE] event=snapshot_source_stale date=\(dateKey) stored=\(serviceIntelligenceSourceFingerprint.isEmpty ? "none" : serviceIntelligenceSourceFingerprint) current=\(current.isEmpty ? "none" : current)")
+      #endif
+      return false
+    }
+    #if DEBUG
+    print("[SERVICE_INTEL_LIFECYCLE_TRACE] event=snapshot_source_current date=\(dateKey) fingerprint=\(String(current.prefix(16)))")
+    #endif
+    return true
+  }
+
   /// Synchronously clears old-date publishable state when the view's selected date
   /// changes before the debounced evaluate task runs. Mirrors the dateChanged clearing
   /// block inside evaluate(), but callable immediately from onChange(of: selectedDateKey).
   /// Safe/idempotent: no-op when called with the already-evaluated date.
   func beginSelectedDateTransition(to newSelectedDateKey: String) {
     guard newSelectedDateKey != latestSelectedDateKey else { return }
+    let previousDateKey = latestSelectedDateKey
     briefingRefreshGeneration += 1
     clearAttentionPreservation()
     clearValidModelBriefingCache()
@@ -166,10 +221,13 @@ final class HostIntelligenceController: ObservableObject {
     applyTemplateBriefing(from: .empty, presentation: .empty)
     localEvaluationComplete = false
     isEnrichmentLoading = false
-    serviceIntelligenceSnapshot = .empty
-    lastServiceIntelSnapshotFingerprint = ""
+    latestEvaluatedServiceIntelSourceFingerprint = ""
+    clearServiceIntelligenceSnapshotForDateTransition(
+      oldDateKey: previousDateKey,
+      newDateKey: newSelectedDateKey
+    )
     #if DEBUG
-    print("[HOST_CARD_STALE_GUARD_TRACE] event=date_transition_begin from=\(latestSelectedDateKey) to=\(newSelectedDateKey)")
+    print("[HOST_CARD_STALE_GUARD_TRACE] event=date_transition_begin from=\(previousDateKey) to=\(newSelectedDateKey)")
     #endif
   }
 
@@ -182,7 +240,10 @@ final class HostIntelligenceController: ObservableObject {
   ///     .empty HostDecisionSnapshot right after a date switch.
   ///  2. Skip-gated by FNV-1a fingerprint of all meaningful inputs.
   /// Emits [SERVICE_INTEL_SNAPSHOT_TRACE] on build and skip.
-  func updateServiceIntelligenceSnapshot(_ input: HostServiceIntelligenceSnapshotBuilder.Input) {
+  func updateServiceIntelligenceSnapshot(
+    _ input: HostServiceIntelligenceSnapshotBuilder.Input,
+    sourceFingerprint: String
+  ) {
     // Guard 1: evaluate must have completed for this date.
     guard isEvaluatedForSelectedDate(input.dateKey) else {
       #if DEBUG
@@ -192,13 +253,25 @@ final class HostIntelligenceController: ObservableObject {
     }
     // Guard 2: fingerprint skip if inputs unchanged.
     let fingerprint = HostServiceIntelligenceSnapshotBuilder.inputFingerprint(input)
-    guard fingerprint != lastServiceIntelSnapshotFingerprint else {
+    let normalizedSourceFingerprint = sourceFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalizedSourceFingerprint.isEmpty,
+          normalizedSourceFingerprint == latestEvaluatedServiceIntelSourceFingerprint else {
+      #if DEBUG
+      print("[SERVICE_INTEL_SNAPSHOT_TRACE] decision=skip reason=source_awaiting_evaluate date=\(input.dateKey)")
+      #endif
+      return
+    }
+    let sourceFingerprintChanged = normalizedSourceFingerprint != serviceIntelligenceSourceFingerprint
+    guard fingerprint != lastServiceIntelSnapshotFingerprint || sourceFingerprintChanged else {
       #if DEBUG
       print("[SERVICE_INTEL_SNAPSHOT_TRACE] decision=skip reason=fingerprint_unchanged date=\(input.dateKey)")
       #endif
       return
     }
     lastServiceIntelSnapshotFingerprint = fingerprint
+    if serviceIntelligenceSourceFingerprint != normalizedSourceFingerprint {
+      serviceIntelligenceSourceFingerprint = normalizedSourceFingerprint
+    }
     serviceIntelligenceSnapshot = HostServiceIntelligenceSnapshotBuilder.build(input)
   }
 
@@ -209,8 +282,13 @@ final class HostIntelligenceController: ObservableObject {
   ) {
     latestStabilityContext = stability
     let selectedDateKey = input.selectedDate.reservationDateString()
+    let evaluatedSourceFingerprint = HostIntelligenceController.serviceIntelligenceSourceFingerprint(
+      dateKey: selectedDateKey,
+      reservations: input.reservations
+    )
     let dateChanged = !latestSelectedDateKey.isEmpty && latestSelectedDateKey != selectedDateKey
     if dateChanged {
+      let previousDateKey = latestSelectedDateKey
       briefingRefreshGeneration += 1
       clearAttentionPreservation()
       clearValidModelBriefingCache()
@@ -219,6 +297,11 @@ final class HostIntelligenceController: ObservableObject {
       applyTemplateBriefing(from: .empty, presentation: .empty)
       localEvaluationComplete = false
       isEnrichmentLoading = false
+      latestEvaluatedServiceIntelSourceFingerprint = ""
+      clearServiceIntelligenceSnapshotForDateTransition(
+        oldDateKey: previousDateKey,
+        newDateKey: selectedDateKey
+      )
     }
     latestSelectedDateKey = selectedDateKey
     latestFloorTableSource = input.floorTableSource
@@ -236,6 +319,7 @@ final class HostIntelligenceController: ObservableObject {
       clearBriefingCache()
       applyTemplateBriefing(from: .empty, presentation: .empty)
       localEvaluationComplete = true
+      latestEvaluatedServiceIntelSourceFingerprint = evaluatedSourceFingerprint
       renderState = .ready
       traceEvaluation(snapshot: .empty, preservedPrevious: false, emptyAllowed: true)
       return
@@ -318,6 +402,7 @@ final class HostIntelligenceController: ObservableObject {
     }
 
     localEvaluationComplete = true
+    latestEvaluatedServiceIntelSourceFingerprint = evaluatedSourceFingerprint
     renderState = .ready
     traceEvaluation(
       snapshot: candidate,
@@ -657,12 +742,12 @@ final class HostIntelligenceController: ObservableObject {
   }
 
   func reset() {
-    // If the model is mid-generation when the Host Board is hidden, discard any
-    // in-flight result (bump the generation guard) and log the cancellation. The
-    // llama runtime itself is not force-killed, but its output can no longer reach UI.
+    // If the model is mid-generation during a full reset, discard any in-flight
+    // result (bump the generation guard) and log the cancellation. The llama
+    // runtime itself is not force-killed, but its output can no longer reach UI.
     if HostLocalModelInferenceTracker.isActive {
       briefingRefreshGeneration += 1
-      HostAILifecycleTrace.modelCancelled(reason: "view_hidden")
+      HostAILifecycleTrace.modelCancelled(reason: "full_reset")
     }
     decisionSnapshot = .empty
     attentionPresentation = .empty
@@ -672,6 +757,51 @@ final class HostIntelligenceController: ObservableObject {
     renderState = .evaluating
     localEvaluationComplete = false
     isEnrichmentLoading = false
+    serviceIntelligenceSnapshot = .empty
+    serviceIntelligenceSourceFingerprint = ""
+    lastServiceIntelSnapshotFingerprint = ""
+    latestEvaluatedServiceIntelSourceFingerprint = ""
+    latestSelectedDateKey = ""
+  }
+
+  /// Clears transient Host presentation/loading state when the Host Board is hidden,
+  /// while preserving the canonical service-day snapshot and evaluated-date marker
+  /// for other surfaces such as More → Service Intelligence.
+  func resetVolatilePresentation(reason: String) {
+    if HostLocalModelInferenceTracker.isActive {
+      briefingRefreshGeneration += 1
+      HostAILifecycleTrace.modelCancelled(reason: reason)
+    }
+    isEnrichmentLoading = false
+    renderState = localEvaluationComplete ? .ready : .evaluating
+    #if DEBUG
+    let snapshotDate = serviceIntelligenceSnapshot.dateKey.isEmpty
+      ? "none"
+      : serviceIntelligenceSnapshot.dateKey
+    let hasSnapshot = serviceIntelligenceSnapshot.inputFingerprint != "empty"
+    print(
+      "[SERVICE_INTEL_LIFECYCLE_TRACE] event=preserve_snapshot_on_hide " +
+      "date=\(latestSelectedDateKey.isEmpty ? "none" : latestSelectedDateKey) " +
+      "snapshotDate=\(snapshotDate) hasSnapshot=\(hasSnapshot) reason=\(reason)"
+    )
+    #endif
+  }
+
+  private func clearServiceIntelligenceSnapshotForDateTransition(
+    oldDateKey: String,
+    newDateKey: String
+  ) {
+    let hadSnapshot = serviceIntelligenceSnapshot.inputFingerprint != "empty"
+      && !serviceIntelligenceSnapshot.dateKey.isEmpty
+    serviceIntelligenceSnapshot = .empty
+    serviceIntelligenceSourceFingerprint = ""
+    lastServiceIntelSnapshotFingerprint = ""
+    latestEvaluatedServiceIntelSourceFingerprint = ""
+    #if DEBUG
+    if hadSnapshot {
+      print("[SERVICE_INTEL_LIFECYCLE_TRACE] event=clear_snapshot_on_date_transition old=\(oldDateKey.isEmpty ? "none" : oldDateKey) new=\(newDateKey)")
+    }
+    #endif
   }
 
   private func applyTemplateBriefing(

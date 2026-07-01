@@ -234,6 +234,13 @@ struct HostBoardView: View {
         return hasher.finalize()
     }
 
+    private var hostServiceIntelligenceSourceFingerprint: String {
+        HostIntelligenceController.serviceIntelligenceSourceFingerprint(
+            dateKey: selectedDateKey,
+            reservations: reservations
+        )
+    }
+
     private var hostIntelligenceSeatedStamp: Int {
         var hasher = Hasher()
         for (id, seatedAt) in controller.localSeatedAtByReservationID.sorted(by: { $0.key < $1.key }) {
@@ -267,7 +274,7 @@ struct HostBoardView: View {
     /// includes hostBoardSnapshotTimingRefreshStamp (minute-aware, gated to today + time-sensitive rows).
     private var hostIntelligenceEvaluationKey: String {
         let options = hostFloorLegacyOptions
-        return "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostIntelligenceSeatedStamp)-\(hostIntelligenceSettingsStore.settings.hostDecisionFingerprint)-\(floorPlanStore.layoutFingerprint(for: selectedDateKey, allowsLegacyFallback: options.allowsFallback, localActiveTableCount: options.localActiveTableCount))"
+        return "\(selectedDateKey)-\(hostIntelligenceReservationStamp)-\(hostServiceIntelligenceSourceFingerprint)-\(hostIntelligenceSeatedStamp)-\(hostIntelligenceSettingsStore.settings.hostDecisionFingerprint)-\(floorPlanStore.layoutFingerprint(for: selectedDateKey, allowsLegacyFallback: options.allowsFallback, localActiveTableCount: options.localActiveTableCount))"
     }
 
     private var hostIntelligenceEvaluationTaskKey: String {
@@ -736,7 +743,7 @@ struct HostBoardView: View {
         }
         .task(id: hostIntelligenceEvaluationTaskKey) {
             guard isVisible else {
-                hostIntelligenceController.reset()
+                hostIntelligenceController.resetVolatilePresentation(reason: "view_hidden")
                 return
             }
             guard !liveHostModeEnabled, !externalInteractionActive else {
@@ -1513,6 +1520,7 @@ struct HostBoardView: View {
         return [
             selectedDateKey,
             String(reservations.count),
+            hostServiceIntelligenceSourceFingerprint,
             String(Int(hostIntelligenceController.decisionSnapshot.generatedAt.timeIntervalSince1970)),
             serviceIntelligenceAttachmentDigest,
             "h\(hourBucket)"
@@ -1591,6 +1599,7 @@ struct HostBoardView: View {
         // Evaluate-order guard inside updateServiceIntelligenceSnapshot prevents building
         // from an empty HostDecisionSnapshot right after a date switch.
         let attachmentMetadata = serviceIntelligenceAttachmentMetadataByDate[selectedDateKey] ?? []
+        let sourceFingerprint = hostServiceIntelligenceSourceFingerprint
         hostIntelligenceController.updateServiceIntelligenceSnapshot(
             HostServiceIntelligenceSnapshotBuilder.Input(
                 now: clockTick,
@@ -1601,7 +1610,8 @@ struct HostBoardView: View {
                 snapshot: hostIntelligenceController.decisionSnapshot,
                 attachmentMetadata: attachmentMetadata,
                 largePartyThreshold: hostIntelligenceSettingsStore.settings.largePartyThreshold
-            )
+            ),
+            sourceFingerprint: sourceFingerprint
         )
 
         // LOCAL-FIRST-OPS-4B-2: substitute snapshot headline/subline for planning/recap
@@ -1613,6 +1623,10 @@ struct HostBoardView: View {
             let snapReady = snap.dateKey == selectedDateKey
                 && snap.inputFingerprint != "empty"
                 && hostIntelligenceController.isEvaluatedForSelectedDate(selectedDateKey)
+                && hostIntelligenceController.isServiceIntelligenceSnapshotCurrent(
+                    dateKey: selectedDateKey,
+                    sourceFingerprint: sourceFingerprint
+                )
             if snapReady {
                 #if DEBUG
                 let truncated = String(snap.headline.prefix(50))

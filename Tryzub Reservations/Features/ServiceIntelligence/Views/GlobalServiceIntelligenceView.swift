@@ -451,6 +451,13 @@ struct GlobalServiceIntelligenceView: View {
         windowReservations.filter { $0.reservationDate == todayKey }
     }
 
+    private var todayServiceIntelligenceSourceFingerprint: String {
+        HostIntelligenceController.serviceIntelligenceSourceFingerprint(
+            dateKey: todayKey,
+            reservations: todayReservations
+        )
+    }
+
     private var upcomingReservationCount: Int {
         windowReservations.filter { reservation in
             reservation.reservationDate > todayKey
@@ -489,6 +496,8 @@ struct GlobalServiceIntelligenceView: View {
             String(todayReservations.count),
             String(Int(hostIntelligenceController.decisionSnapshot.generatedAt.timeIntervalSince1970)),
             hostIntelligenceController.serviceIntelligenceSnapshot.inputFingerprint,
+            hostIntelligenceController.serviceIntelligenceSourceFingerprint,
+            todayServiceIntelligenceSourceFingerprint,
             String(minute),
             guestIntelligenceStore.cacheStamp(for: todayKey),
             businessIntelligenceStore.cacheStamp(from: businessRangeFrom, to: todayKey),
@@ -521,7 +530,11 @@ struct GlobalServiceIntelligenceView: View {
                 selectedDateLabel: now.formatted(.dateTime.weekday(.wide))
             )
         )
-        let readiness = canonicalSnapshotReadiness(for: todayKey)
+        let currentSourceFingerprint = todayServiceIntelligenceSourceFingerprint
+        let readiness = canonicalSnapshotReadiness(
+            for: todayKey,
+            sourceFingerprint: currentSourceFingerprint
+        )
         let snapshotReady = readiness.snapshot != nil
         if let snapshot = readiness.snapshot {
             #if DEBUG
@@ -732,7 +745,8 @@ struct GlobalServiceIntelligenceView: View {
     }
 
     private func canonicalSnapshotReadiness(
-        for dateKey: String
+        for dateKey: String,
+        sourceFingerprint: String
     ) -> (snapshot: HostServiceIntelligenceSnapshot?, reason: String) {
         let snapshot = hostIntelligenceController.serviceIntelligenceSnapshot
         guard snapshot.dateKey == dateKey else { return (nil, "date_mismatch") }
@@ -742,6 +756,12 @@ struct GlobalServiceIntelligenceView: View {
         let fingerprint = snapshot.inputFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !fingerprint.isEmpty, fingerprint != "empty" else {
             return (nil, "empty_fingerprint")
+        }
+        guard hostIntelligenceController.isServiceIntelligenceSnapshotCurrent(
+            dateKey: dateKey,
+            sourceFingerprint: sourceFingerprint
+        ) else {
+            return (nil, "stale_source_fingerprint")
         }
         return (snapshot, "ready")
     }
