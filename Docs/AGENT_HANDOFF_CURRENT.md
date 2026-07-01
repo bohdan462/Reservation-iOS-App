@@ -6,17 +6,18 @@
 
 ## Title
 
-V1 stabilization + reservation attachments (iOS Slice E done; live verification next)
+Service Intelligence snapshot lifecycle (4C done) + runtime smoke + 4D/LLM planning
 
 ---
 
-## Git state (2026-06-29)
+## Git state (2026-06-30)
 
 | Location | State |
 |----------|--------|
 | **Root branch** | `audit-current-state` |
-| **Root HEAD** | `f2e9be0` — Track build 12 project settings |
-| **Root vs remote** | Push `origin/audit-current-state` after doc sync |
+| **Root HEAD** | `50b207a` — Guard service intelligence snapshot across Host hide and source changes |
+| **Root vs remote** | Pushed to `origin/audit-current-state` at `50b207a` |
+| **Build** | **13** — tracked in `2227d8d` |
 | **Backend submodule pointer** | `a2422d3` — Add private reservation attachment backend |
 | **Backend branch** | `AI` |
 | **Backend HEAD** | `a2422d3` |
@@ -24,6 +25,15 @@ V1 stabilization + reservation attachments (iOS Slice E done; live verification 
 
 **Recent root commits (newest first):**
 
+- `50b207a` — Guard service intelligence snapshot across Host hide and source changes (4C-2 + 4C-3)
+- `2227d8d` — Intelligance rebuild (4C-1 More → snapshot reader; build 13)
+- `bec4a6d` — Restore Host More reminder stats sheet
+- `a7cde0c` — Fix Host reminder relocation build
+- `e7a2088` — Stabilize service intelligence metadata and enrichment
+- `05f70b0` — Add attachment facts to service intelligence snapshot
+- `325c7f3` — LOCAL-FIRST-OPS-4B-2 — Wire future planning Host card from unified snapshot
+- `4f088f6` — LOCAL-FIRST-OPS-4B-1 — Harden Service Intelligence snapshot before UI consumption
+- `f0554a3` — LOCAL-FIRST-OPS-4A: Build unified deterministic per-date Service Intelligence snapshot
 - `f2e9be0` — Track build 12 project settings
 - `cd842c3` — Document reservation attachment management polish
 - `eed6530` — Track build 11 project settings
@@ -78,9 +88,42 @@ V1 stabilization + reservation attachments (iOS Slice E done; live verification 
 
 ## Current slice goal
 
-**Stabilization still open** (physical device verification + release smoke test). **Guest memory foundation**, **guest person-map Slices 1/2/3A/3B/3R/3M-B/3M**, **Manual Intake input polish**, **device smoke code Phases 1–4**, and **Tryzub V1 Host production polish** are shipped in code. **Current focus:** physical device verification + release smoke — see [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) §10. **Slice 3D/3E parked** until smoke verification is accepted or Bohdan resumes.
+**Snapshot lifecycle implementation (4C-1/2/3) is code-complete and pushed.** **Current focus:**
 
-**Bookings CPU (P0-CPU-1A):** **P0-CPU-1A implemented; build passed; device verification open.** `ReservationScheduleView` no longer calls `NewBookingRowInsightBuilder.build` from `ForEach`/body; keyed MainActor `.task` rebuilds row insights with `GuestInsightLocalPool.boundedPool`. **Do not claim** Bookings scroll performance is fully verified or fully fixed. **P0-CPU-1B:** NewBookingsIntelligenceCard aggregate summary still runs body-time analysis; fix only if Bookings remains heavy after 1A smoke. **P0-CPU-1C:** HostBoardSnapshot body fallback — separate follow-up ([OPEN_WORK.md](./OPEN_WORK.md)).
+1. **Finish 4C runtime smoke** — stale reservation-source fallback while Host hidden still open ([OPEN_WORK.md](./OPEN_WORK.md)).
+2. **Docs sync** — this handoff + queue + HOST_INTELLIGENCE (done in same pass as focus shift).
+3. **Next phase: 4D / LLM narrative layer** on top of canonical `HostServiceIntelligenceSnapshot` — richer deterministic facts first (4D-1), then cached staff briefing narrative (4E).
+
+**Stabilization** (physical device verification, attachments live verification) remains open separately. **Slice 3D/3E parked** until smoke verification is accepted or Bohdan resumes.
+
+**Bookings CPU (P0-CPU-1A):** implemented; device verification open. **P0-CPU-1B:** Review intelligence card removed (`65a7f1f`) — card file may remain orphaned. **P0-CPU-1C:** HostBoardSnapshot body fallback — separate follow-up ([OPEN_WORK.md](./OPEN_WORK.md)).
+
+---
+
+## Current Intelligence state
+
+### 4C snapshot lifecycle (done in code — `2227d8d`, `50b207a`)
+
+| Slice | Commit | Behavior |
+|-------|--------|----------|
+| **4C-1** | `2227d8d` | More → Service Intelligence reads `HostIntelligenceController.serviceIntelligenceSnapshot` when ready; top card + Service facts from `rankedFacts`; skips duplicate note/attachment analyzers when snapshot active |
+| **4C-2** | `50b207a` | Host hide calls `resetVolatilePresentation(reason: "view_hidden")` — preserves canonical snapshot, evaluated-date state, and `localEvaluationComplete` |
+| **4C-3** | `50b207a` | `serviceIntelligenceSourceFingerprint` guards stale preserved snapshot; More falls back to legacy with `reason=stale_source_fingerprint` when reservation-source inputs changed |
+
+**Canonical read model:** `HostServiceIntelligenceSnapshot` — built only on Host path via `HostServiceIntelligenceSnapshotBuilder` → `HostIntelligenceController.updateServiceIntelligenceSnapshot`. **More never builds it.**
+
+**Partial runtime smoke (device, 2026-06-30):**
+
+- `[SERVICE_INTEL_SNAPSHOT_TRACE] decision=build` — passed (today + future date after transition)
+- `[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=use_snapshot reason=ready` — passed after Host hide
+- `[SERVICE_INTEL_LIFECYCLE_TRACE] event=clear_snapshot_on_date_transition` — passed
+- `[SERVICE_INTEL_LIFECYCLE_TRACE] event=snapshot_source_current` — passed
+- **Open:** stale reservation-source fallback after backend/reservation change while Host hidden
+- Host local model attempted later; validator blocked wrong reservation count (`HOST_AI_VALIDATOR_TRACE`) — expected safety behavior
+
+**Observed product behavior:** Host compact card (“Next: Julie at 18:30 · 5 guests”, occasion chip) and More → Service Intelligence (“Julie Bachman mentioned a birthday”, Service facts section) reuse the same canonical snapshot — one source of truth across surfaces.
+
+**Known staleness gaps (follow-up, not blockers for 4D):** attachment/OCR, backend guest-intel summaries, floor/table layout not in 4C-3 reservation-source fingerprint — see [OPEN_WORK.md](./OPEN_WORK.md).
 
 **P0 smoothness (Detail + local model):** **P0-DETAIL-1** (`84f210c`) and **P0-LOCALMODEL-1** (`4e4c274`) **done in code; smoke-supported.** Detail guest truth moved off body/computed hot paths (`DETAIL_TRUTH_CACHE_TRACE`). Detail no longer cold-loads 3B model on open (`LOCAL_MODEL_GATE_TRACE`). Deterministic note signals still immediate.
 
@@ -94,7 +137,7 @@ V1 stabilization + reservation attachments (iOS Slice E done; live verification 
 
 **LOCAL-FIRST-OPS-3B:** Removed `NewBookingsIntelligenceCard`, all Needs Review insight tasks, `needsReviewInsightRebuildKey`, `guestInsightHistoryPool` fingerprint from SwiftUI key path, and all 8 related functions from `ReservationsListView`. Eliminated the hidden O(N) body-time compute that fingerpinted the full `guestInsightHistoryPool` on every SwiftUI render.
 
-**LOCAL-FIRST-OPS-4 (audit):** Identified three parallel intelligence pipelines: Host today uses `HostDecisionSnapshot` via `HostAttentionGrouper`; Host future/past uses `HostServiceBriefingViewState` which strips rich facts to generic "planning" copy; More → Service Intelligence hard-locks to today and independently analyzes notes/guests (duplication). Rich `HostDecisionSnapshot` data is discarded for future planning cards. LLM runs for future dates but output is ignored. Root cause map documented in prior audit.
+**LOCAL-FIRST-OPS-4C (`2227d8d`, `50b207a`):** Unified More → Service Intelligence with canonical snapshot; snapshot survives Host hide; reservation-source fingerprint stale guard. See **Current Intelligence state** above.
 
 **LOCAL-FIRST-OPS-4A (`f0554a3`):** Created unified deterministic per-date staff intelligence snapshot.
 - **New:** `ServiceIntelligence/Models/HostServiceIntelligenceSnapshot.swift` — `ServiceIntelligenceFactCategory` (14 categories with ranked `basePriority`), `ServiceIntelligenceFact` (id, reservationID, guestName, category, priority, headline, detail), `HostServiceIntelligenceSnapshot` (dateKey, serviceMode, headline, subline, rankedFacts, inputFingerprint).
@@ -104,7 +147,7 @@ V1 stabilization + reservation attachments (iOS Slice E done; live verification 
 - Build: **SUCCEEDED** (exit 0, zero warnings, zero lints). Builder never called from SwiftUI body.
 - Device log: `[SERVICE_INTEL_SNAPSHOT_TRACE] decision=build` emits once per meaningful fingerprint change; `decision=skip reason=fingerprint_unchanged` on re-selection with unchanged data. No LLM traces added. No full-history scan. No Bookings Review query reintroduced.
 
-**Reservation attachments (boss request):** Backend **deployed and production-smoked** (`a2422d3`, plugin **0.5.5**, DB **1.12.0**). iOS **Slice C** at `17a0bee` (DTO/API/cache). iOS **Slice D** at `d947721` (Detail shared list/upload/download/delete). iOS **Slice E** at `9d2784d` (management UI polish: staff-friendly rows, manage sheet, tag/note edit, fit-to-screen preview, manage delete, shared PATCH). `AttachmentFeatureFlag.remoteUploadEnabled` **true**; API calls detail-scoped only. Build **12** tracked (`f2e9be0`). **TestFlight build 12 upload pending** — build 11 already submitted. **Live/cross-device verification not run** — do not claim passed. Old pre-sync local-only attachments may remain device-local; staff should reattach important old images for shared visibility. Full plan: [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next:** live verification checklist — do not change backend unless a real API bug is found. Physical device smoke remains a separate open track.
+**Reservation attachments (boss request):** Backend **deployed and production-smoked** (`a2422d3`, plugin **0.5.5**, DB **1.12.0**). iOS **Slice C** at `17a0bee` (DTO/API/cache). iOS **Slice D** at `d947721` (Detail shared list/upload/download/delete). iOS **Slice E** at `9d2784d` (management UI polish). `AttachmentFeatureFlag.remoteUploadEnabled` **true**; API calls detail-scoped only. Build **13** tracked (`2227d8d`). Live/cross-device verification still open. **Live/cross-device verification not run** — do not claim passed. Old pre-sync local-only attachments may remain device-local; staff should reattach important old images for shared visibility. Full plan: [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next:** live verification checklist — do not change backend unless a real API bug is found. Physical device smoke remains a separate open track.
 
 **Guest Person Map target:** one shared **Guest history** destination by `guestKey` (`GuestProfileDetailView`). Wiring status:
 

@@ -13,7 +13,7 @@ Do not implement from stale index or diagram files listed under [Stale / archive
 | [SECOND_ENGINEER_CONTEXT.md](./SECOND_ENGINEER_CONTEXT.md) | ChatGPT / second-engineer alignment: priorities, repo state, V1 rules, verification |
 | [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) | Non-negotiable architecture and workflow rules |
 | [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) | V1 order: stabilization → guest person-map 3D; Slices 1/2/3A/3B/3R/3M-B/3M + Manual Intake input polish + Host polish + device smoke Phases 1–4 done in code |
-| [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) | Active handoff: physical device verification open; guest person-map through 3M-B/3M + device smoke Phases 1–4 shipped in code |
+| [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) | Active handoff: 4C snapshot lifecycle done; partial runtime smoke; 4D/4E next |
 | [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) | Device smoke P1/P2: code Phases 1–4 landed; physical verification open (3D/3E parked) |
 | [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md) | Reservation attachments: backend deployed; iOS Slice C (`17a0bee`); D (`d947721`); E polish (`9d2784d`); live verification open |
 | [OPEN_WORK.md](./OPEN_WORK.md) | V1 stabilization backlog with acceptance tests |
@@ -21,7 +21,7 @@ Do not implement from stale index or diagram files listed under [Stale / archive
 
 **Deploy note:** `Backend/*.zip` is not tracked in git. Build plugin zip locally from submodule `HEAD` when deploying to WordPress.
 
-**Current root HEAD:** `f2e9be0` on `audit-current-state` (build **12** tracked; attachment live verification open; TestFlight build 12 upload pending).
+**Current root HEAD:** `50b207a` on `audit-current-state` (build **13** in `2227d8d`; 4C snapshot lifecycle done; stale reservation-source smoke open).
 
 ---
 
@@ -55,7 +55,7 @@ All backend API, schema, email, and guest-token contracts live in the plugin fol
 | [HOST_TAB_ARCHITECTURE.md](./HOST_TAB_ARCHITECTURE.md) | Host tab file map and ownership |
 | [HOST_TAB_STATE_FLOW.md](./HOST_TAB_STATE_FLOW.md) | selectedDate, snapshot, pressure, seated duration |
 | [HOST_TAB_UI_DESIGN_SYSTEM.md](./HOST_TAB_UI_DESIGN_SYSTEM.md) | Host visual system |
-| [HOST_INTELLIGENCE.md](./HOST_INTELLIGENCE.md) | Deterministic briefing pipeline |
+| [HOST_INTELLIGENCE.md](./HOST_INTELLIGENCE.md) | Canonical snapshot pipeline + optional local model (wording only) |
 | [LOCAL_MODEL_INTELLIGENCE.md](./LOCAL_MODEL_INTELLIGENCE.md) | On-device wording assistant only |
 
 ---

@@ -1,8 +1,10 @@
 # Open work — V1 stabilization backlog
 
-**Branch:** `audit-current-state`  
-**Root HEAD:** `4e4c274` (P0-DETAIL-1 + P0-LOCALMODEL-1; attachment live verification open)  
-**Last reviewed:** 2026-06-29  
+**Branch:** `audit-current-state`
+
+**Root HEAD:** `50b207a` (4C snapshot lifecycle; build **13** in `2227d8d`)
+
+**Last reviewed:** 2026-06-30
 **Scope:** V1 stabilization + guest memory foundation — no V2 automation unless noted
 
 **Priority order:** [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) owns what to do next. This file tracks backlog items and implementation status. Production/device verification remains open even when code is implemented.
@@ -32,6 +34,44 @@ Checklist: [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md
 
 ---
 
+## 4C — Service Intelligence snapshot runtime smoke
+
+**Code:** 4C-1/2/3 done (`2227d8d`, `50b207a`). See [HOST_INTELLIGENCE.md](./HOST_INTELLIGENCE.md), [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md).
+
+| Test | Status | Expected trace |
+|------|--------|----------------|
+| Host builds canonical snapshot | **Passed** | `[SERVICE_INTEL_SNAPSHOT_TRACE] decision=build` |
+| More uses snapshot after Host hide | **Passed** | `[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=use_snapshot reason=ready` |
+| Date transition clears snapshot | **Passed** | `[SERVICE_INTEL_LIFECYCLE_TRACE] event=clear_snapshot_on_date_transition` |
+| Source fingerprint current | **Passed** | `[SERVICE_INTEL_LIFECYCLE_TRACE] event=snapshot_source_current` |
+| Stale reservation-source fallback | **Open** | Change today reservation while Host hidden → sync → More shows `decision=legacy reason=stale_source_fingerprint` + `event=snapshot_source_stale` |
+
+**Known snapshot staleness gaps (follow-up, not blockers for 4D):**
+
+- Attachment/OCR metadata changes are **not** in 4C-3 reservation-source fingerprint
+- Backend guest-intelligence summary changes are **not** in 4C-3 source fingerprint
+- Floor/table layout changes are **not** in 4C-3 source fingerprint
+
+Optional follow-up: **4C-4** extend validity fingerprint (attachment digest + guest-intel cache stamp).
+
+---
+
+## 4E — Narrative layer (open)
+
+Use **`HostServiceIntelligenceSnapshot`** as the only source of truth for staff-facing intelligence prose.
+
+| Rule | Requirement |
+|------|-------------|
+| **LLM role** | Writes staff-facing prose only — never facts, actions, or reservation mutations |
+| **Validator** | Must block wrong counts, wrong guest names, wrong statuses, guest-facing tone, unsupported actions |
+| **Cache key** | `dateKey` + snapshot `inputFingerprint` + model/prompt version |
+| **Reuse** | Host Board and More → Service Intelligence must show the same narrative when cache valid |
+| **More** | Must not trigger model load; narrative follows snapshot readiness gates |
+
+Slices: **4E-0** architecture audit; **4E-1** implementation ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) §45–46).
+
+---
+
 ## Reservation attachments — backend + iOS wired; live verification open
 
 **Handoff:** [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md)
@@ -43,7 +83,7 @@ Checklist: [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md
 | **iOS Slice D** | **Done** — `d947721` (Detail shared list/upload/download/delete) |
 | **iOS Slice E** | **Done** — `9d2784d` (management UI polish: rows, manage sheet, edit, preview, delete) |
 | **`remoteUploadEnabled`** | **true** — gated at runtime by reservation id + staff credentials |
-| **Build** | **12** tracked (`f2e9be0`); TestFlight build 12 upload pending (build 11 already submitted) |
+| **Build** | **13** tracked (`2227d8d`) |
 | **Live verification** | **Open** — cross-device / fresh-install workflow not fully passed/recorded |
 | **Old local-only attachments** | Pre-sync images may remain on original device only; staff should **reattach** for shared visibility |
 
@@ -107,17 +147,12 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 
 **P0-CPU-1A implemented; build passed; device verification open.** Row insight rendering no longer calls `NewBookingRowInsightBuilder.build` from `ForEach`/body; rebuild runs in keyed MainActor `.task` with `GuestInsightLocalPool.boundedPool`. **Do not claim** Bookings CPU is fully fixed — aggregate card and Host paths remain.
 
-### P0-CPU-1B: NewBookingsIntelligenceCard aggregate summary (follow-up)
+### P0-CPU-1B: NewBookingsIntelligenceCard aggregate summary
 
 | Field | Value |
 |-------|-------|
-| **Risk** | `NewBookingsIntelligenceSummary.build` still runs in `body` on Needs Review scope — body-time `analyze` for duplicate/returning counts |
-| **Files** | `NewBookingsIntelligenceCard.swift`, `ReservationsListView.swift` |
-| **Approach** | Cache or derive summary off row cache — only if needed after 1A device smoke |
-| **Acceptance** | No `GuestInsightsController().analyze` in card `body` path when scoped to Needs Review |
-| **Class** | V1 stabilization — iOS only — **open** |
-
-**P0-CPU-1B:** NewBookingsIntelligenceCard aggregate summary still runs body-time analysis; fix only if Bookings remains heavy after 1A smoke.
+| **Status** | **removed** — card removed from Review UI (`65a7f1f`); orphan file may remain |
+| **Notes** | No longer active backlog unless card is reintroduced |
 
 ### P0-CPU-1C: HostBoardSnapshot body fallback (follow-up)
 
@@ -150,12 +185,12 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 
 | Field | Value |
 |-------|-------|
-| **Risk if not fixed** | Host date navigation still pays ~64–67 ms building `ReturningGuestHistoryIndex` over full history pool during card presentation |
-| **Files** | `HostIntelligenceInlineItem.swift` (primary) |
-| **Approach** | Map returning inline chips from `snapshot.guestSignals` (`.regularGuest` / `.importantGuest`) like `guestCareItems`; do not rescan `knownReservations` |
-| **Evidence** | `INTEL_PERF_TRACE operation=Host inline returning scan reservations=1 knownReservations=4162 durationMs=64–67` |
-| **Acceptance** | Date tap does not scan full pool; rows still immediate; returning chips update after evaluate settles |
-| **Class** | V1 stabilization — iOS only — **open** (next recommended smoothness slice) |
+| **Status** | **done** — `ec63d26` |
+| **Risk if not fixed** | Host date navigation paid ~64–67 ms scanning full history pool during card presentation |
+| **Files** | `HostIntelligenceInlineItem.swift` |
+| **Approach** | Map returning inline chips from `snapshot.guestSignals`; trace `using_snapshot_guest_signals` |
+| **Acceptance** | Date tap does not scan full pool; returning chips update after evaluate settles |
+| **Class** | V1 stabilization — iOS only — device verification open |
 
 **Related done:** P0-HOST-2A Host evaluate debounce on date nav (`f2274ee`).
 
@@ -397,7 +432,8 @@ Also implemented: active-window `server_time` cursors and scope success metadata
 - Manual intake: local guest cache merge, call-in/walk-in modes, known-guest prefill, phone UX (`0a89caa`)
 - Guests tab + detail local-first guest cache wiring (`67e02d2`)
 - Host freshness + idle snapshot flicker polish (`71601fc`)
-- Host Intelligence card presentation stability (`39f7fcb`)
+- LOCAL-FIRST-OPS-4C-1/2/3 — More reads canonical snapshot; Host hide preserve; source fingerprint stale guard (`2227d8d`, `50b207a`)
+- P0-HOST-2B — Host inline returning scan removed (`ec63d26`)
 - Guest person-map Slice 1 — full-list sync completion + full cache lookup (`d541488`)
 - Backend guest person-map Slice 2 — staff profile lookup (`1431a06` backend, `b1a09e7` root pointer)
 - iOS guest person-map Slice 3A — lookup API/client/store foundation (`823f42c`)

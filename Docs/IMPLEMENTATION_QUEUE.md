@@ -4,7 +4,7 @@
 
 Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), backend 3M-B (#18), iOS Slices 3A/3B/3R/3M, Manual Intake input polish (#17b), Tryzub V1 Host production polish (#5b, #5c), and **device smoke Phases 1–4 (#24–#27)** are **done in code**.
 
-**Current focus:** (1) physical device verification + release smoke test (backend `63d0cfc` **deployed**); (2) **reservation attachments** — backend Slice A+B **done** (`a2422d3` **deployed**, production-smoked); iOS Slice C **done** (`17a0bee`); iOS Slice D **done** (`d947721`); iOS Slice E **done** (`9d2784d`); see [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md). **Next attachment step:** live/cross-device verification + TestFlight **build 12** upload (not new backend work). (3) **Bookings CPU** — **P0-CPU-1A implemented; build passed; device verification open.** **P0-CPU-1B:** NewBookingsIntelligenceCard aggregate summary still runs body-time analysis; fix only if Bookings remains heavy after 1A smoke. **P0-CPU-1C:** HostBoardSnapshot body fallback — separate follow-up. (4) **P0 smoothness** — **P0-DETAIL-1** + **P0-LOCALMODEL-1** **done in code; smoke-supported** (`84f210c`, `4e4c274`); **next recommended slice: P0-HOST-2B** (Host inline full-history returning scan). **Next guest person-map code slice:** **3D** (parked until smoke verification accepted or Bohdan resumes).
+**Current focus:** (1) **Service Intelligence snapshot lifecycle** — 4C-1/2/3 **done** (`2227d8d`, `50b207a`); **4C-SMOKE** stale reservation-source fallback open; (2) **4D-1** richer canonical `rankedFacts`; (3) **4E** cached staff briefing narrative on canonical snapshot; (4) physical device verification + release smoke; (5) reservation attachments live verification (build **13**). See [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md).
 
 ---
 
@@ -465,10 +465,80 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 
 | Field | Value |
 |-------|-------|
-| **Status** | **open** — next recommended smoothness slice |
+| **Status** | **done** — `ec63d26` |
 | **Scope** | `HostIntelligenceInlineItem.swift` — map returning inline chips from `snapshot.guestSignals` instead of `ReturningGuestHistoryIndex(records: knownReservations)` |
-| **Evidence** | `INTEL_PERF_TRACE operation=Host inline returning scan reservations=1 knownReservations=4162 durationMs=64–67` |
-| **Notes** | Separate from P0-HOST-2A evaluate debounce (`f2274ee`). Rows must stay immediate. |
+| **Notes** | Trace: `using_snapshot_guest_signals`. Device verification open. |
+
+---
+
+## 40. LOCAL-FIRST-OPS-4C-1 — More reads canonical Service Intelligence snapshot
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done** — `2227d8d` |
+| **Scope** | `GlobalServiceIntelligenceView.swift` — reads `serviceIntelligenceSnapshot`; Service facts section; legacy fallback |
+| **Notes** | `[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence` |
+
+---
+
+## 41. LOCAL-FIRST-OPS-4C-2 — Preserve snapshot across Host hide
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done** — `50b207a` |
+| **Scope** | `HostIntelligenceController.resetVolatilePresentation`, `HostBoardView` hide path |
+| **Notes** | `[SERVICE_INTEL_LIFECYCLE_TRACE] event=preserve_snapshot_on_hide` |
+
+---
+
+## 42. LOCAL-FIRST-OPS-4C-3 — Reservation-source fingerprint stale guard
+
+| Field | Value |
+|-------|-------|
+| **Status** | **done** — `50b207a` |
+| **Scope** | `serviceIntelligenceSourceFingerprint`, `isServiceIntelligenceSnapshotCurrent` |
+| **Notes** | More `stale_source_fingerprint` fallback; attachment/guest-intel/floor not in fingerprint — follow-up optional |
+
+---
+
+## 43. LOCAL-FIRST-OPS-4C-SMOKE — Runtime verification (open)
+
+| Field | Value |
+|-------|-------|
+| **Status** | **open** — partial pass |
+| **Scope** | Device traces for snapshot build, More use_snapshot, date transition, stale reservation-source fallback |
+| **Passed** | Host snapshot build; More use_snapshot after Host hide; date transition clear; snapshot_source_current |
+| **Open** | Stale reservation-source fallback after reservation change while Host hidden |
+
+---
+
+## 44. LOCAL-FIRST-OPS-4D-1 — Richer canonical rankedFacts
+
+| Field | Value |
+|-------|-------|
+| **Status** | **open** — next deterministic slice |
+| **Scope** | `HostServiceIntelligenceSnapshotBuilder` — seated/overdue/arriving, stronger named operational facts |
+| **Notes** | Deterministic only; no LLM in 4D-1 |
+
+---
+
+## 45. LOCAL-FIRST-OPS-4E-0 — LLM/narrative architecture audit
+
+| Field | Value |
+|-------|-------|
+| **Status** | **open** |
+| **Scope** | Design narrative layer on canonical snapshot — input packet, cache keys, Host + More reuse |
+| **Notes** | Audit/plan only; no implementation in 4E-0 |
+
+---
+
+## 46. LOCAL-FIRST-OPS-4E-1 — Cached staff briefing narrative
+
+| Field | Value |
+|-------|-------|
+| **Status** | **open** |
+| **Scope** | Validator-protected local model prose from snapshot; cache by date + snapshot fingerprint + prompt version |
+| **Notes** | Wording only; Host Board + More reuse same narrative when valid |
 
 ---
 
@@ -503,21 +573,11 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 | Reservation attachments iOS Slice C — DTO/API/cache | `17a0bee` |
 | Reservation attachments iOS Slice D — Detail sync UI | `d947721` — `remoteUploadEnabled` true |
 | Reservation attachments iOS Slice E — management UI polish | `9d2784d` |
-| Build 12 project settings | `f2e9be0` — tracked; TestFlight build 12 upload pending |
-| P0-CPU-1A — Bookings Needs Review row insight cache | `ReservationsListView.swift` — build passed; device verification open |
-| P0-DETAIL-1 — Detail guest truth cache | `84f210c` — smoke-supported; device verification open |
-| P0-LOCALMODEL-1 — Detail note analysis model gate | `4e4c274` — smoke-supported; device verification open |
-| P0-HOST-2A — Host intelligence debounce on date nav | `f2274ee` |
-| P0-HOST-2B — Remove Host inline full-history returning scan | `see handoff` |
-| P0-DETAIL-2 Slice A — Defer Detail secondary work until after first paint | `see handoff` |
-| P0-NAV-1 — Gate underlying Host/Bookings work during reservation navigation | `see handoff` |
-| LIVE-SYNC-1A — Restore foreground active-window delta polling | `see handoff` |
-| LIVE-SYNC-1B — Make foreground root sync the only active-window reservation poll owner | `see handoff` |
-| LOCAL-FIRST-OPS-2A — Gate Host no-op CPU work when fingerprint unchanged | `cf32e95` |
-| LOCAL-FIRST-OPS-2B — Host date-switch stale publish guards | `4d8d101` |
-| LOCAL-FIRST-OPS-3A — Scope Bookings All tab to active-window; cap filter traces | `2a5b81f` |
-| LOCAL-FIRST-OPS-3B — Remove Bookings Review intelligence card and row labels | `see handoff` |
-| LOCAL-FIRST-OPS-4 — Read-only audit: Host/Service Intelligence fragmentation | `see handoff` |
+| Build 13 project settings | `2227d8d` — tracked |
+| LOCAL-FIRST-OPS-4C-1 — More reads canonical snapshot | `2227d8d` |
+| LOCAL-FIRST-OPS-4C-2 — Preserve snapshot across Host hide | `50b207a` |
+| LOCAL-FIRST-OPS-4C-3 — Reservation-source fingerprint stale guard | `50b207a` |
+| P0-HOST-2B — Remove Host inline full-history returning scan | `ec63d26` |
 | LOCAL-FIRST-OPS-4A — Build unified deterministic per-date Service Intelligence snapshot | `f0554a3` |
 
 ---

@@ -98,9 +98,25 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 
 ## 7. Host Intelligence truth
 
-1. **Deterministic engine** owns facts and operational signals.
-2. **Local model** may rewrite wording only (see [LOCAL_MODEL_INTELLIGENCE.md](./LOCAL_MODEL_INTELLIGENCE.md)).
-3. Local model must **not** invent facts, mutate reservations, send messages, or decide actions.
+1. **Deterministic engine** owns facts and operational signals (`HostIntelligenceEngine`).
+2. **`HostServiceIntelligenceSnapshot`** is the **canonical service-day read model** for staff-facing intelligence copy and ranked facts (see §7a).
+3. **Local model** may rewrite wording only (see [LOCAL_MODEL_INTELLIGENCE.md](./LOCAL_MODEL_INTELLIGENCE.md)).
+4. Local model must **not** invent facts, mutate reservations, send messages, or decide actions.
+5. **More → Service Intelligence** reads the canonical snapshot; it must **not** build it.
+
+---
+
+## 7a. Canonical Service Intelligence Snapshot
+
+1. **Built by** Host path only — `HostBoardView.rebuildServiceBriefing()` → `HostServiceIntelligenceSnapshotBuilder` → `HostIntelligenceController.updateServiceIntelligenceSnapshot`.
+2. **Stored in** `HostIntelligenceController.serviceIntelligenceSnapshot` (+ `serviceIntelligenceSourceFingerprint`).
+3. **Read by** Host Board (planning headline/subline; today live card still uses engine presentation) and **More → Service Intelligence** (top card + Service facts).
+4. **Preserved across Host hide** — `resetVolatilePresentation`; not cleared on tab switch.
+5. **Cleared on date transition** — `beginSelectedDateTransition` / evaluate date change.
+6. **Guarded by reservation-source fingerprint** — `serviceIntelligenceSourceFingerprint`; More refuses stale preserved snapshot (`stale_source_fingerprint` → legacy fallback).
+7. **More cannot build** the snapshot — no `HostServiceIntelligenceSnapshotBuilder` from More views.
+8. **LLM cannot change** facts or actions — optional narrative rewrite only, validator-protected, template fallback.
+9. **Known gaps (follow-up):** attachment/OCR, backend guest-intel, floor layout not in 4C-3 source fingerprint — see [OPEN_WORK.md](./OPEN_WORK.md).
 
 ---
 
