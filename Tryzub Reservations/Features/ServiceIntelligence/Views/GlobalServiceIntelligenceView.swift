@@ -41,6 +41,8 @@ struct GlobalServiceIntelligenceView: View {
     @Query(sort: \ReservationAttachmentRecord.createdAt) private var allAttachmentRecords: [ReservationAttachmentRecord]
 
     @State private var briefing: HostServiceBriefingViewState?
+    @State private var usesCanonicalSnapshot = false
+    @State private var snapshotFacts: [ServiceIntelligenceFact] = []
     @State private var bookingItems: [BookingSuggestionViewItem] = []
     @State private var bookingKnownOnlyNote: String = ""
     /// Reservations that have actionable note signals (Phase 6 — Note intelligence).
@@ -95,6 +97,8 @@ struct GlobalServiceIntelligenceView: View {
                     HostServiceBriefingCardPlaceholder()
                 }
 
+                snapshotFactsSection
+
                 bookingSuggestionsSection
 
                 guestsToKnowSection
@@ -140,6 +144,36 @@ struct GlobalServiceIntelligenceView: View {
     }
 
     // MARK: - Sections
+
+    @ViewBuilder
+    private var snapshotFactsSection: some View {
+        if usesCanonicalSnapshot && !snapshotFacts.isEmpty {
+            sectionCard(
+                title: "Service facts",
+                systemImage: "list.bullet.clipboard",
+                tint: .blue
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(snapshotFacts) { fact in
+                        if let reservationID = fact.reservationID,
+                           let reservation = windowReservations.first(where: { $0.remoteID == reservationID }) {
+                            Button {
+                                selectedReservation = reservation
+                            } label: {
+                                SnapshotFactRow(fact: fact)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            SnapshotFactRow(fact: fact)
+                        }
+                        if fact.id != snapshotFacts.last?.id {
+                            Divider().opacity(0.4)
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     @ViewBuilder
     private var bookingSuggestionsSection: some View {
@@ -454,6 +488,7 @@ struct GlobalServiceIntelligenceView: View {
             todayKey,
             String(todayReservations.count),
             String(Int(hostIntelligenceController.decisionSnapshot.generatedAt.timeIntervalSince1970)),
+            hostIntelligenceController.serviceIntelligenceSnapshot.inputFingerprint,
             String(minute),
             guestIntelligenceStore.cacheStamp(for: todayKey),
             businessIntelligenceStore.cacheStamp(from: businessRangeFrom, to: todayKey),
@@ -486,7 +521,23 @@ struct GlobalServiceIntelligenceView: View {
                 selectedDateLabel: now.formatted(.dateTime.weekday(.wide))
             )
         )
-        briefing = state
+        let readiness = canonicalSnapshotReadiness(for: todayKey)
+        let snapshotReady = readiness.snapshot != nil
+        if let snapshot = readiness.snapshot {
+            #if DEBUG
+            print("[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=use_snapshot reason=ready date=\(todayKey)")
+            #endif
+            briefing = state.overridingHeadline(snapshot.headline, summary: snapshot.subline ?? "")
+            usesCanonicalSnapshot = true
+            snapshotFacts = snapshot.rankedFacts
+        } else {
+            #if DEBUG
+            print("[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=legacy reason=\(readiness.reason) date=\(todayKey)")
+            #endif
+            briefing = state
+            usesCanonicalSnapshot = false
+            snapshotFacts = []
+        }
 
         // ── Booking load ──────────────────────────────────────────────────────────
         if state.mode == .beforeService || state.mode == .duringService || state.mode == .futurePlanning {
@@ -500,39 +551,44 @@ struct GlobalServiceIntelligenceView: View {
         ServiceIntelligenceTrace.bookingSection(count: bookingItems.count)
 
         // ── Note + attachment signals (Phase 6 + Phase 9) ────────────────────────
-        let signalled: [(reservation: ReservationRecord, topSignals: [ReservationSignal])] = todayReservations
-            .compactMap { res in
-                // Note-based signals.
-                let input = NoteSignalAnalyzer.Input(
-                    reservationID: String(res.remoteID),
-                    guestNote: res.guestNotes,
-                    staffNote: res.staffNotes
-                )
-                var signals = NoteSignalAnalyzer.analyze(input)
-
-                // Attachment-based signals (label + OCR) — Phase 9.
-                let resAttachments = allAttachmentRecords.filter { $0.reservationRemoteID == res.remoteID }
-                for att in resAttachments {
-                    let attInput = AttachmentSignalAnalyzer.Input(
+        if snapshotReady {
+            signalledReservations = []
+            ServiceIntelligenceTrace.noteSignals(count: 0)
+        } else {
+            let signalled: [(reservation: ReservationRecord, topSignals: [ReservationSignal])] = todayReservations
+                .compactMap { res in
+                    // Note-based signals.
+                    let input = NoteSignalAnalyzer.Input(
                         reservationID: String(res.remoteID),
-                        attachmentID: att.id,
-                        label: att.label,
-                        extractedText: att.extractedText
+                        guestNote: res.guestNotes,
+                        staffNote: res.staffNotes
                     )
-                    let attSignals = AttachmentSignalAnalyzer.analyze(attInput)
-                    // Deduplicate by type — note signals take precedence.
-                    let existingTypes = Set(signals.map { $0.type })
-                    signals.append(contentsOf: attSignals.filter { !existingTypes.contains($0.type) })
-                }
+                    var signals = NoteSignalAnalyzer.analyze(input)
 
-                guard !signals.isEmpty else { return nil }
-                return (res, signals)
-            }
-            .sorted { a, b in
-                (a.topSignals.first?.priority ?? .info) > (b.topSignals.first?.priority ?? .info)
-            }
-        signalledReservations = signalled
-        ServiceIntelligenceTrace.noteSignals(count: signalled.count)
+                    // Attachment-based signals (label + OCR) — Phase 9.
+                    let resAttachments = allAttachmentRecords.filter { $0.reservationRemoteID == res.remoteID }
+                    for att in resAttachments {
+                        let attInput = AttachmentSignalAnalyzer.Input(
+                            reservationID: String(res.remoteID),
+                            attachmentID: att.id,
+                            label: att.label,
+                            extractedText: att.extractedText
+                        )
+                        let attSignals = AttachmentSignalAnalyzer.analyze(attInput)
+                        // Deduplicate by type — note signals take precedence.
+                        let existingTypes = Set(signals.map { $0.type })
+                        signals.append(contentsOf: attSignals.filter { !existingTypes.contains($0.type) })
+                    }
+
+                    guard !signals.isEmpty else { return nil }
+                    return (res, signals)
+                }
+                .sorted { a, b in
+                    (a.topSignals.first?.priority ?? .info) > (b.topSignals.first?.priority ?? .info)
+                }
+            signalledReservations = signalled
+            ServiceIntelligenceTrace.noteSignals(count: signalled.count)
+        }
 
         // ── Backend guest intelligence ────────────────────────────────────────────
         let dayResponse = guestIntelligenceStore.response(for: todayKey)
@@ -674,9 +730,75 @@ struct GlobalServiceIntelligenceView: View {
     private func reservationFor(guestSummary: GuestIntelligenceSummaryDTO) -> ReservationRecord? {
         windowReservations.first { $0.remoteID == guestSummary.reservationId }
     }
+
+    private func canonicalSnapshotReadiness(
+        for dateKey: String
+    ) -> (snapshot: HostServiceIntelligenceSnapshot?, reason: String) {
+        let snapshot = hostIntelligenceController.serviceIntelligenceSnapshot
+        guard snapshot.dateKey == dateKey else { return (nil, "date_mismatch") }
+        guard hostIntelligenceController.isEvaluatedForSelectedDate(dateKey) else {
+            return (nil, "awaiting_evaluate")
+        }
+        let fingerprint = snapshot.inputFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fingerprint.isEmpty, fingerprint != "empty" else {
+            return (nil, "empty_fingerprint")
+        }
+        return (snapshot, "ready")
+    }
 }
 
 // MARK: - Guest to know row (backend-enriched)
+
+private struct SnapshotFactRow: View {
+    let fact: ServiceIntelligenceFact
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Circle()
+                .fill(priorityColor)
+                .frame(width: 7, height: 7)
+                .padding(.top, 6)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(fact.headline)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail = fact.detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+            if fact.reservationID != nil {
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    private var priorityColor: Color {
+        switch fact.category {
+        case .allergy, .staffNote:
+            return .red
+        case .attachment, .accessibility, .largeParty:
+            return .orange
+        case .occasion:
+            return .purple
+        case .returningGuest, .regularGuest, .guestNote:
+            return .teal
+        case .mainWave, .reminder, .confirmation, .noTable:
+            return .blue
+        case .cancellationNoShow:
+            return .secondary
+        }
+    }
+}
 
 private struct GuestToKnowRow: View {
     let row: ServiceGuestTruthRow
