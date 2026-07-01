@@ -173,6 +173,51 @@ struct HostLocalModelTaskProfile: Sendable, Equatable {
     ],
     maxInferenceSeconds: 15
   )
+
+  /// 4F — On-demand full staff / management briefing.
+  /// Multi-section operational briefing generated only on explicit request (never
+  /// on packet rebuild). Consumes StaffBriefingPacket safe facts via
+  /// StaffBriefingPromptBuilder. Largest token budget of any task and a long
+  /// wall-clock deadline, because this is a deliberate, user-initiated action that
+  /// falls back to the deterministic template on timeout.
+  ///
+  /// NOTE: kept within the existing 2048-token runtime context window. Output is
+  /// capped so prompt + output stay inside that budget; the validator also enforces
+  /// a hard 1200-word ceiling. If a larger context window becomes available, this
+  /// budget can grow without changing the compact-narrative profiles.
+  static let staffBriefing = HostLocalModelTaskProfile(
+    taskName: "staffBriefing",
+    systemPrompt: """
+    You write an internal staff and management briefing for a restaurant team. \
+    Use only the structured facts provided. Never address guests. Never invent \
+    reservations, guests, tables, counts, attachments, reminders, confirmations, \
+    cancellations, no-shows, allergies, birthdays, or regular status. Never claim \
+    anything was sent, confirmed, seated, completed, assigned, or reviewed unless \
+    the provided facts explicitly support it. Write like a strong floor manager \
+    briefing the team: plain, useful, calm, operational. No AI/meta language. \
+    Output only the formatted block requested by the user message.
+    """,
+    maxOutputTokens: 768,
+    echoStopMarkers: [
+      "BRIEFING MODE:",
+      "SERVICE STATE:",
+      "COUNTS (ground truth",
+      "STATUS COUNTS",
+      "PRIORITY FACTS",
+      "ALLOWED GUEST NAMES",
+      "OUTPUT FORMAT",
+      "FORBIDDEN IN OUTPUT:",
+    ],
+    artifactPrefixes: [
+      "Here is the briefing:",
+      "Here is the staff briefing:",
+      "Staff briefing:",
+      "Briefing:",
+      "Output:",
+      "Result:",
+    ],
+    maxInferenceSeconds: 55
+  )
 }
 
 enum HostLocalModelRuntimeError: LocalizedError, Equatable {

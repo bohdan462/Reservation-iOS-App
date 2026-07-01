@@ -26,6 +26,9 @@ struct HostIntelligenceDiagnosticsView: View {
   var guestIntelligenceStore: GuestIntelligenceStore? = nil
   /// 4E-2: Optional read-only view of the current packet narrative.
   var serviceBriefingNarrative: HostServiceBriefingNarrative? = nil
+  /// 4F-1: Optional read-only view of the on-demand staff briefing state.
+  var staffBriefingState: StaffBriefingDisplayState = .none
+  var staffBriefingModelProfileLabel: String? = nil
 
   @State private var isShowingModelImporter = false
   @State private var modelImportMessage: String?
@@ -122,6 +125,9 @@ struct HostIntelligenceDiagnosticsView: View {
       Button("Run service briefing packet proof") {
         HostServiceBriefingPacketProofHarness.run()
       }
+      Button("Run staff briefing proof") {
+        StaffBriefingProofHarness.run()
+      }
       Button("Run AI validator proof") {
         HostAIValidatorProofHarness.run()
       }
@@ -134,6 +140,65 @@ struct HostIntelligenceDiagnosticsView: View {
     }
   }
   #endif
+
+  // MARK: - 4F Staff briefing diagnostics
+
+  @ViewBuilder
+  private func staffBriefingDiagnostics() -> some View {
+    Divider()
+    Text("Service briefing (on-demand staff briefing)")
+      .font(.subheadline.weight(.semibold))
+      .foregroundStyle(.secondary)
+
+    LabeledContent("State") {
+      Text(staffBriefingStateLabel)
+    }
+    if let result = staffBriefingState.result {
+      LabeledContent("Last source") {
+        Text(result.source.rawValue)
+      }
+      LabeledContent("Mode") {
+        Text(result.mode.displayName)
+      }
+      LabeledContent("Generated at") {
+        Text(result.generatedAt, style: .time)
+      }
+      LabeledContent("Word count") {
+        Text("\(result.wordCount)")
+      }
+      if let reason = result.failedReason, !reason.isEmpty {
+        LabeledContent("Failed reason") {
+          Text(reason)
+        }
+      }
+      LabeledContent("Cache fingerprint") {
+        Text(String(result.cacheKey.packetFingerprint.prefix(16)))
+          .font(.caption.monospaced())
+      }
+      LabeledContent("Prompt version") {
+        Text(result.cacheKey.promptVersion)
+          .font(.caption.monospaced())
+      }
+    }
+    if let profile = staffBriefingModelProfileLabel {
+      LabeledContent("Model profile") {
+        Text(profile)
+      }
+    }
+    Text("On-demand only. Never auto-generated on packet rebuild (4F-2 adds the UI trigger).")
+      .font(.caption)
+      .foregroundStyle(.secondary)
+  }
+
+  private var staffBriefingStateLabel: String {
+    switch staffBriefingState {
+    case .none: return "None"
+    case .current: return "Current"
+    case .stale(_, let reason): return "Stale (\(reason))"
+    case .generating(let mode): return "Generating (\(mode.displayName))"
+    case .unavailable(let reason): return "Unavailable (\(reason))"
+    }
+  }
 
   private func analyticsIntelligence(for decision: HostDecisionSnapshot) -> HostAnalyticsIntelligenceResult {
     HostAnalyticsIntelligenceSupport.analyze(
@@ -931,6 +996,8 @@ struct HostIntelligenceDiagnosticsView: View {
           Text(briefingFailureReason)
         }
       }
+
+      staffBriefingDiagnostics()
 
       hostBoardModelDecisionSection(packet: packet, decision: decision)
       guestIntelligenceDiagnosticsSection(decision: decision)

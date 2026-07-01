@@ -25,6 +25,8 @@ enum HostLocalModelInferenceTracker {
     case hostBriefing
     /// 4E: Service Intelligence packet-based narrative (planning / recap / non-live paths).
     case serviceBriefingNarrative
+    /// 4F: On-demand full staff / management briefing (user-initiated only).
+    case staffBriefing
     case guestMessageDraft
     case noteAnalysis
     case diagnosticsPreload
@@ -33,6 +35,8 @@ enum HostLocalModelInferenceTracker {
       switch self {
       case .hostBoardNarrative, .guestMessageDraft:
         return 100
+      case .staffBriefing:
+        return 95
       case .serviceBriefingNarrative:
         return 90
       case .hostBriefing:

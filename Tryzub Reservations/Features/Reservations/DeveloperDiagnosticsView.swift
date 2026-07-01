@@ -338,7 +338,9 @@ struct DeveloperDiagnosticsView: View {
             floorTableSource: hostFloorTableSource,
             allKnownReservations: reservations,
             guestIntelligenceStore: guestIntelligenceStore,
-            serviceBriefingNarrative: hostIntelligenceController.serviceBriefingNarrative
+            serviceBriefingNarrative: hostIntelligenceController.serviceBriefingNarrative,
+            staffBriefingState: hostIntelligenceController.staffBriefingDisplayState,
+            staffBriefingModelProfileLabel: hostIntelligenceController.staffBriefingModelProfileLabel
         )
     }
 

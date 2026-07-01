@@ -246,6 +246,7 @@ final class HostIntelligenceController: ObservableObject {
     localEvaluationComplete = false
     isEnrichmentLoading = false
     latestEvaluatedServiceIntelSourceFingerprint = ""
+    clearStaffBriefingState()
     clearServiceIntelligenceSnapshotForDateTransition(
       oldDateKey: previousDateKey,
       newDateKey: newSelectedDateKey
@@ -413,6 +414,191 @@ final class HostIntelligenceController: ObservableObject {
     #if DEBUG
     print("[SERVICE_BRIEFING_NARRATIVE_TRACE] decision=stored source=\(result.source.rawValue) date=\(result.dateKey) fingerprint=\(result.packetFingerprint.prefix(12)) compact=\"\(result.compactLine.prefix(60))\"")
     #endif
+  }
+
+  // MARK: - 4F On-demand staff briefing
+
+  /// UI-facing state for the on-demand staff briefing surface. Only mutated by
+  /// requestStaffBriefing; never auto-generated on packet rebuild.
+  @Published private(set) var staffBriefingDisplayState: StaffBriefingDisplayState = .none
+  /// Last generated result (any mode). Retained across date transitions only until cleared.
+  @Published private(set) var staffBriefingLastResult: StaffBriefingResult?
+
+  private var staffBriefingCache: [StaffBriefingCacheKey: StaffBriefingResult] = [:]
+  private var staffBriefingRefreshGeneration = 0
+
+  /// Human-readable label for the best available model profile (diagnostics only).
+  var staffBriefingModelProfileLabel: String {
+    HostLocalModelFileLocator.bestAvailableProfile().rawValue
+  }
+
+  private func staffBriefingCacheKey(
+    mode: StaffBriefingMode,
+    dateKey: String,
+    packetFingerprint: String,
+    sourceFingerprint: String
+  ) -> StaffBriefingCacheKey {
+    StaffBriefingCacheKey(
+      mode: mode,
+      dateKey: dateKey,
+      packetFingerprint: packetFingerprint,
+      sourceFingerprint: sourceFingerprint,
+      promptVersion: StaffBriefingPromptBuilder.promptVersion,
+      settingsStamp: briefingSettingsStamp(runtimeSettings)
+    )
+  }
+
+  /// Pure lookup used by the UI to decide what to show without triggering generation.
+  /// Cache hit → .current; same mode/date but changed inputs → .stale; otherwise .none.
+  func staffBriefingDisplayState(
+    for mode: StaffBriefingMode,
+    dateKey: String,
+    packetFingerprint: String,
+    sourceFingerprint: String
+  ) -> StaffBriefingDisplayState {
+    if staffBriefingDisplayState.isGenerating,
+       case .generating(let activeMode) = staffBriefingDisplayState,
+       activeMode == mode {
+      return staffBriefingDisplayState
+    }
+    let key = staffBriefingCacheKey(
+      mode: mode,
+      dateKey: dateKey,
+      packetFingerprint: packetFingerprint,
+      sourceFingerprint: sourceFingerprint
+    )
+    if let hit = staffBriefingCache[key] {
+      return .current(hit)
+    }
+    if let stale = staleStaffBriefingResult(mode: mode, dateKey: dateKey, currentKey: key) {
+      return .stale(stale, reason: "inputs_changed")
+    }
+    return .none
+  }
+
+  /// Finds a prior result for the same mode + date whose fingerprint/settings differ.
+  private func staleStaffBriefingResult(
+    mode: StaffBriefingMode,
+    dateKey: String,
+    currentKey: StaffBriefingCacheKey
+  ) -> StaffBriefingResult? {
+    staffBriefingCache
+      .filter { $0.key.mode == mode && $0.key.dateKey == dateKey && $0.key != currentKey }
+      .sorted { $0.value.generatedAt > $1.value.generatedAt }
+      .first?
+      .value
+  }
+
+  /// On-demand full staff briefing generation. MUST only be called from an explicit
+  /// user action (never on packet rebuild). Uses the current packet/snapshot state
+  /// plus caller-supplied deterministic reservation summaries for counts/tomorrow.
+  func requestStaffBriefing(
+    mode: StaffBriefingMode,
+    dayReservations: [ReservationRecord] = [],
+    tomorrowReservations: [ReservationRecord] = [],
+    businessSummaryLines: [String] = [],
+    serviceDateLabel: String? = nil,
+    largePartyThreshold: Int = 7,
+    forceRefresh: Bool = false
+  ) async {
+    let packet = serviceBriefingPacket
+    let dateKey = latestSelectedDateKey.isEmpty ? packet.dateKey : latestSelectedDateKey
+    let sourceFingerprint = serviceIntelligenceSourceFingerprint
+    let serviceMode = packet.inputFingerprint == "empty" ? serviceModeFallback(for: mode) : packet.serviceMode
+
+    #if DEBUG
+    print("[STAFF_BRIEFING_TRACE] decision=request mode=\(mode.rawValue) date=\(dateKey) force=\(forceRefresh)")
+    #endif
+
+    let cacheKey = staffBriefingCacheKey(
+      mode: mode,
+      dateKey: dateKey,
+      packetFingerprint: packet.inputFingerprint,
+      sourceFingerprint: sourceFingerprint
+    )
+
+    if !forceRefresh, let cached = staffBriefingCache[cacheKey] {
+      staffBriefingLastResult = cached
+      staffBriefingDisplayState = .current(cached)
+      #if DEBUG
+      print("[STAFF_BRIEFING_TRACE] decision=cache_hit mode=\(mode.rawValue) source=\(cached.source.rawValue)")
+      #endif
+      return
+    }
+
+    #if DEBUG
+    if staleStaffBriefingResult(mode: mode, dateKey: dateKey, currentKey: cacheKey) != nil {
+      print("[STAFF_BRIEFING_TRACE] decision=stale mode=\(mode.rawValue) reason=regenerating")
+    }
+    #endif
+    staffBriefingDisplayState = .generating(mode: mode)
+
+    staffBriefingRefreshGeneration += 1
+    let generation = staffBriefingRefreshGeneration
+
+    let builtPacket = StaffBriefingPacketBuilder.build(
+      StaffBriefingPacketBuilder.Input(
+        mode: mode,
+        dateKey: dateKey,
+        now: Date(),
+        serviceMode: serviceMode,
+        sourceFingerprint: sourceFingerprint,
+        servicePacket: packet,
+        dayReservations: dayReservations,
+        tomorrowReservations: tomorrowReservations,
+        businessSummaryLines: businessSummaryLines,
+        largePartyThreshold: largePartyThreshold
+      )
+    )
+
+    let writerInput = StaffBriefingWriter.Input(
+      packet: builtPacket,
+      settings: runtimeSettings,
+      gateContext: StaffBriefingGate.Context(
+        isLocalModelInferenceActive: HostLocalModelInferenceTracker.isActive
+      ),
+      serviceDateLabel: serviceDateLabel,
+      cacheKey: cacheKey
+    )
+
+    let result = await StaffBriefingWriter.write(writerInput)
+
+    // Discard results that finished after a date change or a newer request superseded us.
+    guard generation == staffBriefingRefreshGeneration,
+          cacheKey.dateKey == latestSelectedDateKey || latestSelectedDateKey.isEmpty else {
+      #if DEBUG
+      print("[STAFF_BRIEFING_TRACE] decision=discard_stale_result mode=\(mode.rawValue) date=\(cacheKey.dateKey) expected=\(latestSelectedDateKey)")
+      #endif
+      return
+    }
+
+    staffBriefingCache[cacheKey] = result
+    staffBriefingLastResult = result
+    staffBriefingDisplayState = .current(result)
+    #if DEBUG
+    if result.source == .localModel {
+      print("[STAFF_BRIEFING_TRACE] decision=model_accept mode=\(mode.rawValue) words=\(result.wordCount)")
+    } else {
+      print("[STAFF_BRIEFING_TRACE] decision=fallback mode=\(mode.rawValue) source=\(result.source.rawValue) reason=\(result.failedReason ?? "template")")
+    }
+    #endif
+  }
+
+  /// Clears staff briefing state (date transition / reset). Bumps the generation
+  /// token so any in-flight generation is discarded on completion.
+  private func clearStaffBriefingState() {
+    staffBriefingRefreshGeneration += 1
+    staffBriefingCache.removeAll()
+    staffBriefingLastResult = nil
+    staffBriefingDisplayState = .none
+  }
+
+  private func serviceModeFallback(for mode: StaffBriefingMode) -> ServiceMode {
+    switch mode {
+    case .preService:  return .beforeService
+    case .liveService: return .duringService
+    case .closingRecap: return .afterCloseFinished
+    }
   }
 
   func evaluate(
@@ -927,6 +1113,7 @@ final class HostIntelligenceController: ObservableObject {
     lastServiceBriefingPacketFingerprint = ""
     lastNarrativeCacheKey = ""
     narrativeRefreshGeneration += 1
+    clearStaffBriefingState()
     latestEvaluatedServiceIntelSourceFingerprint = ""
     latestSelectedDateKey = ""
   }
