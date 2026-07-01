@@ -873,6 +873,12 @@ struct HostBoardView: View {
                 guestIntelligenceStore.profilePackCacheStamp(for: reservations.map(\.remoteID))
             ].joined(separator: "|")
             let bookingReport = buildBookingLoadReport(bounds: serviceDensityBounds)
+            // 4E-3: Packet narrative owns live Service Intelligence wording.
+            // Suppress legacy ManagerNarrativeWriter local model to prevent duplicate calls.
+            let packetNarrativeIsActive = hostIntelligenceController.isServiceBriefingPacketCurrent(
+                dateKey: selectedDateKey,
+                sourceFingerprint: hostServiceIntelligenceSourceFingerprint
+            )
             await hostIntelligenceController.refreshBriefing(
                 hostBoardContext: HostBriefingHostBoardContext(
                     selectedDateKey: selectedDateKey,
@@ -889,7 +895,8 @@ struct HostBoardView: View {
                     startupUIReleasedAt: controller.startupUIReleasedAt,
                     now: clockTick
                 ),
-                bookingLoadReport: bookingReport
+                bookingLoadReport: bookingReport,
+                allowLocalModelNarrative: !packetNarrativeIsActive
             )
             guard !Task.isCancelled, requestedKey == hostIntelligenceEnrichmentKey else {
                 traceHostBoardStabilization(event: "enrichment_skipped", detail: "reason=stale_completion")
@@ -1656,19 +1663,16 @@ struct HostBoardView: View {
                     sourceFingerprint: sourceFingerprint
                 )
             )
-            // 4E-2: Trigger packet narrative refresh after a successful packet build.
-            // Guard: skip async model for live today beforeService/duringService to
-            // avoid a duplicate LLM call when legacy ManagerNarrativeWriter may already
-            // be active via the enrichment task. Template narrative is still stored
-            // synchronously when the gate returns template-only.
+            // 4E-3: Trigger packet narrative refresh for all modes after successful packet build.
+            // Duplicate LLM prevention is handled by passing allowLocalModelNarrative:false
+            // to refreshBriefing (see enrichment task) when packet narrative owns live wording.
             let packet4E = hostIntelligenceController.serviceBriefingPacket
             if packet4E.dateKey == selectedDateKey,
                packet4E.inputFingerprint != "empty",
                hostIntelligenceController.isServiceBriefingPacketCurrent(
                    dateKey: selectedDateKey,
                    sourceFingerprint: sourceFingerprint
-               ),
-               usesServiceBriefingCard(state.mode) || selectedDateKey != Date.reservationDateString() {
+               ) {
                 let capturedDateKey = selectedDateKey
                 let capturedSourceFP = sourceFingerprint
                 let capturedDateLabel = selectedDate.formatted(.dateTime.weekday(.wide))
@@ -1978,7 +1982,11 @@ struct HostBoardView: View {
         let useSeparatedPrompts = hostIntelligenceController.settings.useSeparatedBriefingPrompts
         let presentation = ready ? stableHostIntelligenceCardPresentation : .empty
         let cardAttentionPresentation = ready ? hostIntelligenceController.displayAttentionPresentation : .empty
-        let cardBriefingText: String? = ready ? hostIntelligenceController.displayBriefingText : nil
+        // 4E-3: Resolve fallback sentence from packet narrative / packet template
+        // before falling back to legacy displayBriefingText. presentation.headline
+        // continues to win inside HostIntelligenceCard, so this only affects the
+        // fallback sentence slot (priority 3 in the card's resolution chain).
+        let cardBriefingText: String? = ready ? resolvedLiveBriefingText : nil
         let cardManagerNarrative: ManagerNarrative? = ready ? hostIntelligenceController.displayManagerNarrative : nil
         let cardBriefingSource = ready ? hostIntelligenceController.briefingSource : .template
         let cardRenderState = ready ? hostIntelligenceController.renderState : .evaluating
@@ -2007,7 +2015,7 @@ struct HostBoardView: View {
                     snapshot: snapshot,
                     reservations: reservations,
                     operationalPrompts: presentation.expandedPrompts,
-                    briefingText: hostIntelligenceController.displayBriefingText,
+                    briefingText: resolvedLiveBriefingText ?? hostIntelligenceController.displayBriefingText,
                     briefingSource: hostIntelligenceController.briefingSource
                 ) { action in
                     handleHostIntelligenceAction(action)
@@ -2015,6 +2023,52 @@ struct HostBoardView: View {
             }
         }
 
+    }
+
+    /// 4E-3: Resolves the live Host card fallback sentence from packet narrative/template.
+    /// Priority:
+    ///   1. serviceBriefingNarrative (current + model-accepted)
+    ///   2. serviceBriefingPacket.compactLine (template, current)
+    ///   3. hostIntelligenceController.displayBriefingText (legacy fallback)
+    /// Note: HostIntelligenceCard's presentation.headline always wins above this text
+    /// when a deterministic headline is available (allergy, no-table, busy slot, etc.).
+    private var resolvedLiveBriefingText: String? {
+        let packet = hostIntelligenceController.serviceBriefingPacket
+        let narrative = hostIntelligenceController.serviceBriefingNarrative
+        let sourceFingerprint = hostServiceIntelligenceSourceFingerprint
+
+        // 1. Model narrative if current and usable
+        if narrative.isCurrent(
+            dateKey: selectedDateKey,
+            packetFingerprint: packet.inputFingerprint
+        ), narrative.hasUsableCopy, narrative.usesModel {
+            #if DEBUG
+            print("[SERVICE_INTEL_UI_TRACE] surface=host_live decision=use_narrative source=\(narrative.source.rawValue) date=\(selectedDateKey)")
+            #endif
+            return narrative.compactLine
+        }
+
+        // 2. Packet template compact line if packet is current
+        if packet.dateKey == selectedDateKey,
+           packet.inputFingerprint != "empty",
+           hostIntelligenceController.isServiceBriefingPacketCurrent(
+               dateKey: selectedDateKey,
+               sourceFingerprint: sourceFingerprint
+           ),
+           !packet.compactLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            #if DEBUG
+            let reason = narrative.source == .none ? "narrative_empty" : "narrative_template_source"
+            print("[SERVICE_INTEL_UI_TRACE] surface=host_live decision=use_packet_template reason=\(reason) date=\(selectedDateKey)")
+            #endif
+            return packet.compactLine
+        }
+
+        // 3. Legacy fallback
+        let legacy = hostIntelligenceController.displayBriefingText
+        #if DEBUG
+        print("[SERVICE_INTEL_UI_TRACE] surface=host_live decision=use_legacy_fallback reason=packet_not_current date=\(selectedDateKey)")
+        #endif
+        return legacy.isEmpty ? nil : legacy
     }
 
     private var stableHostIntelligenceCardPresentation: HostIntelligenceCardPresentation {
@@ -2047,6 +2101,9 @@ struct HostBoardView: View {
 
     private var hostIntelligenceCardPresentationKey: String {
         let snapshot = hostIntelligenceController.displaySnapshot
+        // 4E-3: Include packet narrative source/fingerprint so the card refreshes
+        // when serviceBriefingNarrative lands asynchronously after model finishes.
+        let narrative = hostIntelligenceController.serviceBriefingNarrative
         return [
             selectedDateKey,
             snapshot.llmPacket.briefingFingerprint,
@@ -2056,7 +2113,9 @@ struct HostBoardView: View {
             String(allKnownReservations.count),
             hostIntelligenceController.displayAttentionPresentation.presentationFingerprint,
             HostAttentionStableDigest.hexDigest(hostIntelligenceController.displayBriefingText),
-            String(hostIntelligenceController.settings.useSeparatedBriefingPrompts)
+            String(hostIntelligenceController.settings.useSeparatedBriefingPrompts),
+            narrative.source.rawValue,
+            narrative.packetFingerprint
         ].joined(separator: "|")
     }
 

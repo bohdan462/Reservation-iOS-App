@@ -112,6 +112,10 @@ struct HostIntelligenceSettingsView: View {
         Text(hostBoardModelNote)
           .font(.caption)
           .foregroundStyle(.secondary)
+
+        Text("Also controls Service Intelligence briefing wording for Host and Service Intelligence surfaces.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
 
       Toggle("Use local model for guest message drafts", isOn: binding(\.useLocalModelForGuestMessageDrafts))

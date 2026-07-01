@@ -554,9 +554,14 @@ final class HostIntelligenceController: ObservableObject {
   }
 
   /// Presentation-only rewrite of the approved LLM packet. Does not change engine output.
+  ///
+  /// - Parameter allowLocalModelNarrative: When false, skips the legacy ManagerNarrativeWriter
+  ///   local model branch. Pass false for live Service Intelligence paths where packet narrative
+  ///   owns the wording to prevent two simultaneous local model calls.
   func refreshBriefing(
     hostBoardContext: HostBriefingHostBoardContext? = nil,
-    bookingLoadReport: BookingLoadReport? = nil
+    bookingLoadReport: BookingLoadReport? = nil,
+    allowLocalModelNarrative: Bool = true
   ) async {
     briefingRefreshGeneration += 1
     let refreshGeneration = briefingRefreshGeneration
@@ -744,6 +749,23 @@ final class HostIntelligenceController: ObservableObject {
     }
 
     if let hostBoardContext, provider == .localModel {
+      // 4E-3: Skip legacy ManagerNarrativeWriter model when packet narrative owns SI wording.
+      // allowLocalModelNarrative is false for live Host paths where serviceBriefingNarrative
+      // takes over, preventing two simultaneous local model calls.
+      guard allowLocalModelNarrative else {
+        #if DEBUG
+        print("[HOST_AI] legacy_model_skipped reason=packet_service_briefing_narrative_active date=\(latestSelectedDateKey)")
+        #endif
+        storeBriefingResult(
+          cacheKey: cacheKey,
+          fingerprint: fingerprint,
+          text: fallback,
+          source: .template,
+          failureReason: nil,
+          narrative: templateNarrative
+        )
+        return
+      }
       HostIntelligenceDiagnostics.localModelAttempted(surface: "host_home")
       let narrativePacket = ManagerNarrativePacketBuilder.buildHostHome(
         from: decisionSnapshot,

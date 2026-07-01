@@ -882,21 +882,10 @@ struct HostIntelligenceDiagnosticsView: View {
           Text(settings.useLocalModelOnHostBoard ? "Enabled" : "Disabled")
         }
       }
-      if let briefingSource {
-        LabeledContent("Current source") {
-          Text(briefingSource.displayName)
-        }
-      }
-      if let briefingFailureReason, !briefingFailureReason.isEmpty {
-        LabeledContent("Failure reason") {
-          Text(briefingFailureReason)
-        }
-      }
-
-      // 4E-2: Packet narrative diagnostics (developer only)
+      // 4E-3: Service briefing narrative (primary SI narrative source)
       if let narrative = serviceBriefingNarrative {
         Divider()
-        Text("Service Intelligence Narrative (4E)")
+        Text("Service briefing narrative")
           .font(.subheadline.weight(.semibold))
           .foregroundStyle(.secondary)
         LabeledContent("Narrative source") {
@@ -925,6 +914,22 @@ struct HostIntelligenceDiagnosticsView: View {
         Text("Local model setting also controls Service Intelligence briefing wording.")
           .font(.caption)
           .foregroundStyle(.secondary)
+      }
+
+      // Legacy Host LLM narrative (ManagerNarrativeWriter / HostLLMPacket)
+      Divider()
+      Text("Legacy Host LLM narrative")
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(.secondary)
+      if let briefingSource {
+        LabeledContent("Legacy Host LLM source") {
+          Text(briefingSource.displayName)
+        }
+      }
+      if let briefingFailureReason, !briefingFailureReason.isEmpty {
+        LabeledContent("Legacy failure reason") {
+          Text(briefingFailureReason)
+        }
       }
 
       hostBoardModelDecisionSection(packet: packet, decision: decision)
