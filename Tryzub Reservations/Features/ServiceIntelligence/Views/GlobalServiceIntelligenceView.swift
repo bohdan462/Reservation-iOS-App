@@ -103,6 +103,8 @@ struct GlobalServiceIntelligenceView: View {
                         HostServiceBriefingCardPlaceholder()
                     }
 
+                    staffBriefingPanel
+
                     snapshotFactsSection
 
                     if !bookingItems.isEmpty {
@@ -154,12 +156,28 @@ struct GlobalServiceIntelligenceView: View {
         .onAppear {
             rebuild()
             scheduleBackendLoads()
+            traceStaffBriefingDisplayState()
         }
         .onChange(of: rebuildStamp) { _, _ in rebuild() }
+        .onChange(of: staffBriefingTraceStamp) { _, _ in
+            traceStaffBriefingDisplayState()
+        }
         .onReceive(clockTimer) { now in clockTick = now }
     }
 
     // MARK: - Sections
+
+    private var staffBriefingPanel: some View {
+        StaffBriefingPanel(
+            mode: staffBriefingMode,
+            state: visibleStaffBriefingState,
+            retainedResult: retainedStaffBriefingResult,
+            retainedResultIsCurrent: retainedStaffBriefingResultIsCurrent,
+            primaryButtonLabel: staffBriefingMode.primaryButtonLabel,
+            onRequest: { requestStaffBriefing(forceRefresh: false) },
+            onRefresh: { requestStaffBriefing(forceRefresh: true) }
+        )
+    }
 
     @ViewBuilder
     private var snapshotFactsSection: some View {
@@ -482,6 +500,130 @@ struct GlobalServiceIntelligenceView: View {
     }
 
     // MARK: - Data
+
+    private var staffBriefingMode: StaffBriefingMode {
+        StaffBriefingMode.from(serviceMode: currentServiceMode)
+    }
+
+    private var currentServiceMode: ServiceMode {
+        if let briefing {
+            return briefing.mode
+        }
+        let packet = hostIntelligenceController.serviceBriefingPacket
+        if packet.dateKey == serviceDateKey, packet.inputFingerprint != "empty" {
+            return packet.serviceMode
+        }
+        let snapshot = hostIntelligenceController.serviceIntelligenceSnapshot
+        if snapshot.dateKey == serviceDateKey, snapshot.inputFingerprint != "empty" {
+            return snapshot.serviceMode
+        }
+        return .beforeService
+    }
+
+    private var currentStaffBriefingPacketFingerprint: String {
+        hostIntelligenceController.serviceBriefingPacket.inputFingerprint
+    }
+
+    private var visibleStaffBriefingState: StaffBriefingDisplayState {
+        hostIntelligenceController.staffBriefingDisplayState(
+            for: staffBriefingMode,
+            dateKey: serviceDateKey,
+            packetFingerprint: currentStaffBriefingPacketFingerprint,
+            sourceFingerprint: serviceDateIntelligenceSourceFingerprint
+        )
+    }
+
+    private var retainedStaffBriefingResult: StaffBriefingResult? {
+        guard let result = hostIntelligenceController.staffBriefingLastResult,
+              result.mode == staffBriefingMode,
+              result.cacheKey.dateKey == serviceDateKey else {
+            return nil
+        }
+        return result
+    }
+
+    private var retainedStaffBriefingResultIsCurrent: Bool {
+        guard let result = retainedStaffBriefingResult else { return false }
+        return result.cacheKey.packetFingerprint == currentStaffBriefingPacketFingerprint
+            && result.cacheKey.sourceFingerprint == serviceDateIntelligenceSourceFingerprint
+    }
+
+    private var tomorrowServiceDateKey: String {
+        guard let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: serviceDate) else {
+            return ""
+        }
+        return tomorrow.reservationDateString()
+    }
+
+    private var tomorrowServiceReservations: [ReservationRecord] {
+        let key = tomorrowServiceDateKey
+        guard !key.isEmpty else { return [] }
+        return windowReservations.filter { $0.reservationDate == key && !$0.isHidden }
+    }
+
+    private var serviceDateLabel: String {
+        serviceDate.formatted(.dateTime.weekday(.wide))
+    }
+
+    private var staffBriefingTraceStamp: String {
+        switch visibleStaffBriefingState {
+        case .none:
+            return "none|\(staffBriefingMode.rawValue)|\(serviceDateKey)"
+        case .generating(let mode):
+            return "generating|\(mode.rawValue)|\(serviceDateKey)"
+        case .current(let result):
+            return "current|\(result.source.rawValue)|\(Int(result.generatedAt.timeIntervalSince1970))"
+        case .stale(let result, let reason):
+            return "stale|\(reason)|\(result.source.rawValue)|\(Int(result.generatedAt.timeIntervalSince1970))"
+        case .unavailable(let reason):
+            return "unavailable|\(reason)|\(serviceDateKey)"
+        }
+    }
+
+    private func requestStaffBriefing(forceRefresh: Bool) {
+        let mode = staffBriefingMode
+        #if DEBUG
+        print("[STAFF_BRIEFING_UI_TRACE] surface=global_si action=tap mode=\(mode.rawValue)")
+        #endif
+        let dateKey = serviceDateKey
+        let serviceMode = currentServiceMode
+        let sourceFingerprint = serviceDateIntelligenceSourceFingerprint
+        let dayReservations = serviceDateReservations
+        let tomorrowReservations = tomorrowServiceReservations
+        let businessLines = businessInsightLines
+        let dateLabel = serviceDateLabel
+        let largePartyThreshold = hostIntelligenceSettingsStore.settings.largePartyThreshold
+
+        Task { @MainActor in
+            await hostIntelligenceController.requestStaffBriefing(
+                mode: mode,
+                dateKey: dateKey,
+                serviceMode: serviceMode,
+                sourceFingerprint: sourceFingerprint,
+                dayReservations: dayReservations,
+                tomorrowReservations: tomorrowReservations,
+                businessSummaryLines: businessLines,
+                serviceDateLabel: dateLabel,
+                largePartyThreshold: largePartyThreshold,
+                forceRefresh: forceRefresh
+            )
+        }
+    }
+
+    private func traceStaffBriefingDisplayState() {
+        #if DEBUG
+        switch visibleStaffBriefingState {
+        case .generating(let mode):
+            print("[STAFF_BRIEFING_UI_TRACE] surface=global_si state=generating mode=\(mode.rawValue)")
+        case .current(let result):
+            print("[STAFF_BRIEFING_UI_TRACE] surface=global_si state=current source=\(result.source.rawValue)")
+        case .stale(_, let reason):
+            print("[STAFF_BRIEFING_UI_TRACE] surface=global_si state=stale reason=\(reason)")
+        case .none, .unavailable:
+            break
+        }
+        #endif
+    }
 
     /// The hub follows the Host Board's evaluated service date when available.
     /// Cold opens still default to calendar today.
@@ -905,6 +1047,318 @@ struct GlobalServiceIntelligenceView: View {
         return (packet, "ready")
     }
 
+}
+
+// MARK: - Staff briefing panel
+
+private struct StaffBriefingPanel: View {
+    let mode: StaffBriefingMode
+    let state: StaffBriefingDisplayState
+    let retainedResult: StaffBriefingResult?
+    let retainedResultIsCurrent: Bool
+    let primaryButtonLabel: String
+    let onRequest: () -> Void
+    let onRefresh: () -> Void
+
+    private var isGenerating: Bool { state.isGenerating }
+
+    private var visibleResult: StaffBriefingResult? {
+        if let result = state.result {
+            return result
+        }
+        return isGenerating ? retainedResult : nil
+    }
+
+    private var visibleResultIsCurrent: Bool {
+        switch state {
+        case .current:
+            return true
+        case .stale:
+            return false
+        case .generating:
+            return retainedResultIsCurrent
+        case .none, .unavailable:
+            return false
+        }
+    }
+
+    private var staleCaption: String? {
+        switch state {
+        case .stale:
+            return "Reservation details changed since this briefing was generated."
+        case .generating where visibleResult != nil && !visibleResultIsCurrent:
+            return "Reservation details changed since this briefing was generated."
+        default:
+            return nil
+        }
+    }
+
+    private var unavailableReason: String? {
+        if case .unavailable(let reason) = state {
+            return reason
+        }
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            header
+
+            Text("Generated from today’s reservations, guest notes, floor state, and service signals.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let result = visibleResult {
+                if let staleCaption {
+                    Text(staleCaption)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                StaffBriefingMessageCard(result: result)
+
+                HStack {
+                    Spacer(minLength: 0)
+                    refreshButton
+                }
+            } else if let unavailableReason {
+                Text(unavailableReason)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if isGenerating {
+                StaffBriefingLoadingRow()
+            } else if visibleResult == nil {
+                primaryButton
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .hostBoardGlassPanel(cornerRadius: 14, strokeOpacity: 0.12)
+        .animation(.easeInOut(duration: 0.18), value: state)
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "quote.bubble")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 15, alignment: .center)
+                Text("Staff briefing")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+            }
+
+            Spacer(minLength: 0)
+
+            if visibleResult != nil {
+                StaffBriefingStatusBadge(isCurrent: visibleResultIsCurrent)
+            }
+        }
+    }
+
+    private var primaryButton: some View {
+        Button(action: onRequest) {
+            HStack(spacing: 9) {
+                Image(systemName: "text.bubble")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(width: 20, alignment: .center)
+                Text(primaryButtonLabel)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.right")
+                    .font(.caption.weight(.bold))
+            }
+            .foregroundStyle(TryzubColors.primaryControl)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .hostBoardGlassPanel(cornerRadius: 12, strokeOpacity: 0.14)
+        }
+        .buttonStyle(.plain)
+        .disabled(isGenerating)
+        .opacity(isGenerating ? 0.55 : 1)
+    }
+
+    private var refreshButton: some View {
+        Button(action: onRefresh) {
+            Label("Refresh briefing", systemImage: "arrow.clockwise")
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .foregroundStyle(isGenerating ? .secondary : TryzubColors.primaryControl)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .hostIntelligenceCompactCapsule(strokeOpacity: 0.08)
+        }
+        .buttonStyle(.plain)
+        .disabled(isGenerating)
+        .opacity(isGenerating ? 0.55 : 1)
+    }
+}
+
+private struct StaffBriefingMessageCard: View {
+    let result: StaffBriefingResult
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(result.headline)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ForEach(result.sections.filter { !$0.isEmpty }) { section in
+                StaffBriefingSectionBlock(section: section)
+            }
+
+            if !result.actionBullets.isEmpty {
+                StaffBriefingBulletBlock(title: "Actions", bullets: result.actionBullets)
+            }
+
+            Text("Generated \(Self.timeFormatter.string(from: result.generatedAt)) · \(result.source.caption)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct StaffBriefingSectionBlock: View {
+    let section: StaffBriefingSection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if section.id != "overview" {
+                Text(section.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+            }
+
+            ForEach(Array(section.paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                Text(paragraph)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if !section.bullets.isEmpty {
+                StaffBriefingBulletBlock(title: nil, bullets: section.bullets)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct StaffBriefingBulletBlock: View {
+    let title: String?
+    let bullets: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if let title {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+            }
+
+            ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
+                HStack(alignment: .top, spacing: 7) {
+                    Circle()
+                        .fill(Color.secondary.opacity(0.75))
+                        .frame(width: 4, height: 4)
+                        .padding(.top, 7)
+                    Text(cleanBullet(bullet))
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func cleanBullet(_ value: String) -> String {
+        var trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasPrefix("-") || trimmed.hasPrefix("•") {
+            trimmed.removeFirst()
+            trimmed = trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return trimmed
+    }
+}
+
+private struct StaffBriefingStatusBadge: View {
+    let isCurrent: Bool
+
+    var body: some View {
+        Text(isCurrent ? "Current" : "Outdated")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(isCurrent ? TryzubColors.primaryControl : .secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .hostIntelligenceCompactCapsule(strokeOpacity: isCurrent ? 0.12 : 0.06)
+    }
+}
+
+private struct StaffBriefingLoadingRow: View {
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "ellipsis.circle")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, alignment: .center)
+            Text("Preparing briefing…")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            TryzubSubtleLoadingDot(diameter: 6)
+        }
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private extension StaffBriefingMode {
+    var primaryButtonLabel: String {
+        switch self {
+        case .preService:
+            return "Brief before service"
+        case .liveService:
+            return "Brief right now"
+        case .closingRecap:
+            return "Close service recap"
+        }
+    }
+}
+
+private extension StaffBriefingSource {
+    var caption: String {
+        switch self {
+        case .localModel:
+            return "Local model briefing"
+        case .template:
+            return "Template briefing"
+        case .fallback:
+            return "Template fallback"
+        }
+    }
 }
 
 // MARK: - Guest to know row (backend-enriched)

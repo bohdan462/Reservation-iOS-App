@@ -494,6 +494,9 @@ final class HostIntelligenceController: ObservableObject {
   /// plus caller-supplied deterministic reservation summaries for counts/tomorrow.
   func requestStaffBriefing(
     mode: StaffBriefingMode,
+    dateKey requestedDateKey: String? = nil,
+    serviceMode requestedServiceMode: ServiceMode? = nil,
+    sourceFingerprint requestedSourceFingerprint: String? = nil,
     dayReservations: [ReservationRecord] = [],
     tomorrowReservations: [ReservationRecord] = [],
     businessSummaryLines: [String] = [],
@@ -501,10 +504,23 @@ final class HostIntelligenceController: ObservableObject {
     largePartyThreshold: Int = 7,
     forceRefresh: Bool = false
   ) async {
-    let packet = serviceBriefingPacket
-    let dateKey = latestSelectedDateKey.isEmpty ? packet.dateKey : latestSelectedDateKey
-    let sourceFingerprint = serviceIntelligenceSourceFingerprint
-    let serviceMode = packet.inputFingerprint == "empty" ? serviceModeFallback(for: mode) : packet.serviceMode
+    let storedPacket = serviceBriefingPacket
+    let normalizedDateKey = requestedDateKey?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let dateKey = normalizedDateKey.isEmpty
+      ? (latestSelectedDateKey.isEmpty ? storedPacket.dateKey : latestSelectedDateKey)
+      : normalizedDateKey
+    let normalizedSourceFingerprint = requestedSourceFingerprint?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let sourceFingerprint = normalizedSourceFingerprint.isEmpty
+      ? serviceIntelligenceSourceFingerprint
+      : normalizedSourceFingerprint
+    let packet = storedPacket.dateKey == dateKey || storedPacket.inputFingerprint == "empty"
+      ? storedPacket
+      : .empty
+    let serviceMode = requestedServiceMode
+      ?? (packet.inputFingerprint == "empty" ? serviceModeFallback(for: mode) : packet.serviceMode)
+    let hasExplicitDateKey = !normalizedDateKey.isEmpty
 
     #if DEBUG
     print("[STAFF_BRIEFING_TRACE] decision=request mode=\(mode.rawValue) date=\(dateKey) force=\(forceRefresh)")
@@ -565,7 +581,7 @@ final class HostIntelligenceController: ObservableObject {
 
     // Discard results that finished after a date change or a newer request superseded us.
     guard generation == staffBriefingRefreshGeneration,
-          cacheKey.dateKey == latestSelectedDateKey || latestSelectedDateKey.isEmpty else {
+          hasExplicitDateKey || cacheKey.dateKey == latestSelectedDateKey || latestSelectedDateKey.isEmpty else {
       #if DEBUG
       print("[STAFF_BRIEFING_TRACE] decision=discard_stale_result mode=\(mode.rawValue) date=\(cacheKey.dateKey) expected=\(latestSelectedDateKey)")
       #endif
