@@ -1,6 +1,6 @@
 # Current Source of Truth — Tryzub Reservations
 
-**Last reviewed:** 2026-06-26  
+**Last reviewed:** 2026-06-30
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md)
 
 Compact master rules. When this file conflicts with stale index/diagram docs, **this file and backend plugin docs win**.
@@ -117,6 +117,18 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 7. **More cannot build** the snapshot — no `HostServiceIntelligenceSnapshotBuilder` from More views.
 8. **LLM cannot change** facts or actions — optional narrative rewrite only, validator-protected, template fallback.
 9. **Known gaps (follow-up):** attachment/OCR, backend guest-intel, floor layout not in 4C-3 source fingerprint — see [OPEN_WORK.md](./OPEN_WORK.md).
+
+---
+
+## 7b. Service Intelligence parent layer
+
+1. **All surfaces reuse the same canonical truth** — `HostServiceIntelligenceSnapshot` in `HostIntelligenceController`.
+2. **Host Board** is the **live compact surface** during service — what matters now, not a static dashboard.
+3. **More → Service Intelligence** is the **full briefing surface** — day, guests, timing, business context, unresolved items.
+4. **Parent briefing packet (4D target)** combines safe facts from: reservations, floor/tables, seated timing, guest memory, guest/staff notes, attachments, reminder/confirmation state, business analytics, walk-ins/completed/no-shows, activity history, and snapshot facts.
+5. **Canonical snapshot = what is true.** **Parent briefing packet = all facts the system can safely talk about.** **Narrative layer = how a good host/admin says it.** **LLM = wording only, never truth.**
+6. **LLM is only the wording layer** — validator-protected; cannot change counts, names, statuses, table facts, or actions; must not expose raw private notes or contact data.
+7. **Tone target:** human host/admin/manager voice — not “Staff needs review”, “Check guest note”, or technical signal labels. See [HOST_INTELLIGENCE.md](./HOST_INTELLIGENCE.md).
 
 ---
 

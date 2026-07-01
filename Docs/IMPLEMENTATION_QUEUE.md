@@ -4,7 +4,7 @@
 
 Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. Guest memory foundation (#7–#9), Guests tab cache wiring (#5), guest person-map Slice 1 (#5d), backend guest person-map Slice 2 lookup (#16), backend 3M-B (#18), iOS Slices 3A/3B/3R/3M, Manual Intake input polish (#17b), Tryzub V1 Host production polish (#5b, #5c), and **device smoke Phases 1–4 (#24–#27)** are **done in code**.
 
-**Current focus:** (1) **Service Intelligence snapshot lifecycle** — 4C-1/2/3 **done** (`2227d8d`, `50b207a`); **4C-SMOKE** stale reservation-source fallback open; (2) **4D-1** richer canonical `rankedFacts`; (3) **4E** cached staff briefing narrative on canonical snapshot; (4) physical device verification + release smoke; (5) reservation attachments live verification (build **13**). See [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md).
+**Current focus:** (1) **4C-SMOKE** — stale reservation-source fallback open; (2) **4D-1** parent briefing packet / richer named facts from all intelligence layers; (3) **4E** human host/admin narrative — local model wording only, reused on Host Board + More; (4) physical device verification + release smoke; (5) reservation attachments live verification (build **13**). See [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md), [HOST_INTELLIGENCE.md](./HOST_INTELLIGENCE.md).
 
 ---
 
@@ -512,33 +512,43 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 
 ---
 
-## 44. LOCAL-FIRST-OPS-4D-1 — Richer canonical rankedFacts
+## 44. LOCAL-FIRST-OPS-4D-1 — Parent briefing packet / richer named facts
 
 | Field | Value |
 |-------|-------|
 | **Status** | **open** — next deterministic slice |
-| **Scope** | `HostServiceIntelligenceSnapshotBuilder` — seated/overdue/arriving, stronger named operational facts |
-| **Notes** | Deterministic only; no LLM in 4D-1 |
+| **Scope** | Expand `HostServiceIntelligenceSnapshotBuilder` + parent briefing packet from all intelligence layers: reservations, floor/seated timing, guest memory, notes, attachments, reminders, business analytics, walk-ins/completed/no-shows, activity |
+| **Notes** | Deterministic only; canonical snapshot = what is true; parent packet = all facts the system can safely talk about; no LLM in 4D-1 |
 
 ---
 
-## 45. LOCAL-FIRST-OPS-4E-0 — LLM/narrative architecture audit
+## 45. LOCAL-FIRST-OPS-4E-1 — Local model narrative (human host/admin tone)
 
 | Field | Value |
 |-------|-------|
 | **Status** | **open** |
-| **Scope** | Design narrative layer on canonical snapshot — input packet, cache keys, Host + More reuse |
-| **Notes** | Audit/plan only; no implementation in 4E-0 |
+| **Scope** | Validator-protected local model prose from parent briefing packet; human host/admin/manager voice — not “staff needs review” or technical signal labels |
+| **Notes** | LLM = wording only, never truth; template fallback on failure |
 
 ---
 
-## 46. LOCAL-FIRST-OPS-4E-1 — Cached staff briefing narrative
+## 46. LOCAL-FIRST-OPS-4E-2 — Reuse narrative on Host Board and More
 
 | Field | Value |
 |-------|-------|
 | **Status** | **open** |
-| **Scope** | Validator-protected local model prose from snapshot; cache by date + snapshot fingerprint + prompt version |
-| **Notes** | Wording only; Host Board + More reuse same narrative when valid |
+| **Scope** | Same validated narrative on Host Board compact intelligence and More → Service Intelligence full briefing when cache valid |
+| **Notes** | Cache by date + snapshot/packet fingerprint + model/prompt version; More must not trigger model load independently |
+
+---
+
+## 47. LOCAL-FIRST-OPS-4E-3 — Live / manual briefing refresh
+
+| Field | Value |
+|-------|-------|
+| **Status** | **open** |
+| **Scope** | Truth-safe refresh when service state changes during shift; manual refresh path; validator-protected; no stale narrative after reservation/floor/seated changes |
+| **Notes** | Must respect snapshot lifecycle + source fingerprint; invalidates narrative cache when packet fingerprint changes |
 
 ---
 

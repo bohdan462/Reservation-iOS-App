@@ -6,7 +6,7 @@
 
 ## Title
 
-Service Intelligence snapshot lifecycle (4C done) + runtime smoke + 4D/LLM planning
+Service Intelligence snapshot lifecycle (4C done) + human host/admin briefing direction (4D/4E next)
 
 ---
 
@@ -16,7 +16,7 @@ Service Intelligence snapshot lifecycle (4C done) + runtime smoke + 4D/LLM plann
 |----------|--------|
 | **Root branch** | `audit-current-state` |
 | **Root HEAD** | `50b207a` — Guard service intelligence snapshot across Host hide and source changes |
-| **Root vs remote** | Pushed to `origin/audit-current-state` at `50b207a` |
+| **Root vs remote** | Code at `50b207a`; docs synced on `audit-current-state` after lifecycle pass |
 | **Build** | **13** — tracked in `2227d8d` |
 | **Backend submodule pointer** | `a2422d3` — Add private reservation attachment backend |
 | **Backend branch** | `AI` |
@@ -88,11 +88,21 @@ Service Intelligence snapshot lifecycle (4C done) + runtime smoke + 4D/LLM plann
 
 ## Current slice goal
 
-**Snapshot lifecycle implementation (4C-1/2/3) is code-complete and pushed.** **Current focus:**
+**Snapshot lifecycle implementation (4C-1/2/3) is code-complete at `50b207a`.** **Current focus:**
 
 1. **Finish 4C runtime smoke** — stale reservation-source fallback while Host hidden still open ([OPEN_WORK.md](./OPEN_WORK.md)).
-2. **Docs sync** — this handoff + queue + HOST_INTELLIGENCE (done in same pass as focus shift).
-3. **Next phase: 4D / LLM narrative layer** on top of canonical `HostServiceIntelligenceSnapshot` — richer deterministic facts first (4D-1), then cached staff briefing narrative (4E).
+2. **Human service briefing direction (4D/4E)** — not generic AI copy or “staff needs review” wording. The app substitutes parts of the admin/host job: brief the team **before, during, and after service** in the voice of a strong human host/admin/manager. See [HOST_INTELLIGENCE.md](./HOST_INTELLIGENCE.md).
+
+**Next phase is not generic AI copy.** It is **human service briefing from the parent intelligence layer**:
+
+| Layer | Role |
+|-------|------|
+| **Canonical snapshot** | What is true — `HostServiceIntelligenceSnapshot` |
+| **Parent briefing packet** | All facts the system can safely talk about (reservations, floor, seated timing, guest memory, notes, attachments, reminders, business analytics, walk-ins, activity, snapshot facts) |
+| **Narrative layer** | How a good host/admin says it — template first, optional local model |
+| **LLM** | Wording only, never truth |
+
+**Host Board** — live work surface during service; compact intelligence where staff actually work; not a static dashboard. **More → Service Intelligence** — deeper briefing view for the day, guests, timing, business context, unresolved items; same truth as Host Board.
 
 **Stabilization** (physical device verification, attachments live verification) remains open separately. **Slice 3D/3E parked** until smoke verification is accepted or Bohdan resumes.
 
@@ -114,12 +124,22 @@ Service Intelligence snapshot lifecycle (4C done) + runtime smoke + 4D/LLM plann
 
 **Partial runtime smoke (device, 2026-06-30):**
 
+| Test | Status |
+|------|--------|
+| Host snapshot build | **Passed** |
+| More `use_snapshot reason=ready` | **Passed** |
+| Date transition clear | **Passed** |
+| Source fingerprint current | **Passed** |
+| Stale reservation-change fallback | **Open** |
+
 - `[SERVICE_INTEL_SNAPSHOT_TRACE] decision=build` — passed (today + future date after transition)
 - `[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=use_snapshot reason=ready` — passed after Host hide
 - `[SERVICE_INTEL_LIFECYCLE_TRACE] event=clear_snapshot_on_date_transition` — passed
 - `[SERVICE_INTEL_LIFECYCLE_TRACE] event=snapshot_source_current` — passed
 - **Open:** stale reservation-source fallback after backend/reservation change while Host hidden
 - Host local model attempted later; validator blocked wrong reservation count (`HOST_AI_VALIDATOR_TRACE`) — expected safety behavior
+
+**Tone direction (product):** Good — “6:30 · Julie, 5 guests. Birthday note. Seat with care.” / “Tristan has been seated at A1 for 1h 24m.” / “Nothing urgent right now. Keep an eye on A1.” Bad — “Staff needs review.” / “Check guest note.” / “Operational action required.” / “Guest signal detected.” Current UI is technically correct but too quiet/generic; 4D/4E targets human host/admin language on both surfaces.
 
 **Observed product behavior:** Host compact card (“Next: Julie at 18:30 · 5 guests”, occasion chip) and More → Service Intelligence (“Julie Bachman mentioned a birthday”, Service facts section) reuse the same canonical snapshot — one source of truth across surfaces.
 

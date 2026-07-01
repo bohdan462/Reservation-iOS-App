@@ -7,38 +7,105 @@
 
 ## What Host Intelligence is
 
-Deterministic operational briefing for the selected service date. Helps staff prioritize without auto-acting. **`HostServiceIntelligenceSnapshot`** is the canonical service-day read model shared by Host Board and More → Service Intelligence.
+Service Intelligence helps staff run the floor like a strong human host, admin, or manager would — briefing the team **before, during, and after service**. It is not a static dashboard or a technical signal dump.
+
+The app substitutes parts of the admin/host job: surface what matters now on Host Board, explain the full day on More → Service Intelligence, and never auto-act on reservations.
+
+**Architecture phrasing:**
+
+| Layer | Meaning |
+|-------|---------|
+| **Canonical snapshot** | What is true |
+| **Parent briefing packet** | All facts the system can safely talk about |
+| **Narrative layer** | How a good host/admin says it |
+| **LLM** | Wording only, never truth |
+
+**`HostServiceIntelligenceSnapshot`** is the canonical service-day read model. The **parent Service Briefing Packet** (4D target) expands that truth with named facts from every intelligence input. Both Host Board and More → Service Intelligence must reuse the same canonical truth.
 
 ## What it is not
 
 - Not reservation truth (engine reads cache + APIs)
 - Not auto-send email/SMS
 - Not auto status/table mutation
+- Not generic “staff needs review” or “operational action required” copy
 - Local model does **not** decide facts or actions
 - More → Service Intelligence does **not** build the canonical snapshot
+
+## Surfaces
+
+| Surface | Role |
+|---------|------|
+| **Host Board** | Live work surface during service — compact, useful intelligence where staff actually work; quietly surfaces what matters now |
+| **More → Service Intelligence** | Deeper briefing — explains the day, guests, timing, business context, and unresolved items; reuses the same truth as Host Board |
 
 ## Pipeline
 
 ```
+Inputs (parent intelligence layer):
+  reservations
+  + floor / tables
+  + seated timing
+  + guest memory
+  + guest notes + staff notes
+  + attachments
+  + reminder / confirmation state
+  + business analytics
+  + walk-ins / completed / no-shows
+  + activity history
+  + snapshot facts
+  + optional LLM narrative (wording only)
+    ↓
 HostBoardView.makeHostEngineInput()
-  → HostIntelligenceEngine (deterministic facts, actions, pressure, guestSignals)
-  → HostAttentionGrouper (today live card presentation — transitional)
-  → HostIntelligenceController.evaluate()
-       → latestEvaluatedServiceIntelSourceFingerprint recorded
-
+  → HostIntelligenceEngine / deterministic analyzers
+    ↓
 HostBoardView.rebuildServiceBriefing()
-  → HostServiceIntelligenceSnapshotBuilder (deterministic analyzers + engine output)
-  → HostIntelligenceController.updateServiceIntelligenceSnapshot(...)
-       → HostIntelligenceController.serviceIntelligenceSnapshot  ← canonical read model
-            ├─ Host Board: compact live card (HostIntelligenceCard) + planning/recap card headline
-            └─ More → Service Intelligence: full briefing + Service facts (rankedFacts)
-
-Optional (wording only, never facts/actions):
-  HostIntelligenceController.refreshBriefing()
-    → ManagerNarrativeWriter / HostBriefingWriter / HostLlamaBriefingRuntime
-    → validator-protected; template fallback on failure
-    → today live Host card only when enrichment gates pass
+  → HostServiceIntelligenceSnapshotBuilder
+    ↓
+HostIntelligenceController.serviceIntelligenceSnapshot   ← canonical snapshot (what is true)
+    ↓
+Parent Service Briefing Packet (4D target)               ← all safe facts to talk about
+    ↓
+Template writer (immediate, deterministic prose)
+    ↓
+Optional local model writer (human host/admin tone)
+    ↓
+Validator (blocks wrong truth, unsupported actions, guest-facing tone)
+    ↓
+  ├─ Host Board — compact intelligence (live card + planning/recap)
+  └─ More → Service Intelligence — full briefing + Service facts (rankedFacts)
 ```
+
+**Today (4C shipped):** canonical snapshot is built on Host path and read by More. Template/narrative layers are partial — today live Host card still uses engine presentation + optional LLM on `HostDecisionSnapshot`; More reads snapshot facts directly.
+
+## Tone rules
+
+Write like a host/admin talking to the team:
+
+**Say:**
+
+- “6:30 · Julie, 5 guests. Birthday note. Seat with care.”
+- “7:30 · Tristan, 4 guests. Already seated at A1 for 1h 24m.”
+- “8:00 · Derek, 3 guests. Mom’s birthday.”
+- “Four reservations are new guests.”
+- “Five walk-ins completed so far.”
+- “Nothing urgent right now. Keep an eye on A1.”
+
+**Avoid:**
+
+- “Staff needs review.”
+- “Check guest note.”
+- “Operational action required.”
+- “Guest signal detected.”
+- “Reservation has occasion metadata.”
+- “Attention category: guestNote.”
+
+## Safety (narrative layer)
+
+- **LLM cannot change** counts, guest names, statuses, table facts, or actions.
+- **LLM cannot invent** facts.
+- **LLM should not expose** raw private notes or raw contact data in prose.
+- **Validator blocks** wrong counts, wrong names, wrong status, unsupported actions, and guest-facing tone.
+- On validation failure → template fallback; never show unvalidated model output as truth.
 
 ## Canonical snapshot lifecycle (4C)
 

@@ -56,6 +56,22 @@ Optional follow-up: **4C-4** extend validity fingerprint (attachment digest + gu
 
 ---
 
+## 4D/4E — Intelligence tone (open)
+
+**Problem:** Current UI is technically correct but too quiet/generic. Copy can read like software (“Check guest note”, “Staff needs review”) instead of a human host/admin briefing the team.
+
+**Goal:** Human host/admin/manager language across Host Board (compact, live) and More → Service Intelligence (full day briefing) — before, during, and after service.
+
+**Good:** “Julie is at 6:30 with 5 guests. Birthday note.” / “Tristan has been seated at A1 for 1h 24m.” / “Four reservations are new guests.” / “Nothing urgent right now. Keep an eye on A1.”
+
+**Bad:** “Staff needs review.” / “Operational action required.” / “Guest signal detected.” / “Attention category: guestNote.”
+
+**Architecture:** Canonical snapshot = what is true. Parent briefing packet = all safe facts. Narrative layer = how a good host says it. LLM = wording only.
+
+Slices: **4D-1** parent packet; **4E-1** human-tone narrative; **4E-2** Host + More reuse; **4E-3** live/manual refresh ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) §44–47).
+
+---
+
 ## 4E — Narrative layer (open)
 
 Use **`HostServiceIntelligenceSnapshot`** as the only source of truth for staff-facing intelligence prose.
@@ -68,7 +84,7 @@ Use **`HostServiceIntelligenceSnapshot`** as the only source of truth for staff-
 | **Reuse** | Host Board and More → Service Intelligence must show the same narrative when cache valid |
 | **More** | Must not trigger model load; narrative follows snapshot readiness gates |
 
-Slices: **4E-0** architecture audit; **4E-1** implementation ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) §45–46).
+Slices: **4E-1** human-tone narrative; **4E-2** Host + More reuse; **4E-3** live/manual refresh ([IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) §45–47).
 
 ---
 
