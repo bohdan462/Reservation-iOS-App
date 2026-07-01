@@ -30,6 +30,19 @@ enum HostServiceBriefingPacketProofHarness {
         testWalkInCompletedRecap()
         testBannedPhraseAbsence()
         testNoRawContactOrNotes()
+        // 4E narrative tests
+        testNarrativePromptExcludesCompactLine()
+        testNarrativePromptExcludesSectionLines()
+        testNarrativePromptExcludesRawContactData()
+        testNarrativeValidatorRejectsUnknownGuestName()
+        testNarrativeValidatorRejectsUnknownTable()
+        testNarrativeValidatorRejectsCountAbovePacket()
+        testNarrativeValidatorRejectsExecutionClaim()
+        testNarrativeValidatorRejectsMetaLanguage()
+        testNarrativeValidatorAcceptsGroundedLine()
+        testNarrativeValidatorRejectsEmptyOutput()
+        testNarrativeValidatorRejectsGuestFacingCopy()
+        testNarrativeTemplateAlwaysAvailable()
     }
 
     private static func testBirthdayLine() {
@@ -547,6 +560,215 @@ enum HostServiceBriefingPacketProofHarness {
             + packet.facts.compactMap(\.tableLabel)
         ).joined(separator: " ")
     }
+
+    // MARK: - 4E narrative validator tests
+
+    private static func makeProofPacket(
+        dateKey: String = "2026-07-01",
+        guestName: String = "Julie Bachman",
+        tableLabel: String = "A1",
+        reservedSeated: Bool = false,
+        additionalFacts: [BriefingFact] = []
+    ) -> HostServiceBriefingPacket {
+        let now = Date()
+        let snapshot = HostServiceIntelligenceSnapshot(
+            dateKey: dateKey,
+            generatedAt: now,
+            serviceMode: .beforeService,
+            headline: "Proof snapshot",
+            subline: nil,
+            reservationCount: 1,
+            guestCount: 4,
+            rankedFacts: [],
+            inputFingerprint: "proof-snap"
+        )
+        var facts: [BriefingFact] = [
+            BriefingFact(id: "overview-\(dateKey)", kind: .dayOverview, count: 3, secondaryCount: 10, priority: 40),
+            BriefingFact(
+                id: "occasion-1",
+                kind: .occasion,
+                reservationID: 1,
+                guestName: guestName,
+                partySize: 4,
+                tableLabel: tableLabel,
+                priority: 80
+            ),
+        ]
+        facts.append(contentsOf: additionalFacts)
+        let res = ReservationRecord(
+            fixtureRemoteID: 1,
+            reservationDate: dateKey,
+            reservationTime: "18:30:00",
+            partySize: 4,
+            status: reservedSeated ? .seated : .confirmed,
+            tableName: tableLabel
+        )
+        res.guestName = guestName
+        let input = HostServiceBriefingPacketBuilder.Input(
+            now: now,
+            selectedDate: now,
+            dateKey: dateKey,
+            serviceMode: .beforeService,
+            dayReservations: [res],
+            historyReservations: [res],
+            serviceSnapshot: snapshot,
+            decisionSnapshot: .empty,
+            localSeatedAtByReservationID: [:],
+            sourceFingerprint: "proof-source"
+        )
+        return HostServiceBriefingPacketBuilder.build(input)
+    }
+
+    // 4E-1: Prompt must not include rendered compact line or section rendered lines
+    private static func testNarrativePromptExcludesCompactLine() {
+        let packet = makeProofPacket()
+        let prompt = HostServiceBriefingNarrativePromptBuilder.build(
+            HostServiceBriefingNarrativePromptBuilder.Input(packet: packet, serviceDateLabel: "Tuesday")
+        )
+        let passed = HostServiceBriefingNarrativePromptBuilder.promptPassesSafetyCheck(
+            prompt: prompt, packet: packet
+        )
+        expect("narrative_prompt_excludes_compact_line", passed)
+    }
+
+    // 4E-1: Prompt must not include section rendered lines
+    private static func testNarrativePromptExcludesSectionLines() {
+        let packet = makeProofPacket()
+        let prompt = HostServiceBriefingNarrativePromptBuilder.build(
+            HostServiceBriefingNarrativePromptBuilder.Input(packet: packet, serviceDateLabel: nil)
+        )
+        let sectionLinesInPrompt = packet.sections
+            .flatMap(\.lines)
+            .filter { !$0.isEmpty }
+            .filter { prompt.contains($0) }
+        expect("narrative_prompt_excludes_section_lines", sectionLinesInPrompt.isEmpty)
+    }
+
+    // 4E-1: Prompt must not include raw contact data
+    private static func testNarrativePromptExcludesRawContactData() {
+        let packet = makeProofPacket()
+        let prompt = HostServiceBriefingNarrativePromptBuilder.build(
+            HostServiceBriefingNarrativePromptBuilder.Input(packet: packet, serviceDateLabel: nil)
+        )
+        let passed = HostServiceBriefingNarrativePromptBuilder.promptExcludesRawContactData(prompt: prompt)
+        expect("narrative_prompt_excludes_raw_contact_data", passed)
+    }
+
+    // 4E-1: Validator rejects name outside allowedGuestNames
+    private static func testNarrativeValidatorRejectsUnknownGuestName() {
+        let packet = makeProofPacket(guestName: "Julie Bachman")
+        let raw = "COMPACT: Stranger McFake has an occasion note."
+        guard let parsed = ServiceBriefingNarrativeOutputParser.parse(raw) else {
+            expect("narrative_validator_rejects_unknown_name", false); return
+        }
+        let result = HostServiceBriefingNarrativeValidator.validate(parsed: parsed, packet: packet)
+        expect("narrative_validator_rejects_unknown_name", !result.accepted && result.rejectionReason == "unknown_guest_name")
+    }
+
+    // 4E-1: Validator rejects table label outside allowedTableLabels
+    private static func testNarrativeValidatorRejectsUnknownTable() {
+        let packet = makeProofPacket(tableLabel: "A1")
+        let raw = "COMPACT: Check table Z9 before service starts."
+        guard let parsed = ServiceBriefingNarrativeOutputParser.parse(raw) else {
+            expect("narrative_validator_rejects_unknown_table", false); return
+        }
+        let result = HostServiceBriefingNarrativeValidator.validate(parsed: parsed, packet: packet)
+        expect("narrative_validator_rejects_unknown_table", !result.accepted && result.rejectionReason == "unknown_table_label")
+    }
+
+    // 4E-1: Validator rejects count higher than packet truth
+    private static func testNarrativeValidatorRejectsCountAbovePacket() {
+        let packet = makeProofPacket()
+        // Packet has 3 active reservations, so 999 should be rejected
+        let raw = "COMPACT: 999 reservations are expected this evening."
+        guard let parsed = ServiceBriefingNarrativeOutputParser.parse(raw) else {
+            expect("narrative_validator_rejects_count_above_packet", false); return
+        }
+        let result = HostServiceBriefingNarrativeValidator.validate(parsed: parsed, packet: packet)
+        expect("narrative_validator_rejects_count_above_packet", !result.accepted && result.rejectionReason == "count_grounding")
+    }
+
+    // 4E-1: Validator rejects execution claims
+    private static func testNarrativeValidatorRejectsExecutionClaim() {
+        let packet = makeProofPacket()
+        let raw = "COMPACT: We confirmed all reservations and sent reminder emails."
+        guard let parsed = ServiceBriefingNarrativeOutputParser.parse(raw) else {
+            expect("narrative_validator_rejects_execution_claim", false); return
+        }
+        let result = HostServiceBriefingNarrativeValidator.validate(parsed: parsed, packet: packet)
+        expect("narrative_validator_rejects_execution_claim", !result.accepted && result.rejectionReason == "execution_claim")
+    }
+
+    // 4E-1: Validator rejects meta/model language
+    private static func testNarrativeValidatorRejectsMetaLanguage() {
+        let packet = makeProofPacket()
+        let raw = "COMPACT: Based on AI model prediction, the backend shows 2 arrivals."
+        guard let parsed = ServiceBriefingNarrativeOutputParser.parse(raw) else {
+            expect("narrative_validator_rejects_meta_language", false); return
+        }
+        let result = HostServiceBriefingNarrativeValidator.validate(parsed: parsed, packet: packet)
+        expect("narrative_validator_rejects_meta_language", !result.accepted && result.rejectionReason == "meta_language")
+    }
+
+    // 4E-1: Validator accepts a clean grounded compact line
+    private static func testNarrativeValidatorAcceptsGroundedLine() {
+        let packet = makeProofPacket(guestName: "Julie Bachman", tableLabel: "A1")
+        let raw = "COMPACT: Julie has an occasion note. Seat at A1 with care."
+        guard let parsed = ServiceBriefingNarrativeOutputParser.parse(raw) else {
+            expect("narrative_validator_accepts_grounded_line", false); return
+        }
+        let result = HostServiceBriefingNarrativeValidator.validate(parsed: parsed, packet: packet)
+        expect("narrative_validator_accepts_grounded_line", result.accepted)
+    }
+
+    // 4E-1: Validator rejects empty output
+    private static func testNarrativeValidatorRejectsEmptyOutput() {
+        let packet = makeProofPacket()
+        let parsed = ServiceBriefingNarrativeOutputParser.Parsed(
+            compactLine: "   ",
+            sectionLinesByID: [:]
+        )
+        let result = HostServiceBriefingNarrativeValidator.validate(parsed: parsed, packet: packet)
+        expect("narrative_validator_rejects_empty_output", !result.accepted && result.rejectionReason == "empty_compact")
+    }
+
+    // 4E-1: Validator rejects guest-facing copy
+    private static func testNarrativeValidatorRejectsGuestFacingCopy() {
+        let packet = makeProofPacket()
+        let raw = "COMPACT: We are excited to welcome guests this evening."
+        guard let parsed = ServiceBriefingNarrativeOutputParser.parse(raw) else {
+            expect("narrative_validator_rejects_guest_facing_copy", false); return
+        }
+        let result = HostServiceBriefingNarrativeValidator.validate(parsed: parsed, packet: packet)
+        expect("narrative_validator_rejects_guest_facing_copy", !result.accepted && result.rejectionReason == "guest_facing")
+    }
+
+    // 4E-1: Template fallback is always available when model is disabled
+    private static func testNarrativeTemplateAlwaysAvailable() {
+        let packet = makeProofPacket()
+        let writerInput = HostServiceBriefingNarrativeWriter.Input(
+            packet: packet,
+            sourceFingerprint: "proof-source",
+            settings: HostIntelligenceSettings.templateOnlyForTests,
+            gateContext: HostServiceBriefingNarrativeGate.Context(
+                selectedDateKey: packet.dateKey,
+                isStartupNetworkPassInFlight: false,
+                isReservationRefreshInFlight: false,
+                isLocalModelInferenceActive: false,
+                hostBoardDateNavigationAt: nil,
+                now: Date()
+            ),
+            serviceDateLabel: nil
+        )
+        let narrative = HostServiceBriefingNarrativeWriter.writeTemplate(writerInput)
+        expect(
+            "narrative_template_always_available",
+            narrative.source == .template && narrative.hasUsableCopy && narrative.dateKey == packet.dateKey
+        )
+        print("[SERVICE_BRIEFING_PACKET_TEST] narrative_validator=pass")
+    }
+
+    // MARK: - Existing helpers
 
     private static func expect(_ scenario: String, _ passed: Bool) {
         print("[SERVICE_BRIEFING_PACKET_TEST] scenario=\(scenario) result=\(passed ? "pass" : "FAIL")")

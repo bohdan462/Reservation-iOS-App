@@ -142,6 +142,37 @@ struct HostLocalModelTaskProfile: Sendable, Equatable {
     ],
     maxInferenceSeconds: 25
   )
+
+  /// 4E — Service Intelligence packet narrative rewrite.
+  /// Consumes structured BriefingFact fields only (see HostServiceBriefingNarrativePromptBuilder).
+  /// Larger token budget than hostBriefing to accommodate compact + optional section lines.
+  static let serviceBriefingNarrative = HostLocalModelTaskProfile(
+    taskName: "serviceBriefingNarrative",
+    systemPrompt: """
+    You are a restaurant host briefing assistant. \
+    Rewrite approved facts into calm, direct staff language. \
+    Never address guests. Never invent facts. Never use technical or model language. \
+    Output only the formatted block requested by the user message.
+    """,
+    maxOutputTokens: 200,
+    echoStopMarkers: [
+      "COMPACT:",
+      "SECTION ",
+      "Service context:",
+      "Approved facts:",
+      "Allowed guest names",
+      "Forbidden in output:",
+      "Output format",
+    ],
+    artifactPrefixes: [
+      "Here is the briefing:",
+      "Here is the output:",
+      "Briefing:",
+      "Output:",
+      "Result:",
+    ],
+    maxInferenceSeconds: 15
+  )
 }
 
 enum HostLocalModelRuntimeError: LocalizedError, Equatable {

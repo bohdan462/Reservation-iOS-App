@@ -37,6 +37,9 @@ final class HostIntelligenceController: ObservableObject {
   /// Populated by updateServiceIntelligenceSnapshot(_:); never built in body.
   @Published private(set) var serviceIntelligenceSnapshot: HostServiceIntelligenceSnapshot = .empty
   @Published private(set) var serviceBriefingPacket: HostServiceBriefingPacket = .empty
+  /// 4E — validated packet narrative (template or local-model wording).
+  /// Built by refreshServiceBriefingNarrative; never built by GlobalServiceIntelligenceView.
+  @Published private(set) var serviceBriefingNarrative: HostServiceBriefingNarrative = .empty
   @Published private(set) var serviceIntelligenceSourceFingerprint: String = ""
 
   let settingsStore: HostIntelligenceSettingsStore
@@ -80,6 +83,8 @@ final class HostIntelligenceController: ObservableObject {
   private var lastRetryableBriefingSkipReason: HostBriefingHostBoardGate.SkipReason?
   private var lastServiceIntelSnapshotFingerprint: String = ""
   private var lastServiceBriefingPacketFingerprint: String = ""
+  private var lastNarrativeCacheKey: String = ""
+  private var narrativeRefreshGeneration = 0
 
   init(
     settingsStore: HostIntelligenceSettingsStore? = nil,
@@ -332,6 +337,81 @@ final class HostIntelligenceController: ObservableObject {
     serviceBriefingPacket = packet
     #if DEBUG
     print("[SERVICE_BRIEFING_PACKET_TRACE] decision=build date=\(packet.dateKey) facts=\(packet.facts.count) compact=\"\(packet.compactLine)\"")
+    #endif
+  }
+
+  // MARK: - 4E Packet narrative
+
+  /// Returns true when the cached narrative is current for the given packet fingerprint and date.
+  func isServiceBriefingNarrativeCurrent(dateKey: String, packetFingerprint: String) -> Bool {
+    serviceBriefingNarrative.isCurrent(dateKey: dateKey, packetFingerprint: packetFingerprint)
+  }
+
+  /// Builds a cache key for the narrative pass.
+  private func narrativeCacheKey(
+    packet: HostServiceBriefingPacket,
+    sourceFingerprint: String,
+    settings: HostIntelligenceSettings
+  ) -> String {
+    [
+      packet.inputFingerprint,
+      sourceFingerprint,
+      HostServiceBriefingNarrativePromptBuilder.promptVersion,
+      settings.useEnhancedBriefing ? "1" : "0",
+      settings.enhancedBriefingProvider.rawValue,
+      settings.useLocalModelOnHostBoard ? "1" : "0",
+    ].joined(separator: "|")
+  }
+
+  /// 4E async narrative refresh. Called from HostBoardView after updateServiceBriefingPacket
+  /// builds a new packet. Global SI must never call this.
+  func refreshServiceBriefingNarrative(
+    packet: HostServiceBriefingPacket,
+    sourceFingerprint: String,
+    serviceDateLabel: String?,
+    gateContext: HostServiceBriefingNarrativeGate.Context
+  ) async {
+    narrativeRefreshGeneration += 1
+    let generation = narrativeRefreshGeneration
+    let settings = settingsStore.settings
+
+    // Cache check — skip if nothing changed
+    let cacheKey = narrativeCacheKey(
+      packet: packet,
+      sourceFingerprint: sourceFingerprint,
+      settings: settings
+    )
+    guard cacheKey != lastNarrativeCacheKey else {
+      #if DEBUG
+      print("[SERVICE_BRIEFING_NARRATIVE_TRACE] decision=skip reason=cache_hit date=\(packet.dateKey) fingerprint=\(packet.inputFingerprint.prefix(12))")
+      #endif
+      return
+    }
+
+    let writerInput = HostServiceBriefingNarrativeWriter.Input(
+      packet: packet,
+      sourceFingerprint: sourceFingerprint,
+      settings: settings,
+      gateContext: gateContext,
+      serviceDateLabel: serviceDateLabel
+    )
+
+    let result = await HostServiceBriefingNarrativeWriter.write(writerInput)
+
+    // Stale-generation guard (date or packet may have changed while model was running)
+    guard generation == narrativeRefreshGeneration,
+          result.dateKey == latestSelectedDateKey,
+          result.packetFingerprint == serviceBriefingPacket.inputFingerprint else {
+      #if DEBUG
+      print("[SERVICE_BRIEFING_NARRATIVE_TRACE] decision=skip reason=stale_result date=\(result.dateKey) expected=\(latestSelectedDateKey)")
+      #endif
+      return
+    }
+
+    lastNarrativeCacheKey = cacheKey
+    serviceBriefingNarrative = result
+    #if DEBUG
+    print("[SERVICE_BRIEFING_NARRATIVE_TRACE] decision=stored source=\(result.source.rawValue) date=\(result.dateKey) fingerprint=\(result.packetFingerprint.prefix(12)) compact=\"\(result.compactLine.prefix(60))\"")
     #endif
   }
 
@@ -819,9 +899,12 @@ final class HostIntelligenceController: ObservableObject {
     isEnrichmentLoading = false
     serviceIntelligenceSnapshot = .empty
     serviceBriefingPacket = .empty
+    serviceBriefingNarrative = .empty
     serviceIntelligenceSourceFingerprint = ""
     lastServiceIntelSnapshotFingerprint = ""
     lastServiceBriefingPacketFingerprint = ""
+    lastNarrativeCacheKey = ""
+    narrativeRefreshGeneration += 1
     latestEvaluatedServiceIntelSourceFingerprint = ""
     latestSelectedDateKey = ""
   }
@@ -853,6 +936,8 @@ final class HostIntelligenceController: ObservableObject {
       "date=\(latestSelectedDateKey.isEmpty ? "none" : latestSelectedDateKey) " +
       "packetDate=\(packetDate) hasPacket=\(hasPacket)"
     )
+    // 4E: narrative is preserved on hide (packet preserved → narrative remains current)
+    print("[SERVICE_BRIEFING_NARRATIVE_TRACE] decision=preserve reason=view_hidden date=\(latestSelectedDateKey.isEmpty ? "none" : latestSelectedDateKey) hasNarrative=\(serviceBriefingNarrative.hasUsableCopy)")
     #endif
   }
 
@@ -864,11 +949,15 @@ final class HostIntelligenceController: ObservableObject {
       && !serviceIntelligenceSnapshot.dateKey.isEmpty
     let hadPacket = serviceBriefingPacket.inputFingerprint != "empty"
       && !serviceBriefingPacket.dateKey.isEmpty
+    let hadNarrative = serviceBriefingNarrative.hasUsableCopy
     serviceIntelligenceSnapshot = .empty
     serviceBriefingPacket = .empty
+    serviceBriefingNarrative = .empty
     serviceIntelligenceSourceFingerprint = ""
     lastServiceIntelSnapshotFingerprint = ""
     lastServiceBriefingPacketFingerprint = ""
+    lastNarrativeCacheKey = ""
+    narrativeRefreshGeneration += 1
     latestEvaluatedServiceIntelSourceFingerprint = ""
     #if DEBUG
     if hadSnapshot {
@@ -876,6 +965,9 @@ final class HostIntelligenceController: ObservableObject {
     }
     if hadPacket {
       print("[SERVICE_BRIEFING_PACKET_TRACE] decision=clear reason=date_transition old=\(oldDateKey.isEmpty ? "none" : oldDateKey) new=\(newDateKey)")
+    }
+    if hadNarrative {
+      print("[SERVICE_BRIEFING_NARRATIVE_TRACE] decision=clear reason=date_transition old=\(oldDateKey.isEmpty ? "none" : oldDateKey) new=\(newDateKey)")
     }
     #endif
   }

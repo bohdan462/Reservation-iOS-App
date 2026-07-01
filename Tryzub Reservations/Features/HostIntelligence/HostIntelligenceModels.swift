@@ -672,6 +672,16 @@ struct HostIntelligenceSettings: Codable, Equatable {
             useLegacyAdvisoryTableFallback ? "1" : "0",
         ].joined(separator: "|")
     }
+
+    /// Returns a settings value that forces template-only wording.
+    /// Used in proof harnesses only — never in production paths.
+    static var templateOnlyForTests: HostIntelligenceSettings {
+        HostIntelligenceSettings(
+            useEnhancedBriefing: true,
+            enhancedBriefingProvider: .template,
+            useLocalModelOnHostBoard: false
+        )
+    }
 }
 
 struct RestaurantTableConfig: Identifiable, Codable, Equatable {
