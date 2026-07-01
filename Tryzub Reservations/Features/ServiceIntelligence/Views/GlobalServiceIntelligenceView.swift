@@ -26,6 +26,7 @@ import SwiftData
 import UIKit
 
 struct GlobalServiceIntelligenceView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var hostIntelligenceController: HostIntelligenceController
@@ -64,11 +65,13 @@ struct GlobalServiceIntelligenceView: View {
     @State private var blockedSlotsPreselectedSlot: String?
 
     let environment: AppEnvironment
+    let showsCloseButton: Bool
 
     private let clockTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
-    init(environment: AppEnvironment) {
+    init(environment: AppEnvironment, showsCloseButton: Bool = false) {
         self.environment = environment
+        self.showsCloseButton = showsCloseButton
         let bounds = activeReservationWindowQueryBounds()
         let fromDate = bounds.from
         let toDate = bounds.to
@@ -86,46 +89,57 @@ struct GlobalServiceIntelligenceView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let briefing {
-                    HostServiceBriefingCard(state: briefing) { intent in
-                        openReservation(for: intent)
+        TryzubHostBoardCanvas {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let briefing {
+                        HostServiceBriefingCard(state: briefing) { intent in
+                            openReservation(for: intent)
+                        }
+                        if briefing.unresolvedCount > 0 {
+                            unresolvedFooter(briefing.unresolvedCount)
+                        }
+                    } else {
+                        HostServiceBriefingCardPlaceholder()
                     }
-                    if briefing.unresolvedCount > 0 {
-                        unresolvedFooter(briefing.unresolvedCount)
+
+                    snapshotFactsSection
+
+                    if !bookingItems.isEmpty {
+                        bookingSuggestionsSection
                     }
-                } else {
-                    HostServiceBriefingCardPlaceholder()
+
+                    guestsToKnowSection
+
+                    noteSignalsSection
+
+                    upcomingSection
+
+                    analyticsSection
+
+                    if let note = freshnessNote {
+                        Text(note)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 4)
+                    }
                 }
-
-                snapshotFactsSection
-
-                bookingSuggestionsSection
-
-                guestsToKnowSection
-
-                noteSignalsSection
-
-                upcomingSection
-
-                analyticsSection
-
-                guestSection
-
-                if let note = freshnessNote {
-                    Text(note)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
-                }
+                .padding(12)
             }
-            .padding(16)
         }
-        .background(Color(.systemGroupedBackground))
         .navigationTitle("Service Intelligence")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if showsCloseButton {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                }
+            }
+        }
         .navigationDestination(item: $selectedReservation) { reservation in
             ReservationDetailView(reservation: reservation, environment: environment)
         }
@@ -153,16 +167,15 @@ struct GlobalServiceIntelligenceView: View {
             ForEach(packetSections) { section in
                 sectionCard(
                     title: section.title,
-                    systemImage: packetSectionIcon(section.id),
-                    tint: packetSectionTint(section.id)
+                    systemImage: packetSectionIcon(section.id)
                 ) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(Array(section.lines.enumerated()), id: \.offset) { index, line in
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(section.lines.prefix(3).enumerated()), id: \.offset) { index, line in
                             Text(line)
-                                .font(.subheadline)
+                                .font(.caption)
                                 .foregroundStyle(.primary)
                                 .fixedSize(horizontal: false, vertical: true)
-                            if index != section.lines.count - 1 {
+                            if index != min(section.lines.count, 3) - 1 {
                                 Divider().opacity(0.4)
                             }
                         }
@@ -170,11 +183,10 @@ struct GlobalServiceIntelligenceView: View {
                 }
             }
         } else if usesCanonicalSnapshot && !snapshotFacts.isEmpty {
-            sectionCard(
-                title: "Service facts",
-                systemImage: "list.bullet.clipboard",
-                tint: .blue
-            ) {
+                sectionCard(
+                    title: "Service facts",
+                    systemImage: "list.bullet.clipboard"
+                ) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(snapshotFacts) { fact in
                         if let reservationID = fact.reservationID,
@@ -201,12 +213,11 @@ struct GlobalServiceIntelligenceView: View {
     private var bookingSuggestionsSection: some View {
         sectionCard(
             title: "Booking Suggestions",
-            systemImage: "clock.badge.exclamationmark",
-            tint: .orange
+            systemImage: "clock.badge.exclamationmark"
         ) {
             if bookingItems.isEmpty {
                 Text("No booking slots need attention right now.")
-                    .font(.subheadline)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(bookingItems) { item in
@@ -234,31 +245,30 @@ struct GlobalServiceIntelligenceView: View {
         // without settings permission get a non-mutating "Copy suggestion" fallback.
         if controller.capabilities.canManageRestaurantSettings {
             Button {
-                blockedSlotsPreselectedSlot = item.slotValue
-                showBlockedSlots = true
-            } label: {
-                Label("Review close slot", systemImage: "calendar.badge.minus")
-                    .font(.subheadline.weight(.medium))
+                    blockedSlotsPreselectedSlot = item.slotValue
+                    showBlockedSlots = true
+                } label: {
+                    Label("Review close slot", systemImage: "calendar.badge.minus")
+                    .font(.caption.weight(.semibold))
+                }
+            } else {
+                Button {
+                    UIPasteboard.general.string = "\(item.headline). \(item.loadLine). \(item.closeLine). \(item.alternateLine)"
+                } label: {
+                    Label("Copy suggestion", systemImage: "doc.on.doc")
+                    .font(.caption.weight(.semibold))
+                }
             }
-        } else {
-            Button {
-                UIPasteboard.general.string = "\(item.headline). \(item.loadLine). \(item.closeLine). \(item.alternateLine)"
-            } label: {
-                Label("Copy suggestion", systemImage: "doc.on.doc")
-                    .font(.subheadline.weight(.medium))
-            }
-        }
     }
 
     // MARK: - Guests to know (backend-enriched)
 
     @ViewBuilder
     private var guestsToKnowSection: some View {
-        if !guestsToKnow.isEmpty {
+        if !guestsToKnow.isEmpty && !packetHasGuestCoverage {
             sectionCard(
                 title: "Guests to know today",
-                systemImage: "person.crop.circle.badge.exclamationmark",
-                tint: .teal
+                systemImage: "person.crop.circle.badge.exclamationmark"
             ) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(guestsToKnow.prefix(6)) { guest in
@@ -283,21 +293,21 @@ struct GlobalServiceIntelligenceView: View {
 
     @ViewBuilder
     private var noteSignalsSection: some View {
-        if !signalledReservations.isEmpty {
+        let visibleEntries = visibleNoteSignalEntries
+        if !visibleEntries.isEmpty {
             sectionCard(
                 title: "Note signals",
-                systemImage: "lightbulb",
-                tint: .indigo
+                systemImage: "lightbulb"
             ) {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(signalledReservations, id: \.reservation.remoteID) { entry in
+                    ForEach(visibleEntries, id: \.reservation.remoteID) { entry in
                         Button {
                             selectedReservation = entry.reservation
                         } label: {
                             HStack(alignment: .top, spacing: 10) {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(entry.reservation.guestName)
-                                        .font(.subheadline.weight(.semibold))
+                                        .font(.caption.weight(.semibold))
                                         .foregroundStyle(.primary)
                                     Text(entry.topSignals.map(\.title).joined(separator: " · "))
                                         .font(.caption)
@@ -306,7 +316,7 @@ struct GlobalServiceIntelligenceView: View {
                                     if entry.topSignals.contains(where: { $0.requiresReview }) {
                                         Text(entry.topSignals.first(where: { $0.requiresReview })?.staffText ?? "")
                                             .font(.caption2)
-                                            .foregroundStyle(.orange)
+                                            .foregroundStyle(.secondary)
                                             .lineLimit(1)
                                     }
                                 }
@@ -317,12 +327,21 @@ struct GlobalServiceIntelligenceView: View {
                             }
                         }
                         .buttonStyle(.plain)
-                        if entry.reservation.remoteID != signalledReservations.last?.reservation.remoteID {
+                        if entry.reservation.remoteID != visibleEntries.last?.reservation.remoteID {
                             Divider()
                         }
                     }
                 }
             }
+        }
+    }
+
+    private var visibleNoteSignalEntries: [(reservation: ReservationRecord, topSignals: [ReservationSignal])] {
+        let coveredReservationIDs = Set(guestsToKnow.map(\.id))
+        guard !coveredReservationIDs.isEmpty else { return signalledReservations }
+        return signalledReservations.filter { entry in
+            !coveredReservationIDs.contains(entry.reservation.remoteID)
+                || entry.topSignals.contains(where: { $0.requiresReview })
         }
     }
 
@@ -332,13 +351,12 @@ struct GlobalServiceIntelligenceView: View {
         if upcoming > 0 {
             sectionCard(
                 title: "Upcoming",
-                systemImage: "calendar.badge.clock",
-                tint: .blue
+                systemImage: "calendar.badge.clock"
             ) {
                 Text(upcoming == 1
-                     ? "1 reservation booked beyond today."
-                     : "\(upcoming) reservations booked beyond today.")
-                    .font(.subheadline)
+                     ? "1 reservation booked beyond this date."
+                     : "\(upcoming) reservations booked beyond this date.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -348,15 +366,14 @@ struct GlobalServiceIntelligenceView: View {
     private var analyticsSection: some View {
         sectionCard(
             title: "Business",
-            systemImage: "chart.bar",
-            tint: .purple
+            systemImage: "chart.bar"
         ) {
             // Business intelligence backend summary (richer than reservation analytics).
             if !businessInsightLines.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(Array(businessInsightLines.enumerated()), id: \.offset) { _, line in
                         Text(line)
-                            .font(.subheadline)
+                            .font(.caption)
                             .foregroundStyle(.primary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -378,7 +395,7 @@ struct GlobalServiceIntelligenceView: View {
                 }
             } else {
                 Text("Open Business Analytics to load the latest numbers.")
-                    .font(.subheadline)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
@@ -387,30 +404,10 @@ struct GlobalServiceIntelligenceView: View {
                     BusinessAnalyticsView(settingsStore: settingsStore)
                 } label: {
                     Label("Open Business Analytics", systemImage: "arrow.up.right")
-                        .font(.subheadline.weight(.medium))
+                        .font(.caption.weight(.semibold))
                 }
                 .padding(.top, 2)
             }
-        }
-    }
-
-    @ViewBuilder
-    private var guestSection: some View {
-        sectionCard(
-            title: "Guests",
-            systemImage: "person.2.crop.square.stack",
-            tint: .teal
-        ) {
-            Text("Regulars, allergies, and guest preferences staff should remember.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            NavigationLink {
-                RegularGuestsView(environment: environment)
-            } label: {
-                Label("Open Guest Memory", systemImage: "arrow.up.right")
-                    .font(.subheadline.weight(.medium))
-            }
-            .padding(.top, 2)
         }
     }
 
@@ -429,36 +426,34 @@ struct GlobalServiceIntelligenceView: View {
     private func sectionCard<Content: View>(
         title: String,
         systemImage: String,
-        tint: Color,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: systemImage)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(tint)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 15, alignment: .center)
                 Text(title)
-                    .font(.headline)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
                 Spacer(minLength: 0)
             }
             content()
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color(.secondarySystemGroupedBackground),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
+        .hostBoardGlassPanel(cornerRadius: 12, strokeOpacity: 0.10)
     }
 
     private func analyticsRow(_ label: String, value: String) -> some View {
         HStack {
             Text(label)
-                .font(.subheadline)
+                .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
             Text(value)
-                .font(.subheadline.weight(.semibold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.primary)
         }
     }
@@ -480,50 +475,51 @@ struct GlobalServiceIntelligenceView: View {
         }
     }
 
-    private func packetSectionTint(_ id: String) -> Color {
-        switch id {
-        case "arrivals":
-            return .blue
-        case "seated":
-            return .orange
-        case "guests":
-            return .teal
-        case "followup":
-            return .purple
-        case "recap":
-            return .green
-        default:
-            return .blue
+    private var packetHasGuestCoverage: Bool {
+        usesBriefingPacket && packetSections.contains { section in
+            section.id == "guests" && !section.lines.isEmpty
         }
     }
 
     // MARK: - Data
 
-    /// The hub action brain focuses on today's service (the deterministic snapshot is
-    /// computed for the host board's day, which defaults to today).
-    private var todayKey: String { Date.reservationDateString() }
-
-    private var todayReservations: [ReservationRecord] {
-        windowReservations.filter { $0.reservationDate == todayKey }
+    /// The hub follows the Host Board's evaluated service date when available.
+    /// Cold opens still default to calendar today.
+    private var serviceDateKey: String {
+        let hostKey = hostIntelligenceController.evaluatedSelectedDateKey
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !hostKey.isEmpty,
+           hostIntelligenceController.isEvaluatedForSelectedDate(hostKey) {
+            return hostKey
+        }
+        return Date.reservationDateString()
     }
 
-    private var todayServiceIntelligenceSourceFingerprint: String {
+    private var serviceDate: Date {
+        ReservationFormatters.reservationDateKey.date(from: serviceDateKey) ?? Date()
+    }
+
+    private var serviceDateReservations: [ReservationRecord] {
+        windowReservations.filter { $0.reservationDate == serviceDateKey }
+    }
+
+    private var serviceDateIntelligenceSourceFingerprint: String {
         HostIntelligenceController.serviceIntelligenceSourceFingerprint(
-            dateKey: todayKey,
-            reservations: todayReservations
+            dateKey: serviceDateKey,
+            reservations: serviceDateReservations
         )
     }
 
     private var upcomingReservationCount: Int {
         windowReservations.filter { reservation in
-            reservation.reservationDate > todayKey
+            reservation.reservationDate > serviceDateKey
                 && reservation.statusValue != .cancelled
                 && reservation.statusValue != .noShow
         }.count
     }
 
-    private var todayServiceBounds: (open: Date?, close: Date?) {
-        guard let availability = controller.availabilitySummary(for: todayKey)?.availability else {
+    private var serviceDateBounds: (open: Date?, close: Date?) {
+        guard let availability = controller.availabilitySummary(for: serviceDateKey)?.availability else {
             return (nil, nil)
         }
         func serviceDate(from timeValue: String?) -> Date? {
@@ -531,7 +527,7 @@ struct GlobalServiceIntelligenceView: View {
             let trimmed = timeValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
             let time = trimmed.count >= 5 ? String(trimmed.prefix(5)) : trimmed
-            return ReservationFormatters.serverDateMinute.date(from: "\(todayKey) \(time)")
+            return ReservationFormatters.serverDateMinute.date(from: "\(serviceDateKey) \(time)")
         }
         guard let open = serviceDate(from: availability.openTime),
               let close = serviceDate(from: availability.closeTime),
@@ -548,23 +544,23 @@ struct GlobalServiceIntelligenceView: View {
         // Include attachment OCR count so rebuild fires when extractedText is written.
         let ocrCompleted = allAttachmentRecords.filter { $0.ocrRanAt != nil }.count
         return [
-            todayKey,
-            String(todayReservations.count),
+            serviceDateKey,
+            String(serviceDateReservations.count),
             String(Int(hostIntelligenceController.decisionSnapshot.generatedAt.timeIntervalSince1970)),
             hostIntelligenceController.serviceIntelligenceSnapshot.inputFingerprint,
             hostIntelligenceController.serviceBriefingPacket.inputFingerprint,
             hostIntelligenceController.serviceIntelligenceSourceFingerprint,
-            todayServiceIntelligenceSourceFingerprint,
+            serviceDateIntelligenceSourceFingerprint,
             String(minute),
-            guestIntelligenceStore.cacheStamp(for: todayKey),
-            businessIntelligenceStore.cacheStamp(from: businessRangeFrom, to: todayKey),
+            guestIntelligenceStore.cacheStamp(for: serviceDateKey),
+            businessIntelligenceStore.cacheStamp(from: businessRangeFrom, to: serviceDateKey),
             String(ocrCompleted)
         ].joined(separator: "|")
     }
 
     /// 30-day rolling window start for business intelligence.
     private var businessRangeFrom: String {
-        let d = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
+        let d = Calendar.current.date(byAdding: .day, value: -30, to: serviceDate) ?? serviceDate
         return d.reservationDateString()
     }
 
@@ -572,39 +568,44 @@ struct GlobalServiceIntelligenceView: View {
     /// Never blocks: first call is instant; subsequent calls (after backend loads) are equally fast.
     private func rebuild() {
         let rebuildStarted = ContinuousClock.now
-        let bounds = todayServiceBounds
+        let dateKey = serviceDateKey
+        let activeDate = serviceDate
+        let activeReservations = serviceDateReservations
+        let bounds = serviceDateBounds
         let now = Date()
 
         // ── Service Briefing ──────────────────────────────────────────────────────
         let state = HostServiceBriefingViewStateBuilder.build(
             HostServiceBriefingViewStateBuilder.Input(
                 now: now,
-                selectedDate: now,
-                reservations: todayReservations,
+                selectedDate: activeDate,
+                reservations: activeReservations,
                 snapshot: hostIntelligenceController.decisionSnapshot,
                 openTime: bounds.open,
                 closeTime: bounds.close,
-                selectedDateLabel: now.formatted(.dateTime.weekday(.wide))
+                selectedDateLabel: activeDate.formatted(.dateTime.weekday(.wide))
             )
         )
-        let currentSourceFingerprint = todayServiceIntelligenceSourceFingerprint
+        let currentSourceFingerprint = serviceDateIntelligenceSourceFingerprint
         let readiness = canonicalSnapshotReadiness(
-            for: todayKey,
+            for: dateKey,
             sourceFingerprint: currentSourceFingerprint
         )
         let packetReadiness = serviceBriefingPacketReadiness(
-            for: todayKey,
+            for: dateKey,
             sourceFingerprint: currentSourceFingerprint
         )
         let snapshotReady = readiness.snapshot != nil
         let packetReady = packetReadiness.packet != nil
         if let packet = packetReadiness.packet {
             #if DEBUG
-            print("[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=use_packet reason=ready date=\(todayKey)")
+            print("[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=use_packet reason=ready date=\(dateKey)")
             #endif
+            let summaryParts = packet.compactChips
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             briefing = state.overridingHeadline(
                 packet.compactLine,
-                summary: packet.compactChips.joined(separator: " · ")
+                summary: summaryParts.joined(separator: " · ")
             )
             usesBriefingPacket = true
             packetSections = packet.sections
@@ -612,7 +613,7 @@ struct GlobalServiceIntelligenceView: View {
             snapshotFacts = []
         } else if let snapshot = readiness.snapshot {
             #if DEBUG
-            print("[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=use_snapshot reason=ready date=\(todayKey)")
+            print("[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=use_snapshot reason=ready date=\(dateKey)")
             #endif
             briefing = state.overridingHeadline(snapshot.headline, summary: snapshot.subline ?? "")
             usesBriefingPacket = false
@@ -621,7 +622,7 @@ struct GlobalServiceIntelligenceView: View {
             snapshotFacts = snapshot.rankedFacts
         } else {
             #if DEBUG
-            print("[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=legacy reason=\(readiness.reason) date=\(todayKey)")
+            print("[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=legacy reason=\(readiness.reason) date=\(dateKey)")
             #endif
             briefing = state
             usesBriefingPacket = false
@@ -646,7 +647,7 @@ struct GlobalServiceIntelligenceView: View {
             signalledReservations = []
             ServiceIntelligenceTrace.noteSignals(count: 0)
         } else {
-            let signalled: [(reservation: ReservationRecord, topSignals: [ReservationSignal])] = todayReservations
+            let signalled: [(reservation: ReservationRecord, topSignals: [ReservationSignal])] = activeReservations
                 .compactMap { res in
                     // Note-based signals.
                     let input = NoteSignalAnalyzer.Input(
@@ -682,29 +683,29 @@ struct GlobalServiceIntelligenceView: View {
         }
 
         // ── Backend guest intelligence ────────────────────────────────────────────
-        let dayResponse = guestIntelligenceStore.response(for: todayKey)
+        let dayResponse = guestIntelligenceStore.response(for: dateKey)
         let guestSummaries = dayResponse?.items ?? []
         let guestStatus: IntelligenceDataStatus = guestSummaries.isEmpty
-            ? (guestIntelligenceStore.hasDateSummaryLoaded(dateKey: todayKey) ? .stale : .missing)
+            ? (guestIntelligenceStore.hasDateSummaryLoaded(dateKey: dateKey) ? .stale : .missing)
             : .loaded
 
         let ctx = ServiceIntelligenceContext(
-            selectedDate: now,
-            selectedDateKey: todayKey,
+            selectedDate: activeDate,
+            selectedDateKey: dateKey,
             serviceMode: state.mode,
-            dayReservations: todayReservations,
+            dayReservations: activeReservations,
             historyReservations: windowReservations,
             guestSummaries: guestSummaries,
             profilePacks: [:],
             businessSummary: businessIntelligenceStore.response(
-                from: businessRangeFrom, to: todayKey
+                from: businessRangeFrom, to: dateKey
             ),
             reservationAnalyticsSummary: settingsStore.analyticsSummary,
             freshness: ServiceIntelligenceFreshness(
                 reservationCacheFresh: true,
                 guestSummaryStatus: guestStatus,
                 businessSummaryStatus: businessIntelligenceStore.response(
-                    from: businessRangeFrom, to: todayKey
+                    from: businessRangeFrom, to: dateKey
                 ) != nil ? .loaded : .missing,
                 profilePacksLoadedCount: 0,
                 evaluatedAt: now
@@ -726,8 +727,8 @@ struct GlobalServiceIntelligenceView: View {
 
         // ── Traces ────────────────────────────────────────────────────────────────
         ServiceIntelligenceTrace.context(
-            dateKey: todayKey,
-            reservations: todayReservations.count,
+            dateKey: dateKey,
+            reservations: activeReservations.count,
             guestSummaryStatus: ctx.freshness.guestSummaryStatus.rawValue,
             businessSummaryStatus: ctx.freshness.businessSummaryStatus.rawValue,
             profilePacks: ctx.freshness.profilePacksLoadedCount,
@@ -749,13 +750,14 @@ struct GlobalServiceIntelligenceView: View {
     /// Schedules non-blocking background backend loads. Called once on `.onAppear`.
     /// The view automatically rebuilds when stores update via `rebuildStamp`.
     private func scheduleBackendLoads() {
-        // Guest intelligence for today — same endpoint the Host Board already uses.
+        let dateKey = serviceDateKey
+        // Guest intelligence for the active service date — same endpoint the Host Board already uses.
         Task(priority: .utility) {
-            await guestIntelligenceStore.load(dateKey: todayKey, force: false)
+            await guestIntelligenceStore.load(dateKey: dateKey, force: false)
         }
         // Business intelligence for the last 30 days.
         let from = businessRangeFrom
-        let to = todayKey
+        let to = dateKey
         ServiceIntelligenceTrace.backendFeed(type: "guest_date_summary", status: "scheduled")
         ServiceIntelligenceTrace.backendFeed(type: "business_summary", status: "scheduled")
         Task(priority: .utility) {
@@ -764,10 +766,12 @@ struct GlobalServiceIntelligenceView: View {
     }
 
     private func buildBookingLoadReport(bounds: (open: Date?, close: Date?)) -> BookingLoadReport {
+        let dateKey = serviceDateKey
+        let activeReservations = serviceDateReservations
         let allowsLegacy = hostIntelligenceSettingsStore.settings.useLegacyAdvisoryTableFallback
         let localActiveCount = hostTableConfigStore.activeTables.count
         let source = floorPlanStore.floorSourceStatus(
-            for: todayKey,
+            for: dateKey,
             allowsLegacyFallback: allowsLegacy,
             localActiveTableCount: localActiveCount
         )
@@ -775,7 +779,7 @@ struct GlobalServiceIntelligenceView: View {
         switch source {
         case .backend:
             capacitySummary = floorPlanStore.capacitySummary(
-                for: todayKey,
+                for: dateKey,
                 allowsLegacyFallback: allowsLegacy,
                 localActiveTableCount: localActiveCount
             )
@@ -794,14 +798,14 @@ struct GlobalServiceIntelligenceView: View {
             localCapacity: hostTableConfigStore.totalActiveCapacity
         )
         let blocked = BookingLoadSupport.blockedMinutes(
-            from: controller.availabilitySummary(for: todayKey)?.blockedSlots ?? []
+            from: controller.availabilitySummary(for: dateKey)?.blockedSlots ?? []
         )
         var thresholds = BookingLoadThresholds.default
         thresholds.largePartyThreshold = hostIntelligenceSettingsStore.settings.largePartyThreshold
         return BookingLoadAnalyzer.analyze(
             BookingLoadAnalyzer.Input(
-                date: todayKey,
-                reservations: todayReservations,
+                date: dateKey,
+                reservations: activeReservations,
                 openMinutes: BookingLoadSupport.minutesOfDay(from: bounds.open),
                 closeMinutes: BookingLoadSupport.minutesOfDay(from: bounds.close),
                 plannedReservableSeats: seats,
@@ -865,6 +869,7 @@ struct GlobalServiceIntelligenceView: View {
         }
         return (packet, "ready")
     }
+
 }
 
 // MARK: - Guest to know row (backend-enriched)
@@ -876,14 +881,14 @@ private struct SnapshotFactRow: View {
         HStack(alignment: .top, spacing: 10) {
             Circle()
                 .fill(priorityColor)
-                .frame(width: 7, height: 7)
+                .frame(width: 6, height: 6)
                 .padding(.top, 6)
             VStack(alignment: .leading, spacing: 3) {
-                Text(fact.headline)
-                    .font(.subheadline.weight(.medium))
+                Text(displayHeadline)
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
-                if let detail = fact.detail, !detail.isEmpty {
+                if let detail = displayDetail {
                     Text(detail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -903,20 +908,63 @@ private struct SnapshotFactRow: View {
     }
 
     private var priorityColor: Color {
+        .secondary
+    }
+
+    private var displayHeadline: String {
         switch fact.category {
-        case .allergy, .staffNote:
-            return .red
-        case .attachment, .accessibility, .largeParty:
-            return .orange
-        case .occasion:
-            return .purple
-        case .returningGuest, .regularGuest, .guestNote:
-            return .teal
-        case .mainWave, .reminder, .confirmation, .noTable:
-            return .blue
-        case .cancellationNoShow:
-            return .secondary
+        case .returningGuest, .regularGuest:
+            guard let name = displayName(fact.guestName) else { return fact.headline }
+            if fact.headline.localizedCaseInsensitiveContains(name) {
+                return fact.headline
+            }
+            if let lastVisit = lastVisitDisplay(from: [fact.headline, fact.detail].compactMap { $0 }) {
+                return "\(firstName(from: name)) has been here before. Last visit \(lastVisit)."
+            }
+            return "\(firstName(from: name)) has been here before."
+        case .accessibility, .guestNote:
+            guard let name = displayName(fact.guestName),
+                  !fact.headline.localizedCaseInsensitiveContains(name) else {
+                return fact.headline
+            }
+            return "\(firstName(from: name)) has a seating note. Open reservation to review."
+        default:
+            return fact.headline
         }
+    }
+
+    private var displayDetail: String? {
+        guard let detail = fact.detail?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !detail.isEmpty else {
+            return nil
+        }
+        if fact.category == .returningGuest || fact.category == .regularGuest,
+           detail.localizedCaseInsensitiveContains("seen before") {
+            return nil
+        }
+        return detail
+    }
+
+    private func displayName(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func firstName(from name: String) -> String {
+        name.split(separator: " ").first.map(String.init) ?? name
+    }
+
+    private func lastVisitDisplay(from lines: [String]) -> String? {
+        let marker = "Last visit "
+        let terminators: [Character] = [".", "·", "\n"]
+        for line in lines {
+            guard let range = line.range(of: marker, options: [.caseInsensitive]) else { continue }
+            let suffix = line[range.upperBound...]
+            let value = String(suffix.prefix { !terminators.contains($0) })
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty { return value }
+        }
+        return nil
     }
 }
 
@@ -929,7 +977,7 @@ private struct GuestToKnowRow: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(row.guestName)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.primary)
                 HStack(spacing: 6) {
                     ForEach(badges, id: \.self) { badge in
@@ -937,8 +985,8 @@ private struct GuestToKnowRow: View {
                             .font(.caption2.weight(.medium))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
-                            .background(badgeColor(badge).opacity(0.15))
-                            .foregroundStyle(badgeColor(badge))
+                            .background(Color.primary.opacity(0.08))
+                            .foregroundStyle(.secondary)
                             .cornerRadius(4)
                     }
                 }
@@ -964,15 +1012,6 @@ private struct GuestToKnowRow: View {
         return b
     }
 
-    private func badgeColor(_ badge: String) -> Color {
-        switch badge {
-        case "Service issue": return .red
-        case "Allergy": return .orange
-        case "Accessibility": return .blue
-        case "Occasion": return .purple
-        default: return .teal
-        }
-    }
 }
 
 /// Lightweight placeholder shown for the brief moment before the first cache-only build.
@@ -983,15 +1022,12 @@ private struct HostServiceBriefingCardPlaceholder: View {
                 Image(systemName: "sparkles")
                     .foregroundStyle(.secondary)
                 Text("Reading today's service…")
-                    .font(.headline)
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color(.secondarySystemGroupedBackground),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
+        .hostBoardGlassPanel(cornerRadius: 12, strokeOpacity: 0.10)
     }
 }

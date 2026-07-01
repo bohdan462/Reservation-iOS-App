@@ -14,17 +14,10 @@ enum BusinessIntelligenceInsightBuilder {
         systemStatus: IntelligenceSystemStatusDTO?
     ) -> String? {
         let needsReview = summary.risk.needsReviewCount ?? systemStatus?.managerSummary.itemsNeedingReview ?? 0
-        let noTable = summary.risk.noTableCount ?? 0
         let peak = BusinessIntelligenceFormatting.peakWindowLabel(summary: summary)
 
-        if needsReview > 0, noTable > 0 {
-            return "Review \(needsReview) bookings, including \(noTable) still without tables."
-        }
         if needsReview > 0 {
             return "\(needsReview) bookings need management review."
-        }
-        if noTable > 0 {
-            return "\(noTable) upcoming reservations still need tables."
         }
         if let peak {
             return "Main pressure builds around \(peak)."
@@ -56,11 +49,8 @@ enum BusinessIntelligenceInsightBuilder {
         }
 
         let needsReview = summary.risk.needsReviewCount ?? systemStatus?.managerSummary.itemsNeedingReview
-        let noTable = summary.risk.noTableCount
-        if let needsReview, needsReview > 0, let noTable, noTable > 0 {
-            lines.append("Check booking pipeline and table plan before peak service.")
-        } else if let noTable, noTable > 0 {
-            lines.append("Confirm table plan before the busiest arrivals.")
+        if let needsReview, needsReview > 0 {
+            lines.append("Check booking pipeline before peak service.")
         }
 
         return Array(lines.prefix(2))
@@ -71,7 +61,9 @@ enum BusinessIntelligenceInsightBuilder {
         systemStatus: IntelligenceSystemStatusDTO?
     ) -> [String] {
         if let headline = headline(summary: summary, systemStatus: systemStatus) {
-            return [headline] + supportingLines(summary: summary, systemStatus: systemStatus).prefix(1)
+            let supporting = supportingLines(summary: summary, systemStatus: systemStatus)
+                .filter { !duplicatesHeadlineMeaning($0, headline: headline) }
+            return [headline] + supporting.prefix(1)
         }
         return supportingLines(summary: summary, systemStatus: systemStatus)
     }
@@ -147,5 +139,18 @@ enum BusinessIntelligenceInsightBuilder {
                 || lowered.contains("estimated")
                 || lowered.contains("name_only")
         }
+    }
+
+    private static func duplicatesHeadlineMeaning(_ line: String, headline: String) -> Bool {
+        let normalizedLine = line.lowercased()
+        let normalizedHeadline = headline.lowercased()
+        guard normalizedHeadline.contains("main pressure builds around"),
+              normalizedLine.contains("peak window:") else {
+            return false
+        }
+        let linePeak = normalizedLine
+            .replacingOccurrences(of: "peak window:", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: " ."))
+        return !linePeak.isEmpty && normalizedHeadline.contains(linePeak)
     }
 }

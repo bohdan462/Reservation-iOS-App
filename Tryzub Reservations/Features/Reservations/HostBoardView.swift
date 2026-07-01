@@ -50,6 +50,7 @@ struct HostBoardView: View {
     @ObservedObject private var onDeviceSupportCoordinator = HostLocalModelAutoPrepareCoordinator.shared
     @State private var isShowingHostIntelligenceReview = false
     @State private var showReminderStats = false
+    @State private var showServiceIntelligence = false
     /// Phase 2: cached deterministic Service Briefing, rebuilt only when inputs change
     /// (selected date, reservations, snapshot, coarse hour bucket) — never from a fetch.
     @State private var serviceBriefingState: HostServiceBriefingViewState?
@@ -78,6 +79,7 @@ struct HostBoardView: View {
         externalInteractionActive
             || pendingAction != nil
             || showReminderStats
+            || showServiceIntelligence
             || showBackendReminderConfirmation
     }
 
@@ -916,6 +918,11 @@ struct HostBoardView: View {
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showServiceIntelligence) {
+            NavigationStack {
+                GlobalServiceIntelligenceView(environment: environment, showsCloseButton: true)
+            }
+        }
     }
 
     private var pendingActionTitle: String {
@@ -1123,6 +1130,12 @@ struct HostBoardView: View {
             onOpenReminderStats: selectedDateKey == Date.reservationDateString()
                 ? { showReminderStats = true }
                 : nil,
+            onOpenServiceIntelligence: {
+                #if DEBUG
+                print("[SERVICE_INTEL_UI_TRACE] surface=host_menu action=open_service_intelligence date=\(selectedDateKey)")
+                #endif
+                showServiceIntelligence = true
+            },
             collapseProgress: hostBoardHeaderCollapse,
             usesInlineDateStrip: usesInlineDateStrip,
             liveHostModeEnabled: $liveHostModeEnabled
@@ -1667,7 +1680,20 @@ struct HostBoardView: View {
                 let truncated = String(snap.headline.prefix(50))
                 print("[SERVICE_INTEL_UI_TRACE] surface=host_planning decision=use_snapshot date=\(selectedDateKey) headline=\"\(truncated)\"")
                 #endif
-                state = state.overridingHeadline(snap.headline, summary: snap.subline ?? "")
+                let packet = hostIntelligenceController.serviceBriefingPacket
+                if packet.dateKey == selectedDateKey,
+                   packet.inputFingerprint != "empty",
+                   hostIntelligenceController.isServiceBriefingPacketCurrent(
+                        dateKey: selectedDateKey,
+                        sourceFingerprint: sourceFingerprint
+                   ) {
+                    state = state.overridingHeadline(
+                        packet.compactLine,
+                        summary: packet.compactChips.joined(separator: " · ")
+                    )
+                } else {
+                    state = state.overridingHeadline(snap.headline, summary: snap.subline ?? "")
+                }
             } else {
                 #if DEBUG
                 print("[SERVICE_INTEL_UI_TRACE] surface=host_planning decision=legacy reason=snapshot_not_ready date=\(selectedDateKey)")
@@ -2331,6 +2357,7 @@ private struct HomeServiceHeader: View {
     let onShowFormProblems: () -> Void
     var onOpenTimeline: (() -> Void)? = nil
     var onOpenReminderStats: (() -> Void)? = nil
+    var onOpenServiceIntelligence: (() -> Void)? = nil
     var collapseProgress: CGFloat = 0
     /// iPad Host board: title + sync and date chips share one row when horizontal space allows.
     var usesInlineDateStrip: Bool = false
@@ -2584,6 +2611,15 @@ private struct HomeServiceHeader: View {
                         onOpenReminderStats()
                     } label: {
                         Label("Reminder stats", systemImage: "bell.badge")
+                    }
+                }
+
+                if let onOpenServiceIntelligence {
+                    Button {
+                        ReservationHaptics.selection()
+                        onOpenServiceIntelligence()
+                    } label: {
+                        Label("Service Intelligence", systemImage: "sparkles")
                     }
                 }
 

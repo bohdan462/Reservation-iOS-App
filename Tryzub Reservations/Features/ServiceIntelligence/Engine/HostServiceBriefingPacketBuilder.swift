@@ -106,12 +106,22 @@ enum HostServiceBriefingPacketBuilder {
             newGuests: newGuestCount
         )
 
-        var seenIDs = Set<String>()
         var facts: [BriefingFact] = []
+        var semanticIndexByKey: [String: Int] = [:]
+        var attemptedFactCount = 0
+        var duplicatesRemoved = 0
 
         func add(_ fact: BriefingFact) {
-            guard !seenIDs.contains(fact.id) else { return }
-            seenIDs.insert(fact.id)
+            attemptedFactCount += 1
+            let key = semanticKey(for: fact, dateKey: input.dateKey)
+            if let existingIndex = semanticIndexByKey[key] {
+                duplicatesRemoved += 1
+                if fact.priority > facts[existingIndex].priority {
+                    facts[existingIndex] = fact
+                }
+                return
+            }
+            semanticIndexByKey[key] = facts.count
             facts.append(fact)
         }
 
@@ -245,6 +255,9 @@ enum HostServiceBriefingPacketBuilder {
                 }
                 continue
             }
+            let memoryLastVisit = kind == .guestMemory
+                ? guestMemoryLastVisitDisplay(from: fact)
+                : nil
             add(
                 BriefingFact(
                     id: "canonical-\(fact.id)",
@@ -252,7 +265,7 @@ enum HostServiceBriefingPacketBuilder {
                     reservationID: reservation.remoteID,
                     guestName: reservation.guestName,
                     partySize: reservation.partySize,
-                    timeLabel: displayTime(reservation.reservationTime),
+                    timeLabel: memoryLastVisit ?? displayTime(reservation.reservationTime),
                     tableLabel: ReservationTableTruth.effectiveTableLabel(
                         for: reservation,
                         assignmentsByReservationID: assignmentsByReservationID
@@ -345,11 +358,17 @@ enum HostServiceBriefingPacketBuilder {
         // TODO: Add attachment-specific deposit/preorder/setup facts from typed
         // attachment metadata when those categories are passed directly to this builder.
 
-        let sortedFacts = facts.sorted {
-            if $0.priority != $1.priority { return $0.priority > $1.priority }
-            return $0.id < $1.id
-        }
-        let presentation = HostServiceBriefingTemplateWriter.presentation(for: sortedFacts)
+        let sortedFacts = displaySortedFacts(facts, serviceMode: input.serviceMode)
+        let presentation = HostServiceBriefingTemplateWriter.presentation(
+            for: sortedFacts,
+            dateKey: input.dateKey,
+            serviceMode: input.serviceMode,
+            truthCounts: counts,
+            now: input.now
+        )
+        #if DEBUG
+        print("[SERVICE_BRIEFING_PRESENTATION_TRACE] factsBefore=\(attemptedFactCount) factsAfter=\(sortedFacts.count) duplicatesRemoved=\(duplicatesRemoved) compact=\"\(presentation.compactLine)\"")
+        #endif
         let guestNames = Set(input.dayReservations.map(\.guestName) + sortedFacts.compactMap(\.guestName))
         let tableLabels = Set(
             input.dayReservations.compactMap {
@@ -418,6 +437,75 @@ enum HostServiceBriefingPacketBuilder {
         return input.dayReservations.contains { reservation in
             reservation.statusValue == .seated
                 && input.localSeatedAtByReservationID[reservation.remoteID] != nil
+        }
+    }
+
+    private static func semanticKey(for fact: BriefingFact, dateKey: String) -> String {
+        if fact.kind == .noTableToday {
+            return "\(fact.kind.rawValue):\(dateKey)"
+        }
+        if fact.kind == .arrivalWindow {
+            return "\(fact.kind.rawValue):\(dateKey)"
+        }
+        if fact.kind == .reminder || fact.kind == .confirmation || fact.kind == .newGuestCount || fact.kind == .dayOverview {
+            return "\(fact.kind.rawValue):\(dateKey)"
+        }
+        if let reservationID = fact.reservationID {
+            return "\(fact.kind.rawValue):reservation:\(reservationID)"
+        }
+        if let tableLabel = fact.tableLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !tableLabel.isEmpty {
+            return "\(fact.kind.rawValue):table:\(tableLabel.lowercased())"
+        }
+        if let timeLabel = fact.timeLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !timeLabel.isEmpty {
+            return "\(fact.kind.rawValue):\(dateKey):\(timeLabel.lowercased())"
+        }
+        return "\(fact.kind.rawValue):\(dateKey):\(fact.id)"
+    }
+
+    private static func displaySortedFacts(_ facts: [BriefingFact], serviceMode: ServiceMode) -> [BriefingFact] {
+        facts.sorted {
+            let leftRank = displayRank(for: $0.kind, serviceMode: serviceMode)
+            let rightRank = displayRank(for: $1.kind, serviceMode: serviceMode)
+            if leftRank != rightRank { return leftRank < rightRank }
+            if $0.priority != $1.priority { return $0.priority > $1.priority }
+            return $0.id < $1.id
+        }
+    }
+
+    private static func displayRank(for kind: BriefingFactKind, serviceMode: ServiceMode) -> Int {
+        switch serviceMode {
+        case .futurePlanning, .beforeService:
+            switch kind {
+            case .noTableToday: return 10
+            case .nextArrival, .timedArrival: return 20
+            case .arrivalWindow: return 30
+            case .reminder, .confirmation: return 40
+            case .occasion, .allergy, .seatingPreference, .guestMemory: return 50
+            case .newGuestCount: return 60
+            case .dayOverview: return 70
+            default: return 90
+            }
+        case .duringService, .afterCloseNeedsCleanup:
+            switch kind {
+            case .waitingArrivals: return 10
+            case .noTableToday: return 20
+            case .seatedDuration, .tableWatch: return 30
+            case .allergy, .occasion, .seatingPreference: return 40
+            case .nextArrival, .timedArrival: return 50
+            case .reminder, .confirmation: return 60
+            case .dayOverview: return 70
+            default: return 90
+            }
+        case .afterCloseFinished, .pastRecap:
+            switch kind {
+            case .completedRecap: return 10
+            case .walkInCompleted: return 20
+            case .noShowFollowUp: return 30
+            case .longStayRecap: return 40
+            case .guestMemory, .occasion, .allergy, .seatingPreference: return 50
+            case .businessPeak: return 60
+            default: return 90
+            }
         }
     }
 
@@ -524,6 +612,19 @@ enum HostServiceBriefingPacketBuilder {
         let text = [fact.headline, fact.detail ?? ""].joined(separator: " ")
         let token = text.split(separator: " ").first.flatMap { Int($0) }
         return token
+    }
+
+    private static func guestMemoryLastVisitDisplay(from fact: ServiceIntelligenceFact) -> String? {
+        let text = [fact.headline, fact.detail ?? ""].joined(separator: " ")
+        let marker = "Last visit "
+        guard let range = text.range(of: marker, options: [.caseInsensitive]) else {
+            return nil
+        }
+        let suffix = text[range.upperBound...]
+        let terminators: [Character] = [".", "·", "\n"]
+        let value = String(suffix.prefix { !terminators.contains($0) })
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 
     private static func supportedNewGuestCount(

@@ -17,14 +17,11 @@ struct HostServiceBriefingCard: View {
     var onActionTapped: ((StaffActionIntent) -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 7) {
             header
 
             if state.showsSummary {
-                Text(state.summary)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                summaryChipLane
             }
 
             if let title = state.primaryGroupTitle {
@@ -39,24 +36,27 @@ struct HostServiceBriefingCard: View {
                 summaryLines
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color(.secondarySystemGroupedBackground),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .hostIntelligenceCompactPanel(cornerRadius: 16)
+        .background(styleTraceView)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .center, spacing: 9) {
             Image(systemName: headerIcon)
-                .font(.subheadline.weight(.semibold))
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(headerTint)
+                .frame(width: 26, height: 26)
+                .accessibilityHidden(true)
             Text(state.headline)
-                .font(.headline)
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.primary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.90)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
@@ -73,11 +73,46 @@ struct HostServiceBriefingCard: View {
 
     private var headerTint: Color {
         switch state.mode {
-        case .afterCloseNeedsCleanup: return .orange
-        case .duringService: return .blue
-        case .afterCloseFinished, .pastRecap: return .green
+        case .afterCloseNeedsCleanup: return .orange.opacity(0.86)
+        case .duringService: return TryzubColors.primaryControl.opacity(0.80)
+        case .afterCloseFinished, .pastRecap: return .green.opacity(0.82)
         case .beforeService, .futurePlanning: return .secondary
         }
+    }
+
+    // MARK: - Summary chips
+
+    @ViewBuilder
+    private var summaryChipLane: some View {
+        let chips = summaryChips
+        if !chips.isEmpty {
+            ScrollView(.horizontal) {
+                HStack(spacing: 7) {
+                    ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
+                        summaryChip(chip)
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+            .padding(.top, 1)
+        }
+    }
+
+    private var summaryChips: [String] {
+        state.summary
+            .components(separatedBy: " · ")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func summaryChip(_ label: String) -> some View {
+        Text(label)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .hostIntelligenceCompactCapsule(strokeOpacity: 0.06)
     }
 
     // MARK: - Action group
@@ -105,7 +140,7 @@ struct HostServiceBriefingCard: View {
                     .padding(.top, 6)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(action.title)
-                        .font(.subheadline)
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.primary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let detail = action.detail, !detail.isEmpty {
@@ -145,10 +180,24 @@ struct HostServiceBriefingCard: View {
         VStack(alignment: .leading, spacing: 3) {
             ForEach(Array(state.todaySummary.enumerated()), id: \.offset) { _, line in
                 Text(line)
-                    .font(.subheadline)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private var styleTraceView: some View {
+        Color.clear.onAppear {
+            logStyleTrace()
+        }
+    }
+
+    private func logStyleTrace() {
+        #if DEBUG
+        print(
+            "[SERVICE_BRIEFING_STYLE_TRACE] source=HostServiceBriefingCard mode=\(state.mode) headlineFont=caption.medium summaryStyle=compact_chips panel=hostIntelligenceCompactPanel"
+        )
+        #endif
     }
 }
