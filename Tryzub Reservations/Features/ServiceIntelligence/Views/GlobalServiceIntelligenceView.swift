@@ -549,6 +549,9 @@ struct GlobalServiceIntelligenceView: View {
             String(Int(hostIntelligenceController.decisionSnapshot.generatedAt.timeIntervalSince1970)),
             hostIntelligenceController.serviceIntelligenceSnapshot.inputFingerprint,
             hostIntelligenceController.serviceBriefingPacket.inputFingerprint,
+            // 4E-2: include narrative so rebuild fires when narrative lands asynchronously.
+            hostIntelligenceController.serviceBriefingNarrative.packetFingerprint,
+            hostIntelligenceController.serviceBriefingNarrative.source.rawValue,
             hostIntelligenceController.serviceIntelligenceSourceFingerprint,
             serviceDateIntelligenceSourceFingerprint,
             String(minute),
@@ -598,17 +601,49 @@ struct GlobalServiceIntelligenceView: View {
         let snapshotReady = readiness.snapshot != nil
         let packetReady = packetReadiness.packet != nil
         if let packet = packetReadiness.packet {
+            // 4E-2: Read narrative from controller (built and owned by Host Board).
+            // Global SI never calls refreshServiceBriefingNarrative or the model runtime.
+            let narrative = hostIntelligenceController.serviceBriefingNarrative
+            let narrativeCurrent = narrative.isCurrent(
+                dateKey: dateKey,
+                packetFingerprint: packet.inputFingerprint
+            ) && narrative.hasUsableCopy && narrative.usesModel
+
+            let headlineText = narrativeCurrent ? narrative.compactLine : packet.compactLine
             #if DEBUG
-            print("[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=use_packet reason=ready date=\(dateKey)")
+            if narrativeCurrent {
+                print("[SERVICE_INTEL_UI_TRACE] surface=global_service_intelligence decision=use_narrative source=\(narrative.source.rawValue) date=\(dateKey)")
+            } else {
+                let reason = narrative.source == .none ? "narrative_empty" : (narrative.usesModel ? "stale" : "template_source")
+                print("[SERVICE_INTEL_UI_TRACE] surface=global_service_intelligence decision=use_packet_template reason=\(reason) date=\(dateKey)")
+            }
             #endif
+
             let summaryParts = packet.compactChips
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             briefing = state.overridingHeadline(
-                packet.compactLine,
+                headlineText,
                 summary: summaryParts.joined(separator: " · ")
             )
             usesBriefingPacket = true
-            packetSections = packet.sections
+
+            // Merge narrative section lines (model-worded) over packet template lines when available.
+            if narrativeCurrent && !narrative.sectionLinesByID.isEmpty {
+                packetSections = packet.sections.map { section in
+                    if let narrativeLines = narrative.sectionLinesByID[section.id],
+                       !narrativeLines.isEmpty {
+                        return BriefingSection(
+                            id: section.id,
+                            title: section.title,
+                            facts: section.facts,
+                            lines: narrativeLines
+                        )
+                    }
+                    return section
+                }
+            } else {
+                packetSections = packet.sections
+            }
             usesCanonicalSnapshot = false
             snapshotFacts = []
         } else if let snapshot = readiness.snapshot {

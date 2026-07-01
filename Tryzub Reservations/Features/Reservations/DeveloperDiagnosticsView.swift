@@ -26,6 +26,7 @@ struct DeveloperDiagnosticsView: View {
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
     @EnvironmentObject private var activityStore: ReservationActivityStore
     @StateObject private var hostIntelligenceSettings = HostIntelligenceSettingsStore()
+    @EnvironmentObject private var hostIntelligenceController: HostIntelligenceController
 
     let environment: AppEnvironment
 
@@ -336,7 +337,8 @@ struct DeveloperDiagnosticsView: View {
             backendFloorTables: floorPlanStore.backendTables(for: todayDateKey),
             floorTableSource: hostFloorTableSource,
             allKnownReservations: reservations,
-            guestIntelligenceStore: guestIntelligenceStore
+            guestIntelligenceStore: guestIntelligenceStore,
+            serviceBriefingNarrative: hostIntelligenceController.serviceBriefingNarrative
         )
     }
 

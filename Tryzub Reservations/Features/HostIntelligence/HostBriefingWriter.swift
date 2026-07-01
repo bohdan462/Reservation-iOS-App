@@ -23,6 +23,8 @@ enum HostLocalModelInferenceTracker {
   enum Task: String {
     case hostBoardNarrative
     case hostBriefing
+    /// 4E: Service Intelligence packet-based narrative (planning / recap / non-live paths).
+    case serviceBriefingNarrative
     case guestMessageDraft
     case noteAnalysis
     case diagnosticsPreload
@@ -31,6 +33,8 @@ enum HostLocalModelInferenceTracker {
       switch self {
       case .hostBoardNarrative, .guestMessageDraft:
         return 100
+      case .serviceBriefingNarrative:
+        return 90
       case .hostBriefing:
         return 80
       case .noteAnalysis, .diagnosticsPreload:

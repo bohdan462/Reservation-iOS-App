@@ -84,6 +84,11 @@ enum HostServiceBriefingNarrativeWriter {
         print("[SERVICE_BRIEFING_NARRATIVE_TRACE] decision=model_start date=\(packet.dateKey) fingerprint=\(packet.inputFingerprint.prefix(12))")
         #endif
 
+        // Register with single-flight tracker so gate sees local_model_in_flight = true
+        // and any concurrent legacy host-board call stays isolated.
+        HostLocalModelInferenceTracker.begin(task: .serviceBriefingNarrative)
+        defer { HostLocalModelInferenceTracker.end(task: .serviceBriefingNarrative) }
+
         // Run model
         let runtime = HostLocalModelRuntimeFactory.makeRuntime()
         let rawOutput: String

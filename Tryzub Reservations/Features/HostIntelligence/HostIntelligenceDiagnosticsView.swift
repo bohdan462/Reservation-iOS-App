@@ -24,6 +24,8 @@ struct HostIntelligenceDiagnosticsView: View {
   var floorTableSource: HostFloorTableSource = .pendingBackend
   var allKnownReservations: [ReservationRecord] = []
   var guestIntelligenceStore: GuestIntelligenceStore? = nil
+  /// 4E-2: Optional read-only view of the current packet narrative.
+  var serviceBriefingNarrative: HostServiceBriefingNarrative? = nil
 
   @State private var isShowingModelImporter = false
   @State private var modelImportMessage: String?
@@ -889,6 +891,40 @@ struct HostIntelligenceDiagnosticsView: View {
         LabeledContent("Failure reason") {
           Text(briefingFailureReason)
         }
+      }
+
+      // 4E-2: Packet narrative diagnostics (developer only)
+      if let narrative = serviceBriefingNarrative {
+        Divider()
+        Text("Service Intelligence Narrative (4E)")
+          .font(.subheadline.weight(.semibold))
+          .foregroundStyle(.secondary)
+        LabeledContent("Narrative source") {
+          Text(narrative.source.rawValue)
+        }
+        LabeledContent("Has usable copy") {
+          Text(narrative.hasUsableCopy ? "Yes" : "No")
+        }
+        if narrative.hasUsableCopy {
+          LabeledContent("Uses model") {
+            Text(narrative.usesModel ? "Yes (model wording)" : "No (template)")
+          }
+          Text("Compact: \(narrative.compactLine.prefix(80))")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        if let reason = narrative.failedReason, !reason.isEmpty {
+          LabeledContent("Fallback reason") {
+            Text(reason)
+          }
+        }
+        LabeledContent("Packet fingerprint") {
+          Text(String(narrative.packetFingerprint.prefix(16)))
+            .font(.caption.monospaced())
+        }
+        Text("Local model setting also controls Service Intelligence briefing wording.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
 
       hostBoardModelDecisionSection(packet: packet, decision: decision)

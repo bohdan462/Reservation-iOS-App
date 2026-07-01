@@ -1656,6 +1656,40 @@ struct HostBoardView: View {
                     sourceFingerprint: sourceFingerprint
                 )
             )
+            // 4E-2: Trigger packet narrative refresh after a successful packet build.
+            // Guard: skip async model for live today beforeService/duringService to
+            // avoid a duplicate LLM call when legacy ManagerNarrativeWriter may already
+            // be active via the enrichment task. Template narrative is still stored
+            // synchronously when the gate returns template-only.
+            let packet4E = hostIntelligenceController.serviceBriefingPacket
+            if packet4E.dateKey == selectedDateKey,
+               packet4E.inputFingerprint != "empty",
+               hostIntelligenceController.isServiceBriefingPacketCurrent(
+                   dateKey: selectedDateKey,
+                   sourceFingerprint: sourceFingerprint
+               ),
+               usesServiceBriefingCard(state.mode) || selectedDateKey != Date.reservationDateString() {
+                let capturedDateKey = selectedDateKey
+                let capturedSourceFP = sourceFingerprint
+                let capturedDateLabel = selectedDate.formatted(.dateTime.weekday(.wide))
+                let capturedPacket = packet4E
+                let gateCtx = HostServiceBriefingNarrativeGate.Context(
+                    selectedDateKey: capturedDateKey,
+                    isStartupNetworkPassInFlight: controller.isStartupNetworkPassInFlight,
+                    isReservationRefreshInFlight: controller.isReservationNetworkRefreshInFlight,
+                    isLocalModelInferenceActive: HostLocalModelInferenceTracker.isActive,
+                    hostBoardDateNavigationAt: controller.hostBoardDateNavigationAt,
+                    now: clockTick
+                )
+                Task {
+                    await hostIntelligenceController.refreshServiceBriefingNarrative(
+                        packet: capturedPacket,
+                        sourceFingerprint: capturedSourceFP,
+                        serviceDateLabel: capturedDateLabel,
+                        gateContext: gateCtx
+                    )
+                }
+            }
         } else {
             #if DEBUG
             print("[SERVICE_BRIEFING_PACKET_TRACE] decision=skip reason=snapshot_not_ready date=\(selectedDateKey) facts=0 compact=\"\"")
@@ -1687,10 +1721,29 @@ struct HostBoardView: View {
                         dateKey: selectedDateKey,
                         sourceFingerprint: sourceFingerprint
                    ) {
-                    state = state.overridingHeadline(
-                        packet.compactLine,
-                        summary: packet.compactChips.joined(separator: " · ")
-                    )
+                    // 4E-2: Prefer model narrative headline when current; template otherwise.
+                    let narrative = hostIntelligenceController.serviceBriefingNarrative
+                    if narrative.isCurrent(
+                        dateKey: selectedDateKey,
+                        packetFingerprint: packet.inputFingerprint
+                    ), narrative.hasUsableCopy, narrative.usesModel {
+                        #if DEBUG
+                        print("[SERVICE_INTEL_UI_TRACE] surface=host_planning decision=use_narrative source=\(narrative.source.rawValue) date=\(selectedDateKey)")
+                        #endif
+                        state = state.overridingHeadline(
+                            narrative.compactLine,
+                            summary: packet.compactChips.joined(separator: " · ")
+                        )
+                    } else {
+                        #if DEBUG
+                        let reason = narrative.source == .none ? "narrative_empty" : (narrative.usesModel ? "stale" : "template_source")
+                        print("[SERVICE_INTEL_UI_TRACE] surface=host_planning decision=use_packet_template reason=\(reason) date=\(selectedDateKey)")
+                        #endif
+                        state = state.overridingHeadline(
+                            packet.compactLine,
+                            summary: packet.compactChips.joined(separator: " · ")
+                        )
+                    }
                 } else {
                     state = state.overridingHeadline(snap.headline, summary: snap.subline ?? "")
                 }
