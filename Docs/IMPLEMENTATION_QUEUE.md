@@ -103,7 +103,7 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 | Field | Value |
 |-------|-------|
 | **Status** | **done** — `5762ecb` |
-| **Scope** | Auto-confirmed, confirmation email sent, reminder sent on list rows without detail open |
+| **Scope** | Auto-confirm (`confirmationSource`), delivery-truth confirmation/reminder labels on list rows; Host email-issue for failures |
 | **Do not overstate** | Physical device verification still open (#4d) |
 
 ---
@@ -115,6 +115,17 @@ Ordered slices for **V1**. Stabilization items (#4, #4b, #4c, #4d) remain open. 
 | **Status** | **done** — `3da3a68` |
 | **Scope** | Removed More → Email Controls; **This Device Email** under Restaurant Settings; backend reminders/auto-confirm unchanged |
 | **Do not overstate** | No sending behavior changed; physical device verification still open (#4d) |
+
+---
+
+## 27b. Email delivery truth (iOS)
+
+| Field | Value |
+|-------|-------|
+| **Status** | **code landed** — working tree; device + backend webhook verify open |
+| **Scope** | DTO decode/persist (`EMAIL-DELIVERY-iOS-1`); detail correction UI, delivery labels, Host email-issue, reminder buckets (`EMAIL-DELIVERY-iOS-2`) |
+| **Docs** | [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md) |
+| **Do not overstate** | `_sentAt` ≠ delivered; pending ≠ delivered; production delivered requires webhook + deployed backend ≥ 1.13.0 |
 
 ---
 

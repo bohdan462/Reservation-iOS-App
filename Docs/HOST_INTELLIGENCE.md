@@ -48,7 +48,7 @@ Inputs (parent intelligence layer):
   + guest memory
   + guest notes + staff notes
   + attachments
-  + reminder / confirmation state
+  + reminder / confirmation state (delivery buckets in Staff Briefing — see [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md))
   + business analytics
   + walk-ins / completed / no-shows
   + activity history

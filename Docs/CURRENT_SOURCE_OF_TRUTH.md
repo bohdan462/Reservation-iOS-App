@@ -1,6 +1,6 @@
 # Current Source of Truth — Tryzub Reservations
 
-**Last reviewed:** 2026-06-30
+**Last reviewed:** 2026-07-01
 **Navigation:** [DOCS_INDEX.md](./DOCS_INDEX.md)
 
 Compact master rules. When this file conflicts with stale index/diagram docs, **this file and backend plugin docs win**.
@@ -53,14 +53,28 @@ Compact master rules. When this file conflicts with stale index/diagram docs, **
 
 ---
 
-## 3. Current confirmation truth
+## 3. Email delivery and confirmation truth
+
+Full iOS detail: [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md). Backend webhook/DB: [Backend README](../Backend/tryzub-reservations-api/README.md).
+
+### Confirmation paths
 
 1. **Both paths exist:** backend confirmation (`POST /managed-reservations/{id}/confirm`) and **manual Mail** staff confirmation.
 2. **Active device behavior depends on This Device Email** (`EmailAutomationSettings.backendConfirmationEnabled`, local UserDefaults). Code default is **`true`** — do **not** assume Mail-first unless the device setting is confirmed on the physical device.
-3. **Manual Mail path** (when backend confirmation is off or staff uses reviewable send): `beginPrimaryConfirmFlow` → guest manage link → Mail composer → `manual-email-log` → PATCH `confirmed` on `.sent` only.
-4. **Backend confirmation path** (when enabled): `POST /confirm` sends through backend/provider; must only confirm after backend send success when a usable guest email exists. **Not production-verified** until live tests pass.
-5. **Agents must not switch confirmation flows** on the test device unless explicitly asked.
-6. See [RESERVATION_WORKFLOWS.md](./RESERVATION_WORKFLOWS.md) for step-by-step detail.
+3. **Manual Mail path** (when backend confirmation is off or staff uses reviewable send): `beginPrimaryConfirmFlow` → guest manage link → Mail composer → `manual-email-log` → PATCH `confirmed` on `.sent` only. Manual send is **staff-reported** — not provider delivery proof.
+4. **Backend confirmation path** (when enabled): `POST /confirm` sends through backend/provider; operational confirm after send success when a usable guest email exists. Provider accept → **`pending_delivery`**, not delivered.
+
+### Delivery truth (iOS must enforce)
+
+5. **`confirmationEmailSentAt` / `reminderEmailSentAt`** — attempt timestamps only; never treat as inbox delivery.
+6. **`emailStatus = sent`** on confirm response — provider accepted send; use **`emailDeliveryStatus`** / DTO `confirmationDeliveryStatus` for delivery UI.
+7. **`delivered`** — only when DTO delivery status is `.delivered` (webhook-backed on server).
+8. **Correction:** Detail exposes resend (`POST …/resend-confirmation`) and confirm-by-phone (`POST …/confirm-by-phone`); responses upsert via `ReservationMutationService`.
+9. **Host Board** — only critical **Email issue** on rows (failed/needs correction); not a full delivery dashboard.
+10. **Reminder delivery detail** — primarily `ShiftReminderReviewSheet` buckets/watchlist; Host reminder stats **Handled** = on-record attempts (backend summary), not inbox delivered.
+11. **Auto-confirm badge (current state)** — `confirmationSource == .autoConfirm` on `ReservationRecord`; **not** `ReservationActivityStore` evidence. Activity `auto_confirmed` is timeline history only.
+12. **Legacy local rows** — if delivery raw is nil but `_sentAt` exists, presentation uses **effective** status → legacy copy until server backfill + refresh (`effectiveConfirmationDeliveryStatus` in `ReservationPresentation.swift`).
+13. See [RESERVATION_WORKFLOWS.md](./RESERVATION_WORKFLOWS.md) for step-by-step flows.
 
 ---
 

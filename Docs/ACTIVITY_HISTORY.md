@@ -2,8 +2,8 @@
 
 **Status:** Current source of truth  
 **Branch:** `audit-current-state`  
-**Audit date:** 2026-06-14  
-**Backend schema:** 1.7.0  
+**Audit date:** 2026-07-01  
+**Backend schema:** 1.15.0 (delivery truth); activity unchanged at 1.7.0+  
 **Rule:** Shipped — read-only display; backend writes all events.
 
 Backend owns activity history. Mutation endpoints write activity automatically. iOS **reads** history for display. iOS **does not** create activity rows or POST a separate activity log.
@@ -81,6 +81,15 @@ iOS never writes activity on mutation.
 - **Do not** show raw `metadata` blobs in normal UI
 - No phone, email, message bodies, or tokens in activity rows
 
+## Auto-confirm events (history only)
+
+- Backend may write `auto_confirmed` activity when auto-confirm runs.
+- Timeline rows may show `AutoConfirmedBadge` on those events — **decorative / historic**.
+- **Current-state auto-confirm sparkle** on list, host, and detail uses **`confirmationSource == .autoConfirm`** on the reservation DTO — **not** `ReservationActivityStore.hasBackendAutoConfirmEvidence` (unused).
+- Do not fetch activity to decide whether a row is auto-confirmed today.
+
+See [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md) §7.
+
 ## No backfill limitation
 
 Reservations untouched before backend 1.7.0 deploy have **no history** until the next mutation after deploy. Empty state copy explains this; do not show "backend missing" unless there is a real error.
@@ -99,4 +108,5 @@ Reservations untouched before backend 1.7.0 deploy have **no history** until the
 - [DOCS_INDEX.md](./DOCS_INDEX.md) — start here for current documentation
 - [IOS_LIFECYCLE_AND_SYNC.md](./IOS_LIFECYCLE_AND_SYNC.md) — endpoint fetch timing, active-window refresh
 - [DIAGNOSTICS_AND_TESTING.md](./DIAGNOSTICS_AND_TESTING.md) — manual verification checklist
+- [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md) — delivery vs activity for auto-confirm
 - [refactor.md](./refactor.md) — ownership map

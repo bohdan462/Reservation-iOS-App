@@ -34,7 +34,7 @@ Working tree should be clean before further Agent work. Agent must not edit back
 |-------|--------|---------|
 | **Phase 1** | `804c130` | Live button hit area, bottom tab clearance, keyboard-safe guest candidates |
 | **Phase 2** | `8eab6c4` | Fast seated-now walk-ins, seated duration, attach known guest to walk-in, walk-in validation, Floor Plan table assignment |
-| **Phase 3** | `5762ecb` | Row indicators for auto-confirmed, confirmation email sent, reminder sent |
+| **Phase 3** | `5762ecb` + email-delivery iOS | Row indicators: auto-confirm (`confirmationSource`), delivery labels (not `_sentAt` as delivered), reminder labels; Host **Email issue** only for failures |
 | **Phase 4** | `3da3a68` | Removed duplicate Email Controls path; local-only email settings under Restaurant Settings as **This Device Email** |
 
 **Status:** implemented and pushed; **physical device verification still open**.
@@ -260,28 +260,31 @@ No new screenshot files are tracked in git; reproduce on physical device using c
 
 ---
 
-### P1-8 — Auto-confirm, reminder, and email-sent icons stale until detail opens
+### P1-8 — Auto-confirm, reminder, and delivery indicators on list rows
 
-**Observed:** Auto-confirm adornment appears after opening detail; list cells do not update promptly. Confirmation email sent and reminder sent should also appear on rows without opening detail.
+**Observed (pre-fix):** Auto-confirm adornment appeared after opening detail when inferred from activity; list cells did not update promptly.
 
-**Expected:** List rows show small timely indicators from normal reservation sync/mutation data (`confirmationEmailSentAt`, `reminderEmailSentAt`, auto-confirm evidence) without requiring detail open.
+**Expected (current):** List rows show indicators from **reservation DTO/sync data** without opening detail:
+
+- Auto-confirm sparkle when **`confirmationSource == .autoConfirm`**
+- Confirmation/reminder envelope/bell use **`confirmationDeliveryLabel` / `reminderDeliveryLabel`** (delivery truth — not `_sentAt` alone as "delivered")
+- Host board: **Email issue** only when confirmation failed or needs correction
 
 **Likely files:**
 
-- `Tryzub Reservations/Features/Reservations/HostBoard/HostBoardReservationRow.swift` — `showsAutoConfirmedAdornment` via `ReservationActivityStore`
-- `Tryzub Reservations/Features/Reservations/ActivityHistory/ReservationActivityStore.swift` — `hasBackendAutoConfirmEvidence`
-- `Tryzub Reservations/Features/Reservations/ReservationRowView.swift` — `BackendAutoConfirmedIcon`, meta adornments
-- `Tryzub Reservations/Features/Reservations/ReservationsListView.swift` — bookings row presentation
-- `Tryzub Reservations/Persistence/ReservationRecord.swift` — `confirmationEmailSentAt`, `reminderEmailSentAt`
+- `Tryzub Reservations/Features/Reservations/HostBoard/HostBoardReservationRow.swift`
+- `Tryzub Reservations/Features/Reservations/ReservationRowView.swift`
+- `Tryzub Reservations/Features/Reservations/ReservationPresentation.swift` — delivery labels, effective legacy status
+- `Tryzub Reservations/Persistence/ReservationRecord.swift` — delivery + provenance raw fields
 - `Tryzub Reservations/Import/ReservationsController.swift` — upsert after sync/mutation
 
-**Reuse:** Prefer **`ReservationRecord` DTO fields** for email-sent badges; use activity store for auto-confirm only if needed — prefetch/warm activity cache on list appear or merge auto-confirm signal into reservation payload if backend exposes it.
+**Do not:** prefetch activity per row for auto-confirm badges. Activity is history-only for timeline.
 
 **Acceptance:**
 
 - [ ] After sync/confirm/reminder mutation, list row shows correct icons without opening detail
-- [ ] Auto-confirm icon on Host board when evidence exists
-- [ ] Confirmation-email-sent and reminder-sent visible on appropriate rows
+- [ ] Auto-confirm icon when DTO `confirmationSource=auto_confirm`
+- [ ] Delivery labels reflect pending/delivered/failed/legacy — not blanket "sent"
 - [ ] No extra network call per row on every keystroke
 
 ---
@@ -370,7 +373,7 @@ No new screenshot files are tracked in git; reproduce on physical device using c
 
 ### Phase 3 — Timely row indicators — **`5762ecb`**
 
-9. P1-8 Auto-confirm, confirmation email sent, reminder sent on list rows without detail open
+9. P1-8 Auto-confirm (`confirmationSource`), delivery-truth confirmation/reminder labels on list rows without detail open
 
 ### Phase 4 — Settings cleanup — **`3da3a68`**
 
@@ -420,7 +423,7 @@ Run on **physical device** (iPhone and/or iPad as noted). Code for all items is 
 - [ ] Attach known guest on walk-in edit; source remains walk-in
 - [ ] Walk-in edit name-only/no-phone saves
 - [ ] Floor Plan assignment path used when backend layout exists; no raw table string
-- [ ] Auto-confirm / confirmation / reminder indicators show on list rows without opening detail
+- [ ] Auto-confirm / confirmation / reminder indicators show on list rows without opening detail (DTO delivery labels; not `_sentAt` as delivered)
 - [ ] More no longer shows Email Controls; Restaurant Settings contains **This Device Email** plus backend reminder/auto-confirm settings
 - [ ] Regression: unknown walk-in party/time only still saves (backend `63d0cfc`)
 - [ ] Regression: Reservation Detail confirm/email workflow still works post-create

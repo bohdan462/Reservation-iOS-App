@@ -138,6 +138,19 @@ Requires physical device (iPhone and/or iPad as noted per item):
 
 **Do not claim:** device smoke passed; code landed ≠ verification complete.
 
+## Email delivery truth test (iOS + deployed backend ≥ 1.13.0)
+
+Full checklist: [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md) §9.
+
+1. Confirm with email → detail shows **waiting for delivery** (not delivered)
+2. After webhook/simulated delivered state + refresh → **delivered** copy
+3. Bounce/suppress → correction banner; Host row **Email issue**
+4. Resend after email fix → pending again; not delivered until webhook
+5. Confirm by phone → phone provenance; email not marked delivered
+6. Legacy row (`_sentAt` only) → **recorded before delivery tracking**
+7. Auto-confirm: sparkle when `confirmationSource=auto_confirm`; not from activity prefetch
+8. Shift reminders sheet → delivery buckets + watchlist for failed/pending
+
 ## Floor / table test
 
 1. Floor tab with backend layout → assign via sheet
@@ -163,7 +176,8 @@ Requires physical device (iPhone and/or iPad as noted per item):
 - [ ] Host board quiet off-hours — no minute idle flicker; intelligence-card chips stable during refresh (`39f7fcb`); seated/due timing still updates in service
 - [ ] Guests tab finds backend-known guest after sync (`67e02d2`); known guest outside old 500 cap findable (`d541488`)
 - [ ] Guest profile full-list sync completes; no per-digit backend calls during Guests/intake typing (`d541488`)
-- [ ] Confirm with email (Mail flow)
+- [ ] Confirm with email (Mail flow); backend confirm shows pending delivery — not delivered until webhook
+- [ ] Email delivery correction: resend + confirm-by-phone from detail when failed
 - [ ] Confirm without email
 - [ ] Shift reminder email + text review
 - [ ] Seat / complete / cancel / no-show

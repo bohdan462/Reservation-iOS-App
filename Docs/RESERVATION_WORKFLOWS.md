@@ -2,7 +2,7 @@
 
 **Status:** Current source of truth  
 **Branch:** `audit-current-state`  
-**Last reviewed:** 2026-06-24
+**Last reviewed:** 2026-07-01
 
 ## Confirmation (staff)
 
@@ -12,7 +12,9 @@
 |---------|--------------|----------------------|
 | `backendConfirmationEnabled` | **`true`** | May be turned **off** on device for Mail-first review |
 
-Do **not** assume Mail-first unless the pilot iPad setting is confirmed. Backend confirmation is **not** marked production-verified until live tests pass.
+Do **not** assume Mail-first unless the pilot iPad setting is confirmed.
+
+**Delivery truth:** iOS must not treat send timestamps or `emailStatus=sent` as inbox delivered. See [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md).
 
 ### Path A — Manual Mail (when backend confirmation is off, or staff uses reviewable send)
 
@@ -33,10 +35,32 @@ Do **not** assume Mail-first unless the pilot iPad setting is confirmed. Backend
 
 1. Staff taps **Confirm & Send** (wording varies by setting)
 2. `POST /managed-reservations/{id}/confirm` sends through backend/provider
-3. Status moves to `confirmed` only after backend send success when a usable guest email exists
-4. Guest manage link may still be created for the email body
+3. Status moves to `confirmed` after backend send success when a usable guest email exists
+4. Provider accept → DTO **`confirmation_delivery_status = pending_delivery`** — **not** delivered until webhook
+5. Success notice uses **`emailDeliveryStatus`** from confirm response (fallback: DTO field, then legacy `emailStatus`)
+6. Guest manage link may still be created for the email body
+7. Next sync/webhook refresh may update DTO to **`delivered`** with timestamps
 
 Manual Mail remains the fallback/reviewable path when backend confirmation is disabled.
+
+### Auto-confirm (backend)
+
+- Backend may auto-confirm eligible reservations (see backend README).
+- iOS badge: **`confirmationSource == .autoConfirm`** on reservation DTO (list, host, detail) — **not** activity fetch.
+- Activity `auto_confirmed` events are **history only** on the timeline.
+
+### Email delivery correction
+
+When confirmation failed, suppressed, or **`requiresEmailCorrection`**:
+
+| Action | Route | iOS |
+|--------|-------|-----|
+| Resend confirmation | `POST …/resend-confirmation` | Detail banner / Resend |
+| Confirm by phone | `POST …/confirm-by-phone` | Detail **Confirm by phone** |
+
+Both upsert returned DTO. Resend → **pending delivery**, not delivered.
+
+**Host Board:** **Email issue** label only for failed/needs-correction — not full delivery dashboard on every row.
 
 ### Not automatic in either path
 
@@ -58,6 +82,8 @@ Manual Mail remains the fallback/reviewable path when backend confirmation is di
 | Text | Staff composer only; no backend SMS log in V1 |
 
 Does **not** PATCH status to confirmed.
+
+**Delivery truth (backend-sent reminders):** DTO carries `reminder_delivery_status` and related fields. **`reminderEmailSentAt`** is attempt-only. Sheet buckets: delivered / waiting / issues / manual-legacy / no email, plus delivery watchlist. Failed reminders → manual follow-up (no `resend-reminder` route yet). Host stats **Handled** = on-record attempts — not inbox delivered. See [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md).
 
 ## Manual reservation create
 
@@ -134,9 +160,11 @@ See [FLOOR_PLAN_AND_TABLES.md](./FLOOR_PLAN_AND_TABLES.md).
 
 ## Activity history
 
-Backend writes on mutation. iOS reads `GET /managed-reservations/{id}/activity` and `GET /activity?date=`.
+Backend writes on mutation. iOS reads `GET /managed-reservations/{id}/activity` and `GET /activity?date=`. Auto-confirm **badges** use DTO `confirmationSource`, not activity — see [ACTIVITY_HISTORY.md](./ACTIVITY_HISTORY.md).
 
 ## Related docs
+
+- [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md)
 
 - [IOS_LIFECYCLE_AND_SYNC.md](./IOS_LIFECYCLE_AND_SYNC.md)
 - [FLOOR_PLAN_AND_TABLES.md](./FLOOR_PLAN_AND_TABLES.md)

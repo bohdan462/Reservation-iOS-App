@@ -12,12 +12,13 @@ Do not implement from stale index or diagram files listed under [Stale / archive
 |-----|---------|
 | [SECOND_ENGINEER_CONTEXT.md](./SECOND_ENGINEER_CONTEXT.md) | ChatGPT / second-engineer alignment: priorities, repo state, V1 rules, verification |
 | [CURRENT_SOURCE_OF_TRUTH.md](./CURRENT_SOURCE_OF_TRUTH.md) | Non-negotiable architecture and workflow rules |
-| [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) | V1 order: stabilization → guest person-map 3D; Slices 1/2/3A/3B/3R/3M-B/3M + Manual Intake input polish + Host polish + device smoke Phases 1–4 done in code |
-| [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) | Active handoff: 4C snapshot lifecycle done; partial runtime smoke; 4D/4E next |
+| [IMPLEMENTATION_QUEUE.md](./IMPLEMENTATION_QUEUE.md) | V1 order: stabilization → guest person-map 3D; device smoke Phases 1–4; email delivery truth iOS (#27b) |
+| [AGENT_HANDOFF_CURRENT.md](./AGENT_HANDOFF_CURRENT.md) | Active handoff: 4C snapshot lifecycle; email delivery truth iOS landed (verify open); 4D/4E next |
 | [DEVICE_SMOKE_FINDINGS_HANDOFF.md](./DEVICE_SMOKE_FINDINGS_HANDOFF.md) | Device smoke P1/P2: code Phases 1–4 landed; physical verification open (3D/3E parked) |
 | [RESERVATION_ATTACHMENTS.md](./RESERVATION_ATTACHMENTS.md) | Reservation attachments: backend deployed; iOS Slice C (`17a0bee`); D (`d947721`); E polish (`9d2784d`); live verification open |
 | [OPEN_WORK.md](./OPEN_WORK.md) | V1 stabilization backlog with acceptance tests |
 | [DIAGNOSTICS_AND_TESTING.md](./DIAGNOSTICS_AND_TESTING.md) | Roles, invariants, test checklists |
+| [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md) | iOS delivery/provenance DTOs, UI surfaces, correction actions, legacy fallback |
 
 **Deploy note:** `Backend/*.zip` is not tracked in git. Build plugin zip locally from submodule `HEAD` when deploying to WordPress.
 
@@ -41,7 +42,7 @@ All backend API, schema, email, and guest-token contracts live in the plugin fol
 | Doc | Purpose |
 |-----|---------|
 | [IOS_ARCHITECTURE.md](./IOS_ARCHITECTURE.md) | App structure, session, SwiftData cache rule |
-| [RESERVATION_WORKFLOWS.md](./RESERVATION_WORKFLOWS.md) | Staff confirm, reminders, mutations |
+| [RESERVATION_WORKFLOWS.md](./RESERVATION_WORKFLOWS.md) | Staff confirm, delivery truth, correction, reminders, mutations |
 | [IOS_LIFECYCLE_AND_SYNC.md](./IOS_LIFECYCLE_AND_SYNC.md) | Startup, refresh, TTL, sync guards |
 | [FLOOR_PLAN_AND_TABLES.md](./FLOOR_PLAN_AND_TABLES.md) | Floor plan and table assignment |
 | [ACTIVITY_HISTORY.md](./ACTIVITY_HISTORY.md) | Read-only activity display |

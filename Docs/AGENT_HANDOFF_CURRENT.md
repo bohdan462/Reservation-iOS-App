@@ -4,6 +4,18 @@
 
 ---
 
+## Email delivery truth (iOS — landed, device verify pending)
+
+**Slices:** EMAIL-DELIVERY-iOS-1 (model/decode/persistence) + EMAIL-DELIVERY-iOS-2 (UI/correction) — code on working tree; **not committed** at last audit.
+
+**Docs:** [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md) (iOS), [Backend README](../Backend/tryzub-reservations-api/README.md) (webhook/DB 1.13–1.15).
+
+**Rules:** `_sentAt` ≠ delivered; auto-confirm badge = `confirmationSource`; Host board email-issue only; correction routes wired on detail.
+
+**Next:** device checklist §9 in EMAIL_DELIVERY_TRUTH; backend deploy + webhook before claiming delivered in production.
+
+---
+
 ## Title
 
 Service Intelligence snapshot lifecycle (4C done) + human host/admin briefing direction (4D/4E next)
@@ -292,10 +304,12 @@ Post-3M staff-operations polish for live-service Manual Intake:
 4. **Walk-in edit validation** — name-only/no-phone saves; call-in rules unchanged.
 5. **Floor Plan table assignment** — when backend layout exists, table pick via floor plan (no raw table string).
 
-### Completed (device smoke Phase 3 — iOS `5762ecb`)
+### Completed (device smoke Phase 3 — iOS `5762ecb` + email-delivery refresh)
 
-1. **Row indicators** — auto-confirmed, confirmation email sent, reminder sent on Host/Bookings rows without opening detail.
-2. **Activity feed warming** — date-scoped `ReservationActivityStore` warm on list appear; email fields from `ReservationRecord` sync.
+1. **Row indicators** — auto-confirm from **`confirmationSource`**; confirmation/reminder labels from **delivery truth** (not `_sentAt` as delivered); Host **Email issue** for failures only.
+2. **No activity prefetch for badges** — DTO/sync fields only; activity remains history-only.
+
+See [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md).
 
 ### Completed (device smoke Phase 4 — iOS `3da3a68`)
 

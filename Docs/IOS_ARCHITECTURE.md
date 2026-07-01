@@ -2,7 +2,7 @@
 
 **Status:** Current source of truth  
 **Branch:** `audit-current-state`  
-**Last reviewed:** 2026-06-24
+**Last reviewed:** 2026-07-01
 
 ## What this app is
 
@@ -22,7 +22,7 @@ Private iOS staff operations app for Tryzub Ukrainian Kitchen. Reads/writes **ma
 | Foreground / privacy | `b910bd1` — `refreshOperationalDataAfterUnlock` → `autoRefreshDashboardIfAllowed` |
 | Freshness UI | `HomeServiceStatusPresenter`, `ScreenFreshnessState` — checked/updated/saved-data lines **already exist**; no duplicate stale-warning UI |
 | Offline / degraded | Mutations blocked (`ensureMutationsAllowedOnline`); cache visible for viewing; **no offline create/edit queue** (not V1) |
-| Confirmation | Both backend `/confirm` and manual Mail exist; active path is **device setting-dependent** (default may enable backend confirm) |
+| Confirmation | Both backend `/confirm` and manual Mail exist; active path is **device setting-dependent** (default may enable backend confirm). Delivery/provenance DTOs: [EMAIL_DELIVERY_TRUTH.md](./EMAIL_DELIVERY_TRUTH.md) |
 
 ### Current risks (stabilization focus)
 
