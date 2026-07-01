@@ -95,11 +95,11 @@ struct HostReminderStatsSheet: View {
 
                     VStack(alignment: .leading, spacing: 8) {
                         reminderStatRow(
-                            title: "Sent",
+                            title: "Accepted",
                             value: summary?.sent ?? 0,
                             systemImage: "paperplane.fill",
                             tint: TryzubColors.info,
-                            detail: "Reminders sent during the latest backend check."
+                            detail: "Reminder attempts accepted during the latest backend check."
                         )
                         reminderStatRow(
                             title: "Handled",

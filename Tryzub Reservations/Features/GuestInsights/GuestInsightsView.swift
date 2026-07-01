@@ -256,7 +256,7 @@ private struct GuestServiceProfileContent: View {
                 if let reminder = presentation.today.reminderLine {
                     GuestServiceFactLine(
                         text: reminder,
-                        systemImage: reminder == "Reminder not sent" ? "bell.slash" : "bell.badge.checkmark"
+                        systemImage: reminder == "Reminder follow-up needed" ? "bell.slash" : "bell.badge.checkmark"
                     )
                 }
                 ForEach(presentation.today.noteLines, id: \.self) { line in

@@ -662,23 +662,34 @@ struct ReservationRowView<Accessory: View>: View {
             )
         }
 
-        if reservation.confirmationEmailSentAt?.nilIfBlank != nil {
+        if reservation.needsEmailCorrection || reservation.hasFailedConfirmationDelivery {
+            items.append(
+                ReservationRowDetailLabelData(
+                    text: displayStyle == .hostBoard ? "Email issue" : "",
+                    systemImage: "envelope.badge.exclamationmark",
+                    accessibilityLabel: "Needs email correction",
+                    tint: TryzubColors.danger
+                )
+            )
+        } else if displayStyle == .standard,
+                  reservation.hasConfirmationEmailRecord {
             items.append(
                 ReservationRowDetailLabelData(
                     text: "",
                     systemImage: "envelope.badge",
-                    accessibilityLabel: "Confirmation email sent",
+                    accessibilityLabel: reservation.confirmationDeliveryLabel,
                     tint: .secondary
                 )
             )
         }
 
-        if reservation.reminderEmailSentAt?.nilIfBlank != nil {
+        if displayStyle == .standard,
+           reservation.hasReminderEmailRecord {
             items.append(
                 ReservationRowDetailLabelData(
                     text: "",
                     systemImage: "bell.badge",
-                    accessibilityLabel: "Reminder email sent",
+                    accessibilityLabel: reservation.reminderDeliveryLabel,
                     tint: .secondary
                 )
             )

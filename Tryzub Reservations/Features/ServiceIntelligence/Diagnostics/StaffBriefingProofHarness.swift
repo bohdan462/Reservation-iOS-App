@@ -370,7 +370,16 @@ enum StaffBriefingProofHarness {
             ],
             communicationSummary: StaffBriefingCommunicationSummary(
                 confirmationsMissingCount: 2, confirmationsSentCount: 4,
-                remindersMissingCount: 3, remindersSentCount: nil, autoConfirmedCount: nil
+                confirmationDeliveredCount: 1,
+                confirmationPendingDeliveryCount: 2,
+                confirmationFailedDeliveryCount: 1,
+                confirmationNeedsCorrectionCount: 1,
+                remindersMissingCount: 3, remindersSentCount: nil,
+                reminderDeliveredCount: 0,
+                reminderPendingDeliveryCount: 0,
+                reminderFailedDeliveryCount: 0,
+                reminderNeedsCorrectionCount: 0,
+                autoConfirmedCount: nil
             ),
             businessSummaryLines: ["Weekend pressure is building."],
             tomorrowPreview: tomorrow

@@ -382,7 +382,7 @@ enum HostReservationActionClusterBuilder {
         } else if signals.contains(.confirmationMissing) {
             suffix = "needs confirmation"
         } else if signals.contains(.reminderMissing) {
-            suffix = "reminder not sent"
+            suffix = "reminder follow-up"
         } else if signals.contains(.largeParty) {
             suffix = "\(reservation.partySize)-guest party"
         } else if signals.contains(.returningGuest) {
@@ -459,7 +459,7 @@ enum HostReservationActionClusterBuilder {
     private static func shouldSuggestReminder(for reservation: ReservationRecord, now: Date) -> Bool {
         guard reservation.hasUsableConfirmationEmail,
               reservation.statusValue == .confirmed,
-              reservation.reminderEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else {
+              !reservation.hasReminderEmailRecord else {
             return false
         }
         switch reservation.operationalTimingState(now: now) {

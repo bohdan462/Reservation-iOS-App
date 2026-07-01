@@ -3455,23 +3455,52 @@ final class ReservationsController: ObservableObject {
                 return
             }
 
-            switch response.emailStatus {
-            case .sent:
-                latestEmailStatusByReservationID[id] = .sent
-                postNotice(severity: .success, source: .email, title: "Reservation confirmed", message: "Confirmation email was recorded as sent.")
-            case .alreadySent:
-                latestEmailStatusByReservationID[id] = .alreadySent
-                postNotice(severity: .info, source: .email, title: "Already confirmed", message: "Confirmation email was already recorded as sent.")
-            case .failed:
+            let deliveryStatus = response.emailDeliveryStatus
+                ?? response.data?.confirmationDeliveryStatus
+                ?? (response.emailStatus == .skipped ? .notApplicable : .unknown)
+
+            switch deliveryStatus {
+            case .pendingDelivery, .sentToProvider:
+                latestEmailStatusByReservationID[id] = response.emailStatus
+                postNotice(severity: .success, source: .email, title: "Reservation confirmed", message: "Email is waiting for delivery.")
+            case .delivered:
+                latestEmailStatusByReservationID[id] = response.emailStatus
+                postNotice(severity: .success, source: .email, title: "Reservation confirmed", message: "Confirmation email delivered.")
+            case .failed, .suppressed, .complained:
                 latestEmailStatusByReservationID[id] = .failed
-                errorMessage = "Couldn’t send confirmation email. Use Confirm Manually."
-                postNotice(severity: .warning, source: .email, title: "Email failed", message: "Couldn’t send confirmation email. Use Confirm Manually.")
-            case .skipped:
-                latestEmailStatusByReservationID[id] = .skipped
-                postNotice(severity: .info, source: .email, title: "Email skipped", message: "No confirmation email sent: no guest email.")
-            case .unknown:
-                latestEmailStatusByReservationID[id] = .unknown
-                postNotice(severity: .info, source: .email, title: "Reservation confirmed", message: "Check email status in details.")
+                errorMessage = "Reservation confirmed, but email delivery failed."
+                postNotice(severity: .warning, source: .email, title: "Email delivery failed", message: "Reservation confirmed, but email delivery failed. Correct the email or confirm by phone.")
+            case .notApplicable:
+                latestEmailStatusByReservationID[id] = response.emailStatus
+                postNotice(severity: .info, source: .email, title: "Reservation confirmed", message: "Reservation confirmed without email.")
+            case .manualRecorded:
+                latestEmailStatusByReservationID[id] = response.emailStatus
+                postNotice(severity: .info, source: .email, title: "Reservation confirmed", message: "Manual confirmation email recorded.")
+            case .legacyRecorded:
+                latestEmailStatusByReservationID[id] = response.emailStatus
+                postNotice(severity: .info, source: .email, title: "Reservation confirmed", message: "Confirmation was recorded before delivery tracking.")
+            case .deliveryDelayed:
+                latestEmailStatusByReservationID[id] = response.emailStatus
+                postNotice(severity: .info, source: .email, title: "Reservation confirmed", message: "Email delivery is delayed.")
+            case .deliveryUnknown, .unknown:
+                switch response.emailStatus {
+                case .sent:
+                    latestEmailStatusByReservationID[id] = .sent
+                    postNotice(severity: .success, source: .email, title: "Reservation confirmed", message: "Email send was accepted. Check delivery status in details.")
+                case .alreadySent:
+                    latestEmailStatusByReservationID[id] = .alreadySent
+                    postNotice(severity: .info, source: .email, title: "Already confirmed", message: "Confirmation was already attempted. Check delivery status in details.")
+                case .failed:
+                    latestEmailStatusByReservationID[id] = .failed
+                    errorMessage = "Couldn’t send confirmation email. Use Confirm Manually."
+                    postNotice(severity: .warning, source: .email, title: "Email failed", message: "Couldn’t send confirmation email. Use Confirm Manually.")
+                case .skipped:
+                    latestEmailStatusByReservationID[id] = .skipped
+                    postNotice(severity: .info, source: .email, title: "Email skipped", message: "Reservation confirmed without email.")
+                case .unknown:
+                    latestEmailStatusByReservationID[id] = .unknown
+                    postNotice(severity: .info, source: .email, title: "Reservation confirmed", message: "Check email status in details.")
+                }
             }
         } catch {
             if error.isCancellationLike {
@@ -3519,6 +3548,107 @@ final class ReservationsController: ObservableObject {
             postMutationFailureNotice(
                 title: "Reservation was not confirmed",
                 message: "Confirmation email may not have been sent. Retry or check details."
+            )
+        }
+    }
+
+    // Intent: Staff retries a failed confirmation after correcting the email address.
+    // Network: POST /managed-reservations/{id}/resend-confirmation.
+    func resendConfirmation(
+        reservation: ReservationRecord,
+        context: ModelContext
+    ) async {
+        guard canStartMutationOnline() else { return }
+
+        let id = reservation.remoteID
+        guard !actionInProgressIDs.contains(id) else { return }
+
+        actionInProgressIDs.insert(id)
+        errorMessage = nil
+        noticeMessage = nil
+        defer { actionInProgressIDs.remove(id) }
+
+        let service = ReservationMutationService(
+            client: environment.apiClient,
+            repository: ReservationRepository(context: context)
+        )
+
+        do {
+            let updated = try await service.resendConfirmation(id: id)
+            markScopesTouched(after: updated)
+            latestEmailStatusByReservationID[id] = .sent
+            postNotice(
+                severity: .success,
+                source: .email,
+                title: "Confirmation resent",
+                message: "Waiting for delivery."
+            )
+        } catch {
+            if error.isCancellationLike {
+                return
+            }
+            if error.isOfflineLike {
+                postOfflineNotice(source: .email, requestReason: .resendConfirmation, error: error)
+            }
+            latestEmailStatusByReservationID[id] = .failed
+            postNotice(
+                severity: .warning,
+                source: .email,
+                title: "Could not resend confirmation",
+                message: "Check the email or use phone confirmation.",
+                requestReason: .resendConfirmation,
+                errorCode: errorLogCode(error),
+                developerDiagnostics: error.reservationAPIDeveloperDetail
+            )
+        }
+    }
+
+    // Intent: Staff records phone confirmation without marking email delivered.
+    // Network: POST /managed-reservations/{id}/confirm-by-phone.
+    func confirmReservationByPhone(
+        reservation: ReservationRecord,
+        context: ModelContext
+    ) async {
+        guard canStartMutationOnline() else { return }
+
+        let id = reservation.remoteID
+        guard !actionInProgressIDs.contains(id) else { return }
+
+        actionInProgressIDs.insert(id)
+        errorMessage = nil
+        noticeMessage = nil
+        defer { actionInProgressIDs.remove(id) }
+
+        let service = ReservationMutationService(
+            client: environment.apiClient,
+            repository: ReservationRepository(context: context)
+        )
+
+        do {
+            let updated = try await service.confirmReservationByPhone(id: id)
+            markScopesTouched(after: updated)
+            latestEmailStatusByReservationID[id] = .skipped
+            postNotice(
+                severity: .success,
+                source: .email,
+                title: "Reservation confirmed",
+                message: "Reservation confirmed by phone."
+            )
+        } catch {
+            if error.isCancellationLike {
+                return
+            }
+            if error.isOfflineLike {
+                postOfflineNotice(source: .email, requestReason: .confirmByPhone, error: error)
+            }
+            postNotice(
+                severity: .warning,
+                source: .email,
+                title: "Could not confirm by phone",
+                message: "Try again or update the reservation manually.",
+                requestReason: .confirmByPhone,
+                errorCode: errorLogCode(error),
+                developerDiagnostics: error.reservationAPIDeveloperDetail
             )
         }
     }

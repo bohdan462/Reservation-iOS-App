@@ -143,19 +143,35 @@ struct StaffBriefingAttachmentSummary: Equatable, Sendable, Identifiable {
 /// "was sent" claims that the model could turn into unsafe assertions.
 struct StaffBriefingCommunicationSummary: Equatable, Sendable {
     let confirmationsMissingCount: Int
-    /// nil when not safely derivable.
+    /// Legacy-compatible recorded/attempted count; nil when not safely derivable.
     let confirmationsSentCount: Int?
+    let confirmationDeliveredCount: Int
+    let confirmationPendingDeliveryCount: Int
+    let confirmationFailedDeliveryCount: Int
+    let confirmationNeedsCorrectionCount: Int
     let remindersMissingCount: Int
-    /// nil when not safely derivable.
+    /// Legacy-compatible recorded/attempted count; nil when not safely derivable.
     let remindersSentCount: Int?
+    let reminderDeliveredCount: Int
+    let reminderPendingDeliveryCount: Int
+    let reminderFailedDeliveryCount: Int
+    let reminderNeedsCorrectionCount: Int
     /// nil when not reliably available from deterministic metadata. Never faked.
     let autoConfirmedCount: Int?
 
     static let empty = StaffBriefingCommunicationSummary(
         confirmationsMissingCount: 0,
         confirmationsSentCount: nil,
+        confirmationDeliveredCount: 0,
+        confirmationPendingDeliveryCount: 0,
+        confirmationFailedDeliveryCount: 0,
+        confirmationNeedsCorrectionCount: 0,
         remindersMissingCount: 0,
         remindersSentCount: nil,
+        reminderDeliveredCount: 0,
+        reminderPendingDeliveryCount: 0,
+        reminderFailedDeliveryCount: 0,
+        reminderNeedsCorrectionCount: 0,
         autoConfirmedCount: nil
     )
 }

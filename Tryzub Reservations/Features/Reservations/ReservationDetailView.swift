@@ -46,7 +46,7 @@ struct ReservationDetailPresentation {
     ) -> ReservationDetailPresentation {
         let emailStatus = Self.emailStateText(for: reservation)
         var reservationRows: [Row] = [
-            Row(title: "Email", value: emailStatus),
+            Row(title: "Confirmation email", value: emailStatus, allowsWrap: true),
             Row(title: "Submitted", value: submittedValue(for: reservation))
         ]
 
@@ -58,8 +58,8 @@ struct ReservationDetailPresentation {
             reservationRows.append(Row(title: "Confirmed", value: serverTimestamp(confirmedAt)))
         }
 
-        if let reminderSentAt = reservation.reminderEmailSentAt?.nilIfBlank {
-            reservationRows.append(Row(title: "Reminder", value: "Sent \(serverTimestamp(reminderSentAt))"))
+        if reservation.hasReminderEmailRecord {
+            reservationRows.append(Row(title: "Reminder", value: reservation.reminderDeliveryDetailText, allowsWrap: true))
         } else if reservation.statusValue == .confirmed,
                   reservation.hasUsableConfirmationEmail {
             reservationRows.append(Row(title: "Reminder", value: "Not sent"))
@@ -99,19 +99,11 @@ struct ReservationDetailPresentation {
     }
 
     private static func emailStateText(for reservation: ReservationRecord) -> String {
-        if reservation.hasConfirmationEmailRecord {
-            return "Confirmation email recorded"
-        }
-
         if reservation.hasManualConfirmationEmailRecord {
             return "Manual email recorded (legacy note)"
         }
 
-        if reservation.hasUsableConfirmationEmail {
-            return "Email not sent"
-        }
-
-        return "No email"
+        return reservation.confirmationDeliveryDetailText
     }
 
     private static func serverTimestamp(_ value: String) -> String {
@@ -143,7 +135,6 @@ struct ReservationDetailView: View {
     @EnvironmentObject private var guestIntelligenceStore: GuestIntelligenceStore
     @EnvironmentObject private var guestProfileStore: GuestProfileStore
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
-    @EnvironmentObject private var activityStore: ReservationActivityStore
     @EnvironmentObject private var emailAutomationSettingsStore: EmailAutomationSettingsStore
     // Guest Insights uses the active reservation window, not the full SwiftData cache.
     @Query private var windowCachedReservations: [ReservationRecord]
@@ -750,7 +741,7 @@ struct ReservationDetailView: View {
     }
 
     private var isBackendAutoConfirmed: Bool {
-        activityStore.hasBackendAutoConfirmEvidence(for: reservation.remoteID)
+        reservation.isAutoConfirmedByBackend
     }
 
     @ViewBuilder
@@ -767,6 +758,15 @@ struct ReservationDetailView: View {
                 message: message,
                 symbolName: "exclamationmark.triangle",
                 tint: .red
+            )
+        }
+
+        if reservation.needsEmailCorrection || reservation.hasFailedConfirmationDelivery {
+            DetailWarningCard(
+                title: "Email needs correction",
+                message: reservation.confirmationCorrectionActionText ?? reservation.confirmationDeliveryDetailText,
+                symbolName: "envelope.badge.exclamationmark",
+                tint: TryzubColors.danger
             )
         }
 
@@ -809,6 +809,9 @@ struct ReservationDetailView: View {
             onAction: handleAction,
             onSeatRequiresTableChoice: { seatPromptReservation = reservation },
             onEdit: { showEditScreen = true },
+            onEditEmail: { showEditScreen = true },
+            onResendConfirmation: { Task { await resendConfirmation() } },
+            onConfirmByPhone: { Task { await confirmByPhone() } },
             onSendGuestConfirmationEmail: canShowManualConfirmationFallback
                 ? { Task { await sendGuestConfirmationEmail() } }
                 : nil,
@@ -2357,6 +2360,26 @@ struct ReservationDetailView: View {
         ReservationHaptics.success()
     }
 
+    private func resendConfirmation() async {
+        guard !isSavingQuickAction else { return }
+        isSavingQuickAction = true
+        errorMessage = nil
+        defer { isSavingQuickAction = false }
+
+        await controller.resendConfirmation(reservation: reservation, context: modelContext)
+        ReservationHaptics.success()
+    }
+
+    private func confirmByPhone() async {
+        guard !isSavingQuickAction else { return }
+        isSavingQuickAction = true
+        errorMessage = nil
+        defer { isSavingQuickAction = false }
+
+        await controller.confirmReservationByPhone(reservation: reservation, context: modelContext)
+        ReservationHaptics.success()
+    }
+
     // Intent: Hide a mistaken manual entry without hard-deleting server data.
     // Network: PATCH /managed-reservations/{id} is_hidden=true.
     private func hideWrongManualEntry() async {
@@ -2540,7 +2563,7 @@ struct ReservationDetailView: View {
         if let draft = GuestConfirmationMailPresenter.draft(reservation: reservation, manageLink: guestManageLink) {
             Task { await recordDraftCreated(draft) }
         }
-        guestManageLinkMessage = "Plain confirmation draft copied. Record sent after staff sends it."
+        guestManageLinkMessage = "Plain confirmation draft copied. Record manual email after staff sends it."
         ReservationHaptics.success()
     }
 
@@ -3144,6 +3167,9 @@ private struct DetailActionBar: View {
     let onAction: (ReservationHostAction) -> Void
     var onSeatRequiresTableChoice: (() -> Void)? = nil
     let onEdit: () -> Void
+    let onEditEmail: () -> Void
+    let onResendConfirmation: () -> Void
+    let onConfirmByPhone: () -> Void
     let onSendGuestConfirmationEmail: (() -> Void)?
     let onRecordManualConfirmationSent: (() -> Void)?
     let onGenerateGuestManageLink: (() -> Void)?
@@ -3169,6 +3195,10 @@ private struct DetailActionBar: View {
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(TryzubColors.mutedText)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if showsEmailCorrectionActions {
+                    emailCorrectionActions
                 }
 
                 if showsPendingConfirmationButtons {
@@ -3206,6 +3236,53 @@ private struct DetailActionBar: View {
         policy.detailPrimaryAction == .confirmOnly
     }
 
+    private var showsEmailCorrectionActions: Bool {
+        reservation.needsEmailCorrection || reservation.hasFailedConfirmationDelivery
+    }
+
+    private var emailCorrectionActions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(reservation.confirmationDeliveryLabel)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(reservation.confirmationDeliveryTone.detailColor)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(reservation.confirmationDeliveryDetailText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 8) {
+                correctionButton(title: "Edit email", systemImage: "pencil", action: onEditEmail)
+                correctionButton(title: "Resend", systemImage: "paperplane", action: onResendConfirmation)
+                    .disabled(!reservation.hasUsableConfirmationEmail || reservation.statusValue != .confirmed)
+                correctionButton(title: "Confirm by phone", systemImage: "phone", action: onConfirmByPhone)
+            }
+        }
+        .padding(12)
+        .background(TryzubColors.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(TryzubColors.danger.opacity(0.18), lineWidth: 1)
+        }
+    }
+
+    private func correctionButton(
+        title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(isBusy || isNetworkDegraded)
+    }
+
     private var pendingConfirmationActions: some View {
         VStack(spacing: 10) {
             Text(primaryConfirmationModeMessage)
@@ -3236,7 +3313,7 @@ private struct DetailActionBar: View {
         }
 
         return emailAutomationSettingsStore.settings.backendConfirmationEnabled
-            ? "Confirmation email will be sent by backend."
+            ? "Backend will send confirmation and wait for delivery proof."
             : "Confirmation opens Mail for review."
     }
 
@@ -3347,7 +3424,7 @@ private struct DetailActionBar: View {
                 Button {
                     onRecordManualConfirmationSent()
                 } label: {
-                    Label("Record sent", systemImage: "envelope.badge")
+                    Label("Record manual email", systemImage: "envelope.badge")
                 }
             }
 
@@ -3396,6 +3473,21 @@ private struct DetailActionBar: View {
             || onCopyConfirmationDraft != nil
             || onHideWrongEntry != nil
             || onRestoreHidden != nil
+    }
+}
+
+private extension EmailDeliveryPresentationTone {
+    var detailColor: Color {
+        switch self {
+        case .neutral:
+            return TryzubColors.mutedText
+        case .success:
+            return TryzubColors.success
+        case .warning:
+            return TryzubColors.warning
+        case .critical:
+            return TryzubColors.danger
+        }
     }
 }
 

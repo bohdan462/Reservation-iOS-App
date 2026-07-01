@@ -162,6 +162,13 @@ enum ReservationOperationalTimingState: Equatable {
     }
 }
 
+enum EmailDeliveryPresentationTone: Equatable {
+    case neutral
+    case success
+    case warning
+    case critical
+}
+
 struct ReservationDateSection: Identifiable {
     let id: String
     let title: String
@@ -334,12 +341,227 @@ extension ReservationRecord {
         staffNotes?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
-    var hasConfirmationEmailRecord: Bool {
-        confirmationEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-    }
-
     var hasManualConfirmationEmailRecord: Bool {
         staffNotes?.contains(ReservationEmailWorkflow.manualConfirmationStaffNoteMarker) == true
+    }
+
+    var confirmationDeliveryStatus: EmailDeliveryStatus {
+        guard let raw = confirmationDeliveryStatusRaw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return .notApplicable
+        }
+        return EmailDeliveryStatus(rawValue: raw) ?? .unknown
+    }
+
+    var reminderDeliveryStatus: EmailDeliveryStatus {
+        guard let raw = reminderDeliveryStatusRaw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return .notApplicable
+        }
+        return EmailDeliveryStatus(rawValue: raw) ?? .unknown
+    }
+
+    var confirmationSource: ConfirmationSource {
+        guard let raw = confirmationSourceRaw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return .unknown
+        }
+        return ConfirmationSource(rawValue: raw) ?? .unknown
+    }
+
+    var isAutoConfirmedByBackend: Bool {
+        confirmationSource == .autoConfirm
+    }
+
+    var hasVerifiedConfirmationDelivery: Bool {
+        confirmationDeliveryStatus == .delivered
+    }
+
+    var needsEmailCorrection: Bool {
+        requiresEmailCorrection || hasFailedConfirmationDelivery
+    }
+
+    var needsReminderCorrection: Bool {
+        requiresReminderCorrection || Self.isFailedDeliveryStatus(reminderDeliveryStatus)
+    }
+
+    var hasPendingConfirmationDelivery: Bool {
+        confirmationDeliveryStatus == .pendingDelivery
+            || confirmationDeliveryStatus == .sentToProvider
+    }
+
+    var hasFailedConfirmationDelivery: Bool {
+        Self.isFailedDeliveryStatus(confirmationDeliveryStatus)
+    }
+
+    var hasFailedReminderDelivery: Bool {
+        Self.isFailedDeliveryStatus(reminderDeliveryStatus)
+    }
+
+    var hasPendingReminderDelivery: Bool {
+        reminderDeliveryStatus == .pendingDelivery
+            || reminderDeliveryStatus == .sentToProvider
+    }
+
+    var needsReminderDeliveryAttention: Bool {
+        needsReminderCorrection
+            || hasFailedReminderDelivery
+            || reminderDeliveryStatus == .deliveryDelayed
+            || hasPendingReminderDelivery
+            || (!hasUsableConfirmationEmail && statusValue == .confirmed)
+    }
+
+    var confirmationDeliveryLabel: String {
+        if confirmationSource == .phone {
+            return "Confirmed by phone"
+        }
+        if confirmationSource == .noEmail {
+            return "Confirmed without guest email"
+        }
+        return Self.deliveryLabel(for: confirmationDeliveryStatus)
+    }
+
+    var confirmationDeliveryDetailText: String {
+        if confirmationSource == .phone {
+            return "Reservation confirmed by phone. Email delivery was not marked delivered."
+        }
+        if confirmationSource == .noEmail {
+            return "Reservation confirmed without a usable guest email."
+        }
+
+        switch confirmationDeliveryStatus {
+        case .delivered:
+            return "Confirmation email delivered."
+        case .pendingDelivery, .sentToProvider:
+            return "Reservation confirmed. Email is waiting for delivery confirmation."
+        case .failed:
+            return "Confirmation email failed. Correct the email or confirm by phone."
+        case .suppressed:
+            return "Confirmation email was suppressed. Correct the email or confirm by phone."
+        case .complained:
+            return "Spam complaint recorded. Review before resending or confirm by phone."
+        case .deliveryDelayed:
+            return "Confirmation email delivery is delayed. The provider is still attempting delivery."
+        case .legacyRecorded:
+            return "Confirmation was recorded before delivery tracking."
+        case .manualRecorded:
+            return "Manual confirmation email recorded."
+        case .notApplicable:
+            return hasUsableConfirmationEmail ? "No confirmation delivery expected." : "Confirmed without guest email."
+        case .deliveryUnknown, .unknown:
+            return "Confirmation delivery status is unknown."
+        }
+    }
+
+    var confirmationDeliveryTone: EmailDeliveryPresentationTone {
+        if needsEmailCorrection || hasFailedConfirmationDelivery {
+            return .critical
+        }
+        return Self.deliveryTone(for: confirmationDeliveryStatus)
+    }
+
+    var confirmationCorrectionActionText: String? {
+        needsEmailCorrection || hasFailedConfirmationDelivery
+            ? "Correct the email, resend confirmation, or confirm by phone."
+            : nil
+    }
+
+    var reminderDeliveryLabel: String {
+        Self.deliveryLabel(for: reminderDeliveryStatus)
+    }
+
+    var reminderDeliveryDetailText: String {
+        switch reminderDeliveryStatus {
+        case .delivered:
+            return "Reminder email delivered."
+        case .pendingDelivery, .sentToProvider:
+            return "Reminder is waiting for delivery confirmation."
+        case .failed:
+            return "Reminder email failed. Use manual follow-up for this reminder."
+        case .suppressed:
+            return "Reminder email was suppressed. Use manual follow-up for this reminder."
+        case .complained:
+            return "Spam complaint recorded. Use manual follow-up for this reminder."
+        case .deliveryDelayed:
+            return "Reminder delivery is delayed. Use manual follow-up if the guest needs an immediate reminder."
+        case .legacyRecorded:
+            return "Reminder was recorded before delivery tracking."
+        case .manualRecorded:
+            return "Manual reminder email recorded."
+        case .notApplicable:
+            return hasUsableConfirmationEmail ? "No reminder delivery expected." : "No usable guest email for reminder delivery."
+        case .deliveryUnknown, .unknown:
+            return "Reminder delivery status is unknown."
+        }
+    }
+
+    var reminderDeliveryTone: EmailDeliveryPresentationTone {
+        if needsReminderCorrection || hasFailedReminderDelivery {
+            return .critical
+        }
+        return Self.deliveryTone(for: reminderDeliveryStatus)
+    }
+
+    var hasConfirmationEmailRecord: Bool {
+        switch confirmationDeliveryStatus {
+        case .pendingDelivery, .sentToProvider, .delivered, .failed, .suppressed, .complained,
+             .deliveryDelayed, .deliveryUnknown, .legacyRecorded, .manualRecorded:
+            return true
+        case .notApplicable, .unknown:
+            return confirmationEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+    }
+
+    var hasReminderEmailRecord: Bool {
+        switch reminderDeliveryStatus {
+        case .pendingDelivery, .sentToProvider, .delivered, .failed, .suppressed, .complained,
+             .deliveryDelayed, .deliveryUnknown, .legacyRecorded, .manualRecorded:
+            return true
+        case .notApplicable, .unknown:
+            return reminderEmailSentAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+    }
+
+    private static func isFailedDeliveryStatus(_ status: EmailDeliveryStatus) -> Bool {
+        status == .failed || status == .suppressed || status == .complained
+    }
+
+    private static func deliveryLabel(for status: EmailDeliveryStatus) -> String {
+        switch status {
+        case .delivered:
+            return "Email delivered"
+        case .pendingDelivery, .sentToProvider:
+            return "Waiting for delivery"
+        case .failed:
+            return "Delivery failed"
+        case .suppressed:
+            return "Email suppressed"
+        case .complained:
+            return "Spam complaint"
+        case .deliveryDelayed:
+            return "Delivery delayed"
+        case .legacyRecorded:
+            return "Recorded before delivery tracking"
+        case .manualRecorded:
+            return "Manual email recorded"
+        case .notApplicable:
+            return "No email delivery"
+        case .deliveryUnknown, .unknown:
+            return "Delivery unknown"
+        }
+    }
+
+    private static func deliveryTone(for status: EmailDeliveryStatus) -> EmailDeliveryPresentationTone {
+        switch status {
+        case .delivered:
+            return .success
+        case .pendingDelivery, .sentToProvider, .deliveryDelayed:
+            return .warning
+        case .failed, .suppressed, .complained:
+            return .critical
+        case .notApplicable, .deliveryUnknown, .legacyRecorded, .manualRecorded, .unknown:
+            return .neutral
+        }
     }
 
     var isManualOrCallIn: Bool {

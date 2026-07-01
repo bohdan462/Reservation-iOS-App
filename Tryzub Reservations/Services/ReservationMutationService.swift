@@ -12,6 +12,8 @@ protocol ReservationMutationServiceProtocol {
     func updateReservation(id: Int, request: ReservationUpdateRequest) async throws -> ReservationDTO
     func createReservation(_ request: ReservationCreateRequest) async throws -> ReservationDTO
     func confirmReservation(id: Int) async throws -> ReservationConfirmResponse
+    func resendConfirmation(id: Int) async throws -> ReservationDTO
+    func confirmReservationByPhone(id: Int) async throws -> ReservationDTO
     func sendDueReminders(date: String?) async throws -> ReservationReminderBatchResponse
     func fetchReminderStatus(date: String) async throws -> ReservationReminderStatusResponse
     func createGuestManageLink(id: Int) async throws -> ReservationGuestManageLinkDTO
@@ -72,6 +74,24 @@ final class ReservationMutationService: ReservationMutationServiceProtocol {
             try repository.upsert(reservation)
         }
         return response
+    }
+
+    // Intent: Resends confirmation after staff fixes a failed/suppressed address.
+    // Network: POST /managed-reservations/{id}/resend-confirmation.
+    // SwiftData: Upserts the returned server DTO; never invents delivered locally.
+    func resendConfirmation(id: Int) async throws -> ReservationDTO {
+        let reservation = try await client.resendConfirmation(id: id, reason: .resendConfirmation)
+        try repository.upsert(reservation)
+        return reservation
+    }
+
+    // Intent: Records phone confirmation without treating email as delivered.
+    // Network: POST /managed-reservations/{id}/confirm-by-phone.
+    // SwiftData: Upserts the returned server DTO.
+    func confirmReservationByPhone(id: Int) async throws -> ReservationDTO {
+        let reservation = try await client.confirmReservationByPhone(id: id, reason: .confirmByPhone)
+        try repository.upsert(reservation)
+        return reservation
     }
 
     // MARK: - Reminder Batch

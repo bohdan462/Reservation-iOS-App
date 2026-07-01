@@ -10,7 +10,6 @@ struct HostBoardReservationRow: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
-    @EnvironmentObject private var activityStore: ReservationActivityStore
 
     let reservation: ReservationRecord
     var referenceNow = Date()
@@ -129,10 +128,7 @@ struct HostBoardReservationRow: View {
     }
 
     private var showsAutoConfirmedAdornment: Bool {
-        activityStore.hasBackendAutoConfirmEvidence(
-            for: reservation.remoteID,
-            serviceDateKey: reservation.reservationDate
-        )
+        reservation.isAutoConfirmedByBackend
     }
 
     private func handle(_ action: ReservationHostAction) {

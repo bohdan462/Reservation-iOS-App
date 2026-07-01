@@ -3207,7 +3207,6 @@ private struct ReservationNavigationRow: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var controller: ReservationsController
     @EnvironmentObject private var floorPlanStore: FloorPlanStore
-    @EnvironmentObject private var activityStore: ReservationActivityStore
 
     let reservation: ReservationRecord
     let environment: AppEnvironment
@@ -3429,10 +3428,7 @@ private struct ReservationNavigationRow: View {
     }
 
     private var showsAutoConfirmedAdornment: Bool {
-        activityStore.hasBackendAutoConfirmEvidence(
-            for: reservation.remoteID,
-            serviceDateKey: reservation.reservationDate
-        )
+        reservation.isAutoConfirmedByBackend
     }
 
     // MARK: - Available Staff Actions

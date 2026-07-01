@@ -37,12 +37,22 @@ struct ReservationCreateResponse: Codable {
 struct ReservationConfirmResponse: Codable {
     let success: Bool
     let emailStatus: ReservationEmailStatus
+    let emailDeliveryStatus: EmailDeliveryStatus?
     let emailError: String?
     let fallback: ReservationConfirmFallback?
     let message: String?
     let data: ReservationDTO?
     let activity: MutationActivityResultDTO?
     let diagnostics: JSONValue?
+}
+
+struct ReservationCorrectionResponse: Codable {
+    let success: Bool
+    let emailStatus: ReservationEmailStatus?
+    let emailDeliveryStatus: EmailDeliveryStatus?
+    let emailError: String?
+    let message: String?
+    let data: ReservationDTO
 }
 
 enum ReservationConfirmFallback: String, Codable {

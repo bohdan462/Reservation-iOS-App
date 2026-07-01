@@ -76,11 +76,19 @@ enum StaffBriefingPromptBuilder {
 
         // Communication summary
         let c = packet.communicationSummary
-        lines.append("COMMUNICATION SUMMARY (ground truth — do not claim messages were sent):")
+        lines.append("COMMUNICATION SUMMARY (ground truth — do not claim delivery unless delivered):")
         lines.append("- Confirmations missing: \(c.confirmationsMissingCount)")
-        if let sent = c.confirmationsSentCount { lines.append("- Confirmations sent: \(sent)") }
+        if let recorded = c.confirmationsSentCount { lines.append("- Confirmations recorded/attempted: \(recorded)") }
+        if c.confirmationDeliveredCount > 0 { lines.append("- Confirmation emails delivered: \(c.confirmationDeliveredCount)") }
+        if c.confirmationPendingDeliveryCount > 0 { lines.append("- Confirmation emails waiting for delivery: \(c.confirmationPendingDeliveryCount)") }
+        if c.confirmationFailedDeliveryCount > 0 { lines.append("- Confirmation emails failed: \(c.confirmationFailedDeliveryCount)") }
+        if c.confirmationNeedsCorrectionCount > 0 { lines.append("- Confirmations needing email correction: \(c.confirmationNeedsCorrectionCount)") }
         lines.append("- Reminders missing: \(c.remindersMissingCount)")
-        if let sent = c.remindersSentCount { lines.append("- Reminders sent: \(sent)") }
+        if let recorded = c.remindersSentCount { lines.append("- Reminders recorded/attempted: \(recorded)") }
+        if c.reminderDeliveredCount > 0 { lines.append("- Reminders delivered: \(c.reminderDeliveredCount)") }
+        if c.reminderPendingDeliveryCount > 0 { lines.append("- Reminders waiting for delivery: \(c.reminderPendingDeliveryCount)") }
+        if c.reminderFailedDeliveryCount > 0 { lines.append("- Reminders failed; use manual follow-up: \(c.reminderFailedDeliveryCount)") }
+        if c.reminderNeedsCorrectionCount > 0 { lines.append("- Reminders needing email correction: \(c.reminderNeedsCorrectionCount)") }
         if let auto = c.autoConfirmedCount { lines.append("- Auto-confirmed: \(auto)") }
         lines.append("")
 

@@ -18,6 +18,11 @@ enum ShiftReminderEligibility {
         let smsReady: Int
         let noContact: Int
         let alreadyReminded: Int
+        let delivered: Int
+        let pendingDelivery: Int
+        let failedOrNeedsCorrection: Int
+        let manualOrLegacy: Int
+        let notApplicable: Int
     }
 
     static func eligibleReservations(
@@ -46,6 +51,11 @@ enum ShiftReminderEligibility {
         var smsReady = 0
         var noContact = 0
         var alreadyReminded = 0
+        var delivered = 0
+        var pendingDelivery = 0
+        var failedOrNeedsCorrection = 0
+        var manualOrLegacy = 0
+        var notApplicable = 0
 
         for reservation in reservations {
             let hasEmail = reservation.hasUsableConfirmationEmail
@@ -53,8 +63,28 @@ enum ShiftReminderEligibility {
             if hasEmail { emailReady += 1 }
             if hasSMS { smsReady += 1 }
             if !hasEmail && !hasSMS { noContact += 1 }
-            if reservation.reminderEmailSentAt?.nilIfBlank != nil {
+            if reservation.hasReminderEmailRecord {
                 alreadyReminded += 1
+            }
+
+            switch reservation.reminderDeliveryStatus {
+            case .delivered:
+                delivered += 1
+            case .pendingDelivery, .sentToProvider:
+                pendingDelivery += 1
+            case .failed, .suppressed, .complained:
+                failedOrNeedsCorrection += 1
+            case .manualRecorded, .legacyRecorded:
+                manualOrLegacy += 1
+            case .notApplicable:
+                notApplicable += 1
+            case .deliveryDelayed:
+                pendingDelivery += 1
+            case .deliveryUnknown, .unknown:
+                break
+            }
+            if reservation.requiresReminderCorrection && !reservation.hasFailedReminderDelivery {
+                failedOrNeedsCorrection += 1
             }
         }
 
@@ -63,7 +93,12 @@ enum ShiftReminderEligibility {
             emailReady: emailReady,
             smsReady: smsReady,
             noContact: noContact,
-            alreadyReminded: alreadyReminded
+            alreadyReminded: alreadyReminded,
+            delivered: delivered,
+            pendingDelivery: pendingDelivery,
+            failedOrNeedsCorrection: failedOrNeedsCorrection,
+            manualOrLegacy: manualOrLegacy,
+            notApplicable: notApplicable
         )
     }
 }
@@ -103,6 +138,7 @@ struct ShiftReminderReviewSheet: View {
                     Section {
                         VStack(alignment: .leading, spacing: 6) {
                             summaryLine
+                            deliveryStatsLine
                             Text("Review before sending. Nothing is sent automatically.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -111,6 +147,14 @@ struct ShiftReminderReviewSheet: View {
                                 .foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 2)
+                    }
+
+                    if !deliveryAttentionReservations.isEmpty {
+                        Section("Delivery watchlist") {
+                            ForEach(deliveryAttentionReservations) { reservation in
+                                deliveryAttentionRow(for: reservation)
+                            }
+                        }
                     }
 
                     Section {
@@ -139,7 +183,10 @@ struct ShiftReminderReviewSheet: View {
                         "emailReady": "\(summary.emailReady)",
                         "smsReady": "\(summary.smsReady)",
                         "excluded": "\(summary.noContact)",
-                        "alreadyReminded": "\(summary.alreadyReminded)"
+                        "alreadyReminded": "\(summary.alreadyReminded)",
+                        "delivered": "\(summary.delivered)",
+                        "pendingDelivery": "\(summary.pendingDelivery)",
+                        "failedOrNeedsCorrection": "\(summary.failedOrNeedsCorrection)"
                     ]
                 )
             }
@@ -179,6 +226,25 @@ struct ShiftReminderReviewSheet: View {
             .foregroundStyle(.secondary)
     }
 
+    private var deliveryStatsLine: some View {
+        let parts = [
+            "\(summary.delivered) delivered",
+            "\(summary.pendingDelivery) waiting",
+            "\(summary.failedOrNeedsCorrection) issue\(summary.failedOrNeedsCorrection == 1 ? "" : "s")",
+            "\(summary.manualOrLegacy) manual/legacy",
+            "\(summary.notApplicable) no email"
+        ]
+        return Text(parts.joined(separator: " · "))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private var deliveryAttentionReservations: [ReservationRecord] {
+        reservations.filter { reservation in
+            reservation.needsReminderDeliveryAttention
+        }
+    }
+
     private var daySummaryLabel: String {
         let calendar = Calendar.current
         if let date = ReservationFormatters.reservationDateKey.date(from: dateKey) {
@@ -207,10 +273,10 @@ struct ShiftReminderReviewSheet: View {
                     Text(result)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
-                } else if reservation.reminderEmailSentAt?.nilIfBlank != nil {
-                    Text("sent")
+                } else if reservation.hasReminderEmailRecord {
+                    Text(reservation.reminderDeliveryLabel)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(color(for: reservation.reminderDeliveryTone))
                 }
             }
 
@@ -241,6 +307,43 @@ struct ShiftReminderReviewSheet: View {
         .padding(.vertical, 2)
     }
 
+    private func deliveryAttentionRow(for reservation: ReservationRecord) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(reservation.guestName)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(reservation.displayTime)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text("\(reservation.partySize) guest\(reservation.partySize == 1 ? "" : "s") · \(reservation.reminderDeliveryLabel)")
+                .font(.caption)
+                .foregroundStyle(color(for: reservation.reminderDeliveryTone))
+            Text(reminderFollowUpText(for: reservation))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func reminderFollowUpText(for reservation: ReservationRecord) -> String {
+        if reservation.needsReminderCorrection || reservation.hasFailedReminderDelivery {
+            return "Email failed. Follow up manually."
+        }
+        if reservation.reminderDeliveryStatus == .deliveryDelayed {
+            return "Delivery delayed. Use manual follow-up if timing matters."
+        }
+        if reservation.hasPendingReminderDelivery {
+            return "Waiting for delivery confirmation."
+        }
+        if !reservation.hasUsableConfirmationEmail {
+            return "No usable guest email. Use text or phone follow-up."
+        }
+        return reservation.reminderDeliveryDetailText
+    }
+
     private func contactChips(for reservation: ReservationRecord) -> some View {
         HStack(spacing: 5) {
             if reservation.hasUsableConfirmationEmail {
@@ -259,6 +362,19 @@ struct ShiftReminderReviewSheet: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(Color(.tertiarySystemGroupedBackground), in: Capsule())
+    }
+
+    private func color(for tone: EmailDeliveryPresentationTone) -> Color {
+        switch tone {
+        case .neutral:
+            return .secondary
+        case .success:
+            return TryzubColors.success
+        case .warning:
+            return TryzubColors.warning
+        case .critical:
+            return TryzubColors.danger
+        }
     }
 
     private func presentReview(for reservation: ReservationRecord, channel: ShiftReminderChannel) {
@@ -407,8 +523,8 @@ struct ShiftReminderReviewSheet: View {
                         bodySnapshot: draft.logBodySnapshot,
                         context: modelContext
                     )
-                    results[reservation.remoteID] = "sent"
-                    trace(reservation, channel: "email", result: "sent")
+                    results[reservation.remoteID] = "recorded"
+                    trace(reservation, channel: "email", result: "manual_recorded")
                 } catch {
                     results[reservation.remoteID] = "failed"
                     trace(reservation, channel: "email", result: "failed")
@@ -458,7 +574,7 @@ struct ShiftReminderReviewSheet: View {
     }
 
     private func completeSheet() {
-        let emailSent = results.values.filter { $0 == "sent" }.count
+        let emailRecorded = results.values.filter { $0 == "recorded" }.count
         let smsSent = results.values.filter { $0 == "sent" }.count
         let skipped = results.values.filter { $0 == "skipped" }.count
         let failed = results.values.filter { $0 == "failed" }.count
@@ -466,7 +582,7 @@ struct ShiftReminderReviewSheet: View {
             "SHIFT_REMINDER_TRACE",
             fields: [
                 "phase": "completed",
-                "emailSent": "\(emailSent)",
+                "emailRecorded": "\(emailRecorded)",
                 "smsSent": "\(smsSent)",
                 "skipped": "\(skipped)",
                 "failed": "\(failed)"

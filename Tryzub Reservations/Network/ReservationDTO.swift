@@ -97,6 +97,57 @@ enum ReservationSourceType: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum EmailDeliveryStatus: String, Codable, CaseIterable, Identifiable, Hashable {
+    case notApplicable = "not_applicable"
+    case pendingDelivery = "pending_delivery"
+    case sentToProvider = "sent_to_provider"
+    case delivered
+    case failed
+    case suppressed
+    case complained
+    case deliveryDelayed = "delivery_delayed"
+    case deliveryUnknown = "delivery_unknown"
+    case legacyRecorded = "legacy_recorded"
+    case manualRecorded = "manual_recorded"
+    case unknown
+
+    var id: String { rawValue }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = EmailDeliveryStatus(rawValue: rawValue) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+enum ConfirmationSource: String, Codable, CaseIterable, Identifiable, Hashable {
+    case manual
+    case autoConfirm = "auto_confirm"
+    case manualEmail = "manual_email"
+    case phone
+    case noEmail = "no_email"
+    case legacy
+    case unknown
+
+    var id: String { rawValue }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = ConfirmationSource(rawValue: rawValue) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
 struct ReservationDTO: Codable, Identifiable, Equatable {
     let id: Int
     let sourceSubmissionId: Int?
@@ -115,6 +166,22 @@ struct ReservationDTO: Codable, Identifiable, Equatable {
     let confirmedAt: String?
     let confirmationEmailSentAt: String?
     let reminderEmailSentAt: String?
+    let confirmationDeliveryStatus: EmailDeliveryStatus?
+    let confirmationDeliveryReason: String?
+    let confirmationDeliveryUpdatedAt: String?
+    let confirmationDeliveredAt: String?
+    let confirmationProviderMessageId: String?
+    let requiresEmailCorrection: Bool?
+    let reminderDeliveryStatus: EmailDeliveryStatus?
+    let reminderDeliveryReason: String?
+    let reminderDeliveryUpdatedAt: String?
+    let reminderDeliveredAt: String?
+    let reminderProviderMessageId: String?
+    let requiresReminderCorrection: Bool?
+    let confirmationSource: ConfirmationSource?
+    let confirmationSourceLabel: String?
+    let autoConfirmedAt: String?
+    let confirmedByUserId: Int?
     let supersededById: Int?
     var sourceType: ReservationSourceType? = nil
     var createdByUserId: Int? = nil
@@ -143,6 +210,22 @@ struct ReservationDTO: Codable, Identifiable, Equatable {
         case confirmedAt
         case confirmationEmailSentAt
         case reminderEmailSentAt
+        case confirmationDeliveryStatus
+        case confirmationDeliveryReason
+        case confirmationDeliveryUpdatedAt
+        case confirmationDeliveredAt
+        case confirmationProviderMessageId
+        case requiresEmailCorrection
+        case reminderDeliveryStatus
+        case reminderDeliveryReason
+        case reminderDeliveryUpdatedAt
+        case reminderDeliveredAt
+        case reminderProviderMessageId
+        case requiresReminderCorrection
+        case confirmationSource
+        case confirmationSourceLabel
+        case autoConfirmedAt
+        case confirmedByUserId
         case supersededById
         case sourceType
         case createdByUserId
@@ -171,6 +254,22 @@ struct ReservationDTO: Codable, Identifiable, Equatable {
         confirmedAt: String?,
         confirmationEmailSentAt: String?,
         reminderEmailSentAt: String?,
+        confirmationDeliveryStatus: EmailDeliveryStatus? = nil,
+        confirmationDeliveryReason: String? = nil,
+        confirmationDeliveryUpdatedAt: String? = nil,
+        confirmationDeliveredAt: String? = nil,
+        confirmationProviderMessageId: String? = nil,
+        requiresEmailCorrection: Bool? = nil,
+        reminderDeliveryStatus: EmailDeliveryStatus? = nil,
+        reminderDeliveryReason: String? = nil,
+        reminderDeliveryUpdatedAt: String? = nil,
+        reminderDeliveredAt: String? = nil,
+        reminderProviderMessageId: String? = nil,
+        requiresReminderCorrection: Bool? = nil,
+        confirmationSource: ConfirmationSource? = nil,
+        confirmationSourceLabel: String? = nil,
+        autoConfirmedAt: String? = nil,
+        confirmedByUserId: Int? = nil,
         supersededById: Int?,
         sourceType: ReservationSourceType? = nil,
         createdByUserId: Int? = nil,
@@ -197,6 +296,22 @@ struct ReservationDTO: Codable, Identifiable, Equatable {
         self.confirmedAt = confirmedAt
         self.confirmationEmailSentAt = confirmationEmailSentAt
         self.reminderEmailSentAt = reminderEmailSentAt
+        self.confirmationDeliveryStatus = confirmationDeliveryStatus
+        self.confirmationDeliveryReason = confirmationDeliveryReason
+        self.confirmationDeliveryUpdatedAt = confirmationDeliveryUpdatedAt
+        self.confirmationDeliveredAt = confirmationDeliveredAt
+        self.confirmationProviderMessageId = confirmationProviderMessageId
+        self.requiresEmailCorrection = requiresEmailCorrection
+        self.reminderDeliveryStatus = reminderDeliveryStatus
+        self.reminderDeliveryReason = reminderDeliveryReason
+        self.reminderDeliveryUpdatedAt = reminderDeliveryUpdatedAt
+        self.reminderDeliveredAt = reminderDeliveredAt
+        self.reminderProviderMessageId = reminderProviderMessageId
+        self.requiresReminderCorrection = requiresReminderCorrection
+        self.confirmationSource = confirmationSource
+        self.confirmationSourceLabel = confirmationSourceLabel
+        self.autoConfirmedAt = autoConfirmedAt
+        self.confirmedByUserId = confirmedByUserId
         self.supersededById = supersededById
         self.sourceType = sourceType
         self.createdByUserId = createdByUserId
@@ -227,6 +342,22 @@ struct ReservationDTO: Codable, Identifiable, Equatable {
         confirmedAt = try container.decodeIfPresent(String.self, forKey: .confirmedAt)
         confirmationEmailSentAt = try container.decodeIfPresent(String.self, forKey: .confirmationEmailSentAt)
         reminderEmailSentAt = try container.decodeIfPresent(String.self, forKey: .reminderEmailSentAt)
+        confirmationDeliveryStatus = try container.decodeIfPresent(EmailDeliveryStatus.self, forKey: .confirmationDeliveryStatus)
+        confirmationDeliveryReason = try container.decodeIfPresent(String.self, forKey: .confirmationDeliveryReason)
+        confirmationDeliveryUpdatedAt = try container.decodeIfPresent(String.self, forKey: .confirmationDeliveryUpdatedAt)
+        confirmationDeliveredAt = try container.decodeIfPresent(String.self, forKey: .confirmationDeliveredAt)
+        confirmationProviderMessageId = try container.decodeIfPresent(String.self, forKey: .confirmationProviderMessageId)
+        requiresEmailCorrection = try container.decodeFlexibleBoolIfPresent(forKey: .requiresEmailCorrection)
+        reminderDeliveryStatus = try container.decodeIfPresent(EmailDeliveryStatus.self, forKey: .reminderDeliveryStatus)
+        reminderDeliveryReason = try container.decodeIfPresent(String.self, forKey: .reminderDeliveryReason)
+        reminderDeliveryUpdatedAt = try container.decodeIfPresent(String.self, forKey: .reminderDeliveryUpdatedAt)
+        reminderDeliveredAt = try container.decodeIfPresent(String.self, forKey: .reminderDeliveredAt)
+        reminderProviderMessageId = try container.decodeIfPresent(String.self, forKey: .reminderProviderMessageId)
+        requiresReminderCorrection = try container.decodeFlexibleBoolIfPresent(forKey: .requiresReminderCorrection)
+        confirmationSource = try container.decodeIfPresent(ConfirmationSource.self, forKey: .confirmationSource)
+        confirmationSourceLabel = try container.decodeIfPresent(String.self, forKey: .confirmationSourceLabel)
+        autoConfirmedAt = try container.decodeIfPresent(String.self, forKey: .autoConfirmedAt)
+        confirmedByUserId = try container.decodeFlexibleIntIfPresent(forKey: .confirmedByUserId)
         supersededById = try container.decodeIfPresent(Int.self, forKey: .supersededById)
         sourceType = try container.decodeIfPresent(ReservationSourceType.self, forKey: .sourceType)
         createdByUserId = try container.decodeIfPresent(Int.self, forKey: .createdByUserId)
@@ -257,6 +388,22 @@ struct ReservationDTO: Codable, Identifiable, Equatable {
         try container.encodeIfPresent(confirmedAt, forKey: .confirmedAt)
         try container.encodeIfPresent(confirmationEmailSentAt, forKey: .confirmationEmailSentAt)
         try container.encodeIfPresent(reminderEmailSentAt, forKey: .reminderEmailSentAt)
+        try container.encodeIfPresent(confirmationDeliveryStatus, forKey: .confirmationDeliveryStatus)
+        try container.encodeIfPresent(confirmationDeliveryReason, forKey: .confirmationDeliveryReason)
+        try container.encodeIfPresent(confirmationDeliveryUpdatedAt, forKey: .confirmationDeliveryUpdatedAt)
+        try container.encodeIfPresent(confirmationDeliveredAt, forKey: .confirmationDeliveredAt)
+        try container.encodeIfPresent(confirmationProviderMessageId, forKey: .confirmationProviderMessageId)
+        try container.encodeIfPresent(requiresEmailCorrection, forKey: .requiresEmailCorrection)
+        try container.encodeIfPresent(reminderDeliveryStatus, forKey: .reminderDeliveryStatus)
+        try container.encodeIfPresent(reminderDeliveryReason, forKey: .reminderDeliveryReason)
+        try container.encodeIfPresent(reminderDeliveryUpdatedAt, forKey: .reminderDeliveryUpdatedAt)
+        try container.encodeIfPresent(reminderDeliveredAt, forKey: .reminderDeliveredAt)
+        try container.encodeIfPresent(reminderProviderMessageId, forKey: .reminderProviderMessageId)
+        try container.encodeIfPresent(requiresReminderCorrection, forKey: .requiresReminderCorrection)
+        try container.encodeIfPresent(confirmationSource, forKey: .confirmationSource)
+        try container.encodeIfPresent(confirmationSourceLabel, forKey: .confirmationSourceLabel)
+        try container.encodeIfPresent(autoConfirmedAt, forKey: .autoConfirmedAt)
+        try container.encodeIfPresent(confirmedByUserId, forKey: .confirmedByUserId)
         try container.encodeIfPresent(supersededById, forKey: .supersededById)
         try container.encodeIfPresent(sourceType, forKey: .sourceType)
         try container.encodeIfPresent(createdByUserId, forKey: .createdByUserId)

@@ -300,12 +300,12 @@ enum HostServiceIntelligenceSnapshotBuilder {
         // ── Source H: confirmation / reminder status ──────────────────────────
         // Day-level facts from local reservation fields. No network required.
         // Confirmation: reservations that are still new/needsReview and have neither
-        //   confirmedAt nor a confirmation email sent.
+        //   confirmedAt nor a confirmation email delivery/record.
         let unconfirmedCount = input.dayReservations.filter { r in
             r.reservationDate == input.dateKey
                 && (r.statusValue == .new || r.statusValue == .needsReview)
                 && r.confirmedAt == nil
-                && r.confirmationEmailSentAt == nil
+                && !r.hasConfirmationEmailRecord
         }.count
         if unconfirmedCount > 0 {
             let plural = unconfirmedCount == 1 ? "reservation" : "reservations"
@@ -329,7 +329,7 @@ enum HostServiceIntelligenceSnapshotBuilder {
             let unremindedCount = input.dayReservations.filter { r in
                 r.reservationDate == input.dateKey
                     && (r.statusValue == .new || r.statusValue == .confirmed || r.statusValue == .needsReview)
-                    && r.reminderEmailSentAt == nil
+                    && !r.hasReminderEmailRecord
             }.count
             if unremindedCount > 0 {
                 let plural = unremindedCount == 1 ? "reservation" : "reservations"
@@ -404,7 +404,7 @@ enum HostServiceIntelligenceSnapshotBuilder {
     /// FNV-1a fingerprint of all builder inputs.
     /// 4B fix: uses note-content hash instead of character count so same-length
     /// edits (e.g. "birthday dinner" → "anniversary dinner") change the fingerprint.
-    /// Includes confirmedAt + reminderEmailSentAt so reminder/confirmation facts
+    /// Includes delivery truth + legacy email timestamps so reminder/confirmation facts
     /// rebuild when those fields change.
     static func inputFingerprint(_ input: Input) -> String {
         let reservationStamp = input.dayReservations
@@ -420,6 +420,9 @@ enum HostServiceIntelligenceSnapshotBuilder {
                     noteHash,
                     r.tableName ?? "",
                     r.confirmedAt ?? "none",
+                    r.confirmationDeliveryStatusRaw ?? "none",
+                    r.reminderDeliveryStatusRaw ?? "none",
+                    r.confirmationEmailSentAt ?? "none",
                     r.reminderEmailSentAt ?? "none"
                 ].joined(separator: ":")
             }

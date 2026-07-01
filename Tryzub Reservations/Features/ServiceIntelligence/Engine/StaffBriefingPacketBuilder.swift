@@ -275,30 +275,66 @@ enum StaffBriefingPacketBuilder {
         reservations: [ReservationRecord]
     ) -> StaffBriefingCommunicationSummary {
         var confirmMissing = 0, confirmSent = 0, remindMissing = 0, remindSent = 0
+        var confirmDelivered = 0, confirmPending = 0, confirmFailed = 0, confirmNeedsCorrection = 0
+        var reminderDelivered = 0, reminderPending = 0, reminderFailed = 0, reminderNeedsCorrection = 0
         for reservation in reservations where !reservation.isHidden {
             let operationalPreArrival = reservation.statusValue == .new
                 || reservation.statusValue == .needsReview
                 || reservation.statusValue == .confirmed
 
-            if reservation.confirmationEmailSentAt?.nilIfBlank != nil {
+            if reservation.hasConfirmationEmailRecord {
                 confirmSent += 1
+                switch reservation.confirmationDeliveryStatus {
+                case .delivered:
+                    confirmDelivered += 1
+                case .pendingDelivery, .sentToProvider, .deliveryDelayed:
+                    confirmPending += 1
+                case .failed, .suppressed, .complained:
+                    confirmFailed += 1
+                case .notApplicable, .deliveryUnknown, .legacyRecorded, .manualRecorded, .unknown:
+                    break
+                }
             } else if operationalPreArrival,
                       reservation.confirmedAt?.nilIfBlank == nil,
                       reservation.statusValue != .confirmed {
                 confirmMissing += 1
             }
+            if reservation.needsEmailCorrection {
+                confirmNeedsCorrection += 1
+            }
 
-            if reservation.reminderEmailSentAt?.nilIfBlank != nil {
+            if reservation.hasReminderEmailRecord {
                 remindSent += 1
+                switch reservation.reminderDeliveryStatus {
+                case .delivered:
+                    reminderDelivered += 1
+                case .pendingDelivery, .sentToProvider, .deliveryDelayed:
+                    reminderPending += 1
+                case .failed, .suppressed, .complained:
+                    reminderFailed += 1
+                case .notApplicable, .deliveryUnknown, .legacyRecorded, .manualRecorded, .unknown:
+                    break
+                }
             } else if operationalPreArrival {
                 remindMissing += 1
+            }
+            if reservation.needsReminderCorrection {
+                reminderNeedsCorrection += 1
             }
         }
         return StaffBriefingCommunicationSummary(
             confirmationsMissingCount: confirmMissing,
             confirmationsSentCount: confirmSent > 0 ? confirmSent : nil,
+            confirmationDeliveredCount: confirmDelivered,
+            confirmationPendingDeliveryCount: confirmPending,
+            confirmationFailedDeliveryCount: confirmFailed,
+            confirmationNeedsCorrectionCount: confirmNeedsCorrection,
             remindersMissingCount: remindMissing,
             remindersSentCount: remindSent > 0 ? remindSent : nil,
+            reminderDeliveredCount: reminderDelivered,
+            reminderPendingDeliveryCount: reminderPending,
+            reminderFailedDeliveryCount: reminderFailed,
+            reminderNeedsCorrectionCount: reminderNeedsCorrection,
             // Not reliably derivable from local deterministic metadata — never faked.
             autoConfirmedCount: nil
         )

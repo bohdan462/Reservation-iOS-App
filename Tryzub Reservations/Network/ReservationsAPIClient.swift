@@ -32,6 +32,8 @@ enum ReservationAPIRequestReason: String {
     case reviewQueues = "review_queues"
     case mutationPatch = "mutation_patch"
     case mutationConfirm = "mutation_confirm"
+    case resendConfirmation = "resend_confirmation"
+    case confirmByPhone = "confirm_by_phone"
     case reminderBatch = "reminder_batch"
     case reminderStatus = "reminder_status"
     case autoConfirmCandidates = "auto_confirm_candidates"
@@ -319,6 +321,8 @@ protocol ReservationsAPIClientProtocol: AnyObject, Sendable {
     func updateReservation(id: Int, request: ReservationUpdateRequest, reason: ReservationAPIRequestReason) async throws -> ReservationDTO
     func createReservation(_ createRequest: ReservationCreateRequest, reason: ReservationAPIRequestReason) async throws -> ReservationDTO
     func confirmReservation(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationConfirmResponse
+    func resendConfirmation(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationDTO
+    func confirmReservationByPhone(id: Int, reason: ReservationAPIRequestReason) async throws -> ReservationDTO
     func sendDueReminders(date: String?, reason: ReservationAPIRequestReason) async throws -> ReservationReminderBatchResponse
     func fetchReminderStatus(date: String, reason: ReservationAPIRequestReason) async throws -> ReservationReminderStatusResponse
     func fetchAutoConfirmCandidates(date: Date, reason: ReservationAPIRequestReason) async throws -> AutoConfirmCandidateResponse
@@ -782,6 +786,50 @@ final class ReservationsAPIClient: ReservationsAPIClientProtocol {
         let response = try decode(ReservationConfirmResponse.self, from: data, request: request)
         traceOptionalMutationActivity(reservationID: id, activity: response.activity)
         return response
+    }
+
+    // Intent: Resends a failed/suppressed/complained confirmation after staff correction.
+    // Network: POST /managed-reservations/{id}/resend-confirmation.
+    func resendConfirmation(
+        id: Int,
+        reason: ReservationAPIRequestReason = .resendConfirmation
+    ) async throws -> ReservationDTO {
+        let url = try apiURL(path: "managed-reservations/\(id)/resend-confirmation")
+        let request = makeRequest(url: url, method: "POST")
+        let data = try await perform(request, reason: reason)
+
+        let response = try decode(ReservationCorrectionResponse.self, from: data, request: request)
+        guard response.success else {
+            throw ReservationAPIError.wordpressError(
+                code: "tryzub_resend_confirmation_failed",
+                message: response.emailError ?? response.message ?? "Could not resend confirmation.",
+                statusCode: 200,
+                diagnostics: ReservationAPIDiagnostics.make(request: request, response: nil, data: data)
+            )
+        }
+        return response.data
+    }
+
+    // Intent: Records staff phone confirmation without marking email delivered.
+    // Network: POST /managed-reservations/{id}/confirm-by-phone.
+    func confirmReservationByPhone(
+        id: Int,
+        reason: ReservationAPIRequestReason = .confirmByPhone
+    ) async throws -> ReservationDTO {
+        let url = try apiURL(path: "managed-reservations/\(id)/confirm-by-phone")
+        let request = makeRequest(url: url, method: "POST")
+        let data = try await perform(request, reason: reason)
+
+        let response = try decode(ReservationCorrectionResponse.self, from: data, request: request)
+        guard response.success else {
+            throw ReservationAPIError.wordpressError(
+                code: "tryzub_confirm_by_phone_failed",
+                message: response.message ?? "Could not confirm by phone.",
+                statusCode: 200,
+                diagnostics: ReservationAPIDiagnostics.make(request: request, response: nil, data: data)
+            )
+        }
+        return response.data
     }
 
     // Intent: Asks the backend to send the due reminder batch once for a selected date.

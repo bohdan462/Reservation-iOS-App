@@ -199,8 +199,8 @@ enum GuestServiceProfilePresentationBuilder {
     if nonBlank(selected.staffNotes) != nil { noteLines.append("Staff note found") }
     let reminderLine: String? = {
       guard isUpcomingStatus(selected.statusValue) else { return nil }
-      if nonBlank(selected.reminderEmailSentAt) != nil { return "Reminder sent" }
-      return selected.statusValue == .confirmed ? "Reminder not sent" : nil
+      if selected.hasReminderEmailRecord { return selected.reminderDeliveryLabel }
+      return selected.statusValue == .confirmed ? "Reminder follow-up needed" : nil
     }()
     return .init(
       sectionTitle: isToday ? "Today" : "Selected reservation",
@@ -457,8 +457,8 @@ enum GuestServiceProfilePresentationBuilder {
     if isUpcomingStatus(selected.statusValue), selected.assignedTableName == nil {
       result.append(.init(id: "table", title: "No table picked", detail: "Choose a table before service.", systemImage: "tablecells"))
     }
-    if selected.statusValue == .confirmed, nonBlank(selected.reminderEmailSentAt) == nil {
-      result.append(.init(id: "reminder", title: "Reminder not sent", detail: nil, systemImage: "bell.slash"))
+    if selected.statusValue == .confirmed, !selected.hasReminderEmailRecord {
+      result.append(.init(id: "reminder", title: "Reminder follow-up needed", detail: nil, systemImage: "bell.slash"))
     }
     if nonBlank(selected.guestNotes) != nil {
       result.append(.init(id: "guest-note", title: "Guest note attached", detail: "Read the note before seating.", systemImage: "note.text"))

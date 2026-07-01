@@ -28,6 +28,22 @@ class ReservationRecord: Identifiable {
     var confirmedAt: String?
     var confirmationEmailSentAt: String?
     var reminderEmailSentAt: String?
+    var confirmationDeliveryStatusRaw: String?
+    var confirmationDeliveryReason: String?
+    var confirmationDeliveryUpdatedAt: String?
+    var confirmationDeliveredAt: String?
+    var confirmationProviderMessageId: String?
+    var requiresEmailCorrection: Bool = false
+    var reminderDeliveryStatusRaw: String?
+    var reminderDeliveryReason: String?
+    var reminderDeliveryUpdatedAt: String?
+    var reminderDeliveredAt: String?
+    var reminderProviderMessageId: String?
+    var requiresReminderCorrection: Bool = false
+    var confirmationSourceRaw: String?
+    var confirmationSourceLabel: String?
+    var autoConfirmedAt: String?
+    var confirmedByUserId: Int?
     var supersededById: Int?
     var sourceType: String?
     var createdByUserId: Int?
@@ -58,6 +74,22 @@ class ReservationRecord: Identifiable {
         self.confirmedAt = dto.confirmedAt
         self.confirmationEmailSentAt = dto.confirmationEmailSentAt
         self.reminderEmailSentAt = dto.reminderEmailSentAt
+        self.confirmationDeliveryStatusRaw = dto.confirmationDeliveryStatus?.rawValue
+        self.confirmationDeliveryReason = dto.confirmationDeliveryReason?.nilIfEmpty
+        self.confirmationDeliveryUpdatedAt = dto.confirmationDeliveryUpdatedAt
+        self.confirmationDeliveredAt = dto.confirmationDeliveredAt
+        self.confirmationProviderMessageId = dto.confirmationProviderMessageId?.nilIfEmpty
+        self.requiresEmailCorrection = dto.requiresEmailCorrection ?? false
+        self.reminderDeliveryStatusRaw = dto.reminderDeliveryStatus?.rawValue
+        self.reminderDeliveryReason = dto.reminderDeliveryReason?.nilIfEmpty
+        self.reminderDeliveryUpdatedAt = dto.reminderDeliveryUpdatedAt
+        self.reminderDeliveredAt = dto.reminderDeliveredAt
+        self.reminderProviderMessageId = dto.reminderProviderMessageId?.nilIfEmpty
+        self.requiresReminderCorrection = dto.requiresReminderCorrection ?? false
+        self.confirmationSourceRaw = dto.confirmationSource?.rawValue
+        self.confirmationSourceLabel = dto.confirmationSourceLabel?.nilIfEmpty
+        self.autoConfirmedAt = dto.autoConfirmedAt
+        self.confirmedByUserId = dto.confirmedByUserId
         self.supersededById = dto.supersededById
         self.sourceType = dto.sourceType?.rawValue
         self.createdByUserId = dto.createdByUserId
@@ -98,6 +130,22 @@ class ReservationRecord: Identifiable {
         self.confirmedAt = nil
         self.confirmationEmailSentAt = nil
         self.reminderEmailSentAt = nil
+        self.confirmationDeliveryStatusRaw = nil
+        self.confirmationDeliveryReason = nil
+        self.confirmationDeliveryUpdatedAt = nil
+        self.confirmationDeliveredAt = nil
+        self.confirmationProviderMessageId = nil
+        self.requiresEmailCorrection = false
+        self.reminderDeliveryStatusRaw = nil
+        self.reminderDeliveryReason = nil
+        self.reminderDeliveryUpdatedAt = nil
+        self.reminderDeliveredAt = nil
+        self.reminderProviderMessageId = nil
+        self.requiresReminderCorrection = false
+        self.confirmationSourceRaw = nil
+        self.confirmationSourceLabel = nil
+        self.autoConfirmedAt = nil
+        self.confirmedByUserId = nil
         self.supersededById = nil
         self.sourceType = nil
         self.createdByUserId = nil
@@ -138,6 +186,22 @@ class ReservationRecord: Identifiable {
             && confirmedAt == dto.confirmedAt
             && confirmationEmailSentAt == dto.confirmationEmailSentAt
             && reminderEmailSentAt == dto.reminderEmailSentAt
+            && confirmationDeliveryStatusRaw == dto.confirmationDeliveryStatus?.rawValue
+            && confirmationDeliveryReason == dto.confirmationDeliveryReason?.nilIfEmpty
+            && confirmationDeliveryUpdatedAt == dto.confirmationDeliveryUpdatedAt
+            && confirmationDeliveredAt == dto.confirmationDeliveredAt
+            && confirmationProviderMessageId == dto.confirmationProviderMessageId?.nilIfEmpty
+            && requiresEmailCorrection == (dto.requiresEmailCorrection ?? false)
+            && reminderDeliveryStatusRaw == dto.reminderDeliveryStatus?.rawValue
+            && reminderDeliveryReason == dto.reminderDeliveryReason?.nilIfEmpty
+            && reminderDeliveryUpdatedAt == dto.reminderDeliveryUpdatedAt
+            && reminderDeliveredAt == dto.reminderDeliveredAt
+            && reminderProviderMessageId == dto.reminderProviderMessageId?.nilIfEmpty
+            && requiresReminderCorrection == (dto.requiresReminderCorrection ?? false)
+            && confirmationSourceRaw == dto.confirmationSource?.rawValue
+            && confirmationSourceLabel == dto.confirmationSourceLabel?.nilIfEmpty
+            && autoConfirmedAt == dto.autoConfirmedAt
+            && confirmedByUserId == dto.confirmedByUserId
             && supersededById == dto.supersededById
             && sourceType == dto.sourceType?.rawValue
             && createdByUserId == dto.createdByUserId
@@ -166,6 +230,22 @@ class ReservationRecord: Identifiable {
         confirmedAt = dto.confirmedAt
         confirmationEmailSentAt = dto.confirmationEmailSentAt
         reminderEmailSentAt = dto.reminderEmailSentAt
+        confirmationDeliveryStatusRaw = dto.confirmationDeliveryStatus?.rawValue
+        confirmationDeliveryReason = dto.confirmationDeliveryReason?.nilIfEmpty
+        confirmationDeliveryUpdatedAt = dto.confirmationDeliveryUpdatedAt
+        confirmationDeliveredAt = dto.confirmationDeliveredAt
+        confirmationProviderMessageId = dto.confirmationProviderMessageId?.nilIfEmpty
+        requiresEmailCorrection = dto.requiresEmailCorrection ?? false
+        reminderDeliveryStatusRaw = dto.reminderDeliveryStatus?.rawValue
+        reminderDeliveryReason = dto.reminderDeliveryReason?.nilIfEmpty
+        reminderDeliveryUpdatedAt = dto.reminderDeliveryUpdatedAt
+        reminderDeliveredAt = dto.reminderDeliveredAt
+        reminderProviderMessageId = dto.reminderProviderMessageId?.nilIfEmpty
+        requiresReminderCorrection = dto.requiresReminderCorrection ?? false
+        confirmationSourceRaw = dto.confirmationSource?.rawValue
+        confirmationSourceLabel = dto.confirmationSourceLabel?.nilIfEmpty
+        autoConfirmedAt = dto.autoConfirmedAt
+        confirmedByUserId = dto.confirmedByUserId
         supersededById = dto.supersededById
         sourceType = dto.sourceType?.rawValue
         createdByUserId = dto.createdByUserId
