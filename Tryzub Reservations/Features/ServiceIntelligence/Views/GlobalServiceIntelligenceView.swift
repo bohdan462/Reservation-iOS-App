@@ -41,6 +41,8 @@ struct GlobalServiceIntelligenceView: View {
     @Query(sort: \ReservationAttachmentRecord.createdAt) private var allAttachmentRecords: [ReservationAttachmentRecord]
 
     @State private var briefing: HostServiceBriefingViewState?
+    @State private var usesBriefingPacket = false
+    @State private var packetSections: [BriefingSection] = []
     @State private var usesCanonicalSnapshot = false
     @State private var snapshotFacts: [ServiceIntelligenceFact] = []
     @State private var bookingItems: [BookingSuggestionViewItem] = []
@@ -147,7 +149,27 @@ struct GlobalServiceIntelligenceView: View {
 
     @ViewBuilder
     private var snapshotFactsSection: some View {
-        if usesCanonicalSnapshot && !snapshotFacts.isEmpty {
+        if usesBriefingPacket && !packetSections.isEmpty {
+            ForEach(packetSections) { section in
+                sectionCard(
+                    title: section.title,
+                    systemImage: packetSectionIcon(section.id),
+                    tint: packetSectionTint(section.id)
+                ) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(section.lines.enumerated()), id: \.offset) { index, line in
+                            Text(line)
+                                .font(.subheadline)
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if index != section.lines.count - 1 {
+                                Divider().opacity(0.4)
+                            }
+                        }
+                    }
+                }
+            }
+        } else if usesCanonicalSnapshot && !snapshotFacts.isEmpty {
             sectionCard(
                 title: "Service facts",
                 systemImage: "list.bullet.clipboard",
@@ -441,6 +463,40 @@ struct GlobalServiceIntelligenceView: View {
         }
     }
 
+    private func packetSectionIcon(_ id: String) -> String {
+        switch id {
+        case "arrivals":
+            return "clock"
+        case "seated":
+            return "table.furniture"
+        case "guests":
+            return "person.2"
+        case "followup":
+            return "bell"
+        case "recap":
+            return "checkmark.circle"
+        default:
+            return "sparkles"
+        }
+    }
+
+    private func packetSectionTint(_ id: String) -> Color {
+        switch id {
+        case "arrivals":
+            return .blue
+        case "seated":
+            return .orange
+        case "guests":
+            return .teal
+        case "followup":
+            return .purple
+        case "recap":
+            return .green
+        default:
+            return .blue
+        }
+    }
+
     // MARK: - Data
 
     /// The hub action brain focuses on today's service (the deterministic snapshot is
@@ -496,6 +552,7 @@ struct GlobalServiceIntelligenceView: View {
             String(todayReservations.count),
             String(Int(hostIntelligenceController.decisionSnapshot.generatedAt.timeIntervalSince1970)),
             hostIntelligenceController.serviceIntelligenceSnapshot.inputFingerprint,
+            hostIntelligenceController.serviceBriefingPacket.inputFingerprint,
             hostIntelligenceController.serviceIntelligenceSourceFingerprint,
             todayServiceIntelligenceSourceFingerprint,
             String(minute),
@@ -535,12 +592,31 @@ struct GlobalServiceIntelligenceView: View {
             for: todayKey,
             sourceFingerprint: currentSourceFingerprint
         )
+        let packetReadiness = serviceBriefingPacketReadiness(
+            for: todayKey,
+            sourceFingerprint: currentSourceFingerprint
+        )
         let snapshotReady = readiness.snapshot != nil
-        if let snapshot = readiness.snapshot {
+        let packetReady = packetReadiness.packet != nil
+        if let packet = packetReadiness.packet {
+            #if DEBUG
+            print("[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=use_packet reason=ready date=\(todayKey)")
+            #endif
+            briefing = state.overridingHeadline(
+                packet.compactLine,
+                summary: packet.compactChips.joined(separator: " · ")
+            )
+            usesBriefingPacket = true
+            packetSections = packet.sections
+            usesCanonicalSnapshot = false
+            snapshotFacts = []
+        } else if let snapshot = readiness.snapshot {
             #if DEBUG
             print("[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=use_snapshot reason=ready date=\(todayKey)")
             #endif
             briefing = state.overridingHeadline(snapshot.headline, summary: snapshot.subline ?? "")
+            usesBriefingPacket = false
+            packetSections = []
             usesCanonicalSnapshot = true
             snapshotFacts = snapshot.rankedFacts
         } else {
@@ -548,6 +624,8 @@ struct GlobalServiceIntelligenceView: View {
             print("[SERVICE_INTEL_UI_TRACE] surface=more_service_intelligence decision=legacy reason=\(readiness.reason) date=\(todayKey)")
             #endif
             briefing = state
+            usesBriefingPacket = false
+            packetSections = []
             usesCanonicalSnapshot = false
             snapshotFacts = []
         }
@@ -564,7 +642,7 @@ struct GlobalServiceIntelligenceView: View {
         ServiceIntelligenceTrace.bookingSection(count: bookingItems.count)
 
         // ── Note + attachment signals (Phase 6 + Phase 9) ────────────────────────
-        if snapshotReady {
+        if snapshotReady || packetReady {
             signalledReservations = []
             ServiceIntelligenceTrace.noteSignals(count: 0)
         } else {
@@ -764,6 +842,28 @@ struct GlobalServiceIntelligenceView: View {
             return (nil, "stale_source_fingerprint")
         }
         return (snapshot, "ready")
+    }
+
+    private func serviceBriefingPacketReadiness(
+        for dateKey: String,
+        sourceFingerprint: String
+    ) -> (packet: HostServiceBriefingPacket?, reason: String) {
+        let packet = hostIntelligenceController.serviceBriefingPacket
+        guard packet.dateKey == dateKey else { return (nil, "date_mismatch") }
+        guard hostIntelligenceController.isEvaluatedForSelectedDate(dateKey) else {
+            return (nil, "awaiting_evaluate")
+        }
+        let fingerprint = packet.inputFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fingerprint.isEmpty, fingerprint != "empty" else {
+            return (nil, "empty_fingerprint")
+        }
+        guard hostIntelligenceController.isServiceBriefingPacketCurrent(
+            dateKey: dateKey,
+            sourceFingerprint: sourceFingerprint
+        ) else {
+            return (nil, "stale_source_fingerprint")
+        }
+        return (packet, "ready")
     }
 }
 

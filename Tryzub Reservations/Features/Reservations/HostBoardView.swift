@@ -1512,18 +1512,23 @@ struct HostBoardView: View {
     }
 
     private var serviceBriefingStamp: String {
-        // Use a coarse hourly bucket so service-mode transitions (before → during → after)
-        // are captured without rebuilding the full service briefing every clock minute.
-        // Reservation count and snapshot generatedAt ensure reservation/status changes
-        // still trigger an immediate rebuild.
+        // Hourly bucket by default; minute bucket during live service or when seated
+        // timing is active so parent briefing seated-duration lines stay fresh.
         let hourBucket = Int(clockTick.timeIntervalSince1970 / 3600)
+        let minuteBucket = Int(clockTick.timeIntervalSince1970 / 60)
+        let refreshByMinute = serviceBriefingState?.mode == .duringService
+            || reservations.contains { reservation in
+                reservation.statusValue == .seated
+                    && controller.localSeatedAtByReservationID[reservation.remoteID] != nil
+            }
+        let timeBucket = refreshByMinute ? "m\(minuteBucket)" : "h\(hourBucket)"
         return [
             selectedDateKey,
             String(reservations.count),
             hostServiceIntelligenceSourceFingerprint,
             String(Int(hostIntelligenceController.decisionSnapshot.generatedAt.timeIntervalSince1970)),
             serviceIntelligenceAttachmentDigest,
-            "h\(hourBucket)"
+            timeBucket
         ].joined(separator: "|")
     }
 
@@ -1613,6 +1618,36 @@ struct HostBoardView: View {
             ),
             sourceFingerprint: sourceFingerprint
         )
+
+        let serviceSnapshot = hostIntelligenceController.serviceIntelligenceSnapshot
+        if serviceSnapshot.dateKey == selectedDateKey,
+           serviceSnapshot.inputFingerprint != "empty",
+           hostIntelligenceController.isServiceIntelligenceSnapshotCurrent(
+                dateKey: selectedDateKey,
+                sourceFingerprint: sourceFingerprint
+           ) {
+            hostIntelligenceController.updateServiceBriefingPacket(
+                HostServiceBriefingPacketBuilder.Input(
+                    now: clockTick,
+                    selectedDate: selectedDate,
+                    dateKey: selectedDateKey,
+                    serviceMode: state.mode,
+                    dayReservations: reservations,
+                    historyReservations: allKnownReservations.isEmpty ? reservations : allKnownReservations,
+                    serviceSnapshot: serviceSnapshot,
+                    decisionSnapshot: hostIntelligenceController.decisionSnapshot,
+                    boardSnapshot: currentDateBoardSnapshot,
+                    localSeatedAtByReservationID: controller.localSeatedAtByReservationID,
+                    effectiveTableAssignments: floorPlanStore.effectiveTableAssignments(for: selectedDateKey),
+                    analyticsSummary: cachedAnalyticsSummary,
+                    sourceFingerprint: sourceFingerprint
+                )
+            )
+        } else {
+            #if DEBUG
+            print("[SERVICE_BRIEFING_PACKET_TRACE] decision=skip reason=snapshot_not_ready date=\(selectedDateKey) facts=0 compact=\"\"")
+            #endif
+        }
 
         // LOCAL-FIRST-OPS-4B-2: substitute snapshot headline/subline for planning/recap
         // modes. Today's HostIntelligenceCard and live-service modes are not touched.

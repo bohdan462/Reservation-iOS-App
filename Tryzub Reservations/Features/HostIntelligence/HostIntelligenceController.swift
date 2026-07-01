@@ -36,6 +36,7 @@ final class HostIntelligenceController: ObservableObject {
   /// LOCAL-FIRST-OPS-4A — unified per-date staff intelligence snapshot.
   /// Populated by updateServiceIntelligenceSnapshot(_:); never built in body.
   @Published private(set) var serviceIntelligenceSnapshot: HostServiceIntelligenceSnapshot = .empty
+  @Published private(set) var serviceBriefingPacket: HostServiceBriefingPacket = .empty
   @Published private(set) var serviceIntelligenceSourceFingerprint: String = ""
 
   let settingsStore: HostIntelligenceSettingsStore
@@ -78,6 +79,7 @@ final class HostIntelligenceController: ObservableObject {
   private var lastRetryableBriefingPacketFingerprint: String?
   private var lastRetryableBriefingSkipReason: HostBriefingHostBoardGate.SkipReason?
   private var lastServiceIntelSnapshotFingerprint: String = ""
+  private var lastServiceBriefingPacketFingerprint: String = ""
 
   init(
     settingsStore: HostIntelligenceSettingsStore? = nil,
@@ -206,6 +208,23 @@ final class HostIntelligenceController: ObservableObject {
     return true
   }
 
+  func isServiceBriefingPacketCurrent(
+    dateKey: String,
+    sourceFingerprint: String
+  ) -> Bool {
+    let current = sourceFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard serviceBriefingPacket.dateKey == dateKey,
+          serviceBriefingPacket.inputFingerprint != "empty",
+          !current.isEmpty,
+          serviceIntelligenceSourceFingerprint == current else {
+      #if DEBUG
+      print("[SERVICE_BRIEFING_PACKET_TRACE] decision=skip reason=stale_source date=\(dateKey)")
+      #endif
+      return false
+    }
+    return true
+  }
+
   /// Synchronously clears old-date publishable state when the view's selected date
   /// changes before the debounced evaluate task runs. Mirrors the dateChanged clearing
   /// block inside evaluate(), but callable immediately from onChange(of: selectedDateKey).
@@ -273,6 +292,47 @@ final class HostIntelligenceController: ObservableObject {
       serviceIntelligenceSourceFingerprint = normalizedSourceFingerprint
     }
     serviceIntelligenceSnapshot = HostServiceIntelligenceSnapshotBuilder.build(input)
+  }
+
+  func updateServiceBriefingPacket(
+    _ input: HostServiceBriefingPacketBuilder.Input
+  ) {
+    guard isEvaluatedForSelectedDate(input.dateKey) else {
+      #if DEBUG
+      print("[SERVICE_BRIEFING_PACKET_TRACE] decision=skip reason=awaiting_evaluate date=\(input.dateKey) facts=0 compact=\"\"")
+      #endif
+      return
+    }
+    let normalizedSourceFingerprint = input.sourceFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalizedSourceFingerprint.isEmpty,
+          normalizedSourceFingerprint == serviceIntelligenceSourceFingerprint else {
+      #if DEBUG
+      print("[SERVICE_BRIEFING_PACKET_TRACE] decision=skip reason=source_not_current date=\(input.dateKey) facts=0 compact=\"\"")
+      #endif
+      return
+    }
+    guard serviceIntelligenceSnapshot.dateKey == input.dateKey,
+          serviceIntelligenceSnapshot.inputFingerprint != "empty",
+          serviceIntelligenceSnapshot.inputFingerprint == input.serviceSnapshot.inputFingerprint else {
+      #if DEBUG
+      print("[SERVICE_BRIEFING_PACKET_TRACE] decision=skip reason=snapshot_not_current date=\(input.dateKey) facts=0 compact=\"\"")
+      #endif
+      return
+    }
+    let fingerprint = HostServiceBriefingPacketBuilder.inputFingerprint(input)
+    guard fingerprint != lastServiceBriefingPacketFingerprint else {
+      #if DEBUG
+      print("[SERVICE_BRIEFING_PACKET_TRACE] decision=skip reason=fingerprint_unchanged date=\(input.dateKey) facts=\(serviceBriefingPacket.facts.count) compact=\"\(serviceBriefingPacket.compactLine)\"")
+      #endif
+      return
+    }
+
+    let packet = HostServiceBriefingPacketBuilder.build(input)
+    lastServiceBriefingPacketFingerprint = packet.inputFingerprint
+    serviceBriefingPacket = packet
+    #if DEBUG
+    print("[SERVICE_BRIEFING_PACKET_TRACE] decision=build date=\(packet.dateKey) facts=\(packet.facts.count) compact=\"\(packet.compactLine)\"")
+    #endif
   }
 
   func evaluate(
@@ -758,8 +818,10 @@ final class HostIntelligenceController: ObservableObject {
     localEvaluationComplete = false
     isEnrichmentLoading = false
     serviceIntelligenceSnapshot = .empty
+    serviceBriefingPacket = .empty
     serviceIntelligenceSourceFingerprint = ""
     lastServiceIntelSnapshotFingerprint = ""
+    lastServiceBriefingPacketFingerprint = ""
     latestEvaluatedServiceIntelSourceFingerprint = ""
     latestSelectedDateKey = ""
   }
@@ -784,6 +846,13 @@ final class HostIntelligenceController: ObservableObject {
       "date=\(latestSelectedDateKey.isEmpty ? "none" : latestSelectedDateKey) " +
       "snapshotDate=\(snapshotDate) hasSnapshot=\(hasSnapshot) reason=\(reason)"
     )
+    let packetDate = serviceBriefingPacket.dateKey.isEmpty ? "none" : serviceBriefingPacket.dateKey
+    let hasPacket = serviceBriefingPacket.inputFingerprint != "empty"
+    print(
+      "[SERVICE_BRIEFING_PACKET_TRACE] decision=preserve reason=view_hidden " +
+      "date=\(latestSelectedDateKey.isEmpty ? "none" : latestSelectedDateKey) " +
+      "packetDate=\(packetDate) hasPacket=\(hasPacket)"
+    )
     #endif
   }
 
@@ -793,13 +862,20 @@ final class HostIntelligenceController: ObservableObject {
   ) {
     let hadSnapshot = serviceIntelligenceSnapshot.inputFingerprint != "empty"
       && !serviceIntelligenceSnapshot.dateKey.isEmpty
+    let hadPacket = serviceBriefingPacket.inputFingerprint != "empty"
+      && !serviceBriefingPacket.dateKey.isEmpty
     serviceIntelligenceSnapshot = .empty
+    serviceBriefingPacket = .empty
     serviceIntelligenceSourceFingerprint = ""
     lastServiceIntelSnapshotFingerprint = ""
+    lastServiceBriefingPacketFingerprint = ""
     latestEvaluatedServiceIntelSourceFingerprint = ""
     #if DEBUG
     if hadSnapshot {
       print("[SERVICE_INTEL_LIFECYCLE_TRACE] event=clear_snapshot_on_date_transition old=\(oldDateKey.isEmpty ? "none" : oldDateKey) new=\(newDateKey)")
+    }
+    if hadPacket {
+      print("[SERVICE_BRIEFING_PACKET_TRACE] decision=clear reason=date_transition old=\(oldDateKey.isEmpty ? "none" : oldDateKey) new=\(newDateKey)")
     }
     #endif
   }

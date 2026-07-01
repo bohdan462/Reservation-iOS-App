@@ -117,6 +117,9 @@ struct HostIntelligenceDiagnosticsView: View {
       Button("Run Service Intelligence proof") {
         ServiceIntelligenceProofHarness.run()
       }
+      Button("Run service briefing packet proof") {
+        HostServiceBriefingPacketProofHarness.run()
+      }
       Button("Run AI validator proof") {
         HostAIValidatorProofHarness.run()
       }
