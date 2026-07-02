@@ -188,6 +188,7 @@ final class ReservationsController: ObservableObject {
     private var serverCursorByScope: [ReservationSyncScope: String] = [:]
     private var successfulActiveWindowDeltaCountSinceFull = 0
     private var lastSuccessfulActiveWindowFullRefreshAt: Date?
+    private var lastSuccessfulActiveWindowFullScopeKey: String?
     private var activeSyncIntentByScope: [ReservationSyncScope: ReservationSyncIntent] = [:] {
         didSet { publishOperationState() }
     }
@@ -224,6 +225,7 @@ final class ReservationsController: ObservableObject {
     private let activeWindowAutoRefreshTTL: TimeInterval = 300
     private let activeWindowFullDeltaThreshold = 5
     private let activeWindowFullMaxAge: TimeInterval = 2 * 60 * 60
+    private let staffVisibilitySafetyFloorDays = 120
     private let autoRefreshFailureCooldown: TimeInterval = 180
     private let historyPrefetchStabilizationDelay: TimeInterval = 25
     private let historyPrefetchDateNavigationCooldown: TimeInterval = 5
@@ -241,6 +243,7 @@ final class ReservationsController: ObservableObject {
     private let syncCursorDefaultsKey = "tryzub.sync.serverCursors.v1"
     private let syncScopeSuccessDefaultsKey = "tryzub.sync.scopeLastSuccessAt.v1"
     private let syncActiveWindowBoundsKey = "tryzub.sync.activeWindowBounds.v1"
+    private let syncActiveWindowFullScopeKey = "tryzub.sync.activeWindowLastFullScope.v1"
     private var persistedActiveWindowBounds: PersistedActiveWindowBounds?
 
     // MARK: - Dependencies
@@ -349,9 +352,11 @@ final class ReservationsController: ObservableObject {
         isHistoryPrefetching = false
         serverCursorByScope = [:]
         syncStateByScope = [:]
+        lastSuccessfulActiveWindowFullScopeKey = nil
         UserDefaults.standard.removeObject(forKey: syncCursorDefaultsKey)
         UserDefaults.standard.removeObject(forKey: syncScopeSuccessDefaultsKey)
         UserDefaults.standard.removeObject(forKey: syncActiveWindowBoundsKey)
+        UserDefaults.standard.removeObject(forKey: syncActiveWindowFullScopeKey)
         persistedActiveWindowBounds = nil
         lastFreshnessCheckedAt = nil
         cacheTrustSource = .unknown
@@ -404,9 +409,11 @@ final class ReservationsController: ObservableObject {
         syncStateByScope = [:]
         successfulActiveWindowDeltaCountSinceFull = 0
         lastSuccessfulActiveWindowFullRefreshAt = nil
+        lastSuccessfulActiveWindowFullScopeKey = nil
         UserDefaults.standard.removeObject(forKey: syncCursorDefaultsKey)
         UserDefaults.standard.removeObject(forKey: syncScopeSuccessDefaultsKey)
         UserDefaults.standard.removeObject(forKey: syncActiveWindowBoundsKey)
+        UserDefaults.standard.removeObject(forKey: syncActiveWindowFullScopeKey)
         persistedActiveWindowBounds = nil
         lastFreshnessCheckedAt = nil
         cacheTrustSource = .unknown
@@ -543,18 +550,23 @@ final class ReservationsController: ObservableObject {
         let scope = activeWindowScope()
         let activeWindowFresh = isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval)
         let hasCursor = serverCursor(for: scope) != nil
+        let hasUsableCursor = activeWindowDeltaCursor(for: scope) != nil
+        let canTrustFreshness = canTrustActiveWindowFreshness(for: scope)
 
         let policy: StartupRefreshPolicy
         let reason: String
         if !cacheHit {
             policy = .coldFull
             reason = "no_cache"
-        } else if activeWindowFresh {
+        } else if activeWindowFresh && canTrustFreshness {
             policy = .skip
             reason = "fresh_cache"
-        } else if hasCursor {
+        } else if hasUsableCursor {
             policy = .delta
             reason = "stale_cache_with_cursor"
+        } else if hasCursor {
+            policy = .full
+            reason = "expanded_window_old_cursor"
         } else {
             policy = .full
             reason = "missing_cursor"
@@ -654,7 +666,7 @@ final class ReservationsController: ObservableObject {
                 try? await Task.sleep(for: .seconds(delay))
             }
             guard !Task.isCancelled else { return }
-            self.startDeferredRestaurantSetupIfNeeded()
+            self.startDeferredRestaurantSetupIfNeeded(context: context)
             self.scheduleHistoryPrefetchWhenReady(context: context)
         }
     }
@@ -903,27 +915,13 @@ final class ReservationsController: ObservableObject {
         HostLocalModelAutoPrepareCoordinator.shared.scheduleWhenReady(controller: self)
     }
 
-    private func startDeferredRestaurantSetupIfNeeded() {
+    private func startDeferredRestaurantSetupIfNeeded(context: ModelContext) {
         guard deferredRestaurantSetupTask == nil else { return }
         guard !hasLoadedRestaurantSetup else { return }
         guard !isLoadingRestaurantSetup else { return }
         StartupPolicyTrace.remoteSetupStarted(fromCache: hasLoadedRestaurantSetup)
         deferredRestaurantSetupTask = Task(priority: .utility) { @MainActor in
-            let previousBookingWindowDays = self.restaurantSetup.bookingWindowDays
-            let previousScope = self.activeWindowScope()
-            _ = try? await self.loadRestaurantSetup()
-            if self.restaurantSetup.bookingWindowDays != previousBookingWindowDays {
-                self.markScopeStale(previousScope)
-                StartupPolicyTrace.policy(
-                    cacheHit: self.localCacheStoreHasReservations,
-                    activeWindowFresh: false,
-                    hasServerCursor: self.serverCursor(for: previousScope) != nil,
-                    policy: .full,
-                    reason: "setup_booking_window_changed",
-                    setupLoadedFromCache: false,
-                    remoteSetupStarted: true
-                )
-            }
+            _ = try? await self.loadRestaurantSetup(context: context)
             self.deferredRestaurantSetupTask = nil
         }
     }
@@ -1046,6 +1044,8 @@ final class ReservationsController: ObservableObject {
             persistedActiveWindowBounds = bounds
         }
 
+        lastSuccessfulActiveWindowFullScopeKey = UserDefaults.standard.string(forKey: syncActiveWindowFullScopeKey)
+
         reconcileActiveWindowSyncMetadata()
         adoptPersistedFreshnessTrustIfAvailable()
         publishSyncScopeSnapshots()
@@ -1055,6 +1055,7 @@ final class ReservationsController: ObservableObject {
         let scope = activeWindowScope()
         let persistedFresh = isScopeFresh(scope, freshnessInterval: scheduleFreshnessInterval)
         guard persistedFresh,
+              canTrustActiveWindowFreshness(for: scope),
               let checkedAt = syncStateByScope[scope]?.lastSuccessAt else {
             #if DEBUG
             StartupPolicyTrace.headerInitialTrust(checked: false, persistedFresh: persistedFresh)
@@ -1129,10 +1130,12 @@ final class ReservationsController: ObservableObject {
         window: (from: String, to: String)
     ) {
         guard case .activeWindow = scope else { return }
+        let horizon = activeWindowBookingHorizon()
         let bounds = PersistedActiveWindowBounds(
             from: window.from,
             to: window.to,
-            bookingWindowDays: activeWindowBookingWindowDays()
+            bookingWindowDays: horizon.bookingWindowDays,
+            staffVisibilityDays: horizon.staffVisibilityDays
         )
         persistedActiveWindowBounds = bounds
         if let data = try? JSONEncoder().encode(bounds) {
@@ -1142,70 +1145,10 @@ final class ReservationsController: ObservableObject {
 
     private func reconcileActiveWindowSyncMetadata() {
         let currentScope = activeWindowScope()
-        let hasCursor = serverCursor(for: currentScope) != nil
-        let hasFreshness = syncStateByScope[currentScope]?.lastSuccessAt != nil
-        if hasCursor && hasFreshness {
-            return
-        }
-
-        if let bounds = persistedActiveWindowBounds {
-            let persistedScope = ReservationSyncScope.activeWindow(from: bounds.from, to: bounds.to)
-            if persistedScope.persistenceKey != currentScope.persistenceKey {
-                migrateActiveWindowSyncMetadata(from: persistedScope, to: currentScope)
-            }
-            if serverCursor(for: currentScope) != nil,
-               syncStateByScope[currentScope]?.lastSuccessAt != nil {
-                return
-            }
-        }
-
-        adoptNearestActiveWindowSyncMetadata(for: currentScope)
-    }
-
-    private func migrateActiveWindowSyncMetadata(
-        from sourceScope: ReservationSyncScope,
-        to targetScope: ReservationSyncScope
-    ) {
-        guard sourceScope.persistenceKey != targetScope.persistenceKey else { return }
-
-        if serverCursor(for: targetScope) == nil,
-           let cursor = serverCursor(for: sourceScope) {
-            serverCursorByScope[targetScope] = cursor
-        }
-
-        if syncStateByScope[targetScope]?.lastSuccessAt == nil,
-           let sourceState = syncStateByScope[sourceScope] {
-            syncStateByScope[targetScope] = sourceState
-        }
-
-        if serverCursor(for: targetScope) != nil || syncStateByScope[targetScope]?.lastSuccessAt != nil {
-            persistSyncMetadata()
-        }
-    }
-
-    private func adoptNearestActiveWindowSyncMetadata(for targetScope: ReservationSyncScope) {
-        guard case .activeWindow(let targetFrom, let targetTo) = targetScope else { return }
-
-        let candidates = serverCursorByScope.keys.compactMap { scope -> (ReservationSyncScope, Int)? in
-            guard case .activeWindow(let from, let to) = scope else { return nil }
-            guard to == targetTo else { return nil }
-            guard let distance = Self.reservationDateDayDistance(from: from, to: targetFrom) else { return nil }
-            guard distance <= 1 else { return nil }
-            return (scope, distance)
-        }
-        .sorted { $0.1 < $1.1 }
-
-        guard let nearest = candidates.first?.0 else { return }
-        migrateActiveWindowSyncMetadata(from: nearest, to: targetScope)
-    }
-
-    private static func reservationDateDayDistance(from: String, to: String) -> Int? {
-        guard let fromDate = ReservationFormatters.reservationDateKey.date(from: from),
-              let toDate = ReservationFormatters.reservationDateKey.date(from: to) else {
-            return nil
-        }
-        let days = Calendar.current.dateComponents([.day], from: fromDate, to: toDate).day ?? 0
-        return abs(days)
+        guard let bounds = persistedActiveWindowBounds else { return }
+        let persistedScope = ReservationSyncScope.activeWindow(from: bounds.from, to: bounds.to)
+        guard persistedScope.persistenceKey != currentScope.persistenceKey else { return }
+        traceActiveWindowCursorScopeChange(previousScope: persistedScope, currentScope: currentScope)
     }
 
     // MARK: - Legacy Refresh Entry Points
@@ -1348,28 +1291,97 @@ final class ReservationsController: ObservableObject {
         return response
     }
 
+    enum ScheduleDateRefreshTrigger: String {
+        case calendarSelection = "calendar_selection"
+        case manualRefresh = "manual_refresh"
+    }
+
     // Intent: Schedule All mode refreshes one service date from the server.
     // Network: GET /managed-reservations?date=YYYY-MM-DD.
+    @discardableResult
     func refreshScheduleDate(
         context: ModelContext,
         date: String,
-        search: String? = nil
-    ) async throws {
-        let response = try await environment.apiClient.fetchReservations(
-            page: 1,
-            perPage: 100,
-            date: date,
-            from: nil,
-            to: nil,
-            status: nil,
-            search: search,
-            includeHidden: false,
-            reason: .scheduleDate
-        )
+        search: String? = nil,
+        trigger: ScheduleDateRefreshTrigger = .calendarSelection,
+        force: Bool = false
+    ) async throws -> Bool {
+        let activeBounds = activeWindow()
+        let isOutsideActiveWindow = date < activeBounds.from || date > activeBounds.to
+        let shouldForce = force || isOutsideActiveWindow
+        let freshnessScope = FreshnessScope.reservationDate(date)
 
-        let repository = ReservationRepository(context: context)
-        try repository.upsert(response.data)
-        noteReservationServerSyncCompleted()
+        let decision = freshnessCoordinator?.decide(
+            scope: freshnessScope,
+            force: shouldForce
+        ) ?? .fetch(reason: "no_freshness_coordinator")
+
+        switch decision {
+        case .fetch:
+            traceFutureDateFetch(
+                date: date,
+                decision: "fetch",
+                reason: force ? trigger.rawValue : (isOutsideActiveWindow ? "outside_active_window" : "inside_active_window"),
+                trigger: trigger,
+                activeBounds: activeBounds,
+                freshnessDecision: decision
+            )
+        case .useCache:
+            traceFutureDateFetch(
+                date: date,
+                decision: "skip",
+                reason: "fresh",
+                trigger: trigger,
+                activeBounds: activeBounds,
+                freshnessDecision: decision
+            )
+            return true
+        case .joinInFlight:
+            traceFutureDateFetch(
+                date: date,
+                decision: "skip",
+                reason: "in_flight",
+                trigger: trigger,
+                activeBounds: activeBounds,
+                freshnessDecision: decision
+            )
+            return true
+        case .blockedByCooldown:
+            traceFutureDateFetch(
+                date: date,
+                decision: "skip",
+                reason: "cooldown",
+                trigger: trigger,
+                activeBounds: activeBounds,
+                freshnessDecision: decision
+            )
+            return false
+        }
+
+        freshnessCoordinator?.markInFlight(freshnessScope)
+
+        do {
+            let response = try await environment.apiClient.fetchReservations(
+                page: 1,
+                perPage: 100,
+                date: date,
+                from: nil,
+                to: nil,
+                status: nil,
+                search: search,
+                includeHidden: false,
+                reason: .scheduleDate
+            )
+
+            let repository = ReservationRepository(context: context)
+            try repository.upsert(response.data)
+            noteReservationServerSyncCompleted()
+            freshnessCoordinator?.markCompleted(freshnessScope)
+            return true
+        } catch {
+            freshnessCoordinator?.markFailed(freshnessScope, cooldown: error.isCancellationLike ? 0 : 30)
+            throw error
+        }
     }
 
     // MARK: - Pending Review Sync
@@ -1728,6 +1740,7 @@ final class ReservationsController: ObservableObject {
         let scope = ReservationSyncScope.activeWindow(from: window.from, to: window.to)
 
         let trigger = activeWindowTriggerName(for: mode)
+        traceBookingHorizonActiveWindowFetch(trigger: trigger, window: window)
 
         if let existing = activeWindowRefreshTask {
             if activeWindowRefreshScope == scope {
@@ -1833,6 +1846,7 @@ final class ReservationsController: ObservableObject {
     ) async -> Bool {
         if !force,
            mode != .automatic,
+           canTrustActiveWindowFreshness(for: scope),
            isScopeFresh(scope, freshnessInterval: mode == .review ? reviewFreshnessInterval : scheduleFreshnessInterval) {
             recordActiveWindowFreshness(.useCache(reason: "scope_fresh_\(mode)"))
             recordRefreshDecision(scope: scope, mode: mode, outcome: "skipped_fresh")
@@ -1896,17 +1910,45 @@ final class ReservationsController: ObservableObject {
             var resolvedSyncMode = "full"
             var resolvedCursorUsed: String?
             if mode == .automatic {
-                let cursor = serverCursor(for: scope)
-                let fullPolicy = activeWindowFullPolicyDecision(
-                    mode: mode,
-                    hasCursor: cursor != nil,
-                    now: Date()
-                )
-                traceActiveWindowFullPolicy(fullPolicy)
-                deltaCursor = fullPolicy.shouldForceFull ? nil : cursor
-                shouldAttemptDelta = deltaCursor != nil
+                let cursor = activeWindowDeltaCursor(for: scope)
+                if serverCursor(for: scope) != nil, cursor == nil {
+                    traceActiveWindowUnsafeCursor(scope: scope, currentWindow: window)
+                    traceActiveWindowFullPolicy(
+                        ActiveWindowFullPolicyDecision(
+                            decision: "force_full",
+                            reason: "expanded_window_old_cursor",
+                            shouldForceFull: true,
+                            deltaCount: successfulActiveWindowDeltaCountSinceFull,
+                            lastFullAge: lastSuccessfulActiveWindowFullRefreshAt.map { Date().timeIntervalSince($0) }
+                        )
+                    )
+                    deltaCursor = nil
+                    shouldAttemptDelta = false
+                } else {
+                    let fullPolicy = activeWindowFullPolicyDecision(
+                        mode: mode,
+                        hasCursor: cursor != nil,
+                        now: Date()
+                    )
+                    traceActiveWindowFullPolicy(fullPolicy)
+                    deltaCursor = fullPolicy.shouldForceFull ? nil : cursor
+                    shouldAttemptDelta = deltaCursor != nil
+                }
             } else if mode == .startup && allowStartupDelta {
-                deltaCursor = serverCursor(for: scope)
+                let cursor = activeWindowDeltaCursor(for: scope)
+                if serverCursor(for: scope) != nil, cursor == nil {
+                    traceActiveWindowUnsafeCursor(scope: scope, currentWindow: window)
+                    traceActiveWindowFullPolicy(
+                        ActiveWindowFullPolicyDecision(
+                            decision: "force_full",
+                            reason: "expanded_window_old_cursor",
+                            shouldForceFull: true,
+                            deltaCount: successfulActiveWindowDeltaCountSinceFull,
+                            lastFullAge: lastSuccessfulActiveWindowFullRefreshAt.map { Date().timeIntervalSince($0) }
+                        )
+                    )
+                }
+                deltaCursor = cursor
                 shouldAttemptDelta = deltaCursor != nil
             } else {
                 deltaCursor = nil
@@ -1915,6 +1957,7 @@ final class ReservationsController: ObservableObject {
             if shouldAttemptDelta, let cursor = deltaCursor {
                 resolvedSyncMode = "delta"
                 resolvedCursorUsed = cursor
+                traceActiveWindowCursorDelta(scope: scope, cursor: cursor)
                 recordRefreshDecision(scope: scope, mode: mode, outcome: "delta")
                 StartupTrace.activeWindow(
                     controllerID: controllerInstanceID,
@@ -1981,6 +2024,7 @@ final class ReservationsController: ObservableObject {
             noteReservationServerSyncCompleted()
             markScopeSuccess(scope)
             recordActiveWindowFullPolicySuccess(syncMode: resolvedSyncMode)
+            recordActiveWindowFullScopeSuccessIfNeeded(scope: scope, syncMode: resolvedSyncMode)
             freshnessCoordinator?.markCompleted(freshnessScope)
             persistActiveWindowBoundsIfNeeded(scope: scope, window: window)
             MultiDeviceSyncTrace.activeWindowSync(
@@ -2305,6 +2349,7 @@ final class ReservationsController: ObservableObject {
         defer { isLoadingRestaurantSetup = false }
 
         do {
+            let previousWindow = activeWindow()
             StartupTrace.directAPI(
                 caller: "ReservationsController.loadRestaurantSetup",
                 reason: "restaurant_setup",
@@ -2314,6 +2359,12 @@ final class ReservationsController: ObservableObject {
             let setup = RestaurantSetup(dto: dto)
             restaurantSetup = setup
             restaurantSetupLoadedAt = Date()
+            if let context {
+                await handleRestaurantSetupLoadedActiveWindowChange(
+                    previousWindow: previousWindow,
+                    context: context
+                )
+            }
             return setup
         } catch {
             if error.isCancellationLike {
@@ -2331,6 +2382,45 @@ final class ReservationsController: ObservableObject {
             )
             throw error
         }
+    }
+
+    private func handleRestaurantSetupLoadedActiveWindowChange(
+        previousWindow: (from: String, to: String),
+        context: ModelContext
+    ) async {
+        let newWindow = activeWindow()
+        guard previousWindow.to != newWindow.to else {
+            traceBookingHorizonSetupLoaded(
+                previousTo: previousWindow.to,
+                newTo: newWindow.to,
+                decision: "skip",
+                reason: "to_unchanged"
+            )
+            return
+        }
+
+        let previousScope = ReservationSyncScope.activeWindow(from: previousWindow.from, to: previousWindow.to)
+        let newScope = ReservationSyncScope.activeWindow(from: newWindow.from, to: newWindow.to)
+        markScopeStale(previousScope)
+        markScopeStale(newScope)
+        freshnessCoordinator?.invalidate(.activeWindow(from: previousWindow.from, to: previousWindow.to))
+        freshnessCoordinator?.invalidate(.activeWindow(from: newWindow.from, to: newWindow.to))
+        traceBookingHorizonSetupLoaded(
+            previousTo: previousWindow.to,
+            newTo: newWindow.to,
+            decision: "resync",
+            reason: "to_changed"
+        )
+        StartupPolicyTrace.policy(
+            cacheHit: localCacheStoreHasReservations,
+            activeWindowFresh: false,
+            hasServerCursor: serverCursor(for: newScope) != nil,
+            policy: .full,
+            reason: "setup_staff_visibility_window_changed",
+            setupLoadedFromCache: false,
+            remoteSetupStarted: true
+        )
+        _ = await performActiveWindowRefresh(context: context, mode: .automatic, force: true)
     }
 
     private func setupFailureTitle(for error: Error) -> String {
@@ -4407,17 +4497,44 @@ final class ReservationsController: ObservableObject {
     }
 
     private func activeWindow() -> (from: String, to: String) {
-        Self.normalizedActiveWindow(
-            bookingWindowDays: activeWindowBookingWindowDays(),
+        let horizon = activeWindowBookingHorizon()
+        let window = Self.normalizedActiveWindow(
+            bookingWindowDays: horizon.staffVisibilityDays,
             referenceDate: Date()
         )
+        traceBookingHorizonCompute(phase: "compute", horizon: horizon, window: window)
+        return window
     }
 
-    private func activeWindowBookingWindowDays() -> Int {
-        if let persistedActiveWindowBounds {
-            return max(persistedActiveWindowBounds.bookingWindowDays, 30)
+    private struct ActiveWindowBookingHorizon {
+        let source: String
+        let bookingWindowDays: Int
+        let staffVisibilityDays: Int
+    }
+
+    private func activeWindowBookingHorizon() -> ActiveWindowBookingHorizon {
+        let defaultDays = RestaurantSetup.default.bookingWindowDays
+        let setupDays = restaurantSetup.bookingWindowDays
+        let persistedDays = persistedActiveWindowBounds?.bookingWindowDays
+
+        let source: String
+        let policyDays: Int
+        if hasLoadedRestaurantSetup {
+            source = "setup"
+            policyDays = setupDays
+        } else if let persistedDays, persistedDays > defaultDays {
+            source = "persisted"
+            policyDays = persistedDays
+        } else {
+            source = "default"
+            policyDays = defaultDays
         }
-        return max(restaurantSetup.bookingWindowDays, 30)
+
+        return ActiveWindowBookingHorizon(
+            source: source,
+            bookingWindowDays: max(policyDays, 30),
+            staffVisibilityDays: max(policyDays, staffVisibilitySafetyFloorDays)
+        )
     }
 
     private static func normalizedActiveWindow(
@@ -4476,6 +4593,131 @@ final class ReservationsController: ObservableObject {
         serverCursorByScope[scope] = serverTime
         persistSyncMetadata()
         publishOperationState()
+    }
+
+    private func activeWindowDeltaCursor(for scope: ReservationSyncScope) -> String? {
+        guard case .activeWindow = scope else {
+            return serverCursor(for: scope)
+        }
+        guard hasRecordedActiveWindowFullFetch(for: scope) else {
+            return nil
+        }
+        return serverCursor(for: scope)
+    }
+
+    private func canTrustActiveWindowFreshness(for scope: ReservationSyncScope) -> Bool {
+        guard case .activeWindow = scope else {
+            return true
+        }
+        return hasRecordedActiveWindowFullFetch(for: scope)
+    }
+
+    private func hasRecordedActiveWindowFullFetch(for scope: ReservationSyncScope) -> Bool {
+        lastSuccessfulActiveWindowFullScopeKey == scope.persistenceKey
+    }
+
+    private func recordActiveWindowFullScopeSuccessIfNeeded(scope: ReservationSyncScope, syncMode: String) {
+        guard case .activeWindow = scope else { return }
+        guard syncMode == "full" || syncMode == "delta_fallback_full" else { return }
+        lastSuccessfulActiveWindowFullScopeKey = scope.persistenceKey
+        UserDefaults.standard.set(scope.persistenceKey, forKey: syncActiveWindowFullScopeKey)
+    }
+
+    private func activeWindowBounds(for scope: ReservationSyncScope) -> (from: String, to: String)? {
+        guard case .activeWindow(let from, let to) = scope else { return nil }
+        return (from, to)
+    }
+
+    private func activeWindowBoundsText(_ bounds: (from: String, to: String)) -> String {
+        "\(bounds.from)...\(bounds.to)"
+    }
+
+    private func previousActiveWindowBoundsForCursorMismatch(
+        currentScope: ReservationSyncScope,
+        currentWindow: (from: String, to: String)
+    ) -> (scope: ReservationSyncScope, bounds: (from: String, to: String), cursor: String?)? {
+        if let bounds = persistedActiveWindowBounds {
+            let scope = ReservationSyncScope.activeWindow(from: bounds.from, to: bounds.to)
+            if scope.persistenceKey != currentScope.persistenceKey {
+                return (scope, (bounds.from, bounds.to), serverCursor(for: scope))
+            }
+        }
+
+        let scopes = Set(serverCursorByScope.keys).union(Set(syncStateByScope.keys))
+        let candidates = scopes.compactMap { scope -> (ReservationSyncScope, (from: String, to: String), String?)? in
+            guard scope.persistenceKey != currentScope.persistenceKey,
+                  let bounds = activeWindowBounds(for: scope) else {
+                return nil
+            }
+            return (scope, bounds, serverCursor(for: scope))
+        }
+        return candidates.sorted { lhs, rhs in
+            let lhsExpandedByCurrent = lhs.1.to < currentWindow.to || lhs.1.from > currentWindow.from
+            let rhsExpandedByCurrent = rhs.1.to < currentWindow.to || rhs.1.from > currentWindow.from
+            if lhsExpandedByCurrent != rhsExpandedByCurrent {
+                return lhsExpandedByCurrent
+            }
+            return lhs.1.to > rhs.1.to
+        }.first
+    }
+
+    private func traceActiveWindowCursorScopeChange(
+        previousScope: ReservationSyncScope,
+        currentScope: ReservationSyncScope
+    ) {
+        guard let previous = activeWindowBounds(for: previousScope),
+              let current = activeWindowBounds(for: currentScope) else {
+            return
+        }
+        let cursor = serverCursor(for: previousScope) ?? "none"
+        traceActiveWindowCursorFullScopeChanged(previous: previous, current: current, cursor: cursor)
+    }
+
+    private func traceActiveWindowUnsafeCursor(
+        scope: ReservationSyncScope,
+        currentWindow: (from: String, to: String)
+    ) {
+        let cursor = serverCursor(for: scope) ?? "none"
+        if let previous = previousActiveWindowBoundsForCursorMismatch(
+            currentScope: scope,
+            currentWindow: currentWindow
+        ) {
+            traceActiveWindowCursorFullScopeChanged(
+                previous: previous.bounds,
+                current: currentWindow,
+                cursor: previous.cursor ?? cursor
+            )
+        } else {
+            #if DEBUG
+            print(
+                "[ACTIVE_WINDOW_CURSOR_TRACE] decision=full reason=expanded_window_old_cursor current=\(activeWindowBoundsText(currentWindow)) cursor=\(cursor)"
+            )
+            #endif
+        }
+    }
+
+    private func traceActiveWindowCursorFullScopeChanged(
+        previous: (from: String, to: String),
+        current: (from: String, to: String),
+        cursor: String
+    ) {
+        #if DEBUG
+        print(
+            "[ACTIVE_WINDOW_CURSOR_TRACE] decision=full reason=scope_changed previous=\(activeWindowBoundsText(previous)) current=\(activeWindowBoundsText(current)) cursor=\(cursor)"
+        )
+        if previous.to < current.to {
+            print(
+                "[ACTIVE_WINDOW_CURSOR_TRACE] decision=full reason=window_expanded previousTo=\(previous.to) currentTo=\(current.to)"
+            )
+        }
+        #endif
+    }
+
+    private func traceActiveWindowCursorDelta(scope: ReservationSyncScope, cursor: String) {
+        guard case .activeWindow = scope else { return }
+        #if DEBUG
+        print("[ACTIVE_WINDOW_CURSOR_TRACE] decision=delta reason=same_scope cursor=\(cursor)")
+        #endif
     }
 
     private struct ActiveWindowFullPolicyDecision {
@@ -4608,6 +4850,60 @@ final class ReservationsController: ObservableObject {
     /// is injected (e.g. unit tests / intro warmup).
     private func recordActiveWindowFreshness(_ decision: FreshnessDecision) {
         freshnessCoordinator?.record(scope: freshnessActiveWindowScope(), decision: decision)
+    }
+
+    private func traceBookingHorizonCompute(
+        phase: String,
+        horizon: ActiveWindowBookingHorizon,
+        window: (from: String, to: String)
+    ) {
+        #if DEBUG
+        print(
+            "[BOOKING_HORIZON_TRACE] phase=\(phase) source=\(horizon.source) bookingWindowDays=\(horizon.bookingWindowDays) staffVisibilityDays=\(horizon.staffVisibilityDays) from=\(window.from) to=\(window.to)"
+        )
+        #endif
+    }
+
+    private func traceBookingHorizonSetupLoaded(
+        previousTo: String,
+        newTo: String,
+        decision: String,
+        reason: String
+    ) {
+        #if DEBUG
+        print(
+            "[BOOKING_HORIZON_TRACE] phase=setup_loaded previousTo=\(previousTo) newTo=\(newTo) decision=\(decision) reason=\(reason)"
+        )
+        #endif
+    }
+
+    private func traceBookingHorizonActiveWindowFetch(
+        trigger: String,
+        window: (from: String, to: String)
+    ) {
+        #if DEBUG
+        print(
+            "[BOOKING_HORIZON_TRACE] phase=active_window_fetch trigger=\(trigger) from=\(window.from) to=\(window.to)"
+        )
+        #endif
+    }
+
+    private func traceFutureDateFetch(
+        date: String,
+        decision: String,
+        reason: String,
+        trigger: ScheduleDateRefreshTrigger,
+        activeBounds: (from: String, to: String),
+        freshnessDecision: FreshnessDecision
+    ) {
+        #if DEBUG
+        let activeWindowPosition = (date < activeBounds.from || date > activeBounds.to)
+            ? "outside_active_window"
+            : "inside_active_window"
+        print(
+            "[FUTURE_DATE_FETCH_TRACE] date=\(date) decision=\(decision) reason=\(reason) trigger=\(trigger.rawValue) active_window=\(activeWindowPosition) bounds=\(activeBounds.from)...\(activeBounds.to) freshness=\(freshnessDecision.description)"
+        )
+        #endif
     }
 
     private func beginScope(_ scope: ReservationSyncScope, intent: ReservationSyncIntent? = nil) -> Bool {
@@ -5216,6 +5512,7 @@ struct PersistedActiveWindowBounds: Codable, Equatable {
     let from: String
     let to: String
     let bookingWindowDays: Int
+    let staffVisibilityDays: Int?
 }
 
 enum ReservationSyncScope: Hashable, CustomStringConvertible {

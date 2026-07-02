@@ -1636,35 +1636,13 @@ private struct ReservationScheduleView: View {
             .contentMargins(.horizontal, 0, for: .scrollContent)
             .contentMargins(.bottom, ReservationLayout.topLevelTabScrollBottomInset, for: .scrollContent)
             .refreshable {
-                guard isActive else { return }
-                if scope == .all {
-                    if usesAllModeCache {
-                        controller.scheduleHistoryPrefetchWhenReady(context: modelContext, force: true)
-                        await controller.requestScheduleRefresh(context: modelContext)
-                    } else {
-                        await loadAllPage(reset: true, caller: "refreshable_all")
-                    }
-                } else {
-                    // Bookings manual refresh stays on the shared active-window path unless All is explicit.
-                    await controller.requestScheduleRefresh(context: modelContext)
-                }
+                await refreshBookingsSelection(caller: "refreshable")
             }
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
                         Task {
-                            guard isActive else { return }
-                            if scope == .all {
-                                if usesAllModeCache {
-                                    controller.scheduleHistoryPrefetchWhenReady(context: modelContext, force: true)
-                                    await controller.requestScheduleRefresh(context: modelContext)
-                                } else {
-                                    await loadAllPage(reset: true, caller: "toolbar_all")
-                                }
-                            } else {
-                                // Bookings manual refresh stays on the shared active-window path unless All is explicit.
-                                await controller.requestScheduleRefresh(context: modelContext)
-                            }
+                            await refreshBookingsSelection(caller: "toolbar")
                         }
                     } label: {
                         if controller.isSyncing {
@@ -1847,8 +1825,16 @@ private struct ReservationScheduleView: View {
                         isCalendarPresented = false
                     },
                     onApply: {
-                        dateScope = .custom(calendarDraftDate)
+                        let selectedDate = calendarDraftDate
+                        dateScope = .custom(selectedDate)
                         isCalendarPresented = false
+                        Task {
+                            await refreshBookingsDate(
+                                selectedDate.reservationDateString(),
+                                trigger: .calendarSelection,
+                                force: false
+                            )
+                        }
                     }
                 )
             }
@@ -1872,6 +1858,50 @@ private struct ReservationScheduleView: View {
         print("[LIVE_SYNC_OWNER_TRACE] owner=bookings decision=skip reason=root_foreground_owner")
         #endif
         // Task exits; restarted by SwiftUI if isActive changes.
+    }
+
+    private func refreshBookingsSelection(caller: String) async {
+        guard isActive else { return }
+
+        if dateScope.customDate != nil {
+            await refreshBookingsDate(
+                bookingsSelectedDateKey,
+                trigger: .manualRefresh,
+                force: true
+            )
+            return
+        }
+
+        if scope == .all {
+            if usesAllModeCache {
+                controller.scheduleHistoryPrefetchWhenReady(context: modelContext, force: true)
+                await controller.requestScheduleRefresh(context: modelContext)
+            } else {
+                await loadAllPage(reset: true, caller: "\(caller)_all")
+            }
+        } else {
+            // Bookings manual refresh stays on the shared active-window path for range scopes.
+            await controller.requestScheduleRefresh(context: modelContext)
+        }
+    }
+
+    private func refreshBookingsDate(
+        _ date: String,
+        trigger: ReservationsController.ScheduleDateRefreshTrigger,
+        force: Bool
+    ) async {
+        do {
+            try await controller.refreshScheduleDate(
+                context: modelContext,
+                date: date,
+                trigger: trigger,
+                force: force
+            )
+        } catch {
+            #if DEBUG
+            print("[FUTURE_DATE_FETCH_TRACE] date=\(date) decision=skip reason=failed trigger=\(trigger.rawValue) error=\(error.localizedDescription)")
+            #endif
+        }
     }
 
     private var newAttentionCount: Int {
