@@ -51,7 +51,7 @@ extension HostReservationOpenIntent {
     case .alertServer:
       return "Check guest note before seating."
     case .reviewReservation, .reviewCancellationOpportunity:
-      return "Review the reservation details before taking action."
+      return nil
     case .seatReservation:
       return "Use Seat after confirming the table is ready."
     default:
@@ -87,10 +87,6 @@ struct HostIntelligenceIntentBanner: View {
           .background(Color(.tertiarySystemGroupedBackground), in: Circle())
 
         VStack(alignment: .leading, spacing: 4) {
-          Text("Check this")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-
           Text(intent.title)
             .font(.headline.weight(.medium))
             .fixedSize(horizontal: false, vertical: true)
@@ -118,10 +114,6 @@ struct HostIntelligenceIntentBanner: View {
               .font(.caption)
               .foregroundStyle(.tertiary)
           }
-
-          Text("Review only — staff confirmation is still required.")
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
         }
 
         Spacer(minLength: 0)

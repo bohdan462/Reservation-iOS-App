@@ -2032,7 +2032,7 @@ struct ReservationDetailView: View {
         if reservation.statusValue == .needsReview {
             return (
                 "Needs review",
-                "Check this reservation before confirming. Guest Notes and Staff Notes are shown separately below.",
+                "",
                 "exclamationmark.triangle",
                 .orange
             )
@@ -3636,10 +3636,12 @@ private struct DetailWarningCard: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.headline.weight(.medium))
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if !message.isEmpty {
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Spacer(minLength: 0)
